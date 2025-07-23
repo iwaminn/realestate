@@ -488,14 +488,12 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
         
         from app.scrapers.suumo_scraper import SuumoScraper
         from app.scrapers.homes_scraper import HomesScraper
-        from app.scrapers.rehouse_scraper import RehouseScraper
-        from app.scrapers.nomu_scraper import NomuScraper
+        from app.scrapers.athome_scraper import AtHomeScraper
         
         scraper_classes = {
             "suumo": SuumoScraper,
             "homes": HomesScraper,
-            "rehouse": RehouseScraper,
-            "nomu": NomuScraper
+            "athome": AtHomeScraper
         }
         
         # エリア名のマッピング（逆引き用）

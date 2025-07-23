@@ -99,8 +99,7 @@ const AdminScraping: React.FC = () => {
   const scraperOptions = [
     { value: 'suumo', label: 'SUUMO' },
     { value: 'homes', label: "LIFULL HOME'S" },
-    { value: 'rehouse', label: '三井のリハウス' },
-    { value: 'nomu', label: 'ノムコム' },
+    { value: 'athome', label: 'AtHome' },
   ];
 
   useEffect(() => {
