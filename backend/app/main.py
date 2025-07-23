@@ -621,7 +621,7 @@ async def get_building_properties_v2(
 
 @app.get("/api/admin/duplicate-buildings", response_model=Dict[str, Any])
 async def get_duplicate_buildings(
-    min_similarity: float = Query(0.95, description="最小類似度"),
+    min_similarity: float = Query(0.94, description="最小類似度"),
     limit: int = Query(50, description="最大グループ数"),
     search: Optional[str] = Query(None, description="建物名検索"),
     db: Session = Depends(get_db)
@@ -645,17 +645,88 @@ async def get_duplicate_buildings(
     
     # 検索フィルタを適用
     if search:
-        # 中点（・）を除去した検索も行う
-        search_normalized = search.replace('・', '')
-        query = query.filter(
-            or_(
-                Building.normalized_name.ilike(f"%{search}%"),
-                Building.normalized_name.ilike(f"%{search_normalized}%")
+        # スペースで分割してAND検索を行う
+        search_terms = search.replace('　', ' ').split()
+        
+        if len(search_terms) > 1:
+            # 複数の検索語がある場合
+            # 1. 各単語を含む建物を検索（AND条件）
+            # 2. スペースを除去した全体文字列でも検索（OR条件）
+            
+            # AND検索条件
+            and_conditions = []
+            for term in search_terms:
+                # 各検索語に対して、複数の正規化パターンでOR検索
+                term_patterns = []
+                
+                # 元の検索語
+                term_patterns.append(term)
+                
+                # 中点（・）を除去
+                term_normalized = term.replace('・', '')
+                if term_normalized != term:
+                    term_patterns.append(term_normalized)
+                
+                # 各パターンでOR条件を作成
+                term_filters = []
+                for pattern in term_patterns:
+                    term_filters.append(Building.normalized_name.ilike(f"%{pattern}%"))
+                
+                # この検索語に対するOR条件を追加
+                and_conditions.append(or_(*term_filters))
+            
+            # スペースを除去した全体文字列での検索も追加
+            search_no_space = search.replace(' ', '').replace('　', '')
+            search_patterns = [search_no_space]
+            
+            # 中点も除去したパターンを追加
+            search_clean = search_no_space.replace('・', '')
+            if search_clean != search_no_space:
+                search_patterns.append(search_clean)
+            
+            # スペースなしパターンのOR条件
+            space_removed_filters = []
+            for pattern in search_patterns:
+                space_removed_filters.append(Building.normalized_name.ilike(f"%{pattern}%"))
+            
+            # AND条件とスペース除去条件のいずれかに一致
+            query = query.filter(
+                or_(
+                    and_(*and_conditions),  # 全ての単語を含む
+                    or_(*space_removed_filters)  # スペースを除去した文字列に一致
+                )
             )
-        )
+        else:
+            # 単一の検索語の場合は、従来通りの処理
+            search_patterns = []
+            
+            # 元の検索文字列
+            search_patterns.append(search)
+            
+            # 中点（・）を除去
+            search_normalized = search.replace('・', '')
+            if search_normalized != search:
+                search_patterns.append(search_normalized)
+            
+            # スペースを除去
+            search_no_space = search.replace(' ', '').replace('　', '')
+            if search_no_space != search:
+                search_patterns.append(search_no_space)
+            
+            # 中点とスペースの両方を除去
+            search_clean = search.replace('・', '').replace(' ', '').replace('　', '')
+            if search_clean not in search_patterns:
+                search_patterns.append(search_clean)
+            
+            # いずれかのパターンに一致するものを検索
+            filters = []
+            for pattern in search_patterns:
+                filters.append(Building.normalized_name.ilike(f"%{pattern}%"))
+            
+            query = query.filter(or_(*filters))
     
     # 検索が指定されている場合は少なめに、そうでない場合は多めに取得
-    fetch_limit = 100 if search else 300
+    fetch_limit = 100 if search else 1000  # 三田ガーデンヒルズのような後半の建物も含める
     buildings_with_count = query.order_by(
         Building.normalized_name
     ).limit(fetch_limit).all()
@@ -730,15 +801,22 @@ async def get_duplicate_buildings(
             # 建物名の類似度
             total_comparisons += 1
             name_similarity = normalizer.calculate_similarity(building1.normalized_name, building2.normalized_name)
+            # 浮動小数点の精度問題を回避するため、小数第3位で丸める
+            name_similarity = round(name_similarity, 3)
             
             # 総合的な判定
             # 1. 名前が完全一致 → 同一建物
             # 2. 名前の類似度が高く、住所も一致 → 同一建物
             # 3. 名前の類似度が中程度でも、住所が完全一致し階数も一致 → 同一建物
+            # 4. 片方の住所が空の場合は、名前の類似度のみで判定
             is_duplicate = False
             
             if norm_name1 == norm_name2:
                 is_duplicate = True
+            elif not building1.address or not building2.address:
+                # 片方でも住所がない場合は、名前の類似度のみで判定
+                if name_similarity >= min_similarity:
+                    is_duplicate = True
             elif name_similarity >= min_similarity and addr_similarity >= 0.8:
                 is_duplicate = True
             elif name_similarity >= 0.8 and addr_similarity >= 0.95 and floors_match:
@@ -817,14 +895,43 @@ async def search_buildings_for_merge(
             })
     
     # 名前で検索
-    name_results = db.query(
+    # スペースで分割してAND検索 または スペースを除去した検索
+    search_terms = query.replace('　', ' ').split()
+    
+    name_query = db.query(
         Building,
         func.count(MasterProperty.id).label('property_count')
     ).outerjoin(
         MasterProperty, Building.id == MasterProperty.building_id
-    ).filter(
-        Building.normalized_name.ilike(f"%{query}%")
-    ).group_by(
+    )
+    
+    if len(search_terms) > 1:
+        # 複数の検索語がある場合
+        # 1. 各単語を含む建物を検索（AND条件）
+        # 2. スペースを除去した全体文字列でも検索（OR条件）
+        
+        # AND検索条件
+        and_conditions = []
+        for term in search_terms:
+            and_conditions.append(Building.normalized_name.ilike(f"%{term}%"))
+        
+        # スペースを除去した検索
+        search_no_space = query.replace(' ', '').replace('　', '')
+        
+        # 複合条件
+        name_query = name_query.filter(
+            or_(
+                and_(*and_conditions),  # 全ての単語を含む
+                Building.normalized_name.ilike(f"%{search_no_space}%")  # スペースを除去した文字列に一致
+            )
+        )
+    else:
+        # 単一の検索語の場合
+        name_query = name_query.filter(
+            Building.normalized_name.ilike(f"%{query}%")
+        )
+    
+    name_results = name_query.group_by(
         Building.id
     ).order_by(
         Building.normalized_name
@@ -953,6 +1060,18 @@ async def merge_buildings(
             merge_details=merge_details
         )
         db.add(history)
+        
+        # 多数決による建物情報更新
+        from backend.app.utils.majority_vote_updater import MajorityVoteUpdater
+        updater = MajorityVoteUpdater(db)
+        updater.update_building_by_majority(primary)
+        
+        # 主建物に紐づく全物件の情報も多数決で更新
+        properties = db.query(MasterProperty).filter(
+            MasterProperty.building_id == primary.id
+        ).all()
+        for prop in properties:
+            updater.update_master_property_by_majority(prop)
         
         db.commit()
         

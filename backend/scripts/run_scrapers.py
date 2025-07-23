@@ -14,9 +14,8 @@ import logging
 import argparse
 from datetime import datetime
 from backend.app.scrapers.suumo_scraper import SuumoScraper
-from backend.app.scrapers.athome_scraper import AtHomeScraper
-from backend.app.scrapers.homes_scraper import HomesScraper
 from backend.app.scrapers.rehouse_scraper import RehouseScraper
+from backend.app.scrapers.homes_scraper import HomesScraper
 from backend.app.scrapers.nomu_scraper import NomuScraper
 
 # ロギング設定
@@ -40,9 +39,8 @@ def run_all_scrapers(area: str = "minato", max_pages: int = 3, force_detail_fetc
     
     scrapers = [
         ('SUUMO', SuumoScraper(force_detail_fetch=force_detail_fetch)),
-        ('AtHome', AtHomeScraper(force_detail_fetch=force_detail_fetch)),
+        ('REHOUSE', RehouseScraper(force_detail_fetch=force_detail_fetch)),
         ('HOMES', HomesScraper(force_detail_fetch=force_detail_fetch)),
-        ('Rehouse', RehouseScraper(force_detail_fetch=force_detail_fetch)),
         ('NOMU', NomuScraper(force_detail_fetch=force_detail_fetch)),
     ]
     
@@ -75,9 +73,8 @@ def run_single_scraper(scraper_name: str, area: str = "minato", max_pages: int =
     """単一のスクレイパーを実行"""
     scrapers = {
         'suumo': SuumoScraper,
-        'athome': AtHomeScraper,
-        'homes': HomesScraper,
         'rehouse': RehouseScraper,
+        'homes': HomesScraper,
         'nomu': NomuScraper,
     }
     

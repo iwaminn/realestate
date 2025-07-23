@@ -142,6 +142,17 @@ const BuildingPropertiesPage: React.FC = () => {
     return `${price.toLocaleString()}万円`;
   };
 
+  const calculatePricePerTsubo = (price: number | undefined, area: number | undefined): string => {
+    if (!price || !area) return '-';
+    
+    // 坪数に変換（1坪 = 3.30578㎡）
+    const tsubo = area / 3.30578;
+    // 坪単価を計算
+    const pricePerTsubo = price / tsubo;
+    
+    return `${pricePerTsubo.toFixed(0)}万円/坪`;
+  };
+
   const formatDate = (dateString: string | undefined) => {
     if (!dateString) return '-';
     const date = new Date(dateString);
@@ -150,6 +161,36 @@ const BuildingPropertiesPage: React.FC = () => {
       month: '2-digit',
       day: '2-digit'
     });
+  };
+
+  const calculateDaysFromPublished = (dateString: string | undefined): string => {
+    if (!dateString) return '-';
+    
+    const publishedDate = new Date(dateString);
+    const today = new Date();
+    const diffTime = Math.abs(today.getTime() - publishedDate.getTime());
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 0) {
+      return '本日';
+    } else if (diffDays === 1) {
+      return '1日';
+    } else if (diffDays < 7) {
+      return `${diffDays}日`;
+    } else if (diffDays < 30) {
+      const weeks = Math.floor(diffDays / 7);
+      return `${weeks}週間`;
+    } else if (diffDays < 365) {
+      const months = Math.floor(diffDays / 30);
+      return `${months}ヶ月`;
+    } else {
+      const years = Math.floor(diffDays / 365);
+      const remainingMonths = Math.floor((diffDays % 365) / 30);
+      if (remainingMonths > 0) {
+        return `${years}年${remainingMonths}ヶ月`;
+      }
+      return `${years}年`;
+    }
   };
 
   const handleRequestSort = (property: OrderBy) => {
@@ -341,6 +382,7 @@ const BuildingPropertiesPage: React.FC = () => {
                     売出確認日
                   </TableSortLabel>
                 </TableCell>
+                <TableCell align="right">経過日数</TableCell>
                 <TableCell align="right">
                   <TableSortLabel
                     active={orderBy === 'floor_number'}
@@ -386,6 +428,7 @@ const BuildingPropertiesPage: React.FC = () => {
                     価格
                   </TableSortLabel>
                 </TableCell>
+                <TableCell align="right">坪単価</TableCell>
                 <TableCell>掲載サイト</TableCell>
                 <TableCell align="center">操作</TableCell>
               </TableRow>
@@ -395,6 +438,9 @@ const BuildingPropertiesPage: React.FC = () => {
                 <TableRow key={property.id} hover>
                   <TableCell component="th" scope="row">
                     {formatDate(property.earliest_published_at)}
+                  </TableCell>
+                  <TableCell align="right">
+                    {calculateDaysFromPublished(property.earliest_published_at)}
                   </TableCell>
                   <TableCell align="right">
                     <Box display="flex" alignItems="center" justifyContent="flex-end">
@@ -413,6 +459,9 @@ const BuildingPropertiesPage: React.FC = () => {
                     {property.min_price === property.max_price
                       ? formatPrice(property.min_price)
                       : `${formatPrice(property.min_price)} 〜 ${formatPrice(property.max_price)}`}
+                  </TableCell>
+                  <TableCell align="right">
+                    {calculatePricePerTsubo(property.min_price, property.area)}
                   </TableCell>
                   <TableCell>
                     <Box>

@@ -361,6 +361,24 @@ def merge_properties(
             primary.room_number = secondary.room_number
             primary_updates["room_number"] = secondary.room_number
         
+        # プロパティが更新された場合、property_hashを再生成
+        if primary_updates:
+            from app.scrapers.base_scraper import BaseScraper
+            scraper = BaseScraper("ADMIN")
+            scraper.session = db
+            
+            # 新しいハッシュを生成（部屋番号は使用しない新しいロジック）
+            new_hash = scraper.generate_property_hash(
+                primary.building_id,
+                primary.room_number,  # 引数として渡すが、実際には使用されない
+                primary.floor_number,
+                primary.area,
+                primary.layout,
+                primary.direction
+            )
+            primary.property_hash = new_hash
+            primary_updates["property_hash"] = new_hash
+        
         # 統合履歴を記録
         merge_history = PropertyMergeHistory(
             primary_property_id=merge_request.primary_property_id,
@@ -377,6 +395,28 @@ def merge_properties(
         
         # すべての変更をフラッシュしてから副物件を削除
         db.flush()
+        
+        # 副物件を参照している再販物件の参照を更新
+        # 副物件が他の物件から再販物件として参照されている場合、主物件を参照するように更新
+        db.execute(text("""
+            UPDATE master_properties 
+            SET resale_property_id = :primary_id 
+            WHERE resale_property_id = :secondary_id
+        """), {
+            "primary_id": merge_request.primary_property_id,
+            "secondary_id": merge_request.secondary_property_id
+        })
+        
+        # 統合履歴の更新
+        # 副物件が以前の統合でprimary_property_idとして記録されている場合、主物件に更新
+        db.execute(text("""
+            UPDATE property_merge_history 
+            SET primary_property_id = :primary_id 
+            WHERE primary_property_id = :secondary_id
+        """), {
+            "primary_id": merge_request.primary_property_id,
+            "secondary_id": merge_request.secondary_property_id
+        })
         
         # 副物件に関連する残りのデータを削除（外部キー制約を回避）
         # 1. 残っている価格履歴を削除
@@ -408,6 +448,11 @@ def merge_properties(
         # 副物件を削除
         db.delete(secondary)
         
+        # 多数決による物件情報更新
+        from app.utils.majority_vote_updater import MajorityVoteUpdater
+        updater = MajorityVoteUpdater(db)
+        updater.update_master_property_by_majority(primary)
+        
         db.commit()
         
         return {
@@ -419,6 +464,9 @@ def merge_properties(
         
     except Exception as e:
         db.rollback()
+        import traceback
+        error_detail = f"Error merging properties: {str(e)}\n{traceback.format_exc()}"
+        print(error_detail)  # ログに出力
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -488,13 +536,13 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
         
         from app.scrapers.suumo_scraper import SuumoScraper
         from app.scrapers.homes_scraper import HomesScraper
-        from app.scrapers.athome_scraper import AtHomeScraper
+        from app.scrapers.rehouse_scraper import RehouseScraper
         from app.scrapers.nomu_scraper import NomuScraper
         
         scraper_classes = {
             "suumo": SuumoScraper,
             "homes": HomesScraper,
-            "athome": AtHomeScraper,
+            "rehouse": RehouseScraper,
             "nomu": NomuScraper
         }
         

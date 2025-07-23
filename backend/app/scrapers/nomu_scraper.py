@@ -138,68 +138,74 @@ class NomuScraper(BaseScraper):
         # テーブルから情報を抽出
         table = card.find("table")
         if table:
-            # テーブルのテキストを取得
-            table_text = table.get_text()
-            
-            # 価格（億と万を処理）
-            # 例: "5億6,800万円" または "6,800万円"
-            price_text = table_text.replace(' ', '').replace('\n', '')
-            
-            # 億がある場合
-            oku_pattern = r'(\d+)億(\d+),?(\d*)万円'
-            oku_match = re.search(oku_pattern, price_text)
-            if oku_match:
-                oku = int(oku_match.group(1))
-                man = int(oku_match.group(2).replace(',', ''))
-                if oku_match.group(3):
-                    man = int(oku_match.group(2).replace(',', '') + oku_match.group(3))
-                property_data['price'] = oku * 10000 + man
-            else:
-                # 万円のみ
-                man_pattern = r'(\d+),?(\d*)万円'
-                man_match = re.search(man_pattern, price_text)
-                if man_match:
-                    man_str = man_match.group(1).replace(',', '')
-                    if man_match.group(2):
-                        man_str += man_match.group(2)
-                    property_data['price'] = int(man_str)
-            
-            # 間取りと方角（m2と結合されている場合の処理）
-            # 例: "45.52m21LDK西"
-            layout_pattern = r'(\d+\.?\d*)m2(\d+[LDK]+)(北東|南東|北西|南西|北|南|東|西)?'
-            layout_match = re.search(layout_pattern, table_text)
-            if layout_match:
-                property_data['area'] = float(layout_match.group(1))
-                property_data['layout'] = layout_match.group(2)
-                if layout_match.group(3):
-                    property_data['direction'] = layout_match.group(3)
-            else:
-                # 別々に探す
-                area_match = re.search(r'(\d+\.?\d+)\s*m2', table_text)
-                if area_match:
-                    property_data['area'] = float(area_match.group(1))
-                
-                layout_match = re.search(r'(\d+[LDK]+)', table_text)
-                if layout_match:
-                    property_data['layout'] = layout_match.group(1)
+            # 価格（item_3 セル）
+            price_cell = table.find("td", class_="item_td item_3")
+            if price_cell:
+                price_elem = price_cell.find("p", class_="item_price")
+                if price_elem:
+                    # span要素から価格を組み立てる
+                    spans = price_elem.find_all("span")
+                    price_parts = []
+                    for span in spans:
+                        if span.get("class") and "num" in span.get("class"):
+                            price_parts.append(span.get_text(strip=True))
+                        elif span.get("class") and "unit" in span.get("class"):
+                            unit = span.get_text(strip=True)
+                            if unit == "億":
+                                price_parts.append("億")
                     
-                # 方角を別途探す
-                direction_match = re.search(r'(北東|南東|北西|南西|北|南|東|西)', table_text)
-                if direction_match:
-                    property_data['direction'] = direction_match.group(1)
+                    # 価格文字列を構築
+                    price_text = "".join(price_parts)
+                    
+                    # 億がある場合
+                    if "億" in price_text:
+                        parts = price_text.split("億")
+                        oku = int(parts[0].replace(',', ''))
+                        man = int(parts[1].replace(',', '')) if parts[1] else 0
+                        property_data['price'] = oku * 10000 + man
+                    else:
+                        # 万円のみ
+                        property_data['price'] = int(price_text.replace(',', ''))
             
-            # 階数
-            floor_pattern = r'(\d+)階\s*/\s*(\d+)階建'
-            floor_match = re.search(floor_pattern, table_text)
-            if floor_match:
-                property_data['floor_number'] = int(floor_match.group(1))
-                property_data['total_floors'] = int(floor_match.group(2))
+            # 面積・間取り・方角（item_4 セル）
+            detail_cell = table.find("td", class_="item_td item_4")
+            if detail_cell:
+                p_tags = detail_cell.find_all("p")
+                
+                # 1番目のp: 面積
+                if len(p_tags) > 0:
+                    area_text = p_tags[0].get_text(strip=True)
+                    area_match = re.search(r'(\d+\.?\d*)', area_text)
+                    if area_match:
+                        property_data['area'] = float(area_match.group(1))
+                
+                # 2番目のp: 間取り
+                if len(p_tags) > 1:
+                    property_data['layout'] = p_tags[1].get_text(strip=True)
+                
+                # 3番目のp: 方角（存在する場合）
+                if len(p_tags) > 2:
+                    direction_text = p_tags[2].get_text(strip=True)
+                    if direction_text in ['北東', '南東', '北西', '南西', '北', '南', '東', '西']:
+                        property_data['direction'] = direction_text
             
-            # 築年（年月から抽出）
-            built_pattern = r'(\d{4})年(\d+)月'
-            built_match = re.search(built_pattern, table_text)
-            if built_match:
-                property_data['built_year'] = int(built_match.group(1))
+            # 階数・築年（item_5 セル）
+            info_cell = table.find("td", class_="item_td item_5")
+            if info_cell:
+                info_text = info_cell.get_text()
+                
+                # 階数 (例: "7階 / 29階建")
+                floor_pattern = r'(\d+)階\s*/\s*(\d+)階建'
+                floor_match = re.search(floor_pattern, info_text)
+                if floor_match:
+                    property_data['floor_number'] = int(floor_match.group(1))
+                    property_data['total_floors'] = int(floor_match.group(2))
+                
+                # 築年（年月から抽出）
+                built_pattern = r'(\d{4})年(\d+)月'
+                built_match = re.search(built_pattern, info_text)
+                if built_match:
+                    property_data['built_year'] = int(built_match.group(1))
             
             # 住所（区名を含む部分を抽出）
             cells = table.find_all("td")
@@ -275,7 +281,15 @@ class NomuScraper(BaseScraper):
             station_info=property_data.get('station_info'),
             features=property_data.get('features'),
             management_fee=property_data.get('management_fee'),
-            repair_fund=property_data.get('repair_fund')
+            repair_fund=property_data.get('repair_fund'),
+            # 掲載サイトごとの物件属性
+            listing_floor_number=property_data.get('floor_number'),
+            listing_area=property_data.get('area'),
+            listing_layout=property_data.get('layout'),
+            listing_direction=property_data.get('direction'),
+            listing_total_floors=property_data.get('total_floors'),
+            listing_balcony_area=property_data.get('balcony_area'),
+            listing_address=property_data.get('address')
         )
         
         # 詳細ページの取得が必要かチェック
@@ -321,6 +335,10 @@ class NomuScraper(BaseScraper):
             listing.detail_fetched_at = datetime.now()
             listing.has_update_mark = False  # 更新マークをクリア
             
+            # 多数決による物件情報更新
+            if listing.master_property:
+                self.update_master_property_by_majority(listing.master_property)
+            
             # 建物情報の更新
             if listing.master_property and listing.master_property.building:
                 building = listing.master_property.building
@@ -330,6 +348,10 @@ class NomuScraper(BaseScraper):
                     building.total_floors = detail_data['total_floors']
                 if detail_data.get('structure') and not building.structure:
                     building.structure = detail_data['structure']
+                # 住所が空の場合は更新
+                if detail_data.get('address') and not building.address:
+                    building.address = detail_data['address']
+                    print(f"    → 建物の住所を更新: {building.address}")
             
             self.session.commit()
             print(f"    → 詳細情報を更新しました")
@@ -343,6 +365,25 @@ class NomuScraper(BaseScraper):
         """物件詳細ページを解析"""
         detail_data = {}
         
+        # 住所を取得
+        address_th = soup.find("th", text="所在地")
+        if address_th:
+            address_td = address_th.find_next("td")
+            if address_td:
+                # リンクテキストと通常テキストを結合
+                address_parts = []
+                for elem in address_td.descendants:
+                    if elem.name is None and elem.strip():
+                        address_parts.append(elem.strip())
+                address_text = ' '.join(address_parts)
+                # 不要な文字を削除
+                address_text = re.sub(r'\s+', ' ', address_text)
+                address_text = re.sub(r'周辺地図を見る', '', address_text).strip()
+                
+                # 個人情報保護の説明文は除外
+                if address_text and not address_text.startswith('物件の所在地'):
+                    detail_data['address'] = address_text
+        
         # 管理費と修繕積立金を含むテーブルを探す
         tables = soup.find_all('table')
         for table in tables:
@@ -354,16 +395,28 @@ class NomuScraper(BaseScraper):
                 for i in range(len(cells) - 1):
                     if '管理費' in cells[i].get_text():
                         fee_text = cells[i + 1].get_text(strip=True)
-                        fee_match = re.search(r'([\d,]+)円', fee_text)
+                        # 通常の管理費パターン
+                        fee_match = re.search(r'(?:管理費\s*)?([\d,]+)円', fee_text)
                         if fee_match:
                             detail_data['management_fee'] = int(fee_match.group(1).replace(',', ''))
+                        else:
+                            # 特殊パターン（PM棟管理費など）
+                            special_fee_match = re.search(r'PM棟管理費\s*([\d,]+)円', fee_text)
+                            if special_fee_match:
+                                detail_data['management_fee'] = int(special_fee_match.group(1).replace(',', ''))
                     
                     # 修繕積立金を探す
                     if '修繕積立金' in cells[i].get_text():
                         fund_text = cells[i + 1].get_text(strip=True)
-                        fund_match = re.search(r'([\d,]+)円', fund_text)
+                        # 通常の修繕積立金パターン
+                        fund_match = re.search(r'(?:修繕積立金\s*)?([\d,]+)円', fund_text)
                         if fund_match:
                             detail_data['repair_fund'] = int(fund_match.group(1).replace(',', ''))
+                        else:
+                            # 特殊パターン（PM棟修繕積立金など）
+                            special_fund_match = re.search(r'PM棟修繕積立金\s*([\d,]+)円', fund_text)
+                            if special_fund_match:
+                                detail_data['repair_fund'] = int(special_fund_match.group(1).replace(',', ''))
         
         # バルコニー面積
         balcony_elem = soup.find(text=re.compile(r'バルコニー')) or \
@@ -388,29 +441,42 @@ class NomuScraper(BaseScraper):
                     detail_data['built_year'] = int(built_match.group(1))
         
         # 総階数
-        floors_elem = soup.find(text=re.compile(r'総階数|建物階数')) or \
-                     soup.find("th", text=re.compile(r'階数'))
+        floors_elem = soup.find("th", string=re.compile(r'総階数|建物階数|階数'))
         if floors_elem:
             floors_value = floors_elem.find_next("td") if floors_elem.name == "th" else floors_elem.parent
             if floors_value:
                 floors_text = floors_value.get_text(strip=True)
-                floors_match = re.search(r'(\d+)階建', floors_text)
+                # 地下階を含むパターンにも対応（例: "14階地下2階建て"）
+                floors_match = re.search(r'(\d+)階', floors_text)
                 if floors_match:
                     detail_data['total_floors'] = int(floors_match.group(1))
         
-        # 構造
-        structure_elem = soup.find(text=re.compile(r'構造')) or \
-                        soup.find("th", text="構造")
-        if structure_elem:
-            structure_value = structure_elem.find_next("td") if structure_elem.name == "th" else structure_elem.parent
-            if structure_value:
-                structure_text = structure_value.get_text(strip=True)
-                # 構造情報のみを抽出（RC造、SRC造など）
-                structure_match = re.search(r'(RC造|SRC造|S造|木造|鉄骨造|鉄筋コンクリート造|鉄骨鉄筋コンクリート造)', structure_text)
-                if structure_match:
-                    detail_data['structure'] = structure_match.group(1)
-                elif len(structure_text) < 100:  # 短いテキストならそのまま使用
-                    detail_data['structure'] = structure_text
+        # 構造（item_tableクラスのテーブルも含めて探す）
+        structure_found = False
+        for table in soup.find_all('table'):
+            if structure_found:
+                break
+            for row in table.find_all('tr'):
+                cells = row.find_all(['th', 'td'])
+                for i in range(len(cells) - 1):
+                    if cells[i].get_text(strip=True) == '構造':
+                        structure_text = cells[i + 1].get_text(strip=True)
+                        
+                        # 実際の構造情報（RC造、SRC造など）が含まれている場合のみ処理
+                        if re.search(r'(RC造|SRC造|S造|木造|鉄骨造|鉄筋コンクリート造|鉄骨鉄筋コンクリート造)', structure_text):
+                            # 構造フィールドから総階数も抽出（例: "RC造14階地下2階建て"）
+                            if not detail_data.get('total_floors'):
+                                floors_in_structure = re.search(r'(\d+)階(?:地下\d+階)?建', structure_text)
+                                if floors_in_structure:
+                                    detail_data['total_floors'] = int(floors_in_structure.group(1))
+                            
+                            # 構造情報のみを抽出（RC造、SRC造など）
+                            structure_match = re.search(r'(RC造|SRC造|S造|木造|鉄骨造|鉄筋コンクリート造|鉄骨鉄筋コンクリート造)', structure_text)
+                            if structure_match:
+                                detail_data['structure'] = structure_match.group(1)
+                            
+                            structure_found = True
+                            break
         
         # 物件説明
         desc_elem = soup.find("div", class_="property-description") or \

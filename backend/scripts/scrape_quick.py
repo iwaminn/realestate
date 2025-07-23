@@ -5,21 +5,20 @@
 
 import sys
 import os
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from src.scrapers.suumo_scraper import SuumoScraper
-from src.scrapers.athome_scraper import AtHomeScraper
-from src.scrapers.homes_scraper import HomesScraper
+from backend.app.scrapers.suumo_scraper import SuumoScraper
+from backend.app.scrapers.rehouse_scraper import RehouseScraper
+from backend.app.scrapers.homes_scraper import HomesScraper
+from backend.app.scrapers.nomu_scraper import NomuScraper
 
 def main():
-    # データベースパス
-    db_path = "data/realestate.db"
-    
     # スクレイパーのリスト
     scrapers = [
-        ("SUUMO", SuumoScraper(db_path=db_path)),
-        ("AtHome", AtHomeScraper(db_path=db_path)),
-        ("HOMES", HomesScraper(db_path=db_path))
+        ("SUUMO", SuumoScraper()),
+        ("REHOUSE", RehouseScraper()),
+        ("HOMES", HomesScraper()),
+        ("NOMU", NomuScraper())
     ]
     
     # 各スクレイパーを実行（1ページのみ）

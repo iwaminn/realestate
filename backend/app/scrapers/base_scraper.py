@@ -520,6 +520,77 @@ class BaseScraper:
         
         return master_property
     
+    def update_master_property_by_majority(self, master_property: MasterProperty):
+        """
+        物件情報を掲載情報の多数決で更新
+        新しい掲載情報を追加した後に呼び出される
+        """
+        # アクティブな掲載情報を取得
+        listings = self.session.query(PropertyListing).filter(
+            PropertyListing.master_property_id == master_property.id,
+            PropertyListing.is_active == True
+        ).all()
+        
+        if len(listings) <= 1:
+            return  # 掲載が1つ以下なら多数決の必要なし
+        
+        # サイト優先順位
+        site_priority = {'suumo': 1, 'homes': 2, 'rehouse': 3, 'nomu': 4}
+        
+        def get_majority_value(attr_name):
+            """特定の属性について多数決を取る"""
+            values_with_source = []
+            for listing in listings:
+                value = getattr(listing, f'listing_{attr_name}', None)
+                if value is not None:
+                    values_with_source.append((value, listing.source_site))
+            
+            if not values_with_source:
+                return None
+            
+            # 値の出現回数をカウント
+            from collections import Counter
+            value_counter = Counter([v for v, _ in values_with_source])
+            max_count = max(value_counter.values())
+            
+            # 最頻値を取得
+            most_common_values = [v for v, c in value_counter.items() if c == max_count]
+            
+            if len(most_common_values) == 1:
+                return most_common_values[0]
+            
+            # 同数の場合はサイト優先順位で決定
+            candidates = []
+            for value in most_common_values:
+                sources = [s for v, s in values_with_source if v == value]
+                best_priority = min(site_priority.get(s, 999) for s in sources)
+                candidates.append((value, best_priority))
+            
+            candidates.sort(key=lambda x: x[1])
+            return candidates[0][0]
+        
+        # 各属性について多数決を実行
+        updated = False
+        
+        for attr in ['floor_number', 'area', 'layout', 'direction']:
+            majority_value = get_majority_value(attr)
+            if majority_value is not None:
+                current_value = getattr(master_property, attr)
+                if current_value != majority_value:
+                    setattr(master_property, attr, majority_value)
+                    updated = True
+                    print(f"  → {attr}: {current_value} → {majority_value} (多数決)")
+        
+        # バルコニー面積も多数決
+        majority_balcony = get_majority_value('balcony_area')
+        if majority_balcony is not None and master_property.balcony_area != majority_balcony:
+            master_property.balcony_area = majority_balcony
+            updated = True
+            print(f"  → balcony_area: {master_property.balcony_area} → {majority_balcony} (多数決)")
+        
+        if updated:
+            master_property.updated_at = datetime.now()
+    
     def create_or_update_listing(self, master_property: MasterProperty,
                                url: str, title: str, price: int,
                                agency_name: str = None, 
@@ -530,7 +601,15 @@ class BaseScraper:
                                management_fee: int = None,
                                repair_fund: int = None,
                                published_at: datetime = None,
-                               first_published_at: datetime = None) -> PropertyListing:
+                               first_published_at: datetime = None,
+                               # 新規追加：掲載サイトごとの物件属性
+                               listing_floor_number: int = None,
+                               listing_area: float = None,
+                               listing_layout: str = None,
+                               listing_direction: str = None,
+                               listing_total_floors: int = None,
+                               listing_balcony_area: float = None,
+                               listing_address: str = None) -> PropertyListing:
         """掲載情報を作成または更新"""
         # 既存の掲載を検索
         listing = self.session.query(PropertyListing).filter(
@@ -562,6 +641,22 @@ class BaseScraper:
                     listing.first_published_at = min(listing.published_at, listing.first_seen_at)
                 else:
                     listing.first_published_at = listing.first_seen_at
+            
+            # 掲載サイトごとの物件属性を更新
+            if listing_floor_number is not None:
+                listing.listing_floor_number = listing_floor_number
+            if listing_area is not None:
+                listing.listing_area = listing_area
+            if listing_layout is not None:
+                listing.listing_layout = listing_layout
+            if listing_direction is not None:
+                listing.listing_direction = listing_direction
+            if listing_total_floors is not None:
+                listing.listing_total_floors = listing_total_floors
+            if listing_balcony_area is not None:
+                listing.listing_balcony_area = listing_balcony_area
+            if listing_address is not None:
+                listing.listing_address = listing_address
             
             # 価格・管理費・修繕積立金のいずれかが変更された場合は履歴に記録
             price_changed = listing.current_price != price
@@ -622,7 +717,15 @@ class BaseScraper:
                 published_at=published_at,  # 情報提供日を設定
                 first_published_at=first_published_at,  # 情報公開日を設定
                 price_updated_at=published_at or datetime.now(),  # 初回は情報提供日を価格改定日とする
-                last_confirmed_at=datetime.now()  # 初回確認日時を設定
+                last_confirmed_at=datetime.now(),  # 初回確認日時を設定
+                # 掲載サイトごとの物件属性
+                listing_floor_number=listing_floor_number,
+                listing_area=listing_area,
+                listing_layout=listing_layout,
+                listing_direction=listing_direction,
+                listing_total_floors=listing_total_floors,
+                listing_balcony_area=listing_balcony_area,
+                listing_address=listing_address
             )
             self.session.add(listing)
             self.session.flush()
@@ -704,23 +807,20 @@ class BaseScraper:
         """物件ハッシュを生成
         
         同一物件の判定基準：
-        1. 部屋番号がある場合: 建物ID + 部屋番号
-        2. 部屋番号がない場合: 建物ID + 所在階 + 平米数（専有面積） + 間取り + 方角
+        建物ID + 所在階 + 平米数（専有面積） + 間取り + 方角
         
-        重要：方角も含めてハッシュを生成します。
-        方角だけが異なる場合は別物件として扱われますが、同一物件の可能性もあるため、
-        管理画面の「物件重複管理」機能で人的に判断・統合する必要があります。
+        重要：
+        - 部屋番号は使用しません（サイトによって公開状況が異なるため）
+        - 方角も含めてハッシュを生成します
+        - 方角だけが異なる場合は別物件として扱われますが、同一物件の可能性もあるため、
+          管理画面の「物件重複管理」機能で人的に判断・統合する必要があります
         """
-        if room_number:
-            # 部屋番号がある場合は従来通り
-            data = f"{building_id}:{room_number}"
-        else:
-            # 部屋番号がない場合は、建物・所在階・平米数・間取り・方角で判定
-            floor_str = f"F{floor_number}" if floor_number else "F?"
-            area_str = f"A{area:.1f}" if area else "A?"  # 小数点第1位まで
-            layout_str = layout if layout else "L?"
-            direction_str = f"D{direction}" if direction else "D?"
-            data = f"{building_id}:{floor_str}_{area_str}_{layout_str}_{direction_str}"
+        # 部屋番号の有無に関わらず、統一的な基準でハッシュを生成
+        floor_str = f"F{floor_number}" if floor_number else "F?"
+        area_str = f"A{area:.1f}" if area else "A?"  # 小数点第1位まで
+        layout_str = layout if layout else "L?"
+        direction_str = f"D{direction}" if direction else "D?"
+        data = f"{building_id}:{floor_str}_{area_str}_{layout_str}_{direction_str}"
         
         return hashlib.md5(data.encode()).hexdigest()
     

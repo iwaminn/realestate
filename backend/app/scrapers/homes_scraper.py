@@ -10,7 +10,7 @@ from urllib.parse import urljoin
 from datetime import datetime
 from bs4 import BeautifulSoup
 from .base_scraper import BaseScraper
-from app.models import PropertyListing
+from ..models import PropertyListing
 
 
 class HomesScraper(BaseScraper):
@@ -805,7 +805,15 @@ class HomesScraper(BaseScraper):
                     repair_fund=property_data.get('repair_fund'),
                     description=property_data.get('description'),
                     published_at=property_data.get('published_at'),
-                    first_published_at=property_data.get('first_published_at')
+                    first_published_at=property_data.get('first_published_at'),
+                    # 掲載サイトごとの物件属性
+                    listing_floor_number=property_data.get('floor_number'),
+                    listing_area=property_data.get('area'),
+                    listing_layout=property_data.get('layout'),
+                    listing_direction=property_data.get('direction'),
+                    listing_total_floors=property_data.get('total_floors'),
+                    listing_balcony_area=property_data.get('balcony_area'),
+                    listing_address=building.address if building else None
                 )
                 
                 # agency_telとremarksは別途設定
@@ -828,6 +836,9 @@ class HomesScraper(BaseScraper):
                     'total_floors': property_data.get('total_floors')
                 }
                 listing.detail_fetched_at = datetime.now()
+                
+                # 多数決による物件情報更新
+                self.update_master_property_by_majority(master_property)
                 
                 saved_count += 1
                 print(f"  → 保存完了")

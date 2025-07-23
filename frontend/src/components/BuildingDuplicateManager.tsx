@@ -67,7 +67,7 @@ const BuildingDuplicateManager: React.FC = () => {
   const [expandedGroups, setExpandedGroups] = useState<number[]>([]);
   const [selectedMasterId, setSelectedMasterId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [minSimilarity, setMinSimilarity] = useState(0.98); // より高い類似度でスタート
+  const [minSimilarity, setMinSimilarity] = useState(0.94); // 単独の「棟」がある場合も検出できるレベル
   const [snackbar, setSnackbar] = useState({ 
     open: false, 
     message: '', 
@@ -106,7 +106,7 @@ const BuildingDuplicateManager: React.FC = () => {
   };
 
   const handleSearch = () => {
-    fetchDuplicateBuildings(searchQuery);
+    fetchDuplicateBuildings(searchQuery, minSimilarity);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -157,8 +157,31 @@ const BuildingDuplicateManager: React.FC = () => {
         severity: 'success' 
       });
 
-      // リストを更新
-      await fetchDuplicateBuildings();
+      // 統合された建物を含むグループをリストから削除（スムースな更新）
+      setDuplicateGroups(prevGroups => {
+        // 統合に関わったすべての建物IDのセット
+        const mergedBuildingIds = new Set([selectedGroup.primary.id, ...selectedCandidates]);
+        
+        // 統合された建物を含まないグループのみを残す
+        return prevGroups.filter(group => {
+          // プライマリ建物が統合されたかチェック
+          if (mergedBuildingIds.has(group.primary.id)) return false;
+          
+          // 候補建物が統合されたかチェック
+          const remainingCandidates = group.candidates.filter(
+            candidate => !mergedBuildingIds.has(candidate.id)
+          );
+          
+          // 候補がまだ残っている場合はグループを更新して保持
+          if (remainingCandidates.length > 0) {
+            group.candidates = remainingCandidates;
+            return true;
+          }
+          
+          // 候補がなくなった場合はグループを削除
+          return false;
+        });
+      });
       
       setSelectedGroup(null);
       setSelectedCandidates([]);
@@ -264,7 +287,7 @@ const BuildingDuplicateManager: React.FC = () => {
           </TableHead>
           <TableBody>
             {duplicateGroups.map((group, index) => (
-              <React.Fragment key={index}>
+              <React.Fragment key={`group-${group.primary.id}`}>
                 <TableRow>
                   <TableCell>
                     <IconButton

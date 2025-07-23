@@ -294,7 +294,15 @@ class SuumoScraper(BaseScraper):
                 management_fee=property_data.get('management_fee'),
                 repair_fund=property_data.get('repair_fund'),
                 published_at=property_data.get('published_at'),
-                first_published_at=property_data.get('first_published_at')
+                first_published_at=property_data.get('first_published_at'),
+                # 掲載サイトごとの物件属性
+                listing_floor_number=property_data.get('floor_number'),
+                listing_area=property_data.get('area'),
+                listing_layout=property_data.get('layout'),
+                listing_direction=property_data.get('direction'),
+                listing_total_floors=property_data.get('total_floors'),
+                listing_balcony_area=property_data.get('balcony_area'),
+                listing_address=property_data.get('address')
             )
             
             # agency_telとremarksは別途設定
@@ -313,6 +321,9 @@ class SuumoScraper(BaseScraper):
             # 詳細情報を保存
             listing.detail_info = property_data.get('detail_info', {})
             listing.detail_fetched_at = datetime.now()
+            
+            # 多数決による物件情報更新
+            self.update_master_property_by_majority(master_property)
             
             print(f"  → 保存完了")
             
@@ -411,6 +422,16 @@ class SuumoScraper(BaseScraper):
                             if direction_value and direction_value not in ['-', '－', '']:
                                 property_data['direction'] = direction_value
                                 print(f"    向き: {property_data['direction']}")
+                        
+                        # 住所（単独のフィールド）
+                        elif label == '住所' or label == '所在地':
+                            # td内に複数のp要素がある場合は最初のp要素のテキストを取得
+                            first_p = td.find('p')
+                            if first_p:
+                                property_data['address'] = first_p.get_text(strip=True)
+                            else:
+                                property_data['address'] = value
+                            print(f"    住所: {property_data['address']}")
                         
                         # 所在階/構造・階建（複合フィールド - フォールバック用）
                         elif '所在階' in label and '構造' in label and 'floor_number' not in property_data:

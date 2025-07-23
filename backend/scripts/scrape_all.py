@@ -7,16 +7,18 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from backend.app.scrapers.suumo_scraper_v3 import SuumoScraperV3
-from backend.app.scrapers.athome_scraper_v2 import AtHomeScraperV2
-from backend.app.scrapers.homes_scraper_v3 import HomesScraperV3
+from backend.app.scrapers.suumo_scraper import SuumoScraper
+from backend.app.scrapers.rehouse_scraper import RehouseScraper
+from backend.app.scrapers.homes_scraper import HomesScraper
+from backend.app.scrapers.nomu_scraper import NomuScraper
 
 def main():
-    # スクレイパーのリスト（楽待は除外）
+    # スクレイパーのリスト
     scrapers = [
-        ("SUUMO", SuumoScraperV3()),
-        ("AtHome", AtHomeScraperV2()),
-        ("HOMES", HomesScraperV3())
+        ("SUUMO", SuumoScraper()),
+        ("REHOUSE", RehouseScraper()),
+        ("HOMES", HomesScraper()),
+        ("NOMU", NomuScraper())
     ]
     
     # 各スクレイパーを実行

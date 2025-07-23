@@ -254,6 +254,7 @@ class BuildingNameNormalizer:
             r'(タワー棟|テラス棟)',          # 特殊棟
             r'(ライトウィング|レフトウィング)',  # ウィング系
             r'(\d+番館)',                    # 番館
+            r'(棟)$',                        # 末尾の単独「棟」
         ]
         
         for pattern in unit_patterns:
@@ -311,8 +312,13 @@ class BuildingNameNormalizer:
                 # 棟が明示的に異なる場合は別建物として扱う
                 return 0.3  # 低い類似度を返す
         elif comp1['unit'] or comp2['unit']:
-            # 片方だけ棟情報がある場合は、同一建物の可能性もあるので軽いペナルティ
-            unit_penalty = 0.2
+            # 片方だけ棟情報がある場合
+            # 単独の「棟」は建物全体を指す可能性があるため、ペナルティを軽減
+            if comp1['unit'] == '棟' or comp2['unit'] == '棟':
+                unit_penalty = 0.05  # 軽微なペナルティ
+            else:
+                # 明確な棟情報（E棟など）がある場合は、やや重いペナルティ
+                unit_penalty = 0.2
         
         # 重み付け計算
         weighted_sim = (

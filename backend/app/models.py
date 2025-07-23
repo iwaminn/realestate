@@ -135,6 +135,17 @@ class PropertyListing(Base):
     features = Column(Text)                               # 物件特徴
     remarks = Column(Text)                                # 物件備考（このサイトでの備考）
     
+    # 掲載サイトごとの物件属性情報（多数決用）
+    listing_floor_number = Column(Integer)                # この掲載での階数情報
+    listing_area = Column(Float)                          # この掲載での専有面積
+    listing_layout = Column(String(50))                   # この掲載での間取り
+    listing_direction = Column(String(50))                # この掲載での方角
+    listing_total_floors = Column(Integer)                # この掲載での総階数
+    listing_building_structure = Column(String(100))      # この掲載での建物構造
+    listing_built_year = Column(Integer)                  # この掲載での築年
+    listing_balcony_area = Column(Float)                  # この掲載でのバルコニー面積
+    listing_address = Column(Text)                        # この掲載での住所
+    
     # 掲載状態
     is_active = Column(Boolean, default=True)             # 掲載中かどうか
     first_seen_at = Column(DateTime, server_default=func.now())

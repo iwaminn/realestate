@@ -88,6 +88,10 @@ psql -U realestate -d realestate
 - 価格履歴グラフ表示
 - データベース名を`realestate`に統一
 
+## デプロイ・保守
+
+**重要**: システム改修後は必ず `docs/DEPLOYMENT_CHECKLIST.md` の手順に従って動作確認を行ってください。
+
 ## よく使うコマンド
 
 ### Docker環境（推奨）
@@ -136,10 +140,14 @@ docker exec -it realestate-postgres psql -U realestate -d realestate
 
 物件の同一性を判定するためのハッシュ値生成ルール：
 
-1. **部屋番号がある場合**: `建物ID + 部屋番号`
-2. **部屋番号がない場合**: `建物ID + 所在階 + 平米数 + 間取り + 方角`
+**ハッシュ生成**: `建物ID + 所在階 + 平米数 + 間取り + 方角`
 
-**重要な注意事項**：
+**重要な変更（2025年1月）**：
+- 部屋番号はハッシュ生成に**使用しません**
+- 理由：サイトによって部屋番号の公開状況が異なるため、同一物件が別物件として扱われる問題を防ぐ
+- LIFULL HOME'Sでは部屋番号が公開されていることがありますが、ハッシュには含めません
+
+**注意事項**：
 - 方角も含めてハッシュを生成します
 - 方角だけが異なる場合は別物件として扱われます
 - ただし、同一物件で方角情報の有無が異なる場合があるため、管理画面の「物件重複管理」機能で人的に判断・統合する必要があります
@@ -147,7 +155,15 @@ docker exec -it realestate-postgres psql -U realestate -d realestate
 
 ## スクレイパー仕様
 
-**重要**: スクレイパーの仕様変更時は必ず `docs/SCRAPER_SPECIFICATION.md` を更新してください。
+**重要**: 
+- スクレイパーの仕様変更時は必ず `docs/SCRAPER_SPECIFICATION.md` を更新してください
+- 有効なスクレイパーの一覧は `docs/ACTIVE_SCRAPERS.md` を参照してください
+
+### 現在有効なスクレイパー
+- SUUMO (`suumo`)
+- LIFULL HOME'S (`homes`)
+- 三井のリハウス (`rehouse`)
+- ノムコム (`nomu`)
 
 詳細な仕様書は上記ファイルを参照してください。主な機能：
 - 不動産会社情報の取得（agency_name, agency_tel）
