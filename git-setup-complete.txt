@@ -1,0 +1,56 @@
+Git リポジトリの初期設定が完了しました！
+
+## 現在の状態
+- Gitリポジトリが初期化されました
+- 177個のファイルが初回コミットされました
+- .gitignoreファイルが適切に設定されています
+- .gitattributesファイルで改行コードなどが統一されています
+
+## 次のステップ
+
+### GitHubなどのリモートリポジトリを追加する場合:
+
+1. GitHubで新しいリポジトリを作成（READMEなしで）
+
+2. リモートリポジトリを追加:
+   ```bash
+   git remote add origin https://github.com/yourusername/realestate-search.git
+   ```
+
+3. 初回プッシュ:
+   ```bash
+   git push -u origin master
+   ```
+
+### ブランチ戦略の推奨:
+- master/main: 本番環境用
+- develop: 開発用統合ブランチ
+- feature/*: 機能開発用
+- hotfix/*: 緊急修正用
+
+### よく使うGitコマンド:
+```bash
+# 現在の状態確認
+git status
+
+# 変更内容の確認
+git diff
+
+# ブランチ作成と切り替え
+git checkout -b feature/new-feature
+
+# 変更をステージング
+git add .
+
+# コミット
+git commit -m "コミットメッセージ"
+
+# リモートにプッシュ
+git push origin branch-name
+
+# ブランチ一覧
+git branch -a
+
+# ログ確認
+git log --oneline --graph --all
+```
