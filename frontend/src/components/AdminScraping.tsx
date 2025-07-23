@@ -100,6 +100,7 @@ const AdminScraping: React.FC = () => {
     { value: 'suumo', label: 'SUUMO' },
     { value: 'homes', label: "LIFULL HOME'S" },
     { value: 'athome', label: 'AtHome' },
+    { value: 'nomu', label: 'ノムコム' },
   ];
 
   useEffect(() => {
