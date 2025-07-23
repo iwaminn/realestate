@@ -1,0 +1,81 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg-info/
+dist/
+build/
+
+# Poetry
+poetry.lock
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Cache
+cache/
+.cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Frontend build
+frontend/dist/
+frontend/build/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.old
+reorganize_structure.sh
+
+# Debug files
+*debug.html
+*_debug.py
+
+# Archive/Backup directories
+.archive/
+scripts_backup_*/
+
+# Data directories
+data/
+cache/
+
+# Cleanup scripts (optional)
+cleanup_root_files.sh
+
+# Docker volumes
+postgres_data/
+redis_data/

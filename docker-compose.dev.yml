@@ -1,0 +1,77 @@
+version: '3.8'
+
+# 開発環境用のdocker-compose設定
+# 使い方: docker-compose -f docker-compose.dev.yml up
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: realestate-postgres
+    environment:
+      POSTGRES_USER: realestate
+      POSTGRES_PASSWORD: realestate_pass
+      POSTGRES_DB: realestate_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - realestate-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U realestate"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: realestate-backend-dev
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./pyproject.toml:/app/pyproject.toml
+      - ./poetry.lock:/app/poetry.lock
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://realestate:realestate_pass@postgres:5432/realestate_db
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+    command: poetry run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - realestate-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    container_name: realestate-frontend-dev
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+    environment:
+      - VITE_API_URL=http://localhost:8000
+      - NODE_ENV=development
+    command: npm run dev
+    depends_on:
+      - backend
+    networks:
+      - realestate-network
+
+networks:
+  realestate-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

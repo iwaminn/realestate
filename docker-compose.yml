@@ -1,0 +1,80 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: realestate-postgres
+    environment:
+      - POSTGRES_DB=realestate
+      - POSTGRES_USER=realestate
+      - POSTGRES_PASSWORD=realestate_pass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - realestate-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: realestate-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://realestate:realestate_pass@postgres:5432/realestate
+    command: poetry run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      - postgres
+    networks:
+      - realestate-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile
+    container_name: realestate-frontend
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    command: npm run dev -- --host 0.0.0.0 --port 3001
+    depends_on:
+      - backend
+    networks:
+      - realestate-network
+
+  scraper:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: realestate-scraper
+    volumes:
+      - ./backend:/app/backend
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=postgresql://realestate:realestate_pass@postgres:5432/realestate
+    command: poetry run python backend/scripts/run_scrapers.py --schedule --interval 6
+    depends_on:
+      - postgres
+      - backend
+    networks:
+      - realestate-network
+
+networks:
+  realestate-network:
+    driver: bridge
+
+volumes:
+  postgres_data:

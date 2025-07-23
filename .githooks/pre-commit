@@ -1,0 +1,28 @@
+#!/bin/bash
+# Git pre-commit hook: データベースマイグレーションのチェック
+
+echo "🔍 データベースマイグレーションをチェック中..."
+
+# models.py が変更されているかチェック
+if git diff --cached --name-only | grep -q "backend/app/models.py"; then
+    echo "📝 models.py が変更されています"
+    
+    # check_migrations.py を実行
+    if [ -f "backend/scripts/check_migrations.py" ]; then
+        python backend/scripts/check_migrations.py
+        if [ $? -ne 0 ]; then
+            echo ""
+            echo "❌ コミットを中止しました"
+            echo ""
+            echo "models.py を変更した場合は、必ずマイグレーションを作成してください:"
+            echo "  1. poetry run alembic revision --autogenerate -m \"変更の説明\""
+            echo "  2. poetry run alembic upgrade head"
+            echo "  3. 生成されたマイグレーションファイルもコミットに含める"
+            echo ""
+            echo "詳細は backend/DATABASE_MANAGEMENT.md を参照してください。"
+            exit 1
+        fi
+    fi
+fi
+
+echo "✅ データベースチェック完了"
