@@ -16,7 +16,7 @@ const Header: React.FC = () => {
           sx={{ flexGrow: 1, cursor: 'pointer' }}
           onClick={() => navigate('/')}
         >
-          中古不動産横断検索
+          マンション一括検索
         </Typography>
         <Button color="inherit" onClick={() => navigate('/')}>
           物件検索

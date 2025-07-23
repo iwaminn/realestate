@@ -1,4 +1,4 @@
-# Makefile for 中古不動産横断検索サービス
+# Makefile for マンション一括検索サービス
 
 .PHONY: help build up down logs shell clean
 
