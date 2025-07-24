@@ -654,20 +654,18 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
     
     # ローカルでスクレイピングを実行（APIサーバーと同じ環境）
     try:
-        import sys
-        import os
-        sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-        
-        from app.scrapers.suumo_scraper import SuumoScraper
-        from app.scrapers.homes_scraper import HomesScraper
-        from app.scrapers.rehouse_scraper import RehouseScraper
-        from app.scrapers.nomu_scraper import NomuScraper
+        from ..scrapers.suumo_scraper import SuumoScraper
+        from ..scrapers.homes_scraper import HomesScraper
+        from ..scrapers.rehouse_scraper import RehouseScraper
+        from ..scrapers.nomu_scraper import NomuScraper
+        from ..scrapers.livable_scraper import LivableScraper
         
         scraper_classes = {
             "suumo": SuumoScraper,
             "homes": HomesScraper,
             "rehouse": RehouseScraper,
-            "nomu": NomuScraper
+            "nomu": NomuScraper,
+            "livable": LivableScraper
         }
         
         # エリア名のマッピング（逆引き用）
@@ -1462,3 +1460,149 @@ def get_property_exclusions(
         })
     
     return {"exclusions": result, "total": len(result)}
+
+
+@router.post("/update-listing-status")
+def update_listing_status(db: Session = Depends(get_db)):
+    """掲載状態を手動で更新（24時間以上確認されていない掲載を終了）"""
+    from datetime import datetime, timedelta
+    
+    try:
+        # 現在時刻
+        now = datetime.now()
+        
+        # 24時間前
+        threshold = now - timedelta(hours=24)
+        
+        # 24時間以上確認されていないアクティブな掲載を非アクティブに
+        inactive_listings = db.query(PropertyListing).filter(
+            PropertyListing.is_active == True,
+            PropertyListing.last_confirmed_at < threshold
+        ).all()
+        
+        inactive_count = len(inactive_listings)
+        
+        # 掲載を非アクティブ化
+        for listing in inactive_listings:
+            listing.is_active = False
+        
+        db.flush()
+        
+        # 物件ごとにすべての掲載がアクティブでないかチェック
+        # アクティブな掲載がなくなった物件を取得
+        properties_to_check = db.query(MasterProperty).filter(
+            MasterProperty.id.in_([listing.master_property_id for listing in inactive_listings])
+        ).all()
+        
+        sold_count = 0
+        
+        for property in properties_to_check:
+            # この物件のアクティブな掲載があるかチェック
+            active_listings = db.query(PropertyListing).filter(
+                PropertyListing.master_property_id == property.id,
+                PropertyListing.is_active == True
+            ).count()
+            
+            # アクティブな掲載がなく、まだ販売終了日が設定されていない場合
+            if active_listings == 0 and property.sold_at is None:
+                property.sold_at = now
+                
+                # 最終販売価格を取得（最も新しい掲載の価格）
+                last_listing = db.query(PropertyListing).filter(
+                    PropertyListing.master_property_id == property.id
+                ).order_by(PropertyListing.last_scraped_at.desc()).first()
+                
+                if last_listing and last_listing.current_price:
+                    property.last_sale_price = last_listing.current_price
+                
+                sold_count += 1
+        
+        db.commit()
+        
+        # 販売終了物件の価格を多数決で更新
+        price_update_count = 0
+        if sold_count > 0:
+            try:
+                from ..utils.majority_vote_updater import MajorityVoteUpdater
+                updater = MajorityVoteUpdater(db)
+                
+                # 今回販売終了となった物件の価格を更新
+                for property in properties_to_check:
+                    if property.sold_at == now:  # 今回販売終了となった物件
+                        result = updater.update_sold_property_price(property.id)
+                        if result:
+                            price_update_count += 1
+                
+                db.commit()
+            except Exception as e:
+                # 価格更新のエラーはログに記録するが、メイン処理は成功とする
+                print(f"Error updating sold property prices: {e}")
+        
+        return {
+            "success": True,
+            "inactive_listings": inactive_count,
+            "sold_properties": sold_count,
+            "price_updates": price_update_count,
+            "message": f"{inactive_count}件の掲載を終了、{sold_count}件の物件を販売終了としました。{price_update_count}件の価格を多数決で更新しました。",
+            "timestamp": now.isoformat()
+        }
+        
+    except Exception as e:
+        db.rollback()
+        import traceback
+        error_detail = f"Error updating listing status: {str(e)}\n{traceback.format_exc()}"
+        print(error_detail)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/update-sold-property-prices")
+def update_sold_property_prices(
+    property_id: Optional[int] = None,
+    db: Session = Depends(get_db)
+):
+    """販売終了物件の価格を多数決で更新"""
+    
+    try:
+        from ..utils.majority_vote_updater import MajorityVoteUpdater
+        
+        updater = MajorityVoteUpdater(db)
+        
+        if property_id:
+            # 特定の物件のみ更新
+            result = updater.update_sold_property_price(property_id)
+            
+            if result:
+                db.commit()
+                return {
+                    "success": True,
+                    "message": f"物件ID {property_id} の価格を更新しました",
+                    "old_price": result[0],
+                    "new_price": result[1]
+                }
+            else:
+                return {
+                    "success": False,
+                    "message": "更新対象がありませんでした"
+                }
+        else:
+            # 全件更新
+            updates = updater.update_all_sold_property_prices()
+            db.commit()
+            
+            return {
+                "success": True,
+                "message": f"{len(updates)}件の物件価格を更新しました",
+                "updates": [
+                    {
+                        "property_id": prop_id,
+                        "old_price": old_price,
+                        "new_price": new_price
+                    }
+                    for prop_id, old_price, new_price in updates[:20]  # 最初の20件のみ返す
+                ],
+                "total_updated": len(updates)
+            }
+    
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))

@@ -17,6 +17,7 @@ from backend.app.scrapers.suumo_scraper import SuumoScraper
 from backend.app.scrapers.rehouse_scraper import RehouseScraper
 from backend.app.scrapers.homes_scraper import HomesScraper
 from backend.app.scrapers.nomu_scraper import NomuScraper
+from backend.app.scrapers.livable_scraper import LivableScraper
 
 # ロギング設定
 logging.basicConfig(
@@ -42,6 +43,7 @@ def run_all_scrapers(area: str = "minato", max_pages: int = 3, force_detail_fetc
         ('REHOUSE', RehouseScraper(force_detail_fetch=force_detail_fetch)),
         ('HOMES', HomesScraper(force_detail_fetch=force_detail_fetch)),
         ('NOMU', NomuScraper(force_detail_fetch=force_detail_fetch)),
+        ('LIVABLE', LivableScraper(force_detail_fetch=force_detail_fetch)),
     ]
     
     results = {
@@ -76,6 +78,7 @@ def run_single_scraper(scraper_name: str, area: str = "minato", max_pages: int =
         'rehouse': RehouseScraper,
         'homes': HomesScraper,
         'nomu': NomuScraper,
+        'livable': LivableScraper,
     }
     
     if scraper_name.lower() not in scrapers:
@@ -111,7 +114,7 @@ def main():
     import argparse
     
     parser = argparse.ArgumentParser(description='不動産スクレイピングツール')
-    parser.add_argument('--scraper', type=str, help='実行するスクレイパー (suumo, athome, homes, rehouse, nomu, all)')
+    parser.add_argument('--scraper', type=str, help='実行するスクレイパー (suumo, athome, homes, rehouse, nomu, livable, all)')
     parser.add_argument('--area', type=str, default='minato', help='検索エリア（デフォルト: minato）')
     parser.add_argument('--pages', type=int, default=3, help='取得するページ数（デフォルト: 3）')
     parser.add_argument('--schedule', action='store_true', help='スケジュール実行モード')

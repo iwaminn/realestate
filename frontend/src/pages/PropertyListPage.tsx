@@ -30,6 +30,7 @@ const PropertyListPage: React.FC = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
   const [includeInactive, setIncludeInactive] = useState(false);
+  const [soldCount, setSoldCount] = useState(0);
   
   // URLパラメータから初期状態を取得
   const getInitialParams = (): SearchParams => {
@@ -66,7 +67,7 @@ const PropertyListPage: React.FC = () => {
   }, []);
 
   // URLパラメータを更新
-  const updateUrlParams = (params: SearchParams, page: number) => {
+  const updateUrlParams = (params: SearchParams, page: number, includeInactiveValue?: boolean) => {
     const urlParams = new URLSearchParams();
     
     // 検索条件をURLパラメータに追加
@@ -81,6 +82,12 @@ const PropertyListPage: React.FC = () => {
     if (params.max_building_age) urlParams.set('max_building_age', params.max_building_age.toString());
     if (page > 1) urlParams.set('page', page.toString());
     
+    // include_inactiveパラメータを追加
+    const includeInactiveToUse = includeInactiveValue !== undefined ? includeInactiveValue : includeInactive;
+    if (includeInactiveToUse) {
+      urlParams.set('include_inactive', 'true');
+    }
+    
     const search = urlParams.toString();
     // 初回ロード時は履歴を置き換えない、それ以外は置き換える
     navigate({ search: search ? `?${search}` : '' }, { replace: !isInitialLoad });
@@ -91,24 +98,47 @@ const PropertyListPage: React.FC = () => {
   };
 
   const fetchProperties = async (params: SearchParams = {}, page = 1, shouldUpdateUrl = true) => {
+    return fetchPropertiesWithIncludeInactive(params, page, shouldUpdateUrl, includeInactive);
+  };
+
+  const fetchPropertiesWithIncludeInactive = async (
+    params: SearchParams = {}, 
+    page = 1, 
+    shouldUpdateUrl = true,
+    includeInactiveParam?: boolean
+  ) => {
     setLoading(true);
     setError(null);
     try {
+      const includeInactiveValue = includeInactiveParam !== undefined ? includeInactiveParam : includeInactive;
+      console.log('[DEBUG] Fetching properties with include_inactive:', includeInactiveValue);
+      
       const response = await propertyApi.searchProperties({
         ...params,
         page,
         per_page: 12,
         sort_by: params.sort_by || 'updated_at',
         sort_order: params.sort_order || 'desc',
+        include_inactive: includeInactiveValue,
       });
+      console.log('[DEBUG] API Response:', {
+        total: response.total,
+        properties_count: response.properties.length,
+        first_property: response.properties[0]
+      });
+      
       setProperties(response.properties);
       setTotalPages(response.total_pages);
       setTotalCount(response.total);
       setCurrentPage(page);
       
+      // 販売終了物件の数をカウント
+      const soldPropertiesCount = response.properties.filter((p: Property) => p.sold_at).length;
+      setSoldCount(soldPropertiesCount);
+      
       // URLパラメータを更新（フラグがtrueの場合のみ）
       if (shouldUpdateUrl) {
-        updateUrlParams(params, page);
+        updateUrlParams(params, page, includeInactiveValue);
       }
     } catch (err) {
       setError('物件の取得に失敗しました。');
@@ -123,9 +153,13 @@ const PropertyListPage: React.FC = () => {
     const urlParams = new URLSearchParams(location.search);
     const page = Number(urlParams.get('page')) || 1;
     const params = getInitialParams();
+    const includeInactiveFromUrl = getIncludeInactiveFromUrl();
+    
     setSearchParams(params);
+    setIncludeInactive(includeInactiveFromUrl);
+    
     // 初回ロードまたはブラウザの戻る/進むボタンでの遷移時はURLを更新しない
-    fetchProperties(params, page, false);
+    fetchPropertiesWithIncludeInactive(params, page, false, includeInactiveFromUrl);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search]);
 
@@ -165,9 +199,37 @@ const PropertyListPage: React.FC = () => {
 
       <Box sx={{ mb: 2 }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-          <Typography variant="body1" color="text.secondary">
-            検索結果: {totalCount}件
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Typography variant="body1" color="text.secondary">
+              検索結果: {totalCount}件
+            </Typography>
+            {includeInactive && soldCount > 0 && (
+              <Box
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  backgroundColor: '#f5f5f5',
+                  px: 1.5,
+                  py: 0.5,
+                  borderRadius: 1,
+                  border: '1px solid #e0e0e0'
+                }}
+              >
+                <Box
+                  sx={{
+                    width: 12,
+                    height: 12,
+                    backgroundColor: '#d32f2f',
+                    borderRadius: '50%'
+                  }}
+                />
+                <Typography variant="body2" color="text.secondary">
+                  販売終了: {soldCount}件
+                </Typography>
+              </Box>
+            )}
+          </Box>
           {!loading && properties.length > 0 && (
             <FormControl size="small" sx={{ minWidth: 200 }}>
               <InputLabel id="sort-select-label">並び替え</InputLabel>
@@ -195,9 +257,11 @@ const PropertyListPage: React.FC = () => {
             <Checkbox
               checked={includeInactive}
               onChange={(e) => {
-                setIncludeInactive(e.target.checked);
+                const newIncludeInactive = e.target.checked;
+                setIncludeInactive(newIncludeInactive);
                 setCurrentPage(1);
-                fetchProperties(searchParams, 1);
+                // 新しい値を直接渡す
+                fetchPropertiesWithIncludeInactive(searchParams, 1, true, newIncludeInactive);
               }}
             />
           }

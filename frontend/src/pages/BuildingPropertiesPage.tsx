@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Container,
   Typography,
@@ -59,6 +59,15 @@ type Order = 'asc' | 'desc';
 
 const BuildingPropertiesPage: React.FC = () => {
   const { buildingName } = useParams<{ buildingName: string }>();
+  const location = useLocation();
+  const navigate = useNavigate();
+  
+  console.log('[BuildingPropertiesPage] Component mounting:', {
+    buildingName,
+    location_pathname: location.pathname,
+    location_search: location.search
+  });
+  
   const [properties, setProperties] = useState<Property[]>([]);
   const [building, setBuilding] = useState<any | null>(null);
   const [stats, setStats] = useState<BuildingStats | null>(null);
@@ -67,49 +76,114 @@ const BuildingPropertiesPage: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [orderBy, setOrderBy] = useState<OrderBy>('earliest_published_at');
   const [order, setOrder] = useState<Order>('desc');
-  const [includeInactive, setIncludeInactive] = useState(false);
+  
+  // URLパラメータからincludeInactiveを取得
+  const getIncludeInactiveFromUrl = () => {
+    const urlParams = new URLSearchParams(location.search);
+    const result = urlParams.get('includeInactive') === 'true';
+    console.log('[BuildingPropertiesPage] getIncludeInactiveFromUrl:', {
+      search: location.search,
+      includeInactive_param: urlParams.get('includeInactive'),
+      result
+    });
+    return result;
+  };
+  
+  const [includeInactive, setIncludeInactive] = useState(getIncludeInactiveFromUrl());
 
   useEffect(() => {
+    console.log('[BuildingPropertiesPage] useEffect triggered:', {
+      buildingName,
+      decodedBuildingName: buildingName ? decodeURIComponent(buildingName) : null,
+      includeInactive,
+      location_search: location.search
+    });
     if (buildingName) {
       fetchBuildingProperties();
     }
   }, [buildingName, includeInactive]);
 
+  // URLパラメータが変更された時の処理
+  useEffect(() => {
+    const newIncludeInactive = getIncludeInactiveFromUrl();
+    if (newIncludeInactive !== includeInactive) {
+      setIncludeInactive(newIncludeInactive);
+    }
+  }, [location.search]);
+
   const fetchBuildingProperties = async () => {
     try {
       setLoading(true);
+      // デバッグログ
+      console.log('[BuildingPropertiesPage] Fetching properties for:', buildingName);
+      console.log('[BuildingPropertiesPage] includeInactive:', includeInactive);
+      console.log('[BuildingPropertiesPage] URL search params:', location.search);
+      
       // 建物名専用のAPIで物件を取得
       const response = await propertyApi.getBuildingProperties(decodeURIComponent(buildingName!), includeInactive);
       
       setProperties(response.properties);
       setBuilding(response.building);
       
+      // デバッグ: 販売終了物件の確認
+      const soldProperties = response.properties.filter((p: any) => p.sold_at);
+      console.log('[BuildingPropertiesPage] Total properties:', response.properties.length);
+      console.log('[BuildingPropertiesPage] Sold properties:', soldProperties.length);
+      if (soldProperties.length > 0) {
+        console.log('[BuildingPropertiesPage] Sold property IDs:', soldProperties.map((p: any) => p.id));
+      }
+      
       // 統計情報を計算
       if (response.properties.length > 0) {
         const prices = response.properties
           .map(p => p.min_price)
-          .filter((p): p is number => p !== undefined);
+          .filter((p): p is number => p !== undefined && p !== null);
         const areas = response.properties
           .map(p => p.area)
-          .filter((a): a is number => a !== undefined);
+          .filter((a): a is number => a !== undefined && a !== null);
         
-        setStats({
-          total_units: response.properties.length,
-          price_range: {
-            min: Math.min(...prices),
-            max: Math.max(...prices),
-            avg: prices.reduce((a, b) => a + b, 0) / prices.length
-          },
-          area_range: {
-            min: areas.length > 0 ? Math.min(...areas) : 0,
-            max: areas.length > 0 ? Math.max(...areas) : 0
-          },
-          total_floors: response.building.total_floors
+        console.log('[BuildingPropertiesPage] Stats calculation:', {
+          prices,
+          areas,
+          properties_with_price: prices.length,
+          properties_with_area: areas.length
         });
+        
+        if (prices.length > 0 && areas.length > 0) {
+          setStats({
+            total_units: response.properties.length,
+            price_range: {
+              min: Math.min(...prices),
+              max: Math.max(...prices),
+              avg: prices.reduce((a, b) => a + b, 0) / prices.length
+            },
+            area_range: {
+              min: Math.min(...areas),
+              max: Math.max(...areas)
+            },
+            total_floors: response.building.total_floors
+          });
+        } else {
+          // 価格や面積情報がない場合でも建物情報は表示
+          setStats({
+            total_units: response.properties.length,
+            price_range: {
+              min: 0,
+              max: 0,
+              avg: 0
+            },
+            area_range: {
+              min: 0,
+              max: 0
+            },
+            total_floors: response.building.total_floors
+          });
+        }
       }
-    } catch (err) {
-      setError('建物の物件情報の取得に失敗しました');
-      console.error(err);
+    } catch (err: any) {
+      console.error('[BuildingPropertiesPage] Error:', err);
+      const errorMessage = err.response?.data?.detail || err.message || '建物の物件情報の取得に失敗しました';
+      setError(errorMessage);
     } finally {
       setLoading(false);
     }
@@ -262,10 +336,45 @@ const BuildingPropertiesPage: React.FC = () => {
     );
   }
   
-  if (!properties.length || !building) {
+  if (!building) {
     return (
       <Container maxWidth="lg" sx={{ py: 4 }}>
-        <Alert severity="info">物件が見つかりません</Alert>
+        <Alert severity="info">
+          建物情報が見つかりません
+        </Alert>
+        <Button
+          component={Link}
+          to="/"
+          startIcon={<ArrowBackIcon />}
+          sx={{ mt: 2 }}
+        >
+          物件一覧に戻る
+        </Button>
+      </Container>
+    );
+  }
+  
+  if (!properties.length) {
+    return (
+      <Container maxWidth="lg" sx={{ py: 4 }}>
+        <Alert severity="info">
+          物件が見つかりません
+          {!includeInactive && (
+            <Box sx={{ mt: 1 }}>
+              <Typography variant="body2">
+                販売終了物件を表示する場合は、URLに「?includeInactive=true」を追加してください。
+              </Typography>
+            </Box>
+          )}
+        </Alert>
+        <Button
+          component={Link}
+          to="/"
+          startIcon={<ArrowBackIcon />}
+          sx={{ mt: 2 }}
+        >
+          物件一覧に戻る
+        </Button>
       </Container>
     );
   }
@@ -375,7 +484,18 @@ const BuildingPropertiesPage: React.FC = () => {
           control={
             <Checkbox
               checked={includeInactive}
-              onChange={(e) => setIncludeInactive(e.target.checked)}
+              onChange={(e) => {
+                const newValue = e.target.checked;
+                setIncludeInactive(newValue);
+                // URLパラメータも更新
+                const searchParams = new URLSearchParams(location.search);
+                if (newValue) {
+                  searchParams.set('includeInactive', 'true');
+                } else {
+                  searchParams.delete('includeInactive');
+                }
+                navigate(`${location.pathname}?${searchParams.toString()}`, { replace: true });
+              }}
             />
           }
           label="販売終了物件を含む"
@@ -397,6 +517,7 @@ const BuildingPropertiesPage: React.FC = () => {
                   </TableSortLabel>
                 </TableCell>
                 <TableCell align="right">経過日数</TableCell>
+                <TableCell>販売終了日</TableCell>
                 <TableCell align="right">
                   <TableSortLabel
                     active={orderBy === 'floor_number'}
@@ -449,15 +570,30 @@ const BuildingPropertiesPage: React.FC = () => {
             </TableHead>
             <TableBody>
               {sortedProperties.map((property) => (
-                <TableRow key={property.id} hover>
+                <TableRow key={property.id} hover sx={{ opacity: property.sold_at ? 0.7 : 1 }}>
                   <TableCell component="th" scope="row">
                     {formatDate(property.earliest_published_at)}
                   </TableCell>
                   <TableCell align="right">
                     {calculateDaysFromPublished(property.earliest_published_at)}
                   </TableCell>
+                  <TableCell>
+                    {property.sold_at ? formatDate(property.sold_at) : '-'}
+                  </TableCell>
                   <TableCell align="right">
                     <Box display="flex" alignItems="center" justifyContent="flex-end">
+                      {property.sold_at && (
+                        <Chip
+                          label="販売終了"
+                          size="small"
+                          sx={{ 
+                            mr: 0.5,
+                            backgroundColor: '#d32f2f',
+                            color: 'white',
+                            fontWeight: 'bold'
+                          }}
+                        />
+                      )}
                       {property.is_resale && (
                         <CachedIcon fontSize="small" color="warning" sx={{ mr: 0.5 }} />
                       )}
@@ -470,12 +606,16 @@ const BuildingPropertiesPage: React.FC = () => {
                   <TableCell>{property.layout || '-'}</TableCell>
                   <TableCell>{property.direction ? `${property.direction}向き` : '-'}</TableCell>
                   <TableCell align="right">
-                    {property.min_price === property.max_price
-                      ? formatPrice(property.min_price)
-                      : `${formatPrice(property.min_price)} 〜 ${formatPrice(property.max_price)}`}
+                    {property.sold_at && property.last_sale_price
+                      ? `${formatPrice(property.last_sale_price)}（販売終了時）`
+                      : property.min_price === property.max_price
+                        ? formatPrice(property.min_price)
+                        : `${formatPrice(property.min_price)} 〜 ${formatPrice(property.max_price)}`}
                   </TableCell>
                   <TableCell align="right">
-                    {calculatePricePerTsubo(property.min_price, property.area)}
+                    {property.sold_at && property.last_sale_price
+                      ? calculatePricePerTsubo(property.last_sale_price, property.area)
+                      : calculatePricePerTsubo(property.min_price, property.area)}
                   </TableCell>
                   <TableCell>
                     <Box>
@@ -525,6 +665,14 @@ const BuildingPropertiesPage: React.FC = () => {
                       <Typography variant="h6" component="div">
                         {property.floor_number ? `${property.floor_number}階` : '物件'}
                       </Typography>
+                      {property.sold_at && (
+                        <Chip
+                          label="販売終了"
+                          size="small"
+                          color="error"
+                          sx={{ ml: 1 }}
+                        />
+                      )}
                       {property.is_resale && (
                         <Chip
                           icon={<CachedIcon />}
@@ -551,10 +699,12 @@ const BuildingPropertiesPage: React.FC = () => {
                     </Box>
                   </Box>
 
-                  <Typography variant="h5" color="primary" sx={{ mt: 1, mb: 2 }}>
-                    {property.min_price === property.max_price
-                      ? formatPrice(property.min_price)
-                      : `${formatPrice(property.min_price)} 〜 ${formatPrice(property.max_price)}`}
+                  <Typography variant="h5" color={property.sold_at ? "text.secondary" : "primary"} sx={{ mt: 1, mb: 2 }}>
+                    {property.sold_at && property.last_sale_price
+                      ? `${formatPrice(property.last_sale_price)}（販売終了時）`
+                      : property.min_price === property.max_price
+                        ? formatPrice(property.min_price)
+                        : `${formatPrice(property.min_price)} 〜 ${formatPrice(property.max_price)}`}
                   </Typography>
 
                   <Grid container spacing={2}>
@@ -604,6 +754,12 @@ const BuildingPropertiesPage: React.FC = () => {
 
                   <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
                     売出確認日: {formatDate(property.earliest_published_at)}
+                    {property.sold_at && (
+                      <>
+                        <br />
+                        販売終了日: {formatDate(property.sold_at)}
+                      </>
+                    )}
                   </Typography>
 
                   <Divider sx={{ my: 2 }} />

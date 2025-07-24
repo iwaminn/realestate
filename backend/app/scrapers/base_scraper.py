@@ -876,7 +876,9 @@ class BaseScraper:
                                listing_direction: str = None,
                                listing_total_floors: int = None,
                                listing_balcony_area: float = None,
-                               listing_address: str = None) -> PropertyListing:
+                               listing_address: str = None,
+                               # カウント制御用フラグ
+                               record_stats: bool = True) -> PropertyListing:
         """掲載情報を作成または更新"""
         # 既存の掲載を検索
         listing = self.session.query(PropertyListing).filter(
@@ -963,8 +965,9 @@ class BaseScraper:
                 listing.management_fee = management_fee
                 listing.repair_fund = repair_fund
             
-            # 更新の統計を記録
-            self.record_listing_updated()
+            # 更新の統計を記録（record_statsがTrueの場合のみ）
+            if record_stats:
+                self.record_listing_updated()
         else:
             # 新規掲載を作成
             # first_published_atが指定されていない場合は、published_atかfirst_seen_atを使用
@@ -1011,8 +1014,9 @@ class BaseScraper:
                 self.session.add(price_history)
                 print(f"  → 初回価格記録: {price}万円")
             
-            # 新規作成の統計を記録
-            self.record_listing_created()
+            # 新規作成の統計を記録（record_statsがTrueの場合のみ）
+            if record_stats:
+                self.record_listing_created()
         
         # 買い取り再販のチェック（再販候補IDがある場合）
         if master_property.resale_property_id and not master_property.is_resale:
@@ -1214,6 +1218,257 @@ class BaseScraper:
         """個別の物件を処理（各スクレイパーでオーバーライド）"""
         raise NotImplementedError("各スクレイパーでprocess_property_dataメソッドを実装してください")
     
+    def handle_skipped_listing(self, existing_listing: PropertyListing, reason: str = "detail_skipped") -> bool:
+        """詳細取得をスキップした既存掲載の処理を統一的に行う
+        
+        Args:
+            existing_listing: 既存の掲載情報
+            reason: スキップ理由（'detail_skipped', 'no_update_mark'など）
+            
+        Returns:
+            bool: 処理成功（スキップは成功として扱う）
+        """
+        if existing_listing:
+            # 最終確認日時だけは更新（物件がまだアクティブであることを記録）
+            existing_listing.last_confirmed_at = datetime.now()
+            self.session.flush()
+        
+        # スキップカウントを記録（更新カウントは増やさない）
+        self.record_listing_skipped()
+        
+        return True  # スキップは成功として扱う
+    
+    def save_property_common(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
+        """物件を保存する共通処理（詳細データ取得済みを前提）
+        
+        各スクレイパーから呼び出される共通保存処理。
+        この時点で property_data には詳細ページのデータが含まれていることを前提とする。
+        
+        Args:
+            property_data: 完全な物件情報（詳細ページのデータ含む）
+            existing_listing: 既存の掲載情報（あれば）
+            
+        Returns:
+            bool: 保存成功かどうか
+        """
+        try:
+            # データ検証
+            if not self.enhanced_validate_property_data(property_data):
+                validation_errors = []
+                if not property_data.get('building_name'):
+                    validation_errors.append('建物名が不足')
+                if not property_data.get('price'):
+                    validation_errors.append('価格が不足')
+                
+                self.record_error(
+                    error_type='validation',
+                    url=property_data.get('url'),
+                    building_name=property_data.get('building_name'),
+                    property_data=property_data,
+                    phase='enhanced_validation'
+                )
+                
+                # バリデーションエラーの詳細を記録
+                if validation_errors:
+                    self.error_logger.log_validation_error(
+                        property_data=property_data,
+                        validation_errors=validation_errors,
+                        url=property_data.get('url')
+                    )
+                return False
+            
+            # 価格が取得できているか確認
+            if not property_data.get('price'):
+                print(f"  → 価格情報が取得できませんでした")
+                self.record_price_missing()
+                self.record_error(
+                    error_type='validation',
+                    url=property_data.get('url'),
+                    building_name=property_data.get('building_name'),
+                    property_data=property_data,
+                    phase='price_validation'
+                )
+                return False
+            
+            print(f"  価格: {property_data.get('price')}万円")
+            print(f"  間取り: {property_data.get('layout', '不明')}")
+            print(f"  面積: {property_data.get('area', '不明')}㎡")
+            print(f"  階数: {property_data.get('floor_number', '不明')}階")
+            
+            # 建物を取得または作成
+            building, extracted_room_number = self.get_or_create_building(
+                property_data.get('building_name', ''),
+                property_data.get('address', ''),
+                built_year=property_data.get('built_year'),
+                total_floors=property_data.get('total_floors'),
+                basement_floors=property_data.get('basement_floors'),
+                total_units=property_data.get('total_units'),
+                structure=property_data.get('structure'),
+                land_rights=property_data.get('land_rights'),
+                parking_info=property_data.get('parking_info')
+            )
+            
+            if not building:
+                print(f"  → 建物情報が不足")
+                self.record_building_info_missing()
+                self.record_error(
+                    error_type='validation',
+                    url=property_data.get('url'),
+                    building_name=property_data.get('building_name'),
+                    property_data=property_data,
+                    phase='building_creation'
+                )
+                return False
+            
+            # 部屋番号の決定（抽出された部屋番号を優先）
+            room_number = property_data.get('room_number', '')
+            if extracted_room_number and not room_number:
+                room_number = extracted_room_number
+                print(f"  → 建物名から部屋番号を抽出: {room_number}")
+            
+            # マスター物件を取得または作成
+            master_property = self.get_or_create_master_property(
+                building=building,
+                room_number=room_number,
+                floor_number=property_data.get('floor_number'),
+                area=property_data.get('area'),
+                layout=property_data.get('layout'),
+                direction=property_data.get('direction'),
+                url=property_data.get('url'),
+                current_price=property_data.get('price')
+            )
+            
+            # バルコニー面積を設定
+            if property_data.get('balcony_area'):
+                master_property.balcony_area = property_data['balcony_area']
+            
+            # 掲載情報を作成または更新
+            listing = self.create_or_update_listing(
+                master_property=master_property,
+                url=property_data.get('url', ''),
+                title=property_data.get('title', property_data.get('building_name', '')),
+                price=property_data.get('price'),
+                agency_name=property_data.get('agency_name'),
+                site_property_id=property_data.get('site_property_id', ''),
+                description=property_data.get('description'),
+                station_info=property_data.get('station_info'),
+                management_fee=property_data.get('management_fee'),
+                repair_fund=property_data.get('repair_fund'),
+                published_at=property_data.get('published_at'),
+                first_published_at=property_data.get('first_published_at'),
+                # 掲載サイトごとの物件属性
+                listing_floor_number=property_data.get('floor_number'),
+                listing_area=property_data.get('area'),
+                listing_layout=property_data.get('layout'),
+                listing_direction=property_data.get('direction'),
+                listing_total_floors=property_data.get('total_floors'),
+                listing_balcony_area=property_data.get('balcony_area'),
+                listing_address=property_data.get('address')
+            )
+            
+            # agency_telとremarksは別途設定
+            if property_data.get('agency_tel'):
+                listing.agency_tel = property_data['agency_tel']
+            if property_data.get('remarks'):
+                listing.remarks = property_data['remarks']
+            
+            # 一覧ページの情報で更新（新着・更新マークなど）
+            self.update_listing_from_list(listing, property_data)
+            
+            # 画像を追加
+            if property_data.get('image_urls'):
+                self.add_property_images(listing, property_data['image_urls'])
+            
+            # 詳細情報を保存
+            if property_data.get('detail_info'):
+                listing.detail_info = property_data['detail_info']
+            listing.detail_fetched_at = datetime.now()
+            
+            # 多数決による物件情報更新
+            self.update_master_property_by_majority(master_property)
+            
+            print(f"  → 保存完了")
+            self.record_success()
+            
+            return True
+            
+        except Exception as e:
+            print(f"  → エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            self.record_error(
+                error_type='saving',
+                url=property_data.get('url'),
+                building_name=property_data.get('building_name'),
+                property_data=property_data,
+                error=e,
+                phase='save_property'
+            )
+            self.record_save_failed()
+            return False
+    
+    def process_property_with_detail_check(self, 
+                                          property_data: Dict[str, Any], 
+                                          existing_listing: Optional[PropertyListing],
+                                          parse_detail_func: callable,
+                                          save_property_func: callable) -> bool:
+        """詳細取得の必要性をチェックしてから物件を処理する共通メソッド
+        
+        Args:
+            property_data: 一覧ページから取得した物件情報
+            existing_listing: 既存の掲載情報（あれば）
+            parse_detail_func: 詳細ページを解析する関数
+            save_property_func: 物件を保存する関数
+            
+        Returns:
+            bool: 処理成功かどうか
+        """
+        url = property_data.get('url')
+        if not url:
+            print(f"  → URLが不足")
+            self.record_other_error()
+            return False
+        
+        print(f"  URL: {url}")
+        
+        # 詳細ページの取得が必要かチェック
+        needs_detail = True
+        if existing_listing:
+            # property_dataに更新マークがある場合は、existing_listingに反映
+            if 'has_update_mark' in property_data:
+                existing_listing.has_update_mark = property_data['has_update_mark']
+            
+            # 価格が変更されているかチェック
+            price_changed = False
+            if 'price' in property_data and property_data['price'] is not None:
+                if existing_listing.current_price != property_data['price']:
+                    price_changed = True
+                    print(f"  → 価格変更検出: {existing_listing.current_price}万円 → {property_data['price']}万円")
+            
+            # 価格変更があれば詳細を取得、なければ通常の判定
+            if price_changed:
+                needs_detail = True
+            else:
+                needs_detail = self.needs_detail_fetch(existing_listing)
+                if not needs_detail:
+                    print(f"  → 詳細ページの取得をスキップ（最終取得: {existing_listing.detail_fetched_at}）")
+                    return self.handle_skipped_listing(existing_listing, "detail_skipped")
+        
+        # 詳細ページから全ての情報を取得
+        detail_data = parse_detail_func(url)
+        if not detail_data:
+            print(f"  → 詳細ページの取得に失敗しました")
+            self.record_detail_fetch_failed()
+            return False
+        
+        # 詳細データで property_data を更新
+        property_data.update(detail_data)
+        # 詳細取得成功を記録
+        self.record_property_scraped()
+        
+        # 物件を保存
+        return save_property_func(property_data, existing_listing)
+    
     def display_scraping_stats(self, saved_count: int):
         """スクレイピング統計を表示"""
         stats = self.get_scraping_stats()
@@ -1378,10 +1633,6 @@ class BaseScraper:
         if not listing.detail_fetched_at:
             return True
         
-        # 更新マークがある場合は詳細を取得
-        if listing.has_update_mark:
-            return True
-        
         # 指定日数以上詳細を取得していない場合は取得
         if listing.detail_fetched_at < datetime.now() - timedelta(days=self.detail_refetch_days):
             return True
@@ -1407,7 +1658,7 @@ class BaseScraper:
             
         try:
             # 既存の掲載を確認
-            from .models import PropertyListing
+            from ..models import PropertyListing
             existing_listing = self.session.query(PropertyListing).filter(
                 PropertyListing.url == url
             ).first()

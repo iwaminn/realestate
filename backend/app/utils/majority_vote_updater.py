@@ -4,10 +4,12 @@
 このモジュールは既存のスクレイパーに組み込んで使用します
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from collections import Counter
+from datetime import datetime, timedelta
+from sqlalchemy import func
 from sqlalchemy.orm import Session
-from ..models import Building, MasterProperty, PropertyListing
+from ..models import Building, MasterProperty, PropertyListing, ListingPriceHistory
 import logging
 
 logger = logging.getLogger(__name__)
@@ -238,6 +240,134 @@ class MajorityVoteUpdater:
             updated = True
         
         return updated
+    
+    def get_price_votes_for_sold_property(
+        self, 
+        property_id: int, 
+        sold_at: datetime, 
+        days_before: int = 7
+    ) -> Dict[int, int]:
+        """
+        販売終了前の指定日数間の価格をカウントして多数決用のデータを取得
+        
+        Args:
+            property_id: 物件ID
+            sold_at: 販売終了日時
+            days_before: 何日前までのデータを対象とするか（デフォルト7日）
+        
+        Returns:
+            価格とその出現回数の辞書 {価格: 回数}
+        """
+        start_date = sold_at - timedelta(days=days_before)
+        
+        # 該当期間の価格履歴を取得
+        price_counts = self.session.query(
+            ListingPriceHistory.price,
+            func.count(ListingPriceHistory.id).label('count')
+        ).join(
+            PropertyListing,
+            PropertyListing.id == ListingPriceHistory.property_listing_id
+        ).filter(
+            PropertyListing.master_property_id == property_id,
+            ListingPriceHistory.recorded_at >= start_date,
+            ListingPriceHistory.recorded_at <= sold_at
+        ).group_by(
+            ListingPriceHistory.price
+        ).all()
+        
+        return {price: count for price, count in price_counts}
+    
+    def get_majority_price_for_sold_property(self, price_votes: Dict[int, int]) -> Optional[int]:
+        """
+        多数決で最も多い価格を決定
+        同数の場合は高い方の価格を採用（より保守的な価格設定）
+        
+        Args:
+            price_votes: 価格とその出現回数の辞書
+        
+        Returns:
+            多数決で決定した価格
+        """
+        if not price_votes:
+            return None
+        
+        # 出現回数でソート（同数の場合は価格が高い方を優先）
+        sorted_prices = sorted(
+            price_votes.items(), 
+            key=lambda x: (x[1], x[0]), 
+            reverse=True
+        )
+        
+        return sorted_prices[0][0]
+    
+    def update_sold_property_price(self, property_id: int) -> Optional[Tuple[int, int]]:
+        """
+        特定の販売終了物件の価格を多数決で更新
+        
+        Args:
+            property_id: 物件ID
+        
+        Returns:
+            (old_price, new_price) のタプル、更新不要の場合はNone
+        """
+        property = self.session.query(MasterProperty).filter(
+            MasterProperty.id == property_id,
+            MasterProperty.sold_at.isnot(None)
+        ).first()
+        
+        if not property:
+            logger.warning(f"Property {property_id} not found or not sold")
+            return None
+        
+        # 価格の投票を取得
+        price_votes = self.get_price_votes_for_sold_property(
+            property.id, 
+            property.sold_at
+        )
+        
+        if not price_votes:
+            logger.warning(f"No price history found for property {property_id} in the 7 days before sold_at")
+            return None
+        
+        # 多数決で価格を決定
+        majority_price = self.get_majority_price_for_sold_property(price_votes)
+        
+        if majority_price and majority_price != property.last_sale_price:
+            old_price = property.last_sale_price
+            property.last_sale_price = majority_price
+            
+            logger.info(
+                f"Property {property_id}: Updated last_sale_price from "
+                f"{old_price} to {majority_price} "
+                f"(votes: {price_votes})"
+            )
+            
+            return (old_price, majority_price)
+        
+        return None
+    
+    def update_all_sold_property_prices(self) -> List[Tuple[int, int, int]]:
+        """
+        すべての販売終了物件の価格を多数決で更新
+        
+        Returns:
+            更新された物件情報リスト [(property_id, old_price, new_price)]
+        """
+        # 販売終了物件を取得
+        sold_properties = self.session.query(MasterProperty).filter(
+            MasterProperty.sold_at.isnot(None)
+        ).all()
+        
+        updates = []
+        
+        for property in sold_properties:
+            result = self.update_sold_property_price(property.id)
+            if result:
+                updates.append((property.id, result[0], result[1]))
+        
+        logger.info(f"Updated {len(updates)} sold property prices by majority vote")
+        
+        return updates
 
 
 def create_property_listing_attributes_table():

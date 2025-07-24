@@ -1,6 +1,6 @@
 # 有効なスクレイパー一覧
 
-最終更新日: 2025-01-23
+最終更新日: 2025-07-24
 
 ## 現在有効なスクレイパー
 
@@ -12,6 +12,7 @@
 | LIFULL HOME'S | `homes` | LIFULL HOME'S | ✅ 有効 | 新セレクタ対応済み |
 | 三井のリハウス | `rehouse` | 三井のリハウス | ✅ 有効 | 2025年1月復活 |
 | ノムコム | `nomu` | ノムコム | ✅ 有効 | 住所・総階数対応済み |
+| 東急リバブル | `livable` | 東急リバブル | ✅ 有効 | 2025年7月追加 |
 
 ## 無効化されたスクレイパー
 
@@ -30,6 +31,7 @@
     { value: 'homes', label: "LIFULL HOME'S" },
     { value: 'rehouse', label: '三井のリハウス' },
     { value: 'nomu', label: 'ノムコム' },
+    { value: 'livable', label: '東急リバブル' },
   ];
   ```
 
@@ -43,6 +45,7 @@
 - `/backend/app/scrapers/homes_scraper.py`
 - `/backend/app/scrapers/rehouse_scraper.py`
 - `/backend/app/scrapers/nomu_scraper.py`
+- `/backend/app/scrapers/livable_scraper.py`
 
 ## 使用方法
 
@@ -60,6 +63,7 @@ docker exec realestate-backend poetry run python /app/backend/scripts/run_scrape
 - `homes`
 - `rehouse`
 - `nomu`
+- `livable`
 
 ## 注意事項
 

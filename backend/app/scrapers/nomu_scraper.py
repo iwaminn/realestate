@@ -12,6 +12,11 @@ from bs4 import BeautifulSoup
 
 from .base_scraper import BaseScraper
 from ..models import PropertyListing
+from . import (
+    normalize_integer, extract_price, extract_area, extract_floor_number,
+    normalize_layout, normalize_direction, extract_monthly_fee,
+    format_station_info, extract_built_year, parse_date
+)
 
 
 class NomuScraper(BaseScraper):
@@ -35,106 +40,8 @@ class NomuScraper(BaseScraper):
     
     def scrape_area(self, area_code: str, max_pages: int = 5):
         """エリアの物件をスクレイピング"""
-        if self.force_detail_fetch:
-            print("※ 強制詳細取得モードが有効です - すべての物件の詳細ページを取得します")
-        
-        from .area_config import get_area_code
-        
-        # エリアコードを取得
-        area_code = get_area_code(area_code)
-        
-        # ===== フェーズ1: 物件一覧の収集 =====
-        all_properties = []
-        
-        for page in range(1, max_pages + 1):
-            print(f"ページ {page} を取得中...")
-            
-            # 検索URLを生成
-            search_url = self.get_search_url(area_code, page)
-            print(f"URL: {search_url}")
-            soup = self.fetch_page(search_url)
-            
-            if not soup:
-                print(f"ページ {page} の取得に失敗しました")
-                break
-            
-            # 物件情報を一覧から直接抽出
-            properties = self.parse_property_list(soup)
-            
-            if not properties:
-                print(f"ページ {page} に物件が見つかりません")
-                break
-            
-            print(f"ページ {page} で {len(properties)} 件の物件を発見")
-            
-            # max_propertiesを超えないように調整
-            if self.max_properties and len(all_properties) + len(properties) > self.max_properties:
-                # 必要な分だけ取得
-                remaining = self.max_properties - len(all_properties)
-                properties = properties[:remaining]
-                print(f"  → 最大取得件数に合わせて {remaining} 件のみ使用")
-            
-            # 物件発見数を記録
-            self.record_property_found(len(properties))
-            all_properties.extend(properties)
-            
-            # max_propertiesに達したらループを抜ける
-            if self.max_properties and len(all_properties) >= self.max_properties:
-                print(f"最大取得件数（{self.max_properties}件）に達しました")
-                break
-            
-            # ページ間で遅延
-            time.sleep(self.delay)
-        
-        # 処理対象数を記録（max_properties制限を考慮）
-        total_to_process = min(len(all_properties), self.max_properties) if self.max_properties else len(all_properties)
-        self.record_property_processed(total_to_process)
-        
-        # ===== フェーズ2: 詳細取得と保存 =====
-        print(f"\n合計 {len(all_properties)} 件の物件を処理します...")
-        
-        saved_count = 0
-        skipped_count = 0
-        
-        for i, property_data in enumerate(all_properties):
-            # 最大取得件数チェック
-            if self.max_properties and i >= self.max_properties:
-                print(f"最大取得件数（{self.max_properties}件）に達しました")
-                break
-                
-            print(f"[{i+1}/{total_to_process}] {property_data.get('building_name', 'Unknown')}")
-            self.record_property_attempted()
-            
-            # 建物名と価格の検証
-            if not self.validate_property_data(property_data):
-                print(f"  → データ検証失敗、スキップ")
-                skipped_count += 1
-                self.record_building_info_missing()
-                continue
-            
-            try:
-                self.save_property(property_data)
-                saved_count += 1
-                
-            except Exception as e:
-                print(f"  → エラー: {e}")
-                skipped_count += 1
-                self.record_save_failed()
-                continue
-        
-        # 変更をコミット
-        self.session.commit()
-        
-        # 統計情報を表示
-        stats = self.get_scraping_stats()
-        print(f"\nスクレイピング完了:")
-        print(f"  物件発見数: {stats['properties_found']} 件（一覧ページから発見）")
-        print(f"  処理対象数: {stats['properties_processed']} 件（max_properties制限後）")
-        print(f"  処理試行数: {stats['properties_attempted']} 件")
-        print(f"  詳細取得数: {stats['detail_fetched']} 件")
-        print(f"  詳細スキップ数: {stats['detail_skipped']} 件")
-        print(f"  新規登録数: {stats['new_listings']} 件")
-        print(f"  更新数: {stats['updated_listings']} 件")
+        # 共通ロジックを使用（価格変更ベースのスマートスクレイピングを含む）
+        return self.common_scrape_area_logic(area_code, max_pages)
     
     def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
         """物件一覧を解析"""
@@ -192,16 +99,14 @@ class NomuScraper(BaseScraper):
                     
                     # 価格文字列を構築
                     price_text = "".join(price_parts)
+                    # 万円を追加（extract_priceが処理するため）
+                    if price_text and "万円" not in price_text:
+                        price_text += "万円"
                     
-                    # 億がある場合
-                    if "億" in price_text:
-                        parts = price_text.split("億")
-                        oku = int(parts[0].replace(',', ''))
-                        man = int(parts[1].replace(',', '')) if parts[1] else 0
-                        property_data['price'] = oku * 10000 + man
-                    else:
-                        # 万円のみ
-                        property_data['price'] = int(price_text.replace(',', ''))
+                    # データ正規化フレームワークを使用して価格を抽出
+                    price = extract_price(price_text)
+                    if price:
+                        property_data['price'] = price
             
             # 面積・間取り・方角（item_4 セル）
             detail_cell = table.find("td", class_="item_td item_4")
@@ -211,19 +116,25 @@ class NomuScraper(BaseScraper):
                 # 1番目のp: 面積
                 if len(p_tags) > 0:
                     area_text = p_tags[0].get_text(strip=True)
-                    area_match = re.search(r'(\d+\.?\d*)', area_text)
-                    if area_match:
-                        property_data['area'] = float(area_match.group(1))
+                    # データ正規化フレームワークを使用して面積を抽出
+                    area = extract_area(area_text)
+                    if area:
+                        property_data['area'] = area
                 
                 # 2番目のp: 間取り
                 if len(p_tags) > 1:
-                    property_data['layout'] = p_tags[1].get_text(strip=True)
+                    # データ正規化フレームワークを使用して間取りを正規化
+                    layout = normalize_layout(p_tags[1].get_text(strip=True))
+                    if layout:
+                        property_data['layout'] = layout
                 
                 # 3番目のp: 方角（存在する場合）
                 if len(p_tags) > 2:
                     direction_text = p_tags[2].get_text(strip=True)
-                    if direction_text in ['北東', '南東', '北西', '南西', '北', '南', '東', '西']:
-                        property_data['direction'] = direction_text
+                    # データ正規化フレームワークを使用して方角を正規化
+                    direction = normalize_direction(direction_text)
+                    if direction:
+                        property_data['direction'] = direction
             
             # 階数・築年（item_5 セル）
             info_cell = table.find("td", class_="item_td item_5")
@@ -238,10 +149,10 @@ class NomuScraper(BaseScraper):
                     property_data['total_floors'] = int(floor_match.group(2))
                 
                 # 築年（年月から抽出）
-                built_pattern = r'(\d{4})年(\d+)月'
-                built_match = re.search(built_pattern, info_text)
-                if built_match:
-                    property_data['built_year'] = int(built_match.group(1))
+                # データ正規化フレームワークを使用して築年を抽出
+                built_year = extract_built_year(info_text)
+                if built_year:
+                    property_data['built_year'] = built_year
             
             # 住所（区名を含む部分を抽出）
             cells = table.find_all("td")
@@ -282,7 +193,28 @@ class NomuScraper(BaseScraper):
         
         return address
     
-    def save_property(self, property_data: Dict[str, Any]):
+    def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
+        """個別の物件を処理（共通インターフェース用）"""
+        # 共通の詳細チェック処理を使用
+        return self.process_property_with_detail_check(
+            property_data=property_data,
+            existing_listing=existing_listing,
+            parse_detail_func=self._parse_property_detail_from_url,
+            save_property_func=self.save_property
+        )
+    
+    def _parse_property_detail_from_url(self, url: str) -> Optional[Dict[str, Any]]:
+        """URLから詳細ページを取得して解析"""
+        soup = self.fetch_page(url)
+        if not soup:
+            return None
+        
+        detail_data = self.parse_property_detail(soup)
+        if detail_data:
+            detail_data['url'] = url
+        return detail_data
+    
+    def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None):
         """物件情報を保存"""
         # 建物を取得または作成
         building, room_number = self.get_or_create_building(
@@ -328,77 +260,11 @@ class NomuScraper(BaseScraper):
             listing_address=property_data.get('address')
         )
         
-        # 詳細ページの取得が必要かチェック
-        if self.needs_detail_fetch(listing):
-            print(f"  → 詳細ページを取得します")
-            self.record_property_scraped()
-            self.fetch_and_update_detail(listing)
-        else:
-            print(f"  → 詳細ページは最近取得済みのためスキップ")
-            self.record_listing_skipped()
-    
-    def fetch_and_update_detail(self, listing: PropertyListing) -> bool:
-        """詳細ページを取得して情報を更新"""
-        try:
-            time.sleep(self.delay)  # 遅延
-            
-            soup = self.fetch_page(listing.url)
-            if not soup:
-                return False
-            
-            # 詳細情報を解析
-            detail_data = self.parse_property_detail(soup)
-            if not detail_data:
-                return False
-            
-            # 詳細情報で既存の情報を更新
-            if detail_data.get('management_fee'):
-                listing.management_fee = detail_data['management_fee']
-            if detail_data.get('repair_fund'):
-                listing.repair_fund = detail_data['repair_fund']
-            if detail_data.get('description'):
-                listing.description = detail_data['description']
-            if detail_data.get('features'):
-                listing.features = detail_data['features']
-            if detail_data.get('agency_tel'):
-                listing.agency_tel = detail_data['agency_tel']
-            if detail_data.get('remarks'):
-                listing.remarks = detail_data['remarks']
-            
-            # バルコニー面積があれば更新
-            if detail_data.get('balcony_area') and listing.master_property:
-                listing.master_property.balcony_area = detail_data['balcony_area']
-            
-            # 詳細取得日時を更新
-            listing.detail_fetched_at = datetime.now()
-            listing.has_update_mark = False  # 更新マークをクリア
-            
-            # 多数決による物件情報更新
-            if listing.master_property:
-                self.update_master_property_by_majority(listing.master_property)
-            
-            # 建物情報の更新
-            if listing.master_property and listing.master_property.building:
-                building = listing.master_property.building
-                if detail_data.get('built_year') and not building.built_year:
-                    building.built_year = detail_data['built_year']
-                if detail_data.get('total_floors') and not building.total_floors:
-                    building.total_floors = detail_data['total_floors']
-                if detail_data.get('structure') and not building.structure:
-                    building.structure = detail_data['structure']
-                # 住所が空の場合は更新
-                if detail_data.get('address') and not building.address:
-                    building.address = detail_data['address']
-                    print(f"    → 建物の住所を更新: {building.address}")
-            
-            # コミットはscrape_areaメソッドで一括で行うので、ここではflushのみ
-            self.session.flush()
-            print(f"    → 詳細情報を更新しました")
-            return True
-            
-        except Exception as e:
-            print(f"    → 詳細ページ取得エラー: {e}")
-            return False
+        
+        # 多数決による物件情報更新
+        self.update_master_property_by_majority(master_property)
+        
+        print(f"  → 保存完了")
     
     def parse_property_detail(self, soup: BeautifulSoup) -> Optional[Dict[str, Any]]:
         """物件詳細ページを解析"""
@@ -434,28 +300,18 @@ class NomuScraper(BaseScraper):
                 for i in range(len(cells) - 1):
                     if '管理費' in cells[i].get_text():
                         fee_text = cells[i + 1].get_text(strip=True)
-                        # 通常の管理費パターン
-                        fee_match = re.search(r'(?:管理費\s*)?([\d,]+)円', fee_text)
-                        if fee_match:
-                            detail_data['management_fee'] = int(fee_match.group(1).replace(',', ''))
-                        else:
-                            # 特殊パターン（PM棟管理費など）
-                            special_fee_match = re.search(r'PM棟管理費\s*([\d,]+)円', fee_text)
-                            if special_fee_match:
-                                detail_data['management_fee'] = int(special_fee_match.group(1).replace(',', ''))
+                        # データ正規化フレームワークを使用して月額費用を抽出
+                        management_fee = extract_monthly_fee(fee_text)
+                        if management_fee:
+                            detail_data['management_fee'] = management_fee
                     
                     # 修繕積立金を探す
                     if '修繕積立金' in cells[i].get_text():
                         fund_text = cells[i + 1].get_text(strip=True)
-                        # 通常の修繕積立金パターン
-                        fund_match = re.search(r'(?:修繕積立金\s*)?([\d,]+)円', fund_text)
-                        if fund_match:
-                            detail_data['repair_fund'] = int(fund_match.group(1).replace(',', ''))
-                        else:
-                            # 特殊パターン（PM棟修繕積立金など）
-                            special_fund_match = re.search(r'PM棟修繕積立金\s*([\d,]+)円', fund_text)
-                            if special_fund_match:
-                                detail_data['repair_fund'] = int(special_fund_match.group(1).replace(',', ''))
+                        # データ正規化フレームワークを使用して月額費用を抽出
+                        repair_fund = extract_monthly_fee(fund_text)
+                        if repair_fund:
+                            detail_data['repair_fund'] = repair_fund
         
         # バルコニー面積
         balcony_elem = soup.find(text=re.compile(r'バルコニー')) or \
@@ -464,9 +320,10 @@ class NomuScraper(BaseScraper):
             balcony_value = balcony_elem.find_next("td") if balcony_elem.name == "th" else balcony_elem.parent
             if balcony_value:
                 balcony_text = balcony_value.get_text(strip=True)
-                balcony_match = re.search(r'([\d.]+)㎡', balcony_text)
-                if balcony_match:
-                    detail_data['balcony_area'] = float(balcony_match.group(1))
+                # データ正規化フレームワークを使用して面積を抽出
+                balcony_area = extract_area(balcony_text)
+                if balcony_area:
+                    detail_data['balcony_area'] = balcony_area
         
         # 築年
         built_elem = soup.find(text=re.compile(r'築年月')) or \
@@ -475,9 +332,10 @@ class NomuScraper(BaseScraper):
             built_value = built_elem.find_next("td") if built_elem.name == "th" else built_elem.parent
             if built_value:
                 built_text = built_value.get_text(strip=True)
-                built_match = re.search(r'(\d{4})年', built_text)
-                if built_match:
-                    detail_data['built_year'] = int(built_match.group(1))
+                # データ正規化フレームワークを使用して築年を抽出
+                built_year = extract_built_year(built_text)
+                if built_year:
+                    detail_data['built_year'] = built_year
         
         # 総階数
         floors_elem = soup.find("th", string=re.compile(r'総階数|建物階数|階数'))

@@ -34,6 +34,8 @@ export interface Property {
   last_confirmed_at?: string;
   delisted_at?: string;
   latest_price_update?: string;
+  sold_at?: string;
+  last_sale_price?: number;
 }
 
 export interface Listing {
@@ -92,6 +94,7 @@ export interface SearchParams {
   sort_order?: string;
   page?: number;
   per_page?: number;
+  include_inactive?: boolean;
 }
 
 export interface ApiResponse<T> {

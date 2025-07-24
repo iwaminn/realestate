@@ -11,6 +11,7 @@ from backend.app.scrapers.suumo_scraper import SuumoScraper
 from backend.app.scrapers.rehouse_scraper import RehouseScraper
 from backend.app.scrapers.homes_scraper import HomesScraper
 from backend.app.scrapers.nomu_scraper import NomuScraper
+from backend.app.scrapers.livable_scraper import LivableScraper
 
 def main():
     # スクレイパーのリスト
@@ -18,7 +19,8 @@ def main():
         ("SUUMO", SuumoScraper()),
         ("REHOUSE", RehouseScraper()),
         ("HOMES", HomesScraper()),
-        ("NOMU", NomuScraper())
+        ("NOMU", NomuScraper()),
+        ("LIVABLE", LivableScraper())
     ]
     
     # 各スクレイパーを実行

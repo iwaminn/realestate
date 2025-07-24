@@ -11,6 +11,11 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 from .base_scraper import BaseScraper
 from ..models import PropertyListing
+from . import (
+    normalize_integer, extract_price, extract_area, extract_floor_number,
+    normalize_layout, normalize_direction, extract_monthly_fee,
+    format_station_info, extract_built_year, parse_date
+)
 
 
 class HomesScraper(BaseScraper):
@@ -242,29 +247,22 @@ class HomesScraper(BaseScraper):
             
             if price_elem:
                 price_text = price_elem.get_text(strip=True)
-                # 億円パターン
-                oku_match = re.search(r'(\d+)億\s*(\d*)万?円', price_text)
-                if oku_match:
-                    oku = int(oku_match.group(1)) * 10000
-                    man = int(oku_match.group(2)) if oku_match.group(2) else 0
-                    property_data['price'] = oku + man
-                else:
-                    # 万円パターン（カンマ対応）
-                    man_match = re.search(r'([\d,]+)万円', price_text)
-                    if man_match:
-                        property_data['price'] = int(man_match.group(1).replace(',', ''))
+                # データ正規化フレームワークを使用して価格を抽出
+                price = extract_price(price_text)
+                if price:
+                    property_data['price'] = price
             
             # 価格が取得できなかった場合の追加処理
             if 'price' not in property_data:
                 # ページ全体から価格を探す
                 page_text = soup.get_text()
-                # 最初に見つかった価格パターンを使用
-                price_matches = re.findall(r'([\d,]+)万円', page_text)
+                # 価格パターンを検索
+                price_matches = re.findall(r'[\d,]+(?:億[\d,]*)?万円', page_text)
                 if price_matches:
-                    # 最初の妥当な価格を使用（100万円以上）
-                    for price_str in price_matches:
-                        price = int(price_str.replace(',', ''))
-                        if price >= 100:  # 100万円以上なら妥当な価格
+                    # 最初の妥当な価格を使用
+                    for price_text in price_matches:
+                        price = extract_price(price_text)
+                        if price and price >= 100:  # 100万円以上なら妥当な価格
                             property_data['price'] = price
                             break
             
@@ -287,36 +285,34 @@ class HomesScraper(BaseScraper):
                 
                 # 間取り
                 elif '間取り' in label:
-                    property_data['layout'] = value.split('/')[0].strip()  # "2LDK/60㎡"のような形式から間取りだけ抽出
+                    # データ正規化フレームワークを使用して間取りを正規化
+                    layout = normalize_layout(value.split('/')[0].strip())
+                    if layout:
+                        property_data['layout'] = layout
                 
                 # 専有面積
                 elif '専有面積' in label or '面積' in label:
-                    area_match = re.search(r'([\d.]+)m²|([\d.]+)㎡', value)
-                    if area_match:
-                        property_data['area'] = float(area_match.group(1) or area_match.group(2))
+                    # データ正規化フレームワークを使用して面積を抽出
+                    area = extract_area(value)
+                    if area:
+                        property_data['area'] = area
                 
                 # 築年月
                 elif '築年月' in label:
-                    # 築年数を計算
-                    year_match = re.search(r'(\d{4})年', value)
-                    if year_match:
-                        from datetime import datetime
-                        built_year = int(year_match.group(1))
+                    # データ正規化フレームワークを使用して築年を抽出
+                    built_year = extract_built_year(value)
+                    if built_year:
+                        property_data['built_year'] = built_year
                         property_data['age'] = datetime.now().year - built_year
-                    else:
-                        age_match = re.search(r'築(\d+)年', value)
-                        if age_match:
-                            property_data['age'] = int(age_match.group(1))
                 
                 # 階数
                 elif '階' in label and '建' not in label:
                     property_data['floor'] = value
-                    # 階数情報を抽出
+                    # データ正規化フレームワークを使用して階数を抽出
                     floor_match = re.search(r'(\d+)階/(\d+)階建', value)
                     if floor_match:
-                        property_data['floor_number'] = int(floor_match.group(1))
-                        # 地下情報も含めて総階数を取得
-                        property_data['total_floors'] = int(floor_match.group(2))
+                        property_data['floor_number'] = extract_floor_number(floor_match.group(1))
+                        property_data['total_floors'] = normalize_integer(floor_match.group(2))
                         basement_match = re.search(r'地下(\d+)階', value)
                         if basement_match:
                             property_data['basement_floors'] = int(basement_match.group(1))
@@ -344,25 +340,25 @@ class HomesScraper(BaseScraper):
                 
                 # 方角・主要採光面
                 elif '向き' in label or '方角' in label or 'バルコニー' in label or '採光' in label:
-                    # 方角を抽出
-                    direction_patterns = ['南東', '南西', '北東', '北西', '南', '北', '東', '西']
-                    for direction in direction_patterns:
-                        if direction in value:
-                            property_data['direction'] = direction
-                            print(f"    {label}: {property_data['direction']}")
-                            break
+                    # データ正規化フレームワークを使用して方角を正規化
+                    direction = normalize_direction(value)
+                    if direction:
+                        property_data['direction'] = direction
+                        print(f"    {label}: {property_data['direction']}")
                 
                 # 管理費
                 elif '管理費' in label:
-                    fee_match = re.search(r'([\d,]+)円', value)
-                    if fee_match:
-                        property_data['management_fee'] = int(fee_match.group(1).replace(',', ''))
+                    # データ正規化フレームワークを使用して月額費用を抽出
+                    management_fee = extract_monthly_fee(value)
+                    if management_fee:
+                        property_data['management_fee'] = management_fee
                 
                 # 修繕積立金
                 elif '修繕積立金' in label:
-                    fund_match = re.search(r'([\d,]+)円', value)
-                    if fund_match:
-                        property_data['repair_fund'] = int(fund_match.group(1).replace(',', ''))
+                    # データ正規化フレームワークを使用して月額費用を抽出
+                    repair_fund = extract_monthly_fee(value)
+                    if repair_fund:
+                        property_data['repair_fund'] = repair_fund
                 
                 # 部屋番号
                 elif '部屋番号' in label or '号室' in label:
@@ -472,22 +468,16 @@ class HomesScraper(BaseScraper):
                             # 駐車場
                             property_data['parking_info'] = value
                         elif '主要採光面' in label:
-                            # 主要採光面から方角を取得
-                            direction_patterns = ['南東', '南西', '北東', '北西', '南', '北', '東', '西']
-                            for direction in direction_patterns:
-                                if direction in value:
-                                    property_data['direction'] = direction
-                                    print(f"    主要採光面: {property_data['direction']}")
-                                    break
+                            # データ正規化フレームワークを使用して方角を正規化
+                            direction = normalize_direction(value)
+                            if direction:
+                                property_data['direction'] = direction
+                                print(f"    主要採光面: {property_data['direction']}")
                         elif '情報提供日' in label or '情報公開日' in label or '情報更新日' in label or '登録日' in label:
-                            # 情報提供日を取得
-                            # 日付のパターンをマッチ（YYYY年MM月DD日 or YYYY/MM/DD or YYYY-MM-DD）
-                            date_match = re.search(r'(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?', value)
-                            if date_match:
-                                year = int(date_match.group(1))
-                                month = int(date_match.group(2))
-                                day = int(date_match.group(3))
-                                property_data['published_at'] = datetime(year, month, day)
+                            # データ正規化フレームワークを使用して日付を解析
+                            published_date = parse_date(value)
+                            if published_date:
+                                property_data['published_at'] = published_date
                                 print(f"    情報提供日: {property_data['published_at'].strftime('%Y-%m-%d')}")
             
             # 情報公開日を探す（物件概要以外のセクションも確認）
@@ -716,153 +706,18 @@ class HomesScraper(BaseScraper):
     
     def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
         """個別の物件を処理（HOMESスクレイパー固有の実装）"""
-        print(f"  URL: {property_data.get('url')}")
-        
-        # 詳細ページの取得が必要かチェック
-        needs_detail = True
-        if existing_listing:
-            needs_detail = self.needs_detail_fetch(existing_listing)
-            if not needs_detail:
-                print(f"  → 詳細ページの取得をスキップ（最終取得: {existing_listing.detail_fetched_at}）")
-                # 詳細ページをスキップした場合は何も更新しない
-                self.record_listing_skipped()
-                return False
-        
-        # 詳細ページから全ての情報を取得
-        detail_data = self.parse_property_detail(property_data['url'])
-        if not detail_data:
-            print(f"  → 詳細ページの取得に失敗しました")
-            self.record_detail_fetch_failed()
-            return False
-        
-        # 詳細データで property_data を更新
-        property_data.update(detail_data)
-        # 詳細取得成功を記録
-        self.record_property_scraped()
-        
-        # データ検証
-        if not self.enhanced_validate_property_data(property_data):
-            self.record_error('validation', url=property_data.get('url'), 
-                              building_name=property_data.get('building_name'),
-                              property_data=property_data,
-                              phase='save_property')
-            return False
-        
-        # 価格が取得できているか確認
-        if not property_data.get('price'):
-            print(f"  → 価格情報が取得できませんでした")
-            self.record_price_missing()
-            self.record_error('validation', url=property_data.get('url'),
-                              building_name=property_data.get('building_name'),
-                              property_data=property_data,
-                              phase='save_property')
-            return False
-        
-        print(f"  価格: {property_data.get('price')}万円")
-        print(f"  間取り: {property_data.get('layout', '不明')}")
-        print(f"  面積: {property_data.get('area', '不明')}㎡")
-        print(f"  階数: {property_data.get('floor_number', '不明')}階")
-        
-        # 建物を取得または作成
-        building, extracted_room_number = self.get_or_create_building(
-            property_data.get('building_name', ''),
-            property_data.get('address', ''),
-            built_year=property_data.get('built_year'),
-            total_floors=property_data.get('total_floors'),
-            basement_floors=property_data.get('basement_floors'),
-            total_units=property_data.get('total_units'),
-            structure=property_data.get('structure'),
-            land_rights=property_data.get('land_rights'),
-            parking_info=property_data.get('parking_info')
+        # 共通の詳細チェック処理を使用
+        return self.process_property_with_detail_check(
+            property_data=property_data,
+            existing_listing=existing_listing,
+            parse_detail_func=self.parse_property_detail,
+            save_property_func=self._save_property_after_detail
         )
-        
-        if not building:
-            print(f"  → 建物情報が不足")
-            self.record_building_info_missing()
-            self.record_error('validation', url=property_data.get('url'),
-                              building_name=property_data.get('building_name'),
-                              property_data=property_data,
-                              phase='save_property')
-            return False
-        
-        # 部屋番号の決定（抽出された部屋番号を優先）
-        room_number = property_data.get('room_number', '')
-        if extracted_room_number and not room_number:
-            room_number = extracted_room_number
-            print(f"  → 建物名から部屋番号を抽出: {room_number}")
-        
-        # マスター物件を取得または作成
-        master_property = self.get_or_create_master_property(
-            building=building,
-            room_number=room_number,
-            floor_number=property_data.get('floor_number'),
-            area=property_data.get('area'),
-            layout=property_data.get('layout'),
-            direction=property_data.get('direction'),
-            url=property_data.get('url')
-        )
-        
-        # バルコニー面積を設定
-        if property_data.get('balcony_area'):
-            master_property.balcony_area = property_data['balcony_area']
-        
-        # 掲載情報を作成または更新
-        listing = self.create_or_update_listing(
-            master_property=master_property,
-            url=property_data.get('url', ''),
-            title=property_data.get('title', property_data.get('building_name', '')),
-            price=property_data.get('price'),
-            agency_name=property_data.get('agency_name'),
-            station_info=property_data.get('station_info'),
-            management_fee=property_data.get('management_fee'),
-            repair_fund=property_data.get('repair_fund'),
-            description=property_data.get('description'),
-            published_at=property_data.get('published_at'),
-            first_published_at=property_data.get('first_published_at'),
-            # 掲載サイトごとの物件属性
-            listing_floor_number=property_data.get('floor_number'),
-            listing_area=property_data.get('area'),
-            listing_layout=property_data.get('layout'),
-            listing_direction=property_data.get('direction'),
-            listing_total_floors=property_data.get('total_floors'),
-            listing_balcony_area=property_data.get('balcony_area'),
-            listing_address=building.address if building else None
-        )
-        
-        # agency_telとremarksは別途設定
-        if property_data.get('agency_tel'):
-            listing.agency_tel = property_data['agency_tel']
-        if property_data.get('remarks'):
-            listing.remarks = property_data['remarks']
-        
-        # 一覧ページの情報で更新（新着・更新マークなど）
-        self.update_listing_from_list(listing, property_data)
-        
-        # 画像を追加
-        if property_data.get('image_urls'):
-            self.add_property_images(listing, property_data['image_urls'])
-        
-        # 詳細情報を保存
-        listing.detail_info = {
-            'age': property_data.get('age'),
-            'floor': property_data.get('floor'),
-            'total_floors': property_data.get('total_floors')
-        }
-        listing.detail_fetched_at = datetime.now()
-        
-        # 多数決による物件情報更新
-        self.update_master_property_by_majority(master_property)
-        
-        # 新規/更新の記録
-        if existing_listing:
-            self.record_listing_updated()
-        else:
-            self.record_listing_created()
-        
-        print(f"  → 保存完了")
-        self.record_success()
-        
-        return True
+    
+    def _save_property_after_detail(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
+        """詳細データ取得後の保存処理（内部メソッド）"""
+        # 共通の保存処理を使用
+        return self.save_property_common(property_data, existing_listing)
     
     def fetch_and_update_detail(self, listing) -> bool:
         """詳細ページを取得して情報を更新"""

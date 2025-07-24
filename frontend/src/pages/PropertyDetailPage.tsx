@@ -129,6 +129,10 @@ const PropertyDetailPage: React.FC = () => {
   const { master_property, listings, price_histories_by_listing, price_timeline, price_consistency } = propertyDetail;
   const property = master_property;
   const building = property.building;
+  
+  // 掲載情報を分類
+  const all_listings = listings || [];
+  const active_listings = all_listings.filter(l => l.is_active);
 
   // 統合価格履歴データの準備（物件単位）
   const priceChartData: any[] = [];
@@ -193,16 +197,33 @@ const PropertyDetailPage: React.FC = () => {
         物件一覧に戻る
       </Button>
 
-      <Paper elevation={1} sx={{ p: 3, mb: 3, opacity: property.has_active_listing === false ? 0.8 : 1 }}>
+      <Paper elevation={1} sx={{ 
+        p: 3, 
+        mb: 3, 
+        opacity: property.sold_at ? 0.85 : (property.has_active_listing === false ? 0.8 : 1),
+        backgroundColor: property.sold_at ? '#f5f5f5' : 'background.paper',
+        border: property.sold_at ? '2px solid #e0e0e0' : '1px solid rgba(0, 0, 0, 0.12)'
+      }}>
         <Grid container spacing={3}>
           <Grid item xs={12}>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h4" component="h1">
+              <Typography variant="h4" component="h1" sx={{ color: property.sold_at ? 'text.secondary' : 'text.primary' }}>
                 {building.normalized_name}
                 {property.room_number && ` ${property.room_number}`}
               </Typography>
               <Box>
-                {property.has_active_listing === false && (
+                {property.sold_at && (
+                  <Chip 
+                    label="販売終了" 
+                    sx={{ 
+                      mr: 1,
+                      backgroundColor: '#d32f2f',
+                      color: 'white',
+                      fontWeight: 'bold'
+                    }} 
+                  />
+                )}
+                {!property.sold_at && property.has_active_listing === false && (
                   <Chip label="掲載終了" color="error" sx={{ mr: 1 }} />
                 )}
                 {property.is_resale && (
@@ -222,22 +243,54 @@ const PropertyDetailPage: React.FC = () => {
           </Grid>
 
           <Grid item xs={12}>
-            <Typography variant="h3" color="primary" gutterBottom>
-              {property.min_price === property.max_price
-                ? formatPrice(property.min_price)
-                : `${formatPrice(property.min_price)} 〜 ${formatPrice(property.max_price)}`}
+            <Typography variant="h3" color={property.sold_at ? "text.secondary" : "primary"} gutterBottom>
+              {property.sold_at && property.last_sale_price ? (
+                <>
+                  <Box component="span" sx={{ textDecoration: 'line-through', opacity: 0.7 }}>
+                    {formatPrice(property.last_sale_price)}
+                  </Box>
+                  <Box component="span" sx={{ ml: 2, fontSize: '0.8em' }}>
+                    販売終了
+                  </Box>
+                </>
+              ) : (
+                property.min_price === property.max_price
+                  ? formatPrice(property.min_price)
+                  : `${formatPrice(property.min_price)} 〜 ${formatPrice(property.max_price)}`
+              )}
             </Typography>
             
-            {/* 売出確認日の表示 */}
+            {/* 売出確認日と販売終了日の表示 */}
             {property.earliest_published_at && (
               <Box sx={{ mb: 2 }}>
                 <Typography variant="body1" color="text.secondary">
                   売出確認日: {format(new Date(property.earliest_published_at), 'yyyy年MM月dd日', { locale: ja })}
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  （販売開始から{Math.floor((new Date().getTime() - new Date(property.earliest_published_at).getTime()) / (1000 * 60 * 60 * 24))}日経過）
-                </Typography>
+                {property.sold_at ? (
+                  <>
+                    <Typography variant="body1" color="text.secondary">
+                      販売終了日: {format(new Date(property.sold_at), 'yyyy年MM月dd日', { locale: ja })}
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary">
+                      （販売期間: {Math.floor((new Date(property.sold_at).getTime() - new Date(property.earliest_published_at).getTime()) / (1000 * 60 * 60 * 24))}日間）
+                    </Typography>
+                  </>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    （販売開始から{Math.floor((new Date().getTime() - new Date(property.earliest_published_at).getTime()) / (1000 * 60 * 60 * 24))}日経過）
+                  </Typography>
+                )}
               </Box>
+            )}
+            
+            {/* 販売終了からの経過日数 */}
+            {property.sold_at && (
+              <Alert severity="info" sx={{ mb: 2 }}>
+                <Typography variant="body2">
+                  この物件は販売終了しています。
+                  （販売終了から{Math.floor((new Date().getTime() - new Date(property.sold_at).getTime()) / (1000 * 60 * 60 * 24))}日経過）
+                </Typography>
+              </Alert>
             )}
             
             {/* 買い取り再販情報 */}
@@ -332,12 +385,13 @@ const PropertyDetailPage: React.FC = () => {
         </Grid>
       </Paper>
 
-      {/* 掲載情報一覧 */}
-      <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h5" gutterBottom>
-          掲載情報一覧
-        </Typography>
-        <TableContainer>
+      {/* 掲載情報一覧 - アクティブな掲載がある場合のみ表示 */}
+      {active_listings.length > 0 && (
+        <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
+          <Typography variant="h5" gutterBottom>
+            掲載情報一覧
+          </Typography>
+          <TableContainer>
           <Table>
             <TableHead>
               <TableRow>
@@ -352,7 +406,7 @@ const PropertyDetailPage: React.FC = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {listings.map((listing) => (
+              {active_listings.map((listing) => (
                 <TableRow key={listing.id}>
                   <TableCell>
                     <Chip label={listing.source_site} size="small" />
@@ -390,6 +444,50 @@ const PropertyDetailPage: React.FC = () => {
           </Table>
         </TableContainer>
       </Paper>
+      )}
+      
+      {/* 販売終了物件の場合、過去の掲載情報を表示 */}
+      {property.sold_at && active_listings.length === 0 && all_listings.length > 0 && (
+        <Paper elevation={1} sx={{ p: 3, mb: 3, backgroundColor: '#f5f5f5' }}>
+          <Typography variant="h5" gutterBottom color="text.secondary">
+            過去の掲載情報
+          </Typography>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            この物件は販売終了のため、現在有効な掲載情報はありません。
+          </Typography>
+          <TableContainer>
+            <Table>
+              <TableHead>
+                <TableRow>
+                  <TableCell>掲載サイト</TableCell>
+                  <TableCell>タイトル</TableCell>
+                  <TableCell align="right">最終価格</TableCell>
+                  <TableCell>不動産会社</TableCell>
+                  <TableCell>最終確認日</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {all_listings.slice(0, 5).map((listing) => (
+                  <TableRow key={listing.id}>
+                    <TableCell>
+                      <Chip label={listing.source_site} size="small" />
+                    </TableCell>
+                    <TableCell>{listing.title}</TableCell>
+                    <TableCell align="right">{formatPrice(listing.current_price)}</TableCell>
+                    <TableCell>{listing.agency_name || '-'}</TableCell>
+                    <TableCell>
+                      {/* listing.last_confirmed_at 
+                        ? format(new Date(listing.last_confirmed_at), 'yyyy/MM/dd', { locale: ja })
+                        : '-' */}
+                      -
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+      )}
 
       {/* 価格推移グラフ */}
       {priceChartData.length > 0 && (
@@ -489,14 +587,54 @@ const PropertyDetailPage: React.FC = () => {
       )}
 
       {/* 同じ建物の他の物件 */}
-      <Button
-        variant="outlined"
-        startIcon={<Business />}
-        onClick={() => navigate(`/buildings/${encodeURIComponent(building.normalized_name)}/properties`)}
-        fullWidth
-      >
-        {building.normalized_name}の他の物件を見る
-      </Button>
+      <Paper elevation={2} sx={{ p: 3, mt: 3, backgroundColor: '#f8f9fa' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+          <Business sx={{ fontSize: 28, color: 'primary.main', mr: 2 }} />
+          <Typography variant="h6" color="text.primary">
+            同じ建物内の他の物件
+          </Typography>
+        </Box>
+        
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+          {building.normalized_name}
+          {building.total_units && ` （総戸数: ${building.total_units}戸）`}
+        </Typography>
+        
+        <Button
+          variant="contained"
+          startIcon={<Apartment />}
+          onClick={() => {
+            console.log('[PropertyDetailPage] Navigating to building properties:', {
+              building_name: building.normalized_name,
+              encoded_name: encodeURIComponent(building.normalized_name),
+              sold_at: property.sold_at,
+              has_active_listing: property.has_active_listing
+            });
+            const url = `/buildings/${encodeURIComponent(building.normalized_name)}/properties`;
+            // 販売終了物件や掲載終了物件の場合は、includeInactive=trueを追加
+            if (property.sold_at || property.has_active_listing === false) {
+              console.log('[PropertyDetailPage] Adding includeInactive=true');
+              navigate(`${url}?includeInactive=true`);
+            } else {
+              navigate(url);
+            }
+          }}
+          fullWidth
+          size="large"
+          sx={{
+            py: 1.5,
+            textTransform: 'none',
+            fontSize: '1rem',
+            fontWeight: 500
+          }}
+        >
+          {building.normalized_name}の全物件を見る
+        </Button>
+        
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, textAlign: 'center' }}>
+          同じ建物内で販売中の他の部屋を確認できます
+        </Typography>
+      </Paper>
     </Box>
   );
 };

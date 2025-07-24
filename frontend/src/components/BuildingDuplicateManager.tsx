@@ -43,14 +43,14 @@ interface DuplicateGroup {
     id: number;
     normalized_name: string;
     address: string;
-    total_floors: number | null;
+    total_floors?: number | null;
     property_count: number;
   };
   candidates: Array<{
     id: number;
     normalized_name: string;
     address: string;
-    total_floors: number | null;
+    total_floors?: number | null;
     property_count: number;
     similarity: number;
     address_similarity?: number;

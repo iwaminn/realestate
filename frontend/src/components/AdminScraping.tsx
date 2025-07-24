@@ -114,6 +114,7 @@ const AdminScraping: React.FC = () => {
     { value: 'homes', label: "LIFULL HOME'S" },
     { value: 'rehouse', label: '三井のリハウス' },
     { value: 'nomu', label: 'ノムコム' },
+    { value: 'livable', label: '東急リバブル' },
   ];
 
   useEffect(() => {
@@ -344,11 +345,71 @@ const AdminScraping: React.FC = () => {
     }), { total: 0, new: 0, updated: 0, skipped: 0 });
   };
 
+  const [updatingListingStatus, setUpdatingListingStatus] = useState(false);
+  const [listingUpdateResult, setListingUpdateResult] = useState<{
+    success: boolean;
+    message: string;
+    inactive_listings?: number;
+    sold_properties?: number;
+  } | null>(null);
+
+  const updateListingStatus = async () => {
+    if (!confirm('24時間以上確認されていない掲載を終了扱いにしますか？')) {
+      return;
+    }
+    
+    setUpdatingListingStatus(true);
+    setListingUpdateResult(null);
+    
+    try {
+      const response = await axios.post('/api/admin/update-listing-status');
+      setListingUpdateResult({
+        success: true,
+        message: response.data.message,
+        inactive_listings: response.data.inactive_listings,
+        sold_properties: response.data.sold_properties,
+      });
+    } catch (error) {
+      console.error('Failed to update listing status:', error);
+      setListingUpdateResult({
+        success: false,
+        message: '掲載状態の更新に失敗しました',
+      });
+    } finally {
+      setUpdatingListingStatus(false);
+    }
+  };
+
   return (
     <Box>
       <Typography variant="h5" gutterBottom>
         スクレイピング管理
       </Typography>
+
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          掲載状態の手動更新
+        </Typography>
+        <Alert severity="info" sx={{ mb: 2 }}>
+          24時間以上確認されていない掲載を終了扱いにし、すべての掲載が終了した物件を販売終了とします。
+        </Alert>
+        <Box display="flex" alignItems="center" gap={2}>
+          <Button
+            variant="contained"
+            color="secondary"
+            onClick={updateListingStatus}
+            disabled={updatingListingStatus}
+            startIcon={updatingListingStatus ? <CircularProgress size={20} /> : <RefreshIcon />}
+          >
+            {updatingListingStatus ? '更新中...' : '掲載状態を更新'}
+          </Button>
+          {listingUpdateResult && (
+            <Alert severity={listingUpdateResult.success ? 'success' : 'error'} sx={{ flex: 1 }}>
+              {listingUpdateResult.message}
+            </Alert>
+          )}
+        </Box>
+      </Paper>
 
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>

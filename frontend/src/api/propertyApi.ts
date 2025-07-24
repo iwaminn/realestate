@@ -41,9 +41,15 @@ export const propertyApi = {
     properties: Property[];
     total: number;
   }> => {
+    console.log('[propertyApi] getBuildingProperties called with:', {
+      buildingName,
+      includeInactive,
+      params: { include_inactive: includeInactive }
+    });
     const response = await api.get(`/v2/buildings/by-name/${encodeURIComponent(buildingName)}/properties`, {
       params: { include_inactive: includeInactive }
     });
+    console.log('[propertyApi] Response properties count:', response.data.properties?.length);
     return response.data;
   },
 
