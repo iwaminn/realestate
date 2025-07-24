@@ -36,12 +36,14 @@ export const propertyApi = {
   },
 
   // 建物別物件一覧取得
-  getBuildingProperties: async (buildingName: string): Promise<{
+  getBuildingProperties: async (buildingName: string, includeInactive: boolean = false): Promise<{
     building: any;
     properties: Property[];
     total: number;
   }> => {
-    const response = await api.get(`/v2/buildings/by-name/${encodeURIComponent(buildingName)}/properties`);
+    const response = await api.get(`/v2/buildings/by-name/${encodeURIComponent(buildingName)}/properties`, {
+      params: { include_inactive: includeInactive }
+    });
     return response.data;
   },
 
@@ -157,6 +159,40 @@ export const propertyApi = {
   }> => {
     const response = await api.get('/admin/buildings/search', { 
       params: { query, limit } 
+    });
+    return response.data;
+  },
+
+  // 物件検索（統合用）
+  searchPropertiesForMerge: async (query: string, limit: number = 20): Promise<{
+    properties: Array<{
+      id: number;
+      building_id: number;
+      building_name: string;
+      room_number: string | null;
+      floor_number: number | null;
+      area: number | null;
+      layout: string | null;
+      direction: string | null;
+      current_price: number | null;
+      listing_count: number;
+    }>;
+    total: number;
+  }> => {
+    const response = await api.get('/admin/properties/search', { 
+      params: { query, limit } 
+    });
+    return response.data;
+  },
+
+  // 物件統合
+  mergeProperties: async (primaryId: number, secondaryId: number): Promise<{
+    success: boolean;
+    message: string;
+  }> => {
+    const response = await api.post('/admin/merge-properties', {
+      primary_property_id: primaryId,
+      secondary_property_id: secondaryId
     });
     return response.data;
   },

@@ -35,13 +35,17 @@ import {
   Info as InfoIcon,
   Check as CheckIcon,
   Close as CloseIcon,
+  Logout as LogoutIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../contexts/AuthContext';
 import AdminScraping from '../components/AdminScraping';
 import BuildingDuplicateManager from '../components/BuildingDuplicateManager';
 import BuildingMergeHistory from '../components/BuildingMergeHistory';
 import PropertyMergeHistory from '../components/PropertyMergeHistory';
 import ManualBuildingMerger from '../components/ManualBuildingMerger';
+import ManualPropertyMerger from '../components/ManualPropertyMerger';
 
 interface DuplicateCandidate {
   property1_id: number;
@@ -83,6 +87,9 @@ interface PropertyDetail {
 }
 
 const Admin: React.FC = () => {
+  const { isAuthenticated, username, isLoading, logout } = useAuth();
+  const navigate = useNavigate();
+  
   const [activeTab, setActiveTab] = useState(0);
   const [propertySubTab, setPropertySubTab] = useState(0);
   const [buildingSubTab, setBuildingSubTab] = useState(0);
@@ -97,6 +104,13 @@ const Admin: React.FC = () => {
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' as 'success' | 'error' });
   const [minSimilarity, setMinSimilarity] = useState(0.8);
   const [limit, setLimit] = useState(50);
+
+  useEffect(() => {
+    // 認証チェック完了後にのみリダイレクト
+    if (!isLoading && !isAuthenticated) {
+      navigate('/admin/login');
+    }
+  }, [isAuthenticated, isLoading, navigate]);
 
   useEffect(() => {
     fetchDuplicates();
@@ -294,11 +308,39 @@ const Admin: React.FC = () => {
     );
   };
 
+  // 認証チェック中はローディング表示
+  if (isLoading) {
+    return (
+      <Container>
+        <Box display="flex" justifyContent="center" alignItems="center" minHeight="80vh">
+          <CircularProgress />
+        </Box>
+      </Container>
+    );
+  }
+
   return (
     <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-      <Typography variant="h4" gutterBottom>
-        管理画面
-      </Typography>
+      <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
+        <Typography variant="h4">
+          管理画面
+        </Typography>
+        <Box display="flex" alignItems="center" gap={2}>
+          <Typography variant="body1" color="text.secondary">
+            ログイン中: {username}
+          </Typography>
+          <Button
+            variant="outlined"
+            startIcon={<LogoutIcon />}
+            onClick={() => {
+              logout();
+              navigate('/');
+            }}
+          >
+            ログアウト
+          </Button>
+        </Box>
+      </Box>
 
       <Paper sx={{ mb: 3 }}>
         <Tabs value={activeTab} onChange={(_, value) => setActiveTab(value)}>
@@ -319,6 +361,7 @@ const Admin: React.FC = () => {
 
           {propertySubTab === 0 && (
             <>
+              <ManualPropertyMerger />
               <Paper sx={{ p: 3, mb: 3 }}>
         <Grid container spacing={3} alignItems="center">
           <Grid item xs={12} md={6}>
@@ -529,10 +572,8 @@ const Admin: React.FC = () => {
 
           {buildingSubTab === 0 && (
             <>
+              <ManualBuildingMerger />
               <BuildingDuplicateManager />
-              <Box sx={{ mt: 3 }}>
-                <ManualBuildingMerger />
-              </Box>
             </>
           )}
 

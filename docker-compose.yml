@@ -8,8 +8,10 @@ services:
       - POSTGRES_DB=realestate
       - POSTGRES_USER=realestate
       - POSTGRES_PASSWORD=realestate_pass
+      - TZ=Asia/Tokyo
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
     ports:
       - "5432:5432"
     networks:
@@ -26,9 +28,11 @@ services:
       - ./backend:/app/backend
       - ./data:/app/data
       - ./logs:/app/logs
+      - /etc/localtime:/etc/localtime:ro
     environment:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql://realestate:realestate_pass@postgres:5432/realestate
+      - TZ=Asia/Tokyo
     command: poetry run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
     depends_on:
       - postgres
@@ -45,8 +49,10 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+      - /etc/localtime:/etc/localtime:ro
     environment:
       - VITE_API_URL=http://localhost:8000
+      - TZ=Asia/Tokyo
     command: npm run dev -- --host 0.0.0.0 --port 3001
     depends_on:
       - backend
@@ -62,9 +68,11 @@ services:
       - ./backend:/app/backend
       - ./data:/app/data
       - ./logs:/app/logs
+      - /etc/localtime:/etc/localtime:ro
     environment:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql://realestate:realestate_pass@postgres:5432/realestate
+      - TZ=Asia/Tokyo
     command: poetry run python backend/scripts/run_scrapers.py --schedule --interval 6
     depends_on:
       - postgres

@@ -16,8 +16,10 @@ from concurrent.futures import ThreadPoolExecutor
 
 from ..database import get_db
 from ..models import MasterProperty, PropertyListing, Building, ListingPriceHistory, PropertyMergeHistory, PropertyMergeExclusion
+from sqlalchemy import func, or_, and_
+from ..auth import verify_admin_credentials
 
-router = APIRouter(prefix="/api/admin", tags=["admin"])
+router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(verify_admin_credentials)])
 
 # スクレイピングタスクの状態を管理
 scraping_tasks: Dict[str, Dict[str, Any]] = {}
@@ -192,6 +194,128 @@ def get_duplicate_candidates(
             ))
     
     return candidates
+
+
+@router.get("/properties/search")
+def search_properties_for_merge(
+    query: str,
+    limit: int = 20,
+    db: Session = Depends(get_db)
+):
+    """物件をIDまたは建物名で検索（統合用）"""
+    results = []
+    
+    # まずIDで検索を試みる
+    if query.isdigit():
+        property_id = int(query)
+        property_data = db.query(MasterProperty).filter(
+            MasterProperty.id == property_id
+        ).first()
+        
+        if property_data:
+            building = db.query(Building).filter(
+                Building.id == property_data.building_id
+            ).first()
+            
+            # アクティブな掲載情報を取得
+            active_listings = db.query(PropertyListing).filter(
+                PropertyListing.master_property_id == property_data.id,
+                PropertyListing.is_active == True
+            ).all()
+            
+            # 最低価格を取得
+            min_price = None
+            if active_listings:
+                prices = [l.current_price for l in active_listings if l.current_price]
+                if prices:
+                    min_price = min(prices)
+            
+            results.append({
+                "id": property_data.id,
+                "building_id": property_data.building_id,
+                "building_name": building.normalized_name if building else "不明",
+                "room_number": property_data.room_number,
+                "floor_number": property_data.floor_number,
+                "area": property_data.area,
+                "layout": property_data.layout,
+                "direction": property_data.direction,
+                "current_price": min_price,
+                "listing_count": len(active_listings)
+            })
+    
+    # 建物名で検索
+    # スペースで分割してAND検索 または スペースを除去した検索
+    search_terms = query.replace('　', ' ').split()
+    
+    name_query = db.query(MasterProperty).join(
+        Building, MasterProperty.building_id == Building.id
+    )
+    
+    if len(search_terms) > 1:
+        # 複数の検索語がある場合
+        # 1. 各単語を含む建物を検索（AND条件）
+        # 2. スペースを除去した全体文字列でも検索（OR条件）
+        
+        # AND検索条件
+        and_conditions = []
+        for term in search_terms:
+            and_conditions.append(Building.normalized_name.ilike(f"%{term}%"))
+        
+        # スペースを除去した検索
+        search_no_space = query.replace(' ', '').replace('　', '')
+        
+        # 複合条件
+        name_query = name_query.filter(
+            or_(
+                and_(*and_conditions),  # 全ての単語を含む
+                Building.normalized_name.ilike(f"%{search_no_space}%")  # スペースを除去した文字列に一致
+            )
+        )
+    else:
+        # 単一の検索語の場合
+        name_query = name_query.filter(
+            Building.normalized_name.ilike(f"%{query}%")
+        )
+    
+    properties = name_query.limit(limit).all()
+    
+    for property_data in properties:
+        # 既にIDで見つかった物件は除外
+        if not any(r["id"] == property_data.id for r in results):
+            building = db.query(Building).filter(
+                Building.id == property_data.building_id
+            ).first()
+            
+            # アクティブな掲載情報を取得
+            active_listings = db.query(PropertyListing).filter(
+                PropertyListing.master_property_id == property_data.id,
+                PropertyListing.is_active == True
+            ).all()
+            
+            # 最低価格を取得
+            min_price = None
+            if active_listings:
+                prices = [l.current_price for l in active_listings if l.current_price]
+                if prices:
+                    min_price = min(prices)
+            
+            results.append({
+                "id": property_data.id,
+                "building_id": property_data.building_id,
+                "building_name": building.normalized_name if building else "不明",
+                "room_number": property_data.room_number,
+                "floor_number": property_data.floor_number,
+                "area": property_data.area,
+                "layout": property_data.layout,
+                "direction": property_data.direction,
+                "current_price": min_price,
+                "listing_count": len(active_listings)
+            })
+    
+    return {
+        "properties": results,
+        "total": len(results)
+    }
 
 
 @router.get("/properties/{property_id}", response_model=PropertyDetail)
@@ -600,6 +724,14 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
                         "properties_scraped": 0,
                         "new_listings": 0,
                         "updated_listings": 0,
+                        "skipped_listings": 0,
+                        # 詳細統計
+                        "properties_found": 0,  # 一覧から取得した物件数
+                        "properties_attempted": 0,  # 処理を試みた物件数
+                        "detail_fetch_failed": 0,  # 詳細ページ取得失敗数
+                        "price_missing": 0,  # 価格情報なし
+                        "building_info_missing": 0,  # 建物情報不足
+                        "other_errors": 0,  # その他のエラー
                         "started_at": datetime.now().isoformat(),
                         "completed_at": None,
                         "error": None
@@ -610,19 +742,21 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
                     print(f"[{task_id}] Starting {scraper_name} scraper for {area_name} ({area_code})")
                     
                     # プログレスを更新する関数を定義
-                    def update_progress(count, new_count=0, updated_count=0):
+                    def update_progress(count, new_count=0, updated_count=0, skipped_count=0):
                         scraping_tasks[task_id]["progress"][progress_key]["properties_scraped"] = count
                         scraping_tasks[task_id]["progress"][progress_key]["new_listings"] = new_count
                         scraping_tasks[task_id]["progress"][progress_key]["updated_listings"] = updated_count
+                        scraping_tasks[task_id]["progress"][progress_key]["skipped_listings"] = skipped_count
                         if count % 10 == 0:
-                            print(f"[{task_id}] Progress: {progress_key} - {count}/{max_properties} properties (new: {new_count}, updated: {updated_count})")
+                            print(f"[{task_id}] Progress: {progress_key} - {count}/{max_properties} properties (new: {new_count}, updated: {updated_count}, skipped: {skipped_count})")
                     
-                    # カウンターを初期化
-                    listing_stats = {
-                        "new": 0,
-                        "updated": 0,
-                        "total": 0
-                    }
+                    # 詳細統計を更新する関数
+                    def update_detail_stats(**kwargs):
+                        for key, value in kwargs.items():
+                            if key in scraping_tasks[task_id]["progress"][progress_key]:
+                                scraping_tasks[task_id]["progress"][progress_key][key] = value
+                    
+                    # 統計管理はスクレイパー側に委任（二重管理を避ける）
                     
                     # スクレイパーインスタンスを作成
                     with scraper_class(max_properties=max_properties) as scraper:
@@ -662,10 +796,10 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
                         
                         scraper.fetch_page = fetch_page_with_pause_check
                         
-                        # create_or_update_listingメソッドをオーバーライド
+                        # create_or_update_listingメソッドをオーバーライド（ログ記録のみ、統計は二重管理しない）
                         original_create_or_update = scraper.create_or_update_listing
                         
-                        def create_or_update_with_stats(*args, **kwargs):
+                        def create_or_update_with_logging(*args, **kwargs):
                             # 簡易的な一時停止・キャンセルチェック
                             pause_flag = task_pause_flags.get(task_id)
                             if pause_flag and pause_flag.is_set():
@@ -710,19 +844,15 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
                                 "building_info": building_info
                             }
                             
-                            # 統計を更新
+                            # ログメッセージを作成
                             if not existing:
-                                listing_stats["new"] += 1
                                 log_entry["message"] = f"新規物件登録: {title} ({price}万円)"
                             else:
-                                listing_stats["updated"] += 1
                                 if existing.current_price != price:
                                     log_entry["message"] = f"価格更新: {title} ({existing.current_price}万円 → {price}万円)"
                                     log_entry["price_change"] = {"old": existing.current_price, "new": price}
                                 else:
                                     log_entry["message"] = f"情報更新: {title} ({price}万円)"
-                            
-                            listing_stats["total"] += 1
                             
                             # ログを追加（最新50件のみ保持）
                             if "logs" not in scraping_tasks[task_id]:
@@ -731,27 +861,99 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
                             if len(scraping_tasks[task_id]["logs"]) > 50:
                                 scraping_tasks[task_id]["logs"] = scraping_tasks[task_id]["logs"][-50:]
                             
-                            # プログレスを更新
-                            update_progress(listing_stats["total"], listing_stats["new"], listing_stats["updated"])
-                            
                             return result
                         
-                        scraper.create_or_update_listing = create_or_update_with_stats
+                        scraper.create_or_update_listing = create_or_update_with_logging
                         
+                        # update_listing_from_listメソッドは既にスクレイパー本体で統計を記録しているので、
+                        # ここでは何もしない（二重カウントを避ける）
+                        
+                        # save_propertyメソッドのオーバーライドは削除（統計の二重管理を避ける）
+                        
+                        # parse_property_detailメソッドのオーバーライドも削除（統計の二重管理を避ける）
+                        
+                        # parse_property_listメソッドのオーバーライドも削除（統計の二重管理を避ける）
                         
                         # スクレイピング実行（max_pagesを計算）
-                        # SUUMOは100件/ページ、他は概ね25件/ページ
-                        items_per_page = 100 if scraper_name == 'suumo' else 25
+                        # 各サイトの1ページあたりの物件数
+                        items_per_page_map = {
+                            'suumo': 100,
+                            'homes': 20,
+                            'rehouse': 30,  # 三井のリハウスは約30件/ページ
+                            'nomu': 20
+                        }
+                        items_per_page = items_per_page_map.get(scraper_name, 25)
                         max_pages = (max_properties + items_per_page - 1) // items_per_page
                         
                         print(f"[{task_id}] Scraping up to {max_pages} pages for {max_properties} properties")
-                        scraper.scrape_area(area_code, max_pages=max_pages)
+                        
+                        # 統計更新用の別スレッドを開始
+                        import threading
+                        import time as time_module
+                        stop_stats_update = threading.Event()
+                        
+                        def update_stats_periodically():
+                            while not stop_stats_update.is_set():
+                                try:
+                                    # スクレイパーから最新の統計を取得
+                                    current_stats = scraper.get_scraping_stats()
+                                    
+                                    # 統計が存在する場合のみ更新（0で上書きしない）
+                                    if current_stats:
+                                        updates = {}
+                                        for key, value in {
+                                            "properties_found": current_stats.get('properties_found', 0),
+                                            "properties_processed": current_stats.get('properties_processed', 0),
+                                            "properties_attempted": current_stats.get('properties_attempted', 0),
+                                            "properties_scraped": current_stats.get('detail_fetched', 0),
+                                            "new_listings": current_stats.get('new_listings', 0),
+                                            "updated_listings": current_stats.get('updated_listings', 0),
+                                            "skipped_listings": current_stats.get('detail_skipped', 0),
+                                            "detail_fetch_failed": current_stats.get('detail_fetch_failed', 0),
+                                            "price_missing": current_stats.get('price_missing', 0),
+                                            "building_info_missing": current_stats.get('building_info_missing', 0),
+                                            "other_errors": current_stats.get('other_errors', 0)
+                                        }.items():
+                                            # 現在の値を取得
+                                            current_value = scraping_tasks[task_id]["progress"][progress_key].get(key, 0)
+                                            # 新しい値が0でない、または現在値が0の場合のみ更新
+                                            if value != 0 or current_value == 0:
+                                                updates[key] = value
+                                        
+                                        # 更新がある場合のみ適用
+                                        if updates:
+                                            scraping_tasks[task_id]["progress"][progress_key].update(updates)
+                                except Exception as e:
+                                    print(f"[{task_id}] Error updating stats: {e}")
+                                time_module.sleep(2)  # 2秒ごとに更新
+                        
+                        stats_thread = threading.Thread(target=update_stats_periodically)
+                        stats_thread.daemon = True
+                        stats_thread.start()
+                        
+                        try:
+                            scraper.scrape_area(area_code, max_pages=max_pages)
+                        finally:
+                            # 統計更新スレッドを停止
+                            stop_stats_update.set()
+                            stats_thread.join(timeout=1)
                     
                     # 完了（実際の取得件数を反映）
-                    final_count = scraping_tasks[task_id]["progress"][progress_key]["properties_scraped"]
+                    final_stats = scraper.get_scraping_stats()
+                    final_count = final_stats.get('detail_fetched', 0)
                     scraping_tasks[task_id]["progress"][progress_key].update({
                         "status": "completed",
-                        "completed_at": datetime.now().isoformat()
+                        "completed_at": datetime.now().isoformat(),
+                        # 最終的な詳細統計を保存
+                        "properties_found": final_stats.get('properties_found', 0),
+                        "properties_processed": final_stats.get('properties_processed', 0),
+                        "properties_attempted": final_stats.get('properties_attempted', 0),
+                        "detail_fetch_failed": final_stats.get('detail_fetch_failed', 0),
+                        "price_missing": final_stats.get('price_missing', 0),
+                        "building_info_missing": final_stats.get('building_info_missing', 0),
+                        "other_errors": final_stats.get('other_errors', 0),
+                        "properties_scraped": final_count,  # 詳細取得数を保存
+                        "skipped_listings": final_stats.get('detail_skipped', 0)
                     })
                     
                     completed_combinations += 1

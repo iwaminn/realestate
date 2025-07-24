@@ -96,6 +96,8 @@ class MasterProperty(Base):
     property_hash = Column(String(255), unique=True)      # 建物ID+部屋番号のハッシュ
     resale_property_id = Column(Integer, ForeignKey("master_properties.id"))  # 再販の場合、前の物件ID
     is_resale = Column(Boolean, default=False)            # 買い取り再販フラグ
+    sold_at = Column(DateTime)                            # 販売終了日（全掲載が終了した日）
+    last_sale_price = Column(Integer)                     # 最終販売価格（販売終了時の価格）
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
     

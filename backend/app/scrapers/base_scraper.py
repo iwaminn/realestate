@@ -6,11 +6,13 @@
 import time
 import hashlib
 import requests
+import threading
 from bs4 import BeautifulSoup
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 import logging
+import os
 
 from ..database import SessionLocal
 from ..models import (
@@ -21,6 +23,7 @@ from ..utils.building_normalizer import BuildingNameNormalizer
 from ..utils.reading_generator import generate_reading
 from ..utils.katakana_converter import english_to_katakana, has_english_words
 from ..config.scraper_config import ScraperConfig
+from ..utils.scraper_error_logger import ScraperErrorLogger
 import re
 
 
@@ -68,10 +71,47 @@ class BaseScraper:
         # ロガーを設定
         self.logger = logging.getLogger(f'{__name__}.{source_site}')
         
+        # エラーログ専用のロガーを設定
+        self.error_logger = ScraperErrorLogger(source_site)
+        
         # 設定を読み込む
         config = ScraperConfig.get_scraper_specific_config(source_site)
         self.delay = config['delay']  # スクレイピング間隔（秒）
         self.detail_refetch_days = config['detail_refetch_days']  # 詳細ページ再取得間隔（日）
+        
+        # エラー追跡とサーキットブレーカー設定
+        self.error_threshold = float(os.getenv('SCRAPER_ERROR_THRESHOLD', '0.5'))  # 50%のエラー率でストップ
+        self.min_attempts_before_check = int(os.getenv('SCRAPER_MIN_ATTEMPTS', '10'))  # 最低10件処理してからチェック
+        self.consecutive_error_limit = int(os.getenv('SCRAPER_CONSECUTIVE_ERROR_LIMIT', '10'))  # 連続10件のエラーでストップ
+        self.consecutive_errors = 0
+        self.circuit_breaker_enabled = os.getenv('SCRAPER_CIRCUIT_BREAKER', 'true').lower() == 'true'
+        
+        # エラー統計
+        self.error_stats = {
+            'total_attempts': 0,
+            'total_errors': 0,
+            'validation_errors': 0,
+            'parsing_errors': 0,
+            'saving_errors': 0,
+            'detail_page_errors': 0,
+        }
+        
+        # スクレイピング統計（管理画面用）
+        self._scraping_stats = {
+            'properties_found': 0,        # 一覧ページから発見した物件総数
+            'properties_processed': 0,    # 処理対象とした物件数（max_properties制限後）
+            'properties_attempted': 0,    # 実際に処理を試行した物件数
+            'detail_fetched': 0,          # 詳細ページを取得した件数
+            'detail_skipped': 0,          # 詳細ページ取得をスキップした件数
+            'new_listings': 0,            # 新規登録した掲載数
+            'updated_listings': 0,        # 更新した掲載数
+            'detail_fetch_failed': 0,     # 詳細取得に失敗した数
+            'save_failed': 0,             # 保存に失敗した数
+            'price_missing': 0,           # 価格情報が取得できなかった数
+            'building_info_missing': 0,   # 建物情報が不足していた数
+            'other_errors': 0,            # その他のエラー数
+        }
+        self._stats_lock = threading.Lock()  # 統計のスレッドセーフアクセス用
     
     def __enter__(self):
         return self
@@ -110,6 +150,233 @@ class BaseScraper:
         if price < 100 or price > 10000000:  # 100万円未満または100億円超は異常
             print(f"警告: 価格が異常です: {price}万円")
             return False
+        
+        return True
+    
+    def check_circuit_breaker(self) -> None:
+        """サーキットブレーカーのチェック - エラー率が閾値を超えた場合は例外を投げる"""
+        if not self.circuit_breaker_enabled:
+            return
+            
+        # 最低試行回数に達していない場合はチェックしない
+        if self.error_stats['total_attempts'] < self.min_attempts_before_check:
+            return
+            
+        # エラー率の計算
+        error_rate = self.error_stats['total_errors'] / self.error_stats['total_attempts']
+        
+        if error_rate >= self.error_threshold:
+            error_msg = (
+                f"サーキットブレーカー作動: エラー率 {error_rate:.1%} が閾値 {self.error_threshold:.1%} を超えました。"
+                f"（{self.error_stats['total_errors']}/{self.error_stats['total_attempts']} 件）"
+            )
+            self.logger.error(error_msg)
+            self.error_logger.log_circuit_breaker_activation(
+                error_rate=error_rate,
+                total_errors=self.error_stats['total_errors'],
+                total_attempts=self.error_stats['total_attempts']
+            )
+            raise Exception(error_msg)
+        
+        # 連続エラーチェック
+        if self.consecutive_errors >= self.consecutive_error_limit:
+            error_msg = (
+                f"サーキットブレーカー作動: 連続エラー数 {self.consecutive_errors} が上限 {self.consecutive_error_limit} に達しました。"
+            )
+            self.logger.error(error_msg)
+            self.error_logger.log_circuit_breaker_activation(
+                error_rate=error_rate,
+                total_errors=self.error_stats['total_errors'],
+                total_attempts=self.error_stats['total_attempts'],
+                consecutive_errors=self.consecutive_errors
+            )
+            raise Exception(error_msg)
+    
+    def record_success(self) -> None:
+        """成功を記録"""
+        self.error_stats['total_attempts'] += 1
+        self.consecutive_errors = 0  # 連続エラーカウントをリセット
+    
+    def record_property_found(self, count: int = 1) -> None:
+        """一覧から見つかった物件数を記録"""
+        with self._stats_lock:
+            self._scraping_stats['properties_found'] += count
+    
+    def record_property_processed(self, count: int = 1) -> None:
+        """処理対象とした物件数を記録（max_properties制限後）"""
+        with self._stats_lock:
+            self._scraping_stats['properties_processed'] += count
+    
+    def record_property_attempted(self) -> None:
+        """処理を試行した物件を記録"""
+        with self._stats_lock:
+            self._scraping_stats['properties_attempted'] += 1
+    
+    def record_property_scraped(self) -> None:
+        """詳細取得に成功した物件を記録"""
+        with self._stats_lock:
+            self._scraping_stats['detail_fetched'] += 1
+    
+    def record_listing_created(self) -> None:
+        """新規作成された掲載を記録"""
+        with self._stats_lock:
+            self._scraping_stats['new_listings'] += 1
+    
+    def record_listing_updated(self) -> None:
+        """更新された掲載を記録"""
+        with self._stats_lock:
+            self._scraping_stats['updated_listings'] += 1
+    
+    def record_listing_skipped(self) -> None:
+        """スキップされた掲載を記録"""
+        with self._stats_lock:
+            self._scraping_stats['detail_skipped'] += 1
+    
+    def record_save_failed(self) -> None:
+        """保存失敗を記録"""
+        with self._stats_lock:
+            self._scraping_stats['save_failed'] += 1
+    
+    def record_detail_fetch_failed(self) -> None:
+        """詳細取得失敗を記録"""
+        with self._stats_lock:
+            self._scraping_stats['detail_fetch_failed'] += 1
+    
+    def record_price_missing(self) -> None:
+        """価格情報なしを記録"""
+        with self._stats_lock:
+            self._scraping_stats['price_missing'] += 1
+    
+    def record_building_info_missing(self) -> None:
+        """建物情報なしを記録"""
+        with self._stats_lock:
+            self._scraping_stats['building_info_missing'] += 1
+    
+    def record_other_error(self) -> None:
+        """その他のエラーを記録"""
+        with self._stats_lock:
+            self._scraping_stats['other_errors'] += 1
+    
+    def get_scraping_stats(self) -> Dict[str, int]:
+        """スクレイピング統計を取得"""
+        with self._stats_lock:
+            return self._scraping_stats.copy()
+    
+    def get_stats(self) -> Dict[str, int]:
+        """管理画面用の統計を取得（後方互換性のため）"""
+        stats = self._scraping_stats.copy()
+        # 旧形式の名前にマッピング
+        return {
+            'properties_found': stats.get('properties_found', 0),
+            'properties_scraped': stats.get('properties_scraped', 0),
+            'new_properties': stats.get('new_listings', 0),
+            'updated_properties': stats.get('updated_listings', 0),
+            'skipped_properties': stats.get('skipped_listings', 0),
+            'price_missing': stats.get('price_missing', 0),
+            'building_info_missing': stats.get('building_info_missing', 0),
+            'detail_fetch_failed': stats.get('detail_fetch_failed', 0),
+            'other_errors': stats.get('other_errors', 0)
+        }
+    
+    def record_error(self, error_type: str = 'other', 
+                    url: Optional[str] = None,
+                    building_name: Optional[str] = None,
+                    property_data: Optional[Dict[str, Any]] = None,
+                    error: Optional[Exception] = None,
+                    phase: str = "unknown") -> None:
+        """エラーを記録（詳細なコンテキスト情報付き）"""
+        self.error_stats['total_attempts'] += 1
+        self.error_stats['total_errors'] += 1
+        self.consecutive_errors += 1
+        
+        # エラータイプ別のカウント
+        if error_type == 'validation':
+            self.error_stats['validation_errors'] += 1
+        elif error_type == 'parsing':
+            self.error_stats['parsing_errors'] += 1
+        elif error_type == 'saving':
+            self.error_stats['saving_errors'] += 1
+        elif error_type == 'detail_page':
+            self.error_stats['detail_page_errors'] += 1
+        
+        # 詳細なエラー情報を記録
+        self.error_logger.log_property_error(
+            error_type=error_type,
+            url=url,
+            building_name=building_name,
+            property_data=property_data,
+            error=error,
+            phase=phase
+        )
+        
+        # サーキットブレーカーのチェック
+        self.check_circuit_breaker()
+    
+    def validate_html_structure(self, soup: BeautifulSoup, required_selectors: Dict[str, str]) -> bool:
+        """HTML構造の検証 - 必要な要素が存在するか確認"""
+        missing_elements = []
+        
+        for name, selector in required_selectors.items():
+            elements = soup.select(selector)
+            if not elements:
+                missing_elements.append(f"{name} ({selector})")
+        
+        if missing_elements:
+            self.logger.warning(
+                f"HTML構造が変更された可能性があります。"
+                f"以下の要素が見つかりません: {', '.join(missing_elements)}"
+            )
+            
+            # パースエラーの詳細を記録
+            missing_selectors = [selector for _, selector in [(name, sel) for name, sel in required_selectors.items() if soup.select(sel) == []]]
+            found_selectors = {name: len(soup.select(selector)) > 0 for name, selector in required_selectors.items()}
+            
+            self.error_logger.log_parsing_error(
+                url=soup.get('data-url', 'unknown'),  # URLが利用可能な場合
+                missing_selectors=missing_selectors,
+                found_selectors=found_selectors
+            )
+            
+            return False
+            
+        return True
+    
+    def enhanced_validate_property_data(self, property_data: Dict[str, Any]) -> bool:
+        """強化された物件データ検証"""
+        # 既存の検証を実行
+        if not self.validate_property_data(property_data):
+            return False
+        
+        # 追加の検証
+        # 必須フィールドの詳細チェック
+        essential_fields = {
+            'url': lambda x: isinstance(x, str) and x.startswith('http'),
+            'price': lambda x: isinstance(x, (int, float)) and 100 <= x <= 10000000,
+            'building_name': lambda x: isinstance(x, str) and 3 <= len(x) <= 100,
+            'area': lambda x: x is None or (isinstance(x, (int, float)) and 10 <= x <= 1000),
+            'layout': lambda x: x is None or (isinstance(x, str) and len(x) <= 20),
+            'floor_number': lambda x: x is None or (isinstance(x, int) and -5 <= x <= 100),
+        }
+        
+        for field, validator in essential_fields.items():
+            if field in property_data:
+                try:
+                    if not validator(property_data[field]):
+                        self.logger.warning(f"フィールド '{field}' の値が無効です: {property_data[field]}")
+                        return False
+                except Exception as e:
+                    self.logger.warning(f"フィールド '{field}' の検証中にエラー: {e}")
+                    return False
+        
+        # データ整合性チェック
+        if 'floor_number' in property_data and 'total_floors' in property_data:
+            if property_data['floor_number'] and property_data['total_floors']:
+                if property_data['floor_number'] > property_data['total_floors']:
+                    self.logger.warning(
+                        f"階数の整合性エラー: {property_data['floor_number']}階/"
+                        f"{property_data['total_floors']}階建て"
+                    )
+                    return False
         
         return True
     
@@ -197,7 +464,7 @@ class BaseScraper:
                     )
                     self.session.add(alias)
                 
-                return building, extracted_room_number, extracted_room_number
+                return building, extracted_room_number
             else:
                 # 新規作成（住所必須）
                 print(f"[WARNING] 広告文タイトルで新規建物作成: {building_name} at {address}")
@@ -477,7 +744,7 @@ class BaseScraper:
     def get_or_create_master_property(self, building: Building, room_number: str,
                                      floor_number: int = None, area: float = None,
                                      layout: str = None, direction: str = None,
-                                     url: str = None) -> MasterProperty:
+                                     url: str = None, current_price: int = None) -> MasterProperty:
         """マスター物件を取得または作成（買い取り再販判定付き）"""
         # 物件ハッシュを生成（方角とURLも渡す）
         property_hash = self.generate_property_hash(
@@ -490,8 +757,8 @@ class BaseScraper:
         ).first()
         
         if not master_property:
-            # 買い取り再販の可能性をチェック（60日以内に販売終了した類似物件があるか）
-            resale_check = self.check_resale_property(building.id, floor_number, area, layout)
+            # 買い取り再販の可能性をチェック
+            resale_check = self.check_resale_property(building.id, floor_number, area, layout, current_price)
             
             # 新規作成
             master_property = MasterProperty(
@@ -695,6 +962,9 @@ class BaseScraper:
                 listing.current_price = price
                 listing.management_fee = management_fee
                 listing.repair_fund = repair_fund
+            
+            # 更新の統計を記録
+            self.record_listing_updated()
         else:
             # 新規掲載を作成
             # first_published_atが指定されていない場合は、published_atかfirst_seen_atを使用
@@ -740,6 +1010,9 @@ class BaseScraper:
                 )
                 self.session.add(price_history)
                 print(f"  → 初回価格記録: {price}万円")
+            
+            # 新規作成の統計を記録
+            self.record_listing_created()
         
         # 買い取り再販のチェック（再販候補IDがある場合）
         if master_property.resale_property_id and not master_property.is_resale:
@@ -801,6 +1074,177 @@ class BaseScraper:
         if inactive_listings:
             print(f"\n{self.source_site}で {len(inactive_listings)} 件の物件が削除されました")
     
+    def get_existing_listings_map(self, urls: List[str]) -> Dict[str, PropertyListing]:
+        """URLリストから既存の掲載情報をマップとして取得（N+1問題の解決）"""
+        if not urls:
+            return {}
+        
+        print(f"\n既存の掲載情報を取得中...")
+        existing_listings_query = self.session.query(PropertyListing).filter(
+            PropertyListing.url.in_(urls)
+        )
+        existing_listings_map = {listing.url: listing for listing in existing_listings_query}
+        print(f"  → {len(existing_listings_map)} 件の既存掲載を発見")
+        
+        return existing_listings_map
+    
+    def common_scrape_area_logic(self, area_identifier: str, max_pages: int = 5):
+        """共通のエリアスクレイピングロジック（Template Method Pattern）
+        
+        各スクレイパーは以下のメソッドを実装する必要があります：
+        - get_search_url(area_identifier, page): 検索URLを生成
+        - parse_property_list(soup): 物件一覧から情報を抽出
+        - process_property_data(property_data, existing_listing): 個別の物件を処理
+        """
+        if self.force_detail_fetch:
+            print("※ 強制詳細取得モードが有効です - すべての物件の詳細ページを取得します")
+        
+        # ===== フェーズ1: 物件一覧の収集 =====
+        all_properties = []
+        
+        for page in range(1, max_pages + 1):
+            print(f"ページ {page} を取得中...")
+            
+            # 検索URLを生成（各スクレイパーで実装）
+            search_url = self.get_search_url(area_identifier, page)
+            print(f"URL: {search_url}")
+            soup = self.fetch_page(search_url)
+            
+            if not soup:
+                print(f"ページ {page} の取得に失敗しました")
+                break
+            
+            # 物件情報を一覧から抽出（各スクレイパーで実装）
+            properties = self.parse_property_list(soup)
+            
+            if not properties:
+                print(f"ページ {page} に物件が見つかりません")
+                break
+            
+            print(f"ページ {page} で {len(properties)} 件の物件を発見")
+            
+            # max_propertiesを超えないように調整
+            if self.max_properties and len(all_properties) + len(properties) > self.max_properties:
+                # 必要な分だけ取得
+                remaining = self.max_properties - len(all_properties)
+                properties = properties[:remaining]
+                print(f"  → 最大取得件数に合わせて {remaining} 件のみ使用")
+            
+            # 一覧から見つかった物件数を記録
+            self.record_property_found(len(properties))
+            all_properties.extend(properties)
+            
+            # 最大件数に達した場合は終了
+            if self.max_properties and len(all_properties) >= self.max_properties:
+                print(f"最大取得件数（{self.max_properties}件）に達しました")
+                break
+            
+            # ページ間で遅延
+            time.sleep(self.delay)
+        
+        # 処理対象数を記録（実際に処理する数）
+        actual_to_process = len(all_properties)
+        print(f"\n収集完了: 合計 {actual_to_process} 件の物件を発見")
+        self.record_property_processed(actual_to_process)
+        
+        # 既存の掲載を一括で取得してマップ化（N+1問題の解決）
+        all_urls = [p['url'] for p in all_properties if p.get('url')]
+        existing_listings_map = self.get_existing_listings_map(all_urls)
+        
+        # ===== フェーズ2: 詳細取得と保存 =====
+        print(f"\n合計 {len(all_properties)} 件の物件を処理します...")
+        
+        saved_count = 0
+        skipped_count = 0
+        
+        for i, property_data in enumerate(all_properties, 1):
+            print(f"[{i}/{len(all_properties)}] {property_data.get('building_name', 'Unknown')}")
+            
+            # 処理を試行
+            self.record_property_attempted()
+            
+            # URLがあれば処理可能
+            if not property_data.get('url'):
+                print(f"  → URLが不足、スキップ")
+                skipped_count += 1
+                self.record_other_error()
+                continue
+            
+            try:
+                # 既存の掲載をマップから取得
+                existing_listing = existing_listings_map.get(property_data['url'])
+                
+                # 個別の物件を処理（各スクレイパーで実装）
+                success = self.process_property_data(property_data, existing_listing)
+                
+                if success:
+                    saved_count += 1
+                else:
+                    skipped_count += 1
+                
+            except Exception as e:
+                print(f"  → エラー: {e}")
+                self.record_error(
+                    error_type='saving',
+                    url=property_data.get('url'),
+                    building_name=property_data.get('building_name'),
+                    property_data=property_data,
+                    error=e,
+                    phase='save_property'
+                )
+                skipped_count += 1
+                self.record_other_error()
+                continue
+        
+        # 非アクティブな掲載をマーク（部分的なスクレイピングの場合はスキップ）
+        if max_pages >= 30:  # 全体スクレイピングの閾値
+            self.mark_inactive_listings(all_urls)
+        else:
+            print(f"部分スクレイピング（{max_pages}ページ）のため、非アクティブマーキングをスキップ")
+        
+        # 変更をコミット
+        self.session.commit()
+        
+        # 統計情報を表示
+        self.display_scraping_stats(saved_count)
+        
+        return saved_count
+    
+    def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
+        """個別の物件を処理（各スクレイパーでオーバーライド）"""
+        raise NotImplementedError("各スクレイパーでprocess_property_dataメソッドを実装してください")
+    
+    def display_scraping_stats(self, saved_count: int):
+        """スクレイピング統計を表示"""
+        stats = self.get_scraping_stats()
+        print(f"\nスクレイピング完了:")
+        print(f"  物件発見数: {stats['properties_found']} 件（一覧ページから発見）")
+        print(f"  処理対象数: {stats['properties_processed']} 件（max_properties制限後）")
+        print(f"  処理試行数: {stats['properties_attempted']} 件")
+        print(f"  詳細取得数: {stats['detail_fetched']} 件")
+        print(f"  詳細スキップ数: {stats['detail_skipped']} 件")
+        print(f"  新規登録数: {stats['new_listings']} 件")
+        print(f"  更新数: {stats['updated_listings']} 件")
+        print(f"  保存成功数: {saved_count} 件")
+        
+        # エラー統計
+        error_count = (stats['detail_fetch_failed'] + stats['price_missing'] + 
+                      stats['building_info_missing'] + stats['save_failed'] + 
+                      stats['other_errors'])
+        if error_count > 0:
+            print(f"\nエラー統計:")
+            if stats['detail_fetch_failed'] > 0:
+                print(f"  詳細取得失敗: {stats['detail_fetch_failed']} 件")
+            if stats['price_missing'] > 0:
+                print(f"  価格情報なし: {stats['price_missing']} 件")
+            if stats['building_info_missing'] > 0:
+                print(f"  建物情報不足: {stats['building_info_missing']} 件")
+            if stats['save_failed'] > 0:
+                print(f"  保存失敗: {stats['save_failed']} 件")
+            if stats['other_errors'] > 0:
+                print(f"  その他エラー: {stats['other_errors']} 件")
+            print(f"  エラー合計: {error_count} 件")
+    
     def generate_property_hash(self, building_id: int, room_number: str, 
                              floor_number: int = None, area: float = None, 
                              layout: str = None, direction: str = None, url: str = None) -> str:
@@ -825,10 +1269,11 @@ class BaseScraper:
         return hashlib.md5(data.encode()).hexdigest()
     
     def check_resale_property(self, building_id: int, floor_number: int = None, 
-                            area: float = None, layout: str = None) -> dict:
+                            area: float = None, layout: str = None, 
+                            current_price: int = None) -> dict:
         """買い取り再販物件かチェック
         
-        60日以内に販売終了した類似物件があり、かつ価格が上昇している場合は買い取り再販と判定
+        1ヶ月以上前に販売終了した類似物件があり、かゔ10%以上価格が上昇している場合は買い取り再販と判定
         """
         from datetime import datetime, timedelta
         
@@ -839,41 +1284,35 @@ class BaseScraper:
         if not floor_number or not area or not layout:
             return result
         
-        # 60日前の日時
-        cutoff_date = datetime.now() - timedelta(days=60)
+        # 1ヶ月前の日時
+        one_month_ago = datetime.now() - timedelta(days=30)
         
         # 同じ建物、同じ階、似た面積、同じ間取りの販売終了物件を検索
-        similar_properties = self.session.query(MasterProperty).join(
-            PropertyListing,
-            MasterProperty.id == PropertyListing.master_property_id
-        ).filter(
+        similar_properties = self.session.query(MasterProperty).filter(
             MasterProperty.building_id == building_id,
             MasterProperty.floor_number == floor_number,
             MasterProperty.layout == layout,
             # 面積の誤差は0.5㎡以内
             MasterProperty.area.between(area - 0.5, area + 0.5),
             # 販売終了している
-            PropertyListing.is_active == False,
-            PropertyListing.sold_at != None,
-            # 60日以内に販売終了
-            PropertyListing.sold_at >= cutoff_date
-        ).order_by(PropertyListing.sold_at.desc()).all()
+            MasterProperty.sold_at != None,
+            # 1ヶ月以上前に販売終了
+            MasterProperty.sold_at < one_month_ago
+        ).order_by(MasterProperty.sold_at.desc()).all()
         
         if similar_properties:
             # 最も最近販売終了した物件
             previous_property = similar_properties[0]
             
-            # 前回の販売価格を取得
-            last_listing = self.session.query(PropertyListing).filter(
-                PropertyListing.master_property_id == previous_property.id,
-                PropertyListing.sold_at != None
-            ).order_by(PropertyListing.sold_at.desc()).first()
-            
-            if last_listing and last_listing.current_price:
-                # この時点では新物件の価格がまだ分からないので、
-                # とりあえず再販候補として記録
-                result['resale_property_id'] = previous_property.id
-                # is_resaleフラグは価格比較後に設定される
+            # 前回の最終販売価格を取得
+            if previous_property.last_sale_price and current_price:
+                # 10%以上の価格上昇かチェック
+                price_increase_rate = (current_price - previous_property.last_sale_price) / previous_property.last_sale_price
+                
+                if price_increase_rate >= 0.1:  # 10%以上の上昇
+                    result['resale_property_id'] = previous_property.id
+                    result['is_resale'] = True
+                    print(f"  → 買い取り再販物件と判定: 前回{previous_property.last_sale_price}万円 → 今回{current_price}万円 ({price_increase_rate*100:.1f}%上昇)")
         
         return result
     
@@ -903,10 +1342,10 @@ class BaseScraper:
         """ページを取得"""
         try:
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
                 'Accept-Language': 'ja-JP,ja;q=0.9,en;q=0.8',
-                'Accept-Encoding': 'gzip, deflate, br',
+                'Accept-Encoding': 'gzip, deflate',
                 'Connection': 'keep-alive',
                 'Upgrade-Insecure-Requests': '1'
             }
@@ -948,6 +1387,60 @@ class BaseScraper:
             return True
         
         return False
+    
+    def process_property_with_smart_scraping(self, property_data: Dict[str, Any], 
+                                           get_detail_func: callable,
+                                           save_func: callable) -> bool:
+        """スマートスクレイピングを使用して物件を処理
+        
+        Args:
+            property_data: 一覧ページから取得した物件情報
+            get_detail_func: 詳細ページを取得する関数 (urlを引数に取る)
+            save_func: 物件を保存する関数 (property_dataを引数に取る)
+            
+        Returns:
+            bool: 保存に成功したかどうか
+        """
+        url = property_data.get('url')
+        if not url:
+            return False
+            
+        try:
+            # 既存の掲載を確認
+            from .models import PropertyListing
+            existing_listing = self.session.query(PropertyListing).filter(
+                PropertyListing.url == url
+            ).first()
+            
+            # 詳細ページの取得が必要かチェック
+            needs_detail = True
+            if existing_listing and not self.force_detail_fetch:
+                needs_detail = self.needs_detail_fetch(existing_listing)
+                if not needs_detail:
+                    print(f"  → 詳細ページの取得をスキップ（最終取得: {existing_listing.detail_fetched_at}）")
+                    # 最終確認日時だけは更新（物件がまだアクティブであることを記録）
+                    existing_listing.last_confirmed_at = datetime.now()
+                    self.session.flush()
+                    self.record_listing_skipped()
+                    return True  # スキップは成功として扱う
+            
+            # 詳細ページを取得
+            detail_data = get_detail_func(url)
+            if detail_data:
+                self.record_property_scraped()
+                # 一覧ページのデータとマージ
+                property_data.update(detail_data)
+                
+                # データベースに保存
+                return save_func(property_data)
+            else:
+                self.record_detail_fetch_failed()
+                return False
+                
+        except Exception as e:
+            logger.error(f"スマートスクレイピングエラー: {e}")
+            self.record_detail_fetch_failed()
+            return False
     
     def update_listing_from_list(self, listing: PropertyListing, list_data: Dict[str, Any]):
         """一覧ページのデータで掲載情報を更新"""

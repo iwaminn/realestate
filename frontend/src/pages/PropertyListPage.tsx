@@ -12,6 +12,8 @@ import {
   Select,
   MenuItem,
   SelectChangeEvent,
+  FormControlLabel,
+  Checkbox,
 } from '@mui/material';
 import SearchForm from '../components/SearchForm';
 import PropertyCard from '../components/PropertyCard';
@@ -27,6 +29,7 @@ const PropertyListPage: React.FC = () => {
   const [totalPages, setTotalPages] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalCount, setTotalCount] = useState(0);
+  const [includeInactive, setIncludeInactive] = useState(false);
   
   // URLパラメータから初期状態を取得
   const getInitialParams = (): SearchParams => {
@@ -48,8 +51,19 @@ const PropertyListPage: React.FC = () => {
     return params;
   };
   
+  // URLパラメータからinclude_inactiveを取得
+  const getIncludeInactiveFromUrl = (): boolean => {
+    const urlParams = new URLSearchParams(location.search);
+    return urlParams.get('include_inactive') === 'true';
+  };
+  
   const [searchParams, setSearchParams] = useState<SearchParams>(getInitialParams());
   const [isInitialLoad, setIsInitialLoad] = useState(true);
+  
+  // URLからinclude_inactiveを初期化
+  useEffect(() => {
+    setIncludeInactive(getIncludeInactiveFromUrl());
+  }, []);
 
   // URLパラメータを更新
   const updateUrlParams = (params: SearchParams, page: number) => {
@@ -149,31 +163,46 @@ const PropertyListPage: React.FC = () => {
         </Alert>
       )}
 
-      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Typography variant="body1" color="text.secondary">
-          検索結果: {totalCount}件
-        </Typography>
-        {!loading && properties.length > 0 && (
-          <FormControl size="small" sx={{ minWidth: 200 }}>
-            <InputLabel id="sort-select-label">並び替え</InputLabel>
-            <Select
-              labelId="sort-select-label"
-              id="sort-select"
-              value={`${searchParams.sort_by || 'updated_at'}-${searchParams.sort_order || 'desc'}`}
-              label="並び替え"
-              onChange={handleSortChange}
-            >
-              <MenuItem value="updated_at-desc">更新日（新しい順）</MenuItem>
-              <MenuItem value="updated_at-asc">更新日（古い順）</MenuItem>
-              <MenuItem value="price-asc">価格（安い順）</MenuItem>
-              <MenuItem value="price-desc">価格（高い順）</MenuItem>
-              <MenuItem value="area-desc">面積（広い順）</MenuItem>
-              <MenuItem value="area-asc">面積（狭い順）</MenuItem>
-              <MenuItem value="built_year-desc">築年数（新しい順）</MenuItem>
-              <MenuItem value="built_year-asc">築年数（古い順）</MenuItem>
-            </Select>
-          </FormControl>
-        )}
+      <Box sx={{ mb: 2 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+          <Typography variant="body1" color="text.secondary">
+            検索結果: {totalCount}件
+          </Typography>
+          {!loading && properties.length > 0 && (
+            <FormControl size="small" sx={{ minWidth: 200 }}>
+              <InputLabel id="sort-select-label">並び替え</InputLabel>
+              <Select
+                labelId="sort-select-label"
+                id="sort-select"
+                value={`${searchParams.sort_by || 'updated_at'}-${searchParams.sort_order || 'desc'}`}
+                label="並び替え"
+                onChange={handleSortChange}
+              >
+                <MenuItem value="updated_at-desc">更新日（新しい順）</MenuItem>
+                <MenuItem value="updated_at-asc">更新日（古い順）</MenuItem>
+                <MenuItem value="price-asc">価格（安い順）</MenuItem>
+                <MenuItem value="price-desc">価格（高い順）</MenuItem>
+                <MenuItem value="area-desc">面積（広い順）</MenuItem>
+                <MenuItem value="area-asc">面積（狭い順）</MenuItem>
+                <MenuItem value="built_year-desc">築年数（新しい順）</MenuItem>
+                <MenuItem value="built_year-asc">築年数（古い順）</MenuItem>
+              </Select>
+            </FormControl>
+          )}
+        </Box>
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={includeInactive}
+              onChange={(e) => {
+                setIncludeInactive(e.target.checked);
+                setCurrentPage(1);
+                fetchProperties(searchParams, 1);
+              }}
+            />
+          }
+          label="販売終了物件を含む"
+        />
       </Box>
 
       {loading ? (

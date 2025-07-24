@@ -30,6 +30,8 @@ import {
   ListItemText,
   Tabs,
   Tab,
+  Autocomplete,
+  CircularProgress,
 } from '@mui/material';
 import {
   PlayArrow as PlayIcon,
@@ -63,6 +65,15 @@ interface ScrapingTask {
       properties_scraped: number;
       new_listings: number;
       updated_listings: number;
+      skipped_listings: number;
+      // 詳細統計
+      properties_found?: number;
+      properties_processed?: number;
+      properties_attempted?: number;
+      detail_fetch_failed?: number;
+      price_missing?: number;
+      building_info_missing?: number;
+      other_errors?: number;
       started_at: string;
       completed_at: string | null;
       error: string | null;
@@ -95,6 +106,8 @@ const AdminScraping: React.FC = () => {
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [selectedTaskLog, setSelectedTaskLog] = useState<string | null>(null);
   const [logTabValue, setLogTabValue] = useState(0);
+  const [loadingButtons, setLoadingButtons] = useState<{ [key: string]: boolean }>({});
+  const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
 
   const scraperOptions = [
     { value: 'suumo', label: 'SUUMO' },
@@ -106,10 +119,21 @@ const AdminScraping: React.FC = () => {
   useEffect(() => {
     fetchAreas();
     fetchTasks();
-    // 定期的にタスクの状態を更新
-    const interval = setInterval(fetchTasks, 3000);
-    return () => clearInterval(interval);
   }, []);
+
+  // 自動更新の制御
+  useEffect(() => {
+    if (autoRefreshEnabled) {
+      const interval = setInterval(fetchTasks, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [autoRefreshEnabled]);
+
+  // ボタン操作中は自動更新を停止
+  useEffect(() => {
+    const isAnyButtonLoading = Object.values(loadingButtons).some(loading => loading);
+    setAutoRefreshEnabled(!isAnyButtonLoading);
+  }, [loadingButtons]);
 
   const fetchAreas = async () => {
     try {
@@ -162,32 +186,95 @@ const AdminScraping: React.FC = () => {
   };
 
   const pauseTask = async (taskId: string) => {
+    console.log(`Pausing task ${taskId}...`);
+    setLoadingButtons(prev => ({ ...prev, [`pause-${taskId}`]: true }));
     try {
+      // APIコールを実行
       await axios.post(`/api/admin/scraping/pause/${taskId}`);
-      fetchTasks();
+      
+      // タスク状態が更新されるまでポーリング
+      let attempts = 0;
+      const maxAttempts = 20; // 最大10秒間チェック
+      
+      while (attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const response = await axios.get('/api/admin/scraping/tasks');
+        const updatedTask = response.data.find((t: ScrapingTask) => t.task_id === taskId);
+        
+        if (updatedTask && updatedTask.status === 'paused') {
+          console.log(`Task ${taskId} is now paused`);
+          setTasks(response.data);
+          break;
+        }
+        attempts++;
+      }
+      
+      if (attempts >= maxAttempts) {
+        console.warn(`Task ${taskId} did not pause within timeout`);
+        fetchTasks(); // 最終的に一度更新
+      }
     } catch (error) {
       console.error('Failed to pause task:', error);
       alert('タスクの一時停止に失敗しました');
+    } finally {
+      setLoadingButtons(prev => ({ ...prev, [`pause-${taskId}`]: false }));
     }
   };
 
   const resumeTask = async (taskId: string) => {
+    console.log(`Resuming task ${taskId}...`);
+    setLoadingButtons(prev => ({ ...prev, [`resume-${taskId}`]: true }));
     try {
+      // APIコールを実行
       await axios.post(`/api/admin/scraping/resume/${taskId}`);
-      fetchTasks();
+      
+      // タスク状態が更新されるまでポーリング
+      let attempts = 0;
+      const maxAttempts = 20; // 最大10秒間チェック
+      
+      while (attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const response = await axios.get('/api/admin/scraping/tasks');
+        const updatedTask = response.data.find((t: ScrapingTask) => t.task_id === taskId);
+        
+        if (updatedTask && updatedTask.status === 'running') {
+          console.log(`Task ${taskId} is now running`);
+          setTasks(response.data);
+          break;
+        }
+        attempts++;
+      }
+      
+      if (attempts >= maxAttempts) {
+        console.warn(`Task ${taskId} did not resume within timeout`);
+        fetchTasks(); // 最終的に一度更新
+      }
     } catch (error) {
       console.error('Failed to resume task:', error);
       alert('タスクの再開に失敗しました');
+    } finally {
+      setLoadingButtons(prev => ({ ...prev, [`resume-${taskId}`]: false }));
     }
   };
 
   const cancelTask = async (taskId: string) => {
+    if (!confirm('タスクをキャンセルしてもよろしいですか？')) {
+      return;
+    }
+    console.log(`Cancelling task ${taskId}...`);
+    setLoadingButtons(prev => ({ ...prev, [`cancel-${taskId}`]: true }));
     try {
-      await axios.post(`/api/admin/scraping/cancel/${taskId}`);
+      // 最小表示時間を保証するため、APIコールと並行してタイマーを実行
+      const [apiResult] = await Promise.all([
+        axios.post(`/api/admin/scraping/cancel/${taskId}`),
+        new Promise(resolve => setTimeout(resolve, 500)) // 最小500ms表示
+      ]);
       fetchTasks();
     } catch (error) {
       console.error('Failed to cancel task:', error);
       alert('タスクのキャンセルに失敗しました');
+    } finally {
+      setLoadingButtons(prev => ({ ...prev, [`cancel-${taskId}`]: false }));
     }
   };
 
@@ -233,6 +320,12 @@ const AdminScraping: React.FC = () => {
     const totalProgress = progressItems.reduce((sum, progress) => {
       if (progress.status === 'completed') return sum + 100;
       if (progress.status === 'running') {
+        // 処理対象数が設定されている場合は、処理試行数/処理対象数で計算
+        if (progress.properties_processed && progress.properties_processed > 0) {
+          const attemptedRatio = (progress.properties_attempted || 0) / progress.properties_processed;
+          return sum + Math.min(attemptedRatio * 100, 95);
+        }
+        // 処理対象数がない場合は、詳細取得数/最大数で計算（フォールバック）
         return sum + Math.min((progress.properties_scraped / task.max_properties) * 100, 90);
       }
       return sum;
@@ -246,8 +339,9 @@ const AdminScraping: React.FC = () => {
     return progressItems.reduce((stats, progress) => ({
       total: stats.total + (progress.properties_scraped || 0),
       new: stats.new + (progress.new_listings || 0),
-      updated: stats.updated + (progress.updated_listings || 0)
-    }), { total: 0, new: 0, updated: 0 });
+      updated: stats.updated + (progress.updated_listings || 0),
+      skipped: stats.skipped + (progress.skipped_listings || 0)
+    }), { total: 0, new: 0, updated: 0, skipped: 0 });
   };
 
   return (
@@ -323,13 +417,37 @@ const AdminScraping: React.FC = () => {
           </Grid>
 
           <Grid item xs={12} md={4}>
-            <TextField
-              fullWidth
-              label="取得件数"
-              type="number"
+            <Autocomplete
+              freeSolo
+              options={[100, 200, 300, 400, 500, 1000, 2000, 3000, 4000, 5000, 10000]}
               value={maxProperties}
-              onChange={(e) => setMaxProperties(parseInt(e.target.value) || 100)}
-              inputProps={{ min: 1, max: 1000 }}
+              onChange={(_, newValue) => {
+                if (typeof newValue === 'number') {
+                  setMaxProperties(newValue);
+                }
+              }}
+              onInputChange={(_, newInputValue) => {
+                const value = parseInt(newInputValue);
+                if (!isNaN(value) && value > 0 && value <= 10000) {
+                  setMaxProperties(value);
+                }
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  label="処理上限数"
+                  type="number"
+                  helperText="一覧ページから発見した物件のうち、処理対象とする最大数"
+                  InputProps={{
+                    ...params.InputProps,
+                    inputProps: {
+                      ...params.inputProps,
+                      min: 1,
+                      max: 10000,
+                    },
+                  }}
+                />
+              )}
             />
           </Grid>
 
@@ -365,7 +483,7 @@ const AdminScraping: React.FC = () => {
                   <TableCell width={40}></TableCell>
                   <TableCell>エリア</TableCell>
                   <TableCell>スクレイパー</TableCell>
-                  <TableCell>取得件数</TableCell>
+                  <TableCell>処理上限数</TableCell>
                   <TableCell>ステータス</TableCell>
                   <TableCell>進行状況</TableCell>
                   <TableCell>開始時刻</TableCell>
@@ -438,6 +556,9 @@ const AdminScraping: React.FC = () => {
                                   <Typography variant="caption" color="info.main">
                                     更新: {stats.updated}
                                   </Typography>
+                                  <Typography variant="caption" color="warning.main">
+                                    スキップ: {stats.skipped}
+                                  </Typography>
                                 </>
                               );
                             })()}
@@ -450,34 +571,67 @@ const AdminScraping: React.FC = () => {
                       <TableCell align="center">
                         {task.status === 'running' && (
                           <Tooltip title="一時停止">
-                            <IconButton
-                              size="small"
-                              color="primary"
-                              onClick={() => pauseTask(task.task_id)}
-                            >
-                              <PauseIcon />
-                            </IconButton>
+                            <span>
+                              <IconButton
+                                size="small"
+                                color="primary"
+                                onClick={() => pauseTask(task.task_id)}
+                                disabled={loadingButtons[`pause-${task.task_id}`]}
+                                sx={{ 
+                                  '&:hover': { backgroundColor: 'action.hover' },
+                                  transition: 'all 0.3s'
+                                }}
+                              >
+                                {loadingButtons[`pause-${task.task_id}`] ? (
+                                  <CircularProgress size={20} />
+                                ) : (
+                                  <PauseIcon />
+                                )}
+                              </IconButton>
+                            </span>
                           </Tooltip>
                         )}
                         {task.status === 'paused' && (
                           <>
                             <Tooltip title="再開">
-                              <IconButton
-                                size="small"
-                                color="primary"
-                                onClick={() => resumeTask(task.task_id)}
-                              >
-                                <PlayIcon />
-                              </IconButton>
+                              <span>
+                                <IconButton
+                                  size="small"
+                                  color="primary"
+                                  onClick={() => resumeTask(task.task_id)}
+                                  disabled={loadingButtons[`resume-${task.task_id}`]}
+                                  sx={{ 
+                                    '&:hover': { backgroundColor: 'action.hover' },
+                                    transition: 'all 0.3s'
+                                  }}
+                                >
+                                  {loadingButtons[`resume-${task.task_id}`] ? (
+                                    <CircularProgress size={20} />
+                                  ) : (
+                                    <PlayIcon />
+                                  )}
+                                </IconButton>
+                              </span>
                             </Tooltip>
                             <Tooltip title="キャンセル">
-                              <IconButton
-                                size="small"
-                                color="error"
-                                onClick={() => cancelTask(task.task_id)}
-                              >
-                                <StopIcon />
-                              </IconButton>
+                              <span>
+                                <IconButton
+                                  size="small"
+                                  color="error"
+                                  onClick={() => cancelTask(task.task_id)}
+                                  disabled={loadingButtons[`cancel-${task.task_id}`]}
+                                  sx={{ 
+                                    '&:hover': { backgroundColor: 'action.hover' },
+                                    transition: 'all 0.3s'
+                                  }}
+                                >
+                                  {loadingButtons[`cancel-${task.task_id}`] ? (
+                                    <CircularProgress size={20} />
+                                  ) : (
+                                    <StopIcon />
+                                  )}
+                                </IconButton>
+                              </span>
                             </Tooltip>
                           </>
                         )}
@@ -516,30 +670,108 @@ const AdminScraping: React.FC = () => {
                                       </ListItem>
                                       <ListItem>
                                         <ListItemText
-                                          primary="取得件数"
-                                          secondary={`${progress.properties_scraped}件`}
-                                        />
-                                      </ListItem>
-                                      <ListItem>
-                                        <ListItemText
-                                          primary="新規登録"
+                                          primary="処理状況"
                                           secondary={
-                                            <Typography variant="body2" color="success.main">
-                                              {progress.new_listings || 0}件
-                                            </Typography>
+                                            <Box>
+                                              <Typography variant="body2" color="text.secondary">
+                                                詳細取得: {progress.properties_scraped || 0}件 / スキップ: {progress.skipped_listings || 0}件
+                                              </Typography>
+                                              <Typography variant="body2" color="success.main">
+                                                新規: {progress.new_listings || 0}件
+                                              </Typography>
+                                              <Typography variant="body2" color="info.main">
+                                                更新: {progress.updated_listings || 0}件
+                                              </Typography>
+                                            </Box>
                                           }
                                         />
                                       </ListItem>
-                                      <ListItem>
-                                        <ListItemText
-                                          primary="更新"
-                                          secondary={
-                                            <Typography variant="body2" color="info.main">
-                                              {progress.updated_listings || 0}件
-                                            </Typography>
-                                          }
-                                        />
-                                      </ListItem>
+                                      {/* 詳細統計 */}
+                                      {progress.properties_found !== undefined && (
+                                        <>
+                                          <ListItem>
+                                            <ListItemText
+                                              primary="物件発見数"
+                                              secondary={
+                                                <Typography variant="body2" color="text.secondary">
+                                                  {progress.properties_found || 0}件（一覧ページから発見）
+                                                </Typography>
+                                              }
+                                            />
+                                          </ListItem>
+                                          {progress.properties_processed !== undefined && (
+                                            <ListItem>
+                                              <ListItemText
+                                                primary="処理進捗"
+                                                secondary={
+                                                  <Typography variant="body2" color="text.secondary">
+                                                    {progress.properties_attempted || 0} / {progress.properties_processed || 0} 件
+                                                    （実行済み / 対象数）
+                                                  </Typography>
+                                                }
+                                              />
+                                            </ListItem>
+                                          )}
+                                          <ListItem>
+                                            <ListItemText
+                                              primary="詳細ページ取得状況"
+                                              secondary={
+                                                <Typography variant="body2" color="text.secondary">
+                                                  取得: {progress.properties_scraped || 0}件 / スキップ: {progress.skipped_listings || 0}件
+                                                </Typography>
+                                              }
+                                            />
+                                          </ListItem>
+                                          {(progress.detail_fetch_failed || 0) > 0 && (
+                                            <ListItem>
+                                              <ListItemText
+                                                primary="詳細取得失敗"
+                                                secondary={
+                                                  <Typography variant="body2" color="error">
+                                                    {progress.detail_fetch_failed}件
+                                                  </Typography>
+                                                }
+                                              />
+                                            </ListItem>
+                                          )}
+                                          {(progress.price_missing || 0) > 0 && (
+                                            <ListItem>
+                                              <ListItemText
+                                                primary="価格情報なし"
+                                                secondary={
+                                                  <Typography variant="body2" color="error">
+                                                    {progress.price_missing}件
+                                                  </Typography>
+                                                }
+                                              />
+                                            </ListItem>
+                                          )}
+                                          {(progress.building_info_missing || 0) > 0 && (
+                                            <ListItem>
+                                              <ListItemText
+                                                primary="建物情報不足"
+                                                secondary={
+                                                  <Typography variant="body2" color="error">
+                                                    {progress.building_info_missing}件
+                                                  </Typography>
+                                                }
+                                              />
+                                            </ListItem>
+                                          )}
+                                          {(progress.other_errors || 0) > 0 && (
+                                            <ListItem>
+                                              <ListItemText
+                                                primary="その他エラー"
+                                                secondary={
+                                                  <Typography variant="body2" color="error">
+                                                    {progress.other_errors}件
+                                                  </Typography>
+                                                }
+                                              />
+                                            </ListItem>
+                                          )}
+                                        </>
+                                      )}
                                       {progress.error && (
                                         <ListItem>
                                           <ListItemText

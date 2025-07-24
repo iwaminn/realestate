@@ -38,6 +38,12 @@ class NomuScraper(BaseScraper):
         if self.force_detail_fetch:
             print("※ 強制詳細取得モードが有効です - すべての物件の詳細ページを取得します")
         
+        from .area_config import get_area_code
+        
+        # エリアコードを取得
+        area_code = get_area_code(area_code)
+        
+        # ===== フェーズ1: 物件一覧の収集 =====
         all_properties = []
         
         for page in range(1, max_pages + 1):
@@ -60,30 +66,50 @@ class NomuScraper(BaseScraper):
                 break
             
             print(f"ページ {page} で {len(properties)} 件の物件を発見")
+            
+            # max_propertiesを超えないように調整
+            if self.max_properties and len(all_properties) + len(properties) > self.max_properties:
+                # 必要な分だけ取得
+                remaining = self.max_properties - len(all_properties)
+                properties = properties[:remaining]
+                print(f"  → 最大取得件数に合わせて {remaining} 件のみ使用")
+            
+            # 物件発見数を記録
+            self.record_property_found(len(properties))
             all_properties.extend(properties)
             
-            # 最大件数に達した場合は終了
+            # max_propertiesに達したらループを抜ける
             if self.max_properties and len(all_properties) >= self.max_properties:
-                all_properties = all_properties[:self.max_properties]
                 print(f"最大取得件数（{self.max_properties}件）に達しました")
                 break
             
             # ページ間で遅延
             time.sleep(self.delay)
         
-        # 各物件を保存
-        print(f"\n合計 {len(all_properties)} 件の物件を保存します...")
+        # 処理対象数を記録（max_properties制限を考慮）
+        total_to_process = min(len(all_properties), self.max_properties) if self.max_properties else len(all_properties)
+        self.record_property_processed(total_to_process)
+        
+        # ===== フェーズ2: 詳細取得と保存 =====
+        print(f"\n合計 {len(all_properties)} 件の物件を処理します...")
         
         saved_count = 0
         skipped_count = 0
         
-        for i, property_data in enumerate(all_properties, 1):
-            print(f"[{i}/{len(all_properties)}] {property_data.get('building_name', 'Unknown')}")
+        for i, property_data in enumerate(all_properties):
+            # 最大取得件数チェック
+            if self.max_properties and i >= self.max_properties:
+                print(f"最大取得件数（{self.max_properties}件）に達しました")
+                break
+                
+            print(f"[{i+1}/{total_to_process}] {property_data.get('building_name', 'Unknown')}")
+            self.record_property_attempted()
             
             # 建物名と価格の検証
             if not self.validate_property_data(property_data):
                 print(f"  → データ検証失敗、スキップ")
                 skipped_count += 1
+                self.record_building_info_missing()
                 continue
             
             try:
@@ -93,12 +119,22 @@ class NomuScraper(BaseScraper):
             except Exception as e:
                 print(f"  → エラー: {e}")
                 skipped_count += 1
+                self.record_save_failed()
                 continue
         
         # 変更をコミット
         self.session.commit()
         
-        print(f"\n完了: {saved_count} 件保存、{skipped_count} 件スキップ")
+        # 統計情報を表示
+        stats = self.get_scraping_stats()
+        print(f"\nスクレイピング完了:")
+        print(f"  物件発見数: {stats['properties_found']} 件（一覧ページから発見）")
+        print(f"  処理対象数: {stats['properties_processed']} 件（max_properties制限後）")
+        print(f"  処理試行数: {stats['properties_attempted']} 件")
+        print(f"  詳細取得数: {stats['detail_fetched']} 件")
+        print(f"  詳細スキップ数: {stats['detail_skipped']} 件")
+        print(f"  新規登録数: {stats['new_listings']} 件")
+        print(f"  更新数: {stats['updated_listings']} 件")
     
     def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
         """物件一覧を解析"""
@@ -295,9 +331,11 @@ class NomuScraper(BaseScraper):
         # 詳細ページの取得が必要かチェック
         if self.needs_detail_fetch(listing):
             print(f"  → 詳細ページを取得します")
+            self.record_property_scraped()
             self.fetch_and_update_detail(listing)
         else:
             print(f"  → 詳細ページは最近取得済みのためスキップ")
+            self.record_listing_skipped()
     
     def fetch_and_update_detail(self, listing: PropertyListing) -> bool:
         """詳細ページを取得して情報を更新"""
@@ -353,7 +391,8 @@ class NomuScraper(BaseScraper):
                     building.address = detail_data['address']
                     print(f"    → 建物の住所を更新: {building.address}")
             
-            self.session.commit()
+            # コミットはscrape_areaメソッドで一括で行うので、ここではflushのみ
+            self.session.flush()
             print(f"    → 詳細情報を更新しました")
             return True
             

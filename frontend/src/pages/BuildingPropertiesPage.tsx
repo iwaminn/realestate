@@ -21,7 +21,9 @@ import {
   TableRow,
   TableSortLabel,
   ToggleButton,
-  ToggleButtonGroup
+  ToggleButtonGroup,
+  FormControlLabel,
+  Checkbox
 } from '@mui/material';
 import { 
   Apartment as ApartmentIcon,
@@ -65,18 +67,19 @@ const BuildingPropertiesPage: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [orderBy, setOrderBy] = useState<OrderBy>('earliest_published_at');
   const [order, setOrder] = useState<Order>('desc');
+  const [includeInactive, setIncludeInactive] = useState(false);
 
   useEffect(() => {
     if (buildingName) {
       fetchBuildingProperties();
     }
-  }, [buildingName]);
+  }, [buildingName, includeInactive]);
 
   const fetchBuildingProperties = async () => {
     try {
       setLoading(true);
       // 建物名専用のAPIで物件を取得
-      const response = await propertyApi.getBuildingProperties(decodeURIComponent(buildingName!));
+      const response = await propertyApi.getBuildingProperties(decodeURIComponent(buildingName!), includeInactive);
       
       setProperties(response.properties);
       setBuilding(response.building);
@@ -347,25 +350,36 @@ const BuildingPropertiesPage: React.FC = () => {
       )}
 
       {/* 表示モード切替と物件一覧タイトル */}
-      <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
-        <Typography variant="h5">
-          販売中の物件 ({properties.length}件)
-        </Typography>
-        <ToggleButtonGroup
-          value={viewMode}
-          exclusive
-          onChange={(_, newMode) => newMode && setViewMode(newMode)}
-          aria-label="表示モード"
-        >
-          <ToggleButton value="table" aria-label="表形式">
-            <TableChartIcon sx={{ mr: 0.5 }} />
-            表形式
-          </ToggleButton>
-          <ToggleButton value="card" aria-label="カード形式">
-            <ViewModuleIcon sx={{ mr: 0.5 }} />
-            カード形式
-          </ToggleButton>
-        </ToggleButtonGroup>
+      <Box sx={{ mb: 3 }}>
+        <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+          <Typography variant="h5">
+            {includeInactive ? '全物件' : '販売中の物件'} ({properties.length}件)
+          </Typography>
+          <ToggleButtonGroup
+            value={viewMode}
+            exclusive
+            onChange={(_, newMode) => newMode && setViewMode(newMode)}
+            aria-label="表示モード"
+          >
+            <ToggleButton value="table" aria-label="表形式">
+              <TableChartIcon sx={{ mr: 0.5 }} />
+              表形式
+            </ToggleButton>
+            <ToggleButton value="card" aria-label="カード形式">
+              <ViewModuleIcon sx={{ mr: 0.5 }} />
+              カード形式
+            </ToggleButton>
+          </ToggleButtonGroup>
+        </Box>
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={includeInactive}
+              onChange={(e) => setIncludeInactive(e.target.checked)}
+            />
+          }
+          label="販売終了物件を含む"
+        />
       </Box>
 
       {viewMode === 'table' ? (

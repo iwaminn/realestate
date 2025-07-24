@@ -3,11 +3,14 @@ import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { Container } from '@mui/material';
+import { AuthProvider } from './contexts/AuthContext';
 import Header from './components/Header';
 import PropertyListPage from './pages/PropertyListPage';
 import PropertyDetailPage from './pages/PropertyDetailPage';
 import BuildingPropertiesPage from './pages/BuildingPropertiesPage';
 import Admin from './pages/Admin';
+import AdminLogin from './components/AdminLogin';
+import './utils/axiosConfig'; // Axiosの設定を読み込む
 
 const theme = createTheme({
   palette: {
@@ -38,18 +41,21 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
-      <Router>
-        <Header />
-        <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-          <Routes>
-            <Route path="/" element={<PropertyListPage />} />
-            <Route path="/properties" element={<PropertyListPage />} />
-            <Route path="/properties/:id" element={<PropertyDetailPage />} />
-            <Route path="/buildings/:buildingName/properties" element={<BuildingPropertiesPage />} />
-            <Route path="/admin" element={<Admin />} />
-          </Routes>
-        </Container>
-      </Router>
+      <AuthProvider>
+        <Router>
+          <Header />
+          <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+            <Routes>
+              <Route path="/" element={<PropertyListPage />} />
+              <Route path="/properties" element={<PropertyListPage />} />
+              <Route path="/properties/:id" element={<PropertyDetailPage />} />
+              <Route path="/buildings/:buildingName/properties" element={<BuildingPropertiesPage />} />
+              <Route path="/admin" element={<Admin />} />
+              <Route path="/admin/login" element={<AdminLogin />} />
+            </Routes>
+          </Container>
+        </Router>
+      </AuthProvider>
     </ThemeProvider>
   );
 }

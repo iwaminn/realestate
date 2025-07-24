@@ -95,15 +95,19 @@ class MajorityVoteUpdater:
         for listing in listings:
             # 管理費と修繕積立金は直接取得可能
             if listing.management_fee:
-                info['management_fees'].append(listing.management_fee)
+                info['management_fees'].append((listing.management_fee, listing.source_site))
             if listing.repair_fund:
-                info['repair_funds'].append(listing.repair_fund)
+                info['repair_funds'].append((listing.repair_fund, listing.source_site))
             
-            # TODO: 将来的にPropertyListingに以下のフィールドを追加することを推奨
-            # - listing_floor_number
-            # - listing_area
-            # - listing_layout
-            # - listing_direction
+            # listing_*フィールドから情報を収集
+            if hasattr(listing, 'listing_floor_number') and listing.listing_floor_number:
+                info['floor_numbers'].append((listing.listing_floor_number, listing.source_site))
+            if hasattr(listing, 'listing_area') and listing.listing_area:
+                info['areas'].append((listing.listing_area, listing.source_site))
+            if hasattr(listing, 'listing_layout') and listing.listing_layout:
+                info['layouts'].append((listing.listing_layout, listing.source_site))
+            if hasattr(listing, 'listing_direction') and listing.listing_direction:
+                info['directions'].append((listing.listing_direction, listing.source_site))
         
         return info
     
@@ -118,15 +122,47 @@ class MajorityVoteUpdater:
         updated = False
         
         # 各属性について多数決を取る
-        # 注：現在のデータ構造では階数、面積、間取り、方角は更新できません
         
-        # 管理費の多数決（これは現在でも可能）
+        # 階数の多数決
+        if info['floor_numbers']:
+            majority_floor = self.get_majority_value(info['floor_numbers'], master_property.floor_number)
+            if majority_floor != master_property.floor_number:
+                logger.info(f"物件ID {master_property.id} の階数を "
+                          f"{master_property.floor_number} → {majority_floor} に更新")
+                master_property.floor_number = majority_floor
+                updated = True
+        
+        # 面積の多数決
+        if info['areas']:
+            majority_area = self.get_majority_value(info['areas'], master_property.area)
+            if majority_area != master_property.area:
+                logger.info(f"物件ID {master_property.id} の面積を "
+                          f"{master_property.area} → {majority_area} に更新")
+                master_property.area = majority_area
+                updated = True
+        
+        # 間取りの多数決
+        if info['layouts']:
+            majority_layout = self.get_majority_value(info['layouts'], master_property.layout)
+            if majority_layout != master_property.layout:
+                logger.info(f"物件ID {master_property.id} の間取りを "
+                          f"{master_property.layout} → {majority_layout} に更新")
+                master_property.layout = majority_layout
+                updated = True
+        
+        # 方角の多数決
+        if info['directions']:
+            majority_direction = self.get_majority_value(info['directions'], master_property.direction)
+            if majority_direction != master_property.direction:
+                logger.info(f"物件ID {master_property.id} の方角を "
+                          f"{master_property.direction} → {majority_direction} に更新")
+                master_property.direction = majority_direction
+                updated = True
+        
+        # 管理費の多数決（現在はMasterPropertyに保存先がないため、ログのみ）
         if info['management_fees']:
-            majority_mgmt_fee = self.get_majority_value(
-                info['management_fees'],
-                None  # MasterPropertyには管理費フィールドがないため
-            )
-            # TODO: MasterPropertyに管理費フィールドを追加することを推奨
+            majority_mgmt_fee = self.get_majority_value(info['management_fees'], None)
+            logger.info(f"物件ID {master_property.id} の管理費（参考）: {majority_mgmt_fee}")
         
         return updated
     

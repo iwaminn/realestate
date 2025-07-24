@@ -24,82 +24,17 @@ class SuumoScraper(BaseScraper):
     
     def scrape_area(self, area: str, max_pages: int = 5):
         """エリアの物件をスクレイピング"""
-        if self.force_detail_fetch:
-            print("※ 強制詳細取得モードが有効です - すべての物件の詳細ページを取得します")
-        
-        all_properties = []
-        
-        for page in range(1, max_pages + 1):
-            print(f"ページ {page} を取得中...")
-            
-            # 検索URLを生成
-            search_url = self.get_search_url(area, page)
-            print(f"URL: {search_url}")
-            soup = self.fetch_page(search_url)
-            
-            if not soup:
-                print(f"ページ {page} の取得に失敗しました")
-                break
-            
-            # 物件情報を一覧から直接抽出
-            properties = self.parse_property_list(soup)
-            
-            if not properties:
-                print(f"ページ {page} に物件が見つかりません")
-                break
-            
-            print(f"ページ {page} で {len(properties)} 件の物件を発見")
-            if len(properties) == 100:
-                print("  → 100件取得（最大表示件数）")
-            all_properties.extend(properties)
-            
-            # 最大件数に達した場合は終了
-            if self.max_properties and len(all_properties) >= self.max_properties:
-                all_properties = all_properties[:self.max_properties]
-                print(f"最大取得件数（{self.max_properties}件）に達しました")
-                break
-            
-            # ページ間で遅延
-            time.sleep(self.delay)
-        
-        # 各物件を保存
-        print(f"\n合計 {len(all_properties)} 件の物件を保存します...")
-        
-        saved_count = 0
-        skipped_count = 0
-        
-        for i, property_data in enumerate(all_properties, 1):
-            print(f"[{i}/{len(all_properties)}] {property_data.get('building_name', 'Unknown')}")
-            
-            # スキップ機能を削除 - 常に最新情報を取得
-            
-            # 建物名のみ検証（価格は詳細ページから取得するため）
-            if not property_data.get('building_name'):
-                print(f"  → 建物名が不足、スキップ")
-                skipped_count += 1
-                continue
-            
-            try:
-                self.save_property(property_data)
-                saved_count += 1
-                
-            except Exception as e:
-                print(f"  → エラー: {e}")
-                skipped_count += 1
-                continue
-        
-        # 非アクティブな掲載をマーク
-        # 注意: 部分的なスクレイピングの場合は、その部分のみをチェックすべきではない
-        # 全体をスクレイピングした場合のみ実行する
-        if max_pages >= 30:  # 全体スクレイピングの閾値（適宜調整）
-            all_urls = [p['url'] for p in all_properties if 'url' in p]
-            self.mark_inactive_listings(all_urls)
-        else:
-            print(f"部分スクレイピング（{max_pages}ページ）のため、非アクティブマーキングをスキップ")
-        
-        # 変更をコミット
-        self.session.commit()
-        print(f"\nスクレイピング完了: {saved_count} 件保存、{skipped_count} 件スキップ")
+        # 共通ロジックを使用
+        return self.common_scrape_area_logic(area, max_pages)
+    
+    def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
+        """個別の物件を処理（SUUMOスクレイパー固有の実装）"""
+        try:
+            self.save_property(property_data, existing_listing)
+            return True
+        except Exception as e:
+            # エラーは呼び出し元で処理されるので、ここでは再スロー
+            raise
     
     def get_search_url(self, area: str, page: int = 1) -> str:
         """SUUMOの検索URLを生成（100件/ページ）"""
@@ -112,27 +47,10 @@ class SuumoScraper(BaseScraper):
         # pj=1: ページ番号
         # pc=100: 1ページあたり100件表示
         
-        area_codes = {
-            "港区": "13103",
-            "minato": "13103",
-            "渋谷区": "13113",
-            "shibuya": "13113",
-            "新宿区": "13104",
-            "shinjuku": "13104",
-            "千代田区": "13101",
-            "chiyoda": "13101",
-            "中央区": "13102",
-            "chuo": "13102",
-            "品川区": "13109",
-            "shinagawa": "13109",
-            "目黒区": "13110",
-            "meguro": "13110",
-            "世田谷区": "13112",
-            "setagaya": "13112"
-        }
+        from .area_config import get_area_code
         
-        # エリアコードを取得（見つからない場合はそのまま使用）
-        area_code = area_codes.get(area.lower(), area_codes.get(area, area))
+        # エリアコードを取得
+        area_code = get_area_code(area)
         
         # 新形式のURL（100件/ページ）
         # pageパラメータを追加して正しくページネーションが動作するように修正
@@ -192,9 +110,26 @@ class SuumoScraper(BaseScraper):
             if building_name:
                 property_data['building_name'] = building_name
             
-            # URLと建物名が取得できた物件のみ追加（他の情報は詳細ページから取得）
-            if property_data.get('url') and property_data.get('building_name'):
+            # 価格を取得（一覧ページから）
+            price_elem = unit.select_one('.dottable-value')
+            if price_elem:
+                price_text = price_elem.get_text(strip=True)
+                # 価格をパースする（例: "5,480万円" -> 5480）
+                price_match = re.search(r'([\d,]+)万円', price_text)
+                if price_match:
+                    price_str = price_match.group(1).replace(',', '')
+                    property_data['price'] = int(price_str)
+            
+            # URLが取得できた物件を追加（建物名は詳細ページから取得可能）
+            if property_data.get('url'):
+                # 建物名がない場合は仮の名前を設定
+                if not property_data.get('building_name'):
+                    property_data['building_name'] = f"物件_{property_data.get('site_property_id', 'unknown')}"
                 properties.append(property_data)
+        
+        # SUUMOの100件表示チェック
+        if len(properties) == 100:
+            print("  → 100件取得（最大表示件数）")
         
         return properties
     
@@ -203,15 +138,22 @@ class SuumoScraper(BaseScraper):
         match = re.search(r'/nc_(\d+)/', url)
         return match.group(1) if match else url.split('/')[-1]
     
-    def save_property(self, property_data: Dict[str, Any]):
+    def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None):
         """物件情報を保存（スマートスクレイピング対応）"""
         try:
             print(f"  URL: {property_data.get('url', 'URLなし')}")
             
-            # 既存の掲載を確認
-            existing_listing = self.session.query(PropertyListing).filter(
-                PropertyListing.url == property_data['url']
-            ).first()
+            # URLの基本検証のみ（詳細データ取得前）
+            if not property_data.get('url'):
+                print(f"  → URLが不足")
+                self.record_error(
+                    error_type='validation',
+                    url=property_data.get('url'),
+                    building_name=property_data.get('building_name'),
+                    property_data=property_data,
+                    phase='initial_validation'
+                )
+                return
             
             # 詳細ページの取得が必要かチェック
             needs_detail = True
@@ -219,23 +161,58 @@ class SuumoScraper(BaseScraper):
                 needs_detail = self.needs_detail_fetch(existing_listing)
                 if not needs_detail:
                     print(f"  → 詳細ページの取得をスキップ（最終取得: {existing_listing.detail_fetched_at}）")
-                    # 一覧ページの情報で更新マークだけ更新
-                    self.update_listing_from_list(existing_listing, property_data)
-                    self.session.commit()
+                    # 詳細ページをスキップした場合は何も更新しない
+                    self.record_listing_skipped()
                     return
             
             # 詳細ページから全ての情報を取得
             detail_data = self.parse_property_detail(property_data['url'])
             if not detail_data:
                 print(f"  → 詳細ページの取得に失敗しました")
+                self.record_detail_fetch_failed()
                 return
             
             # 詳細データで property_data を更新
             property_data.update(detail_data)
+            # 詳細取得成功を記録
+            self.record_property_scraped()
             
-            # 価格が取得できているか確認
+            # 詳細データ取得後の完全な検証
+            if not self.enhanced_validate_property_data(property_data):
+                validation_errors = []
+                if not property_data.get('building_name'):
+                    validation_errors.append('建物名が不足')
+                if not property_data.get('price'):
+                    validation_errors.append('価格が不足')
+                
+                self.record_error(
+                    error_type='validation',
+                    url=property_data.get('url'),
+                    building_name=property_data.get('building_name'),
+                    property_data=property_data,
+                    phase='enhanced_validation'
+                )
+                
+                # バリデーションエラーの詳細を記録
+                if validation_errors:
+                    self.error_logger.log_validation_error(
+                        property_data=property_data,
+                        validation_errors=validation_errors,
+                        url=property_data.get('url')
+                    )
+                return
+            
+            # 価格が取得できているか確認（追加チェック）
             if not property_data.get('price'):
                 print(f"  → 価格情報が取得できませんでした")
+                self.record_price_missing()
+                self.record_error(
+                    error_type='validation',
+                    url=property_data.get('url'),
+                    building_name=property_data.get('building_name'),
+                    property_data=property_data,
+                    phase='price_validation'
+                )
                 return
             
             print(f"  価格: {property_data.get('price')}万円")
@@ -258,6 +235,14 @@ class SuumoScraper(BaseScraper):
             
             if not building:
                 print(f"  → 建物情報が不足")
+                self.record_building_info_missing()
+                self.record_error(
+                    error_type='validation',
+                    url=property_data.get('url'),
+                    building_name=property_data.get('building_name'),
+                    property_data=property_data,
+                    phase='building_creation'
+                )
                 return
             
             # 部屋番号の決定（抽出された部屋番号を優先）
@@ -325,19 +310,41 @@ class SuumoScraper(BaseScraper):
             # 多数決による物件情報更新
             self.update_master_property_by_majority(master_property)
             
+            # 新規/更新の記録
+            if existing_listing:
+                self.record_listing_updated()
+            else:
+                self.record_listing_created()
+            
             print(f"  → 保存完了")
+            self.record_success()
             
         except Exception as e:
             print(f"  → エラー: {e}")
             import traceback
             traceback.print_exc()
+            self.record_error('saving')
     
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
         """物件詳細を解析"""
         try:
+            # アクセス間隔を保つ
+            time.sleep(self.delay)
+            
             # 詳細ページを取得
             soup = self.fetch_page(url)
             if not soup:
+                self.record_error('detail_page')
+                return None
+                
+            # HTML構造の検証
+            required_selectors = {
+                '物件情報テーブル': 'table',
+                'タイトル': 'h1, h2.section_h1-header-title',
+            }
+            
+            if not self.validate_html_structure(soup, required_selectors):
+                self.record_error('parsing')
                 return None
                 
             property_data = {
@@ -812,6 +819,12 @@ class SuumoScraper(BaseScraper):
             
         except Exception as e:
             self.logger.error(f"Error parsing property detail from {url}: {e}")
+            self.record_error(
+                error_type='detail_page',
+                url=url,
+                error=e,
+                phase='parse_property_detail'
+            )
             return None
     
     def fetch_and_update_detail(self, listing: PropertyListing) -> bool:
@@ -868,4 +881,11 @@ class SuumoScraper(BaseScraper):
             
         except Exception as e:
             print(f"    詳細ページ取得エラー: {e}")
+            self.record_error(
+                error_type='detail_page',
+                url=listing.url,
+                building_name=listing.master_property.building.normalized_name if listing.master_property and listing.master_property.building else None,
+                error=e,
+                phase='fetch_and_update_detail'
+            )
             return False
