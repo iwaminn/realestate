@@ -1,5 +1,8 @@
 # Scrapers package
 
+# 定数のインポート
+from .constants import SourceSite
+
 # データ正規化フレームワークのインポート
 from .data_normalizer import (
     DataNormalizer,
@@ -20,6 +23,7 @@ from .data_normalizer import (
 )
 
 __all__ = [
+    'SourceSite',
     'DataNormalizer',
     'extract_price',
     'extract_area',

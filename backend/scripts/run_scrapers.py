@@ -90,7 +90,6 @@ def run_single_scraper(scraper_name: str, area: str = "minato", max_pages: int =
         if force_detail_fetch:
             logger.info("Force detail fetch mode is enabled")
         scraper = scrapers[scraper_name.lower()](force_detail_fetch=force_detail_fetch)
-        # AtHomeSeleniumScraperは runメソッドを使用
         if hasattr(scraper, 'run'):
             scraper.run(area, max_pages)
         else:
