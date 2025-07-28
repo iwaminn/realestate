@@ -7,9 +7,9 @@
 from typing import Dict, List, Optional, Any, Tuple
 from collections import Counter
 from datetime import datetime, timedelta
-from sqlalchemy import func
+from sqlalchemy import func, and_, String
 from sqlalchemy.orm import Session
-from ..models import Building, MasterProperty, PropertyListing, ListingPriceHistory
+from ..models import Building, BuildingAlias, MasterProperty, PropertyListing, ListingPriceHistory
 import logging
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,7 @@ class MajorityVoteUpdater:
     """多数決による情報更新クラス"""
     
     # サイトの優先順位（左が高優先度）
-    SITE_PRIORITY = ['suumo', 'homes', 'rehouse', 'nomu']
+    SITE_PRIORITY = ['suumo', 'homes', 'rehouse', 'nomu', '東急リバブル']
     
     def __init__(self, session: Session):
         self.session = session
@@ -73,35 +73,86 @@ class MajorityVoteUpdater:
         
         return candidates[0][0]
     
-    def collect_property_info_from_listings(self, master_property: MasterProperty) -> Dict[str, List[Any]]:
+    def get_price_range(self, prices_with_source: List[tuple]) -> Optional[Tuple[int, int]]:
         """
-        物件の全掲載情報から属性情報を収集する
+        価格の範囲（最小値〜最大値）を取得する
         
-        注：現在のデータ構造では、掲載情報から直接属性を取得できないため、
-        将来的な拡張を想定した実装となっています
+        Args:
+            prices_with_source: (価格, ソースサイト名)のタプルのリスト
+            
+        Returns:
+            (最小価格, 最大価格)のタプル、価格がない場合はNone
         """
-        listings = self.session.query(PropertyListing).filter(
+        # Noneや0を除外
+        valid_prices = [p for p, _ in prices_with_source if p is not None and p > 0]
+        if not valid_prices:
+            return None
+        
+        return (min(valid_prices), max(valid_prices))
+    
+    def collect_property_info_from_listings(self, master_property: MasterProperty, 
+                                            include_inactive: bool = False) -> Dict[str, List[Any]]:
+        """
+        物件の掲載情報から属性情報を収集する
+        
+        Args:
+            master_property: 対象の物件
+            include_inactive: 非アクティブな掲載も含めるかどうか
+        
+        Returns:
+            属性ごとの値とソースのリスト
+        """
+        # アクティブな掲載情報があるかチェック
+        active_listings = self.session.query(PropertyListing).filter(
             PropertyListing.master_property_id == master_property.id,
             PropertyListing.is_active == True
         ).all()
+        
+        if active_listings:
+            # アクティブな掲載がある場合は、それらのみを使用
+            listings = active_listings
+        elif include_inactive and master_property.sold_at:
+            # 全て非アクティブで販売終了している場合、1週間以内の掲載を使用
+            one_week_ago = master_property.sold_at - timedelta(days=7)
+            listings = self.session.query(PropertyListing).filter(
+                PropertyListing.master_property_id == master_property.id,
+                PropertyListing.last_confirmed_at >= one_week_ago
+            ).all()
+        else:
+            # それ以外の場合は全ての掲載を使用
+            listings = self.session.query(PropertyListing).filter(
+                PropertyListing.master_property_id == master_property.id
+            ).all()
         
         info = {
             'floor_numbers': [],
             'areas': [],
             'layouts': [],
             'directions': [],
+            'balcony_areas': [],
             'management_fees': [],
-            'repair_funds': []
+            'repair_funds': [],
+            'station_infos': [],
+            'addresses': [],
+            'prices': []  # 価格情報も収集
         }
         
         for listing in listings:
-            # 管理費と修繕積立金は直接取得可能
+            # 管理費と修繕積立金
             if listing.management_fee:
                 info['management_fees'].append((listing.management_fee, listing.source_site))
             if listing.repair_fund:
                 info['repair_funds'].append((listing.repair_fund, listing.source_site))
             
-            # listing_*フィールドから情報を収集
+            # 駅情報
+            if listing.station_info:
+                info['station_infos'].append((listing.station_info, listing.source_site))
+            
+            # 価格情報
+            if listing.current_price:
+                info['prices'].append((listing.current_price, listing.source_site))
+            
+            # listing_*フィールドから情報を収集（将来的な拡張用）
             if hasattr(listing, 'listing_floor_number') and listing.listing_floor_number:
                 info['floor_numbers'].append((listing.listing_floor_number, listing.source_site))
             if hasattr(listing, 'listing_area') and listing.listing_area:
@@ -110,6 +161,10 @@ class MajorityVoteUpdater:
                 info['layouts'].append((listing.listing_layout, listing.source_site))
             if hasattr(listing, 'listing_direction') and listing.listing_direction:
                 info['directions'].append((listing.listing_direction, listing.source_site))
+            if hasattr(listing, 'listing_balcony_area') and listing.listing_balcony_area:
+                info['balcony_areas'].append((listing.listing_balcony_area, listing.source_site))
+            if hasattr(listing, 'listing_address') and listing.listing_address:
+                info['addresses'].append((listing.listing_address, listing.source_site))
         
         return info
     
@@ -120,7 +175,9 @@ class MajorityVoteUpdater:
         Returns:
             更新があった場合True
         """
-        info = self.collect_property_info_from_listings(master_property)
+        # 販売終了物件の場合は非アクティブも含める
+        include_inactive = master_property.sold_at is not None
+        info = self.collect_property_info_from_listings(master_property, include_inactive)
         updated = False
         
         # 各属性について多数決を取る
@@ -161,43 +218,305 @@ class MajorityVoteUpdater:
                 master_property.direction = majority_direction
                 updated = True
         
-        # 管理費の多数決（現在はMasterPropertyに保存先がないため、ログのみ）
+        # バルコニー面積の多数決
+        if info['balcony_areas']:
+            majority_balcony_area = self.get_majority_value(info['balcony_areas'], master_property.balcony_area)
+            if majority_balcony_area != master_property.balcony_area:
+                logger.info(f"物件ID {master_property.id} のバルコニー面積を "
+                          f"{master_property.balcony_area} → {majority_balcony_area} に更新")
+                master_property.balcony_area = majority_balcony_area
+                updated = True
+        
+        # 管理費の多数決
         if info['management_fees']:
-            majority_mgmt_fee = self.get_majority_value(info['management_fees'], None)
-            logger.info(f"物件ID {master_property.id} の管理費（参考）: {majority_mgmt_fee}")
+            majority_mgmt_fee = self.get_majority_value(info['management_fees'], master_property.management_fee)
+            if majority_mgmt_fee != master_property.management_fee:
+                logger.info(f"物件ID {master_property.id} の管理費を "
+                          f"{master_property.management_fee} → {majority_mgmt_fee} に更新")
+                master_property.management_fee = majority_mgmt_fee
+                updated = True
+        
+        # 修繕積立金の多数決
+        if info['repair_funds']:
+            majority_repair_fund = self.get_majority_value(info['repair_funds'], master_property.repair_fund)
+            if majority_repair_fund != master_property.repair_fund:
+                logger.info(f"物件ID {master_property.id} の修繕積立金を "
+                          f"{master_property.repair_fund} → {majority_repair_fund} に更新")
+                master_property.repair_fund = majority_repair_fund
+                updated = True
+        
+        # 交通情報の多数決
+        if info['station_infos']:
+            majority_station = self.get_majority_value(info['station_infos'], master_property.station_info)
+            if majority_station != master_property.station_info:
+                logger.info(f"物件ID {master_property.id} の交通情報を更新")
+                master_property.station_info = majority_station
+                updated = True
         
         return updated
     
     def update_building_by_majority(self, building: Building) -> bool:
         """
-        建物情報を物件情報の多数決で更新する
+        建物情報を掲載情報の多数決で更新する
         
         Returns:
             更新があった場合True
         """
-        properties = self.session.query(MasterProperty).filter(
-            MasterProperty.building_id == building.id
-        ).all()
-        
-        if len(properties) <= 1:
-            return False
-        
+        # 建物に関連する全ての掲載情報から建物属性を収集
+        building_info = self.collect_building_info_from_listings(building.id)
         updated = False
         
-        # 総階数の推定（物件の最大階数から）
-        floor_numbers = [p.floor_number for p in properties if p.floor_number]
-        if floor_numbers:
-            estimated_total_floors = max(floor_numbers)
-            if building.total_floors != estimated_total_floors:
-                logger.info(f"建物 '{building.normalized_name}' の総階数を "
-                          f"{building.total_floors} → {estimated_total_floors} に更新")
-                building.total_floors = estimated_total_floors
+        # 住所の多数決
+        if building_info['addresses']:
+            majority_address = self.get_majority_value(building_info['addresses'], building.address)
+            if majority_address != building.address:
+                logger.info(f"建物 '{building.normalized_name}' の住所を更新")
+                building.address = majority_address
                 updated = True
         
-        # 住所の多数決（通常は必要ないが、データ品質向上のため）
-        # 現在のデータ構造では実装できません
+        # 総階数の多数決
+        if building_info['total_floors']:
+            majority_total_floors = self.get_majority_value(building_info['total_floors'], building.total_floors)
+            if majority_total_floors != building.total_floors:
+                logger.info(f"建物 '{building.normalized_name}' の総階数を "
+                          f"{building.total_floors} → {majority_total_floors} に更新")
+                building.total_floors = majority_total_floors
+                updated = True
+        
+        # 築年の多数決
+        if building_info['built_years']:
+            majority_built_year = self.get_majority_value(building_info['built_years'], building.built_year)
+            if majority_built_year != building.built_year:
+                logger.info(f"建物 '{building.normalized_name}' の築年を "
+                          f"{building.built_year} → {majority_built_year} に更新")
+                building.built_year = majority_built_year
+                updated = True
+        
+        # 構造の多数決
+        if building_info['structures']:
+            majority_structure = self.get_majority_value(building_info['structures'], building.structure)
+            if majority_structure != building.structure:
+                logger.info(f"建物 '{building.normalized_name}' の構造を更新")
+                building.structure = majority_structure
+                updated = True
         
         return updated
+    
+    def collect_building_info_from_listings(self, building_id: int) -> Dict[str, List[Any]]:
+        """
+        建物に関連する全ての掲載情報から建物属性を収集
+        
+        Args:
+            building_id: 建物ID
+            
+        Returns:
+            属性ごとの値とソースのリスト
+        """
+        # アクティブな掲載情報があるかチェック
+        active_listings_exist = self.session.query(PropertyListing).join(
+            MasterProperty
+        ).filter(
+            MasterProperty.building_id == building_id,
+            PropertyListing.is_active == True
+        ).first() is not None
+        
+        # 掲載情報を取得
+        if active_listings_exist:
+            # アクティブな掲載のみ
+            listings = self.session.query(PropertyListing).join(
+                MasterProperty
+            ).filter(
+                MasterProperty.building_id == building_id,
+                PropertyListing.is_active == True
+            ).all()
+        else:
+            # 全ての掲載（販売終了物件を含む）
+            listings = self.session.query(PropertyListing).join(
+                MasterProperty
+            ).filter(
+                MasterProperty.building_id == building_id
+            ).all()
+        
+        info = {
+            'addresses': [],
+            'total_floors': [],
+            'built_years': [],
+            'structures': []
+        }
+        
+        for listing in listings:
+            # listing_*フィールドから情報を収集
+            if hasattr(listing, 'listing_address') and listing.listing_address:
+                info['addresses'].append((listing.listing_address, listing.source_site))
+            if hasattr(listing, 'listing_total_floors') and listing.listing_total_floors:
+                info['total_floors'].append((listing.listing_total_floors, listing.source_site))
+            if hasattr(listing, 'listing_built_year') and listing.listing_built_year:
+                info['built_years'].append((listing.listing_built_year, listing.source_site))
+            if hasattr(listing, 'listing_building_structure') and listing.listing_building_structure:
+                info['structures'].append((listing.listing_building_structure, listing.source_site))
+        
+        return info
+    
+    def update_building_name_by_majority(self, building_id: int) -> bool:
+        """
+        建物名を関連する全ての情報から多数決で決定
+        
+        Args:
+            building_id: 建物ID
+            
+        Returns:
+            更新があった場合True
+        """
+        building = self.session.query(Building).filter_by(id=building_id).first()
+        if not building:
+            return False
+        
+        # まず、アクティブな掲載情報があるかチェック
+        active_listings_exist = self.session.query(PropertyListing).join(
+            MasterProperty
+        ).filter(
+            MasterProperty.building_id == building_id,
+            PropertyListing.is_active == True
+        ).first() is not None
+        
+        # BuildingAliasから名前を取得する際に、掲載状態を考慮
+        if active_listings_exist:
+            # アクティブな掲載情報がある場合は、アクティブな掲載からのエイリアスのみを使用
+            alias_votes = self.session.query(
+                BuildingAlias.alias_name,
+                BuildingAlias.source,
+                func.sum(BuildingAlias.occurrence_count).label('count')
+            ).join(
+                PropertyListing,
+                and_(
+                    func.cast(PropertyListing.source_site, String) == BuildingAlias.source,
+                    PropertyListing.is_active == True
+                )
+            ).join(
+                MasterProperty
+            ).filter(
+                MasterProperty.building_id == building_id,
+                BuildingAlias.building_id == building_id
+            ).group_by(
+                BuildingAlias.alias_name,
+                BuildingAlias.source
+            ).all()
+        else:
+            # 全ての掲載が非アクティブの場合
+            # 販売終了日から1週間以内の掲載情報を持つエイリアスを使用
+            one_week_ago = datetime.now() - timedelta(days=7)
+            
+            # 建物に関連する販売終了物件を取得
+            sold_properties = self.session.query(MasterProperty).filter(
+                MasterProperty.building_id == building_id,
+                MasterProperty.sold_at.isnot(None),
+                MasterProperty.sold_at >= one_week_ago
+            ).all()
+            
+            if sold_properties:
+                # 販売終了から1週間以内の物件がある場合、その期間の掲載情報からエイリアスを取得
+                alias_votes = self.session.query(
+                    BuildingAlias.alias_name,
+                    BuildingAlias.source,
+                    func.sum(BuildingAlias.occurrence_count).label('count')
+                ).join(
+                    PropertyListing,
+                    func.cast(PropertyListing.source_site, String) == BuildingAlias.source
+                ).join(
+                    MasterProperty
+                ).filter(
+                    MasterProperty.building_id == building_id,
+                    BuildingAlias.building_id == building_id,
+                    PropertyListing.last_confirmed_at >= one_week_ago
+                ).group_by(
+                    BuildingAlias.alias_name,
+                    BuildingAlias.source
+                ).all()
+            else:
+                # 販売終了から1週間以上経過している場合は、全てのエイリアスを使用（従来の動作）
+                alias_votes = self.session.query(
+                    BuildingAlias.alias_name,
+                    BuildingAlias.source,
+                    func.sum(BuildingAlias.occurrence_count).label('count')
+                ).filter(
+                    BuildingAlias.building_id == building_id
+                ).group_by(
+                    BuildingAlias.alias_name,
+                    BuildingAlias.source
+                ).all()
+        
+        if not alias_votes:
+            return False
+        
+        # 重み付け投票の準備
+        weighted_votes = {}
+        
+        for alias_name, source, count in alias_votes:
+            # 基本的な重み（出現回数）
+            weight = count
+            
+            # ソースによる重み付け（優先度の高いサイトほど高い重み）
+            site_priority = self.get_site_priority(source)
+            if site_priority < len(self.SITE_PRIORITY):
+                # 優先度が高いサイトには追加の重みを付与
+                weight *= (len(self.SITE_PRIORITY) - site_priority + 1)
+            
+            # 広告文っぽい名前は重みを下げる
+            if self._is_advertising_text(alias_name):
+                weight *= 0.1
+            
+            # 集計
+            if alias_name in weighted_votes:
+                weighted_votes[alias_name] += weight
+            else:
+                weighted_votes[alias_name] = weight
+        
+        # 最も重みの高い名前を選択
+        if weighted_votes:
+            best_name = max(weighted_votes.items(), key=lambda x: x[1])[0]
+            
+            # 現在の名前と異なる場合は更新
+            if best_name != building.normalized_name:
+                logger.info(
+                    f"建物名更新: '{building.normalized_name}' → '{best_name}' "
+                    f"(ID: {building_id}, votes: {dict(sorted(weighted_votes.items(), key=lambda x: x[1], reverse=True)[:5])})"
+                )
+                building.normalized_name = best_name
+                return True
+        
+        return False
+    
+    def _is_advertising_text(self, text: str) -> bool:
+        """広告的なテキストかどうかを判定"""
+        import re
+        
+        if not text:
+            return False
+        
+        # 広告的なパターン
+        ad_patterns = [
+            r'徒歩\d+分',
+            r'駅.*\d+分',
+            r'の中古マンション',
+            r'新築',
+            r'分譲',
+            r'賃貸',
+            r'[0-9,]+万円',
+            r'\d+LDK',
+            r'\d+階建',
+            r'築\d+年',
+        ]
+        
+        # いずれかのパターンにマッチしたら広告文と判定
+        for pattern in ad_patterns:
+            if re.search(pattern, text):
+                return True
+        
+        # 建物名として短すぎる場合も広告文と判定
+        if len(text) < 3:
+            return True
+        
+        return False
     
     def update_property_with_new_listing_info(self, master_property: MasterProperty, 
                                             listing_info: Dict[str, Any]) -> bool:

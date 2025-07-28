@@ -10,8 +10,10 @@ from urllib.parse import urljoin
 from datetime import datetime
 from bs4 import BeautifulSoup
 
+from .constants import SourceSite
 from .base_scraper import BaseScraper
 from ..models import PropertyListing
+from ..utils.exceptions import TaskPausedException, TaskCancelledException
 from . import (
     normalize_integer, extract_price, extract_area, extract_floor_number,
     normalize_layout, normalize_direction, extract_monthly_fee,
@@ -25,41 +27,70 @@ class SuumoScraper(BaseScraper):
     BASE_URL = "https://suumo.jp"
     
     def __init__(self, force_detail_fetch=False, max_properties=None):
-        super().__init__("SUUMO", force_detail_fetch, max_properties)
+        super().__init__(SourceSite.SUUMO, force_detail_fetch, max_properties)
     
-    def scrape_area(self, area: str, max_pages: int = 5):
-        """エリアの物件をスクレイピング"""
-        # 共通ロジックを使用
-        return self.common_scrape_area_logic(area, max_pages)
+    def scrape_area(self, area: str, max_pages: int = None):
+        """エリアの物件をスクレイピング
+        
+        Args:
+            area: エリアコード（13101, 13102など）
+            max_pages: 最大ページ数（使用しない）
+        """
+        # エリアコードからローマ字に変換
+        from ..scrapers.area_config import get_area_romaji_from_code
+        area_romaji = get_area_romaji_from_code(area)
+        
+        # 内部的にはローマ字を使用
+        self._area_romaji = area_romaji
+        
+        # 共通ロジックを使用（エリアコードを渡す）
+        return self.common_scrape_area_logic(area)
     
     def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
         """個別の物件を処理（SUUMOスクレイパー固有の実装）"""
         try:
-            self.save_property(property_data, existing_listing)
-            return True
+            # process_property_with_detail_checkを直接呼び出す
+            result = self.process_property_with_detail_check(
+                property_data=property_data,
+                existing_listing=existing_listing,
+                parse_detail_func=self.parse_property_detail,
+                save_property_func=self._save_property_after_detail
+            )
+            # detail_fetchedフラグは既にprocess_property_with_detail_check内で設定されているため、
+            # ここでの二重設定は不要（削除）
+            return result
         except Exception as e:
             # エラーは呼び出し元で処理されるので、ここでは再スロー
             raise
     
     def get_search_url(self, area: str, page: int = 1) -> str:
-        """SUUMOの検索URLを生成（100件/ページ）"""
-        # SUUMOのURLパラメータ
-        # ar=030: 関東地方
-        # bs=011: 中古マンション
-        # sc=13103: 港区（エリアコード）
-        # ta=13: 東京都
-        # po=0: デフォルトソート
-        # pj=1: ページ番号
-        # pc=100: 1ページあたり100件表示
+        """SUUMOの検索URLを生成（100件/ページ）
         
-        from .area_config import get_area_code
+        Args:
+            area: エリアコード（common_scrape_area_logicから渡される）
+            page: ページ番号
+        """
+        # SUUMOの中古マンション検索URL
+        # 東京都のエリア別URL形式: /ms/chuko/tokyo/sc_[area]/
+        # pc=100で100件表示を指定
         
-        # エリアコードを取得
-        area_code = get_area_code(area)
+        # エリアコードからローマ字を取得
+        # 既にローマ字の場合（_area_romajiが設定されている場合）はそのまま使用
+        if hasattr(self, '_area_romaji'):
+            area_romaji = self._area_romaji
+        elif area.isdigit() and len(area) == 5:
+            # エリアコードの場合はローマ字に変換
+            from ..scrapers.area_config import get_area_romaji_from_code
+            area_romaji = get_area_romaji_from_code(area)
+        else:
+            # すでにローマ字の場合はそのまま使用
+            area_romaji = area
         
-        # 新形式のURL（100件/ページ）
-        # pageパラメータを追加して正しくページネーションが動作するように修正
-        return f"{self.BASE_URL}/jj/bukken/ichiran/JJ012FC001/?ar=030&bs=011&sc={area_code}&ta=13&po=0&pj={page}&pc=100&page={page}"
+        # 中古マンション検索用URL
+        if page == 1:
+            return f"{self.BASE_URL}/ms/chuko/tokyo/sc_{area_romaji}/?pc=100"
+        else:
+            return f"{self.BASE_URL}/ms/chuko/tokyo/sc_{area_romaji}/?pc=100&page={page}"
     
     def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
         """物件一覧からURLと最小限の情報のみを抽出"""
@@ -75,45 +106,16 @@ class SuumoScraper(BaseScraper):
         for unit in property_units:
             property_data = {}
             
-            # 物件詳細へのリンク（新旧両方のパターンに対応）
-            link = unit.select_one('a[href*="/ms/chuko/"][href*="/nc_"]')
-            if not link:
-                # 新形式のリンクパターン
-                link = unit.select_one('a[href*="/chuko/"][href*="nc"]')
-            if not link:
-                # さらに別のパターン
-                link = unit.select_one('.js-property_link, .property_link')
-            
-            if link:
-                property_data['url'] = urljoin(self.BASE_URL, link.get('href'))
+            # 物件詳細へのリンク（タイトルリンクを取得）
+            title_link = unit.select_one('.property_unit-title a')
+            if title_link:
+                property_data['url'] = urljoin(self.BASE_URL, title_link.get('href'))
                 property_data['site_property_id'] = self.extract_property_id(property_data['url'])
             
             # 新着・更新マークを検出（詳細ページ取得の判定用）
             is_new = bool(unit.select_one('.property_unit-newmark, .icon_new, [class*="new"]'))
             is_updated = bool(unit.select_one('.property_unit-update, .icon_update, [class*="update"]'))
             property_data['has_update_mark'] = is_new or is_updated
-            
-            # 建物名を取得（物件名フィールドから - 一時的な識別用）
-            building_name = None
-            
-            # .dottable-lineから物件名を取得
-            dottable_lines = unit.select('.dottable-line')
-            for line in dottable_lines:
-                dt_elem = line.select_one('dt')
-                dd_elem = line.select_one('dd')
-                if dt_elem and dd_elem:
-                    label = dt_elem.get_text(strip=True)
-                    value = dd_elem.get_text(strip=True)
-                    
-                    if '物件名' in label:
-                        building_name = value
-                        break
-            
-            # 注意: .cassette-titleや.property_unit-titleは広告文なので使用しない
-            # 物件名フィールドが見つからない場合は建物名なしとする
-            
-            if building_name:
-                property_data['building_name'] = building_name
             
             # 価格を取得（一覧ページから）
             price_elem = unit.select_one('.dottable-value')
@@ -122,11 +124,8 @@ class SuumoScraper(BaseScraper):
                 # データ正規化フレームワークを使用して価格を抽出
                 property_data['price'] = extract_price(price_text)
             
-            # URLが取得できた物件を追加（建物名は詳細ページから取得可能）
+            # URLが取得できた物件を追加
             if property_data.get('url'):
-                # 建物名がない場合は仮の名前を設定
-                if not property_data.get('building_name'):
-                    property_data['building_name'] = f"物件_{property_data.get('site_property_id', 'unknown')}"
                 properties.append(property_data)
         
         # SUUMOの100件表示チェック
@@ -152,16 +151,8 @@ class SuumoScraper(BaseScraper):
     
     def _save_property_after_detail(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
         """詳細データ取得後の保存処理（内部メソッド）"""
-        try:
-            # 共通の保存処理を使用
-            return self.save_property_common(property_data, existing_listing)
-            
-        except Exception as e:
-            print(f"  → エラー: {e}")
-            import traceback
-            traceback.print_exc()
-            self.record_error('saving')
-            return False
+        # 共通の保存処理を使用（例外処理はbase_scraperで行う）
+        return self.save_property_common(property_data, existing_listing)
     
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
         """物件詳細を解析"""
@@ -172,7 +163,7 @@ class SuumoScraper(BaseScraper):
             # 詳細ページを取得
             soup = self.fetch_page(url)
             if not soup:
-                self.record_error('detail_page')
+                # record_errorは呼ばない（base_scraperでカウントされるため）
                 return None
                 
             # HTML構造の検証
@@ -182,7 +173,6 @@ class SuumoScraper(BaseScraper):
             }
             
             if not self.validate_html_structure(soup, required_selectors):
-                self.record_error('parsing')
                 return None
                 
             property_data = {
@@ -279,19 +269,16 @@ class SuumoScraper(BaseScraper):
                             detail_info['structure_full'] = value
                             print(f"    構造（フル）: {value}")
                             
-                            # 総階数を抽出 - より詳細なパターンマッチング
-                            # 「RC21階地下1階建」のように建物種別の後に階数が来るパターンに対応
-                            total_floors_match = re.search(r'(?:RC|SRC|S造|木造|鉄骨)?(\d+)階(?:地下\d+階)?建', value)
-                            if total_floors_match:
-                                detail_info['total_floors'] = int(total_floors_match.group(1))
+                            # データ正規化フレームワークを使用して総階数と地下階数を抽出
+                            from . import extract_total_floors
+                            total_floors, basement_floors = extract_total_floors(value)
+                            if total_floors is not None:
+                                detail_info['total_floors'] = total_floors
                                 print(f"    総階数: {detail_info['total_floors']}階")
-                            
-                            # 地下階数を抽出
-                            basement_match = re.search(r'地下(\d+)階', value)
-                            if basement_match:
-                                detail_info['basement_floors'] = int(basement_match.group(1))
-                            else:
-                                detail_info['basement_floors'] = 0
+                            if basement_floors is not None:
+                                detail_info['basement_floors'] = basement_floors
+                                if basement_floors > 0:
+                                    print(f"    地下階数: {detail_info['basement_floors']}階")
                             
                             # 構造種別を抽出
                             structure_match = re.search(r'(RC|SRC|S造|木造|鉄骨)', value)
@@ -308,19 +295,17 @@ class SuumoScraper(BaseScraper):
                         # 建物の総階数を取得（別形式のフィールドから）
                         elif '構造' in label and '階建' in label and '所在階' not in label and 'total_floors' not in detail_info:
                             print(f"    [DEBUG] 構造・階建フィールド発見（別形式）: {label} = {value}")
-                            # 「SRC14階地下1階建」のようなパターンに対応
                             # スラッシュで分割してからパターンマッチ
                             parts = value.split('/')
                             structure_part = parts[-1] if len(parts) > 1 else value
                             
-                            # 地下を含む完全な階数表記を解析
-                            # 例: "14階地下1階建", "42階建", "5階地下2階建"
-                            # より詳細なパターンマッチング
-                            floors_match = re.search(r'(?:RC|SRC|S造|木造|鉄骨)?(\d+)階(?:地下(\d+)階)?建', structure_part)
-                            if floors_match:
-                                detail_info['total_floors'] = int(floors_match.group(1))
-                                if floors_match.group(2):
-                                    detail_info['basement_floors'] = int(floors_match.group(2))
+                            # データ正規化フレームワークを使用
+                            from . import extract_total_floors
+                            total_floors, basement_floors = extract_total_floors(structure_part)
+                            if total_floors is not None:
+                                detail_info['total_floors'] = total_floors
+                                if basement_floors is not None and basement_floors > 0:
+                                    detail_info['basement_floors'] = basement_floors
                                     print(f"    総階数: {detail_info['total_floors']}階（地下{detail_info['basement_floors']}階）")
                                 else:
                                     detail_info['basement_floors'] = 0
@@ -361,26 +346,11 @@ class SuumoScraper(BaseScraper):
                         
                         # 価格（テーブルからも取得を試みる）
                         if '価格' in label and ('万円' in value or '億円' in value) and 'price' not in property_data:
-                            # 億単位の価格に対応
-                            # パターン1: "1億4500万円"
-                            oku_man_match = re.search(r'(\d+)億(\d+(?:,\d{3})*)万円', value)
-                            if oku_man_match:
-                                oku = int(oku_man_match.group(1))
-                                man = int(oku_man_match.group(2).replace(',', ''))
-                                property_data['price'] = oku * 10000 + man
-                                print(f"    価格（テーブルから）: {oku}億{man}万円 ({property_data['price']}万円)")
-                            # パターン2: "2億円"
-                            elif re.search(r'(\d+)億円', value):
-                                oku_only_match = re.search(r'(\d+)億円', value)
-                                oku = int(oku_only_match.group(1))
-                                property_data['price'] = oku * 10000
-                                print(f"    価格（テーブルから）: {oku}億円 ({property_data['price']}万円)")
-                            # パターン3: 通常の価格
-                            else:
-                                price_match = re.search(r'([\d,]+)万円', value)
-                                if price_match:
-                                    property_data['price'] = int(price_match.group(1).replace(',', ''))
-                                    print(f"    価格（テーブルから）: {property_data['price']}万円")
+                            # データ正規化フレームワークを使用して価格を抽出
+                            price = extract_price(value)
+                            if price:
+                                property_data['price'] = price
+                                print(f"    価格（テーブルから）: {property_data['price']}万円")
                         
                         # 間取り
                         elif '間取り' in label:
@@ -587,6 +557,20 @@ class SuumoScraper(BaseScraper):
             # 詳細情報を保存
             property_data['detail_info'] = detail_info
             
+            # detail_infoの重要な情報をproperty_dataにも含める（後方互換性のため）
+            if 'total_floors' in detail_info:
+                property_data['total_floors'] = detail_info['total_floors']
+            if 'basement_floors' in detail_info:
+                property_data['basement_floors'] = detail_info['basement_floors']
+            if 'total_units' in detail_info:
+                property_data['total_units'] = detail_info['total_units']
+            if 'structure' in detail_info:
+                property_data['structure'] = detail_info['structure']
+            if 'land_rights' in detail_info:
+                property_data['land_rights'] = detail_info['land_rights']
+            if 'parking_info' in detail_info:
+                property_data['parking_info'] = detail_info['parking_info']
+            
             # タイトルと説明文
             title_elem = soup.select_one('h1, .property-title')
             if title_elem:
@@ -595,27 +579,11 @@ class SuumoScraper(BaseScraper):
             # 価格が取得できていない場合は、ページ全体から探す
             if 'price' not in property_data:
                 page_text = soup.get_text()
-                # 億単位の価格を優先的に探す
-                # パターン1: "1億4500万円"
-                oku_man_match = re.search(r'(\d+)億(\d+(?:,\d{3})*)万円', page_text)
-                if oku_man_match:
-                    oku = int(oku_man_match.group(1))
-                    man = int(oku_man_match.group(2).replace(',', ''))
-                    property_data['price'] = oku * 10000 + man
-                    print(f"    価格（ページ全体から）: {oku}億{man}万円 ({property_data['price']}万円)")
-                else:
-                    # パターン2: "2億円"
-                    oku_only_match = re.search(r'(\d+)億円', page_text)
-                    if oku_only_match:
-                        oku = int(oku_only_match.group(1))
-                        property_data['price'] = oku * 10000
-                        print(f"    価格（ページ全体から）: {oku}億円 ({property_data['price']}万円)")
-                    else:
-                        # パターン3: 通常の価格
-                        price_match = re.search(r'([\d,]+)万円', page_text)
-                        if price_match:
-                            property_data['price'] = int(price_match.group(1).replace(',', ''))
-                            print(f"    価格（ページ全体から）: {property_data['price']}万円")
+                # データ正規化フレームワークを使用して価格を抽出
+                price = extract_price(page_text)
+                if price:
+                    property_data['price'] = price
+                    print(f"    価格（ページ全体から）: {property_data['price']}万円")
             
             # 必須フィールドのチェック
             if 'price' in property_data:
@@ -624,14 +592,11 @@ class SuumoScraper(BaseScraper):
                 self.logger.warning(f"Price not found for {url}")
                 return None
             
+        except (TaskPausedException, TaskCancelledException):
+            # タスクの一時停止・キャンセル例外は再スロー
+            raise
         except Exception as e:
             self.logger.error(f"Error parsing property detail from {url}: {e}")
-            self.record_error(
-                error_type='detail_page',
-                url=url,
-                error=e,
-                phase='parse_property_detail'
-            )
             return None
     
     def fetch_and_update_detail(self, listing: PropertyListing) -> bool:
@@ -686,13 +651,9 @@ class SuumoScraper(BaseScraper):
             self.session.commit()
             return True
             
+        except (TaskPausedException, TaskCancelledException):
+            # タスクの一時停止・キャンセル例外は再スロー
+            raise
         except Exception as e:
             print(f"    詳細ページ取得エラー: {e}")
-            self.record_error(
-                error_type='detail_page',
-                url=listing.url,
-                building_name=listing.master_property.building.normalized_name if listing.master_property and listing.master_property.building else None,
-                error=e,
-                phase='fetch_and_update_detail'
-            )
             return False

@@ -7,19 +7,31 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from ..utils.exceptions import TaskPausedException, TaskCancelledException
 from pydantic import BaseModel
 import asyncio
 import threading
 import uuid
 import time
+import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 
 from ..database import get_db
+from ..utils.debug_logger import debug_log
 from ..models import MasterProperty, PropertyListing, Building, ListingPriceHistory, PropertyMergeHistory, PropertyMergeExclusion
 from sqlalchemy import func, or_, and_
 from ..auth import verify_admin_credentials
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(verify_admin_credentials)])
+
+# タスクの永続化ファイル
+TASKS_FILE = "/app/backend/scraping_tasks.json"
+
+# グローバルロック（スレッドセーフな操作のため）
+tasks_lock = threading.Lock()
+instances_lock = threading.Lock()
+flags_lock = threading.Lock()
 
 # スクレイピングタスクの状態を管理
 scraping_tasks: Dict[str, Dict[str, Any]] = {}
@@ -28,6 +40,161 @@ executor = ThreadPoolExecutor(max_workers=3)
 # タスクの制御フラグを管理
 task_cancel_flags: Dict[str, threading.Event] = {}
 task_pause_flags: Dict[str, threading.Event] = {}
+
+# 一時停止のタイムスタンプを管理
+task_pause_timestamps: Dict[str, datetime] = {}
+
+# 一時停止のタイムアウト時間（秒）
+# 環境変数から取得、デフォルトは30分
+PAUSE_TIMEOUT_SECONDS = int(os.environ.get('SCRAPING_PAUSE_TIMEOUT', '1800'))
+
+# スクレイパーインスタンスを保持（再開時に再利用）
+scraper_instances: Dict[str, Any] = {}
+
+
+def check_pause_timeout(task_id: str) -> bool:
+    """一時停止のタイムアウトをチェックし、タイムアウトした場合はタスクをキャンセル"""
+    # まず一時停止中かどうかを確認
+    with flags_lock:
+        pause_flag = task_pause_flags.get(task_id)
+        if not pause_flag or not pause_flag.is_set():
+            # 一時停止中でない場合は何もしない
+            return False
+    
+    with tasks_lock:
+        if task_id in task_pause_timestamps:
+            elapsed_time = (datetime.now() - task_pause_timestamps[task_id]).total_seconds()
+            if elapsed_time > PAUSE_TIMEOUT_SECONDS:
+                print(f"[{task_id}] Pause timeout exceeded ({elapsed_time:.0f}s > {PAUSE_TIMEOUT_SECONDS}s). Cancelling task.")
+                # タスクをキャンセル状態に変更
+                if task_id in scraping_tasks:
+                    scraping_tasks[task_id]["status"] = "cancelled"
+                    scraping_tasks[task_id]["errors"].append(
+                        f"タスクは一時停止タイムアウト（{PAUSE_TIMEOUT_SECONDS}秒）により自動的にキャンセルされました。"
+                    )
+                
+                # タイムスタンプを削除
+                del task_pause_timestamps[task_id]
+    
+                # フラグ操作は別のロックで保護
+                with flags_lock:
+                    # キャンセルフラグをセット
+                    if task_id in task_cancel_flags:
+                        task_cancel_flags[task_id].set()
+                    
+                    # 一時停止フラグをクリア
+                    if task_id in task_pause_flags:
+                        task_pause_flags[task_id].clear()
+                
+                # スクレイパーインスタンスをクリーンアップ
+                cleanup_task_resources(task_id)
+                
+                return True
+    
+    return False
+
+
+def cleanup_task_resources(task_id: str):
+    """タスクに関連するリソースをクリーンアップ"""
+    with instances_lock:
+        # スクレイパーインスタンスを削除
+        keys_to_delete = []
+        for key in scraper_instances:
+            if key.startswith(f"{task_id}_"):
+                keys_to_delete.append(key)
+        
+        for key in keys_to_delete:
+            scraper = scraper_instances.get(key)
+            if scraper:
+                if hasattr(scraper, 'session'):
+                    try:
+                        scraper.session.close()
+                    except:
+                        pass
+                if hasattr(scraper, 'http_session'):
+                    try:
+                        scraper.http_session.close()
+                    except:
+                        pass
+                del scraper_instances[key]
+                print(f"[{task_id}] Cleaned up scraper instance: {key}")
+
+
+def save_tasks_to_file():
+    """タスク情報をファイルに保存（シリアライズ可能なデータのみ）"""
+    try:
+        # シリアライズ可能なデータのみを抽出
+        serializable_tasks = {}
+        for task_id, task_data in scraping_tasks.items():
+            serializable_task = {
+                "task_id": task_data.get("task_id"),
+                "status": task_data.get("status"),
+                "scrapers": task_data.get("scrapers"),
+                "area_codes": task_data.get("area_codes"),
+                "max_properties": task_data.get("max_properties"),
+                "started_at": task_data.get("started_at").isoformat() if task_data.get("started_at") else None,
+                "completed_at": task_data.get("completed_at").isoformat() if task_data.get("completed_at") else None,
+                "errors": task_data.get("errors", []),
+                "progress": {}
+            }
+            
+            # progressの各エントリをシリアライズ可能な形式に変換
+            for progress_key, progress_data in task_data.get("progress", {}).items():
+                serializable_progress = {
+                    k: v for k, v in progress_data.items()
+                    if k not in ["resume_state"]  # 大きなデータは除外
+                }
+                # resume_stateは別途処理（collected_propertiesを除外）
+                if "resume_state" in progress_data and progress_data["resume_state"]:
+                    resume_state = progress_data["resume_state"]
+                    serializable_progress["resume_state"] = {
+                        "phase": resume_state.get("phase"),
+                        "current_page": resume_state.get("current_page"),
+                        "processed_count": resume_state.get("processed_count"),
+                        "stats": resume_state.get("stats", {}),
+                        # collected_propertiesは大きすぎるので保存しない
+                        # 代わりに収集済み物件数のみ保存
+                        "collected_count": len(resume_state.get("collected_properties", []))
+                    }
+                serializable_task["progress"][progress_key] = serializable_progress
+            
+            serializable_tasks[task_id] = serializable_task
+        
+        with open(TASKS_FILE, 'w') as f:
+            json.dump(serializable_tasks, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"Error saving tasks to file: {e}")
+
+
+def load_tasks_from_file():
+    """ファイルからタスク情報を読み込み"""
+    global scraping_tasks
+    try:
+        if os.path.exists(TASKS_FILE):
+            with open(TASKS_FILE, 'r') as f:
+                loaded_tasks = json.load(f)
+            
+            # 日付フィールドを復元
+            for task_id, task_data in loaded_tasks.items():
+                if task_data.get("started_at"):
+                    task_data["started_at"] = datetime.fromisoformat(task_data["started_at"])
+                if task_data.get("completed_at"):
+                    task_data["completed_at"] = datetime.fromisoformat(task_data["completed_at"])
+                
+                # 実行中だったタスクはpaused状態に変更
+                if task_data.get("status") == "running":
+                    task_data["status"] = "paused"
+                    print(f"[INIT] Task {task_id} was running, changed to paused")
+                
+                scraping_tasks[task_id] = task_data
+            
+            print(f"[INIT] Loaded {len(scraping_tasks)} tasks from file")
+    except Exception as e:
+        print(f"Error loading tasks from file: {e}")
+
+
+# アプリケーション起動時にタスクを読み込み
+load_tasks_from_file()
 
 
 class DuplicateCandidate(BaseModel):
@@ -577,6 +744,13 @@ def merge_properties(
         updater = MajorityVoteUpdater(db)
         updater.update_master_property_by_majority(primary)
         
+        # 建物情報と建物名も多数決で更新（物件統合により掲載情報が変わったため）
+        if primary.building_id:
+            building = db.query(Building).get(primary.building_id)
+            if building:
+                updater.update_building_by_majority(building)
+            updater.update_building_name_by_majority(primary.building_id)
+        
         db.commit()
         
         return {
@@ -625,7 +799,7 @@ def merge_properties_batch(
 
 class ScrapingRequest(BaseModel):
     """スクレイピングリクエスト"""
-    scrapers: List[str]  # ["suumo", "athome", "homes"]
+    scrapers: List[str]  # ["suumo", "homes", "rehouse", "nomu", "livable"]
     area_codes: List[str] = ["13103"]  # デフォルト: 港区
     max_properties: int = 100  # 各スクレイパー・各エリアで取得する最大件数
 
@@ -642,6 +816,7 @@ class ScrapingTaskStatus(BaseModel):
     progress: Dict[str, Dict[str, Any]]  # 各スクレイパー・エリアの進行状況
     errors: List[str]
     logs: Optional[List[Dict[str, Any]]] = []  # 詳細ログ
+    error_logs: Optional[List[Dict[str, Any]]] = []  # エラーログ
 
 
 def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], max_properties: int):
@@ -649,17 +824,35 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
     import subprocess
     import json
     
+    print(f"[{task_id}] Starting run_scraping_task with scrapers={scrapers}, areas={area_codes}")
+    
+    # キャンセルフラグの初期状態をチェック
+    cancel_flag = task_cancel_flags.get(task_id)
+    if cancel_flag:
+        print(f"[{task_id}] Cancel flag exists at start: {cancel_flag.is_set()}")
+    else:
+        print(f"[{task_id}] No cancel flag found at start!")
+    
     # タスク状態を更新
     scraping_tasks[task_id]["status"] = "running"
     
-    # ローカルでスクレイピングを実行（APIサーバーと同じ環境）
+    # スクレイパーのインポート（エラーハンドリングを分離）
     try:
         from ..scrapers.suumo_scraper import SuumoScraper
         from ..scrapers.homes_scraper import HomesScraper
         from ..scrapers.rehouse_scraper import RehouseScraper
         from ..scrapers.nomu_scraper import NomuScraper
         from ..scrapers.livable_scraper import LivableScraper
-        
+        # エリア変換は各スクレイパー内部で実施するため不要
+    except Exception as e:
+        scraping_tasks[task_id]["status"] = "failed"
+        scraping_tasks[task_id]["completed_at"] = datetime.now()
+        scraping_tasks[task_id]["errors"].append(f"Failed to import scrapers: {str(e)}")
+        print(f"[{task_id}] Import Error: {e}")
+        return
+    
+    # スクレイピングの実行
+    try:
         scraper_classes = {
             "suumo": SuumoScraper,
             "homes": HomesScraper,
@@ -674,66 +867,76 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
         total_combinations = len(scrapers) * len(area_codes)
         completed_combinations = 0
         
-        for scraper_name in scrapers:
+        # グローバルのscraper_instancesを使用
+        
+        # 再開ポイントの復元
+        resume_point = scraping_tasks[task_id].get("resume_point", {"scraper_index": 0, "area_index": 0})
+        scraper_index = resume_point.get("scraper_index", 0)
+        
+        while scraper_index < len(scrapers):
+            scraper_name = scrapers[scraper_index]
             if scraper_name not in scraper_classes:
                 error_msg = f"Unknown scraper: {scraper_name}"
                 scraping_tasks[task_id]["errors"].append(error_msg)
+                scraper_index += 1
                 continue
                 
-            for area_code in area_codes:
-                # キャンセルチェック
+            # 再開時は保存されていたarea_indexから開始
+            area_index = resume_point.get("area_index", 0) if scraper_index == resume_point.get("scraper_index", 0) else 0
+            while area_index < len(area_codes):
+                area_code = area_codes[area_index]
+                
+                # キャンセルチェック（一時停止はスクレイパー内部で処理）
                 cancel_flag = task_cancel_flags.get(task_id)
                 if cancel_flag and cancel_flag.is_set():
                     scraping_tasks[task_id]["status"] = "cancelled"
                     scraping_tasks[task_id]["completed_at"] = datetime.now()
                     print(f"[{task_id}] Task cancelled by user")
-                    return
-                
-                # 一時停止チェック
-                pause_flag = task_pause_flags.get(task_id)
-                while pause_flag and pause_flag.is_set():
-                    if scraping_tasks[task_id]["status"] != "paused":
-                        scraping_tasks[task_id]["status"] = "paused"
-                        print(f"[{task_id}] Task paused by user")
-                    time.sleep(1)
-                    # 一時停止中でもキャンセルをチェック
-                    if cancel_flag and cancel_flag.is_set():
-                        scraping_tasks[task_id]["status"] = "cancelled"
-                        scraping_tasks[task_id]["completed_at"] = datetime.now()
-                        print(f"[{task_id}] Task cancelled while paused")
-                        return
-                
-                # 一時停止から再開した場合
-                if scraping_tasks[task_id]["status"] == "paused":
-                    scraping_tasks[task_id]["status"] = "running"
-                    print(f"[{task_id}] Task resumed")
+                    raise TaskCancelledException("Task cancelled by user")
                 
                 # 進行状況のキーを作成（スクレイパー名_エリアコード）
                 progress_key = f"{scraper_name}_{area_code}"
                 area_name = area_names.get(area_code, area_code)
                 
+                # 現在処理中の組み合わせを記録
+                scraping_tasks[task_id]["current_combination"] = {
+                    "scraper": scraper_name,
+                    "area": area_code,
+                    "progress_key": progress_key
+                }
+                
                 try:
-                    # スクレイパーの進行状況を初期化
-                    scraping_tasks[task_id]["progress"][progress_key] = {
-                        "scraper": scraper_name,
-                        "area_code": area_code,
-                        "area_name": area_name,
-                        "status": "running",
-                        "properties_scraped": 0,
-                        "new_listings": 0,
-                        "updated_listings": 0,
-                        "skipped_listings": 0,
-                        # 詳細統計
-                        "properties_found": 0,  # 一覧から取得した物件数
-                        "properties_attempted": 0,  # 処理を試みた物件数
-                        "detail_fetch_failed": 0,  # 詳細ページ取得失敗数
-                        "price_missing": 0,  # 価格情報なし
-                        "building_info_missing": 0,  # 建物情報不足
-                        "other_errors": 0,  # その他のエラー
-                        "started_at": datetime.now().isoformat(),
-                        "completed_at": None,
-                        "error": None
-                    }
+                    # 既存の進行状況を確認（一時停止から再開の場合）
+                    existing_progress = scraping_tasks[task_id]["progress"].get(progress_key, {})
+                    was_paused = existing_progress.get("status") == "paused"
+                    
+                    # スクレイパーの進行状況を初期化（既存の状態を保持）
+                    if not existing_progress:
+                        # 新規の場合は初期化
+                        scraping_tasks[task_id]["progress"][progress_key] = {
+                            "scraper": scraper_name,
+                            "area_code": area_code,
+                            "area_name": area_name,
+                            "status": "running",
+                            "properties_scraped": 0,
+                            "new_listings": 0,
+                            "updated_listings": 0,
+                            "skipped_listings": 0,
+                            # 詳細統計
+                            "properties_found": 0,  # 一覧から取得した物件数
+                            "properties_attempted": 0,  # 処理を試みた物件数
+                            "detail_fetched": 0,  # 詳細取得成功数
+                            "detail_fetch_failed": 0,  # 詳細ページ取得失敗数
+                            "price_missing": 0,  # 価格情報なし
+                            "building_info_missing": 0,  # 建物情報不足
+                            "other_errors": 0,  # その他のエラー
+                            "started_at": datetime.now().isoformat(),
+                            "completed_at": None,
+                            "error": None
+                        }
+                    else:
+                        # 既存の場合はステータスのみ更新（他の統計は保持）
+                        scraping_tasks[task_id]["progress"][progress_key]["status"] = "running"
                     
                     # スクレイピング実行
                     scraper_class = scraper_classes[scraper_name]
@@ -756,112 +959,203 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
                     
                     # 統計管理はスクレイパー側に委任（二重管理を避ける）
                     
-                    # スクレイパーインスタンスを作成
-                    with scraper_class(max_properties=max_properties) as scraper:
+                    # スクレイパーインスタンスを取得または作成
+                    # task_idを含めて、タスクごとに独立したインスタンスを使用
+                    instance_key = f"{task_id}_{scraper_name}_{area_code}"
+                    if instance_key in scraper_instances:
+                        # 保存されたインスタンスを再利用
+                        scraper = scraper_instances[instance_key]
+                        print(f"[{task_id}] Reusing existing scraper instance for {scraper_name} in {area_name}")
+                        # セッションがクローズされている場合は新しいセッションを作成
+                        if hasattr(scraper, 'session'):
+                            from ..database import SessionLocal
+                            scraper.session = SessionLocal()
+                        if hasattr(scraper, 'http_session') and scraper.http_session is None:
+                            import requests
+                            scraper.http_session = requests.Session()
+                            scraper.http_session.headers.update({
+                                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                            })
+                    else:
+                        # 新しいインスタンスを作成
+                        scraper = scraper_class(max_properties=max_properties)
+                        scraper_instances[instance_key] = scraper
+                    
+                    # 一時停止・キャンセルフラグを設定（同じフラグオブジェクトを確実に使用）
+                    # 重要：既存インスタンスの場合もフラグを更新する必要がある
+                    scraper.pause_flag = task_pause_flags.get(task_id)
+                    scraper.cancel_flag = task_cancel_flags.get(task_id)
+                    print(f"[{task_id}] Scraper {scraper_name} for {area_code} - Pause flag ID: {id(scraper.pause_flag) if scraper.pause_flag else 'None'}")
+                    if scraper.pause_flag:
+                        print(f"[{task_id}] Pause flag is_set: {scraper.pause_flag.is_set()}")
+                    
+                    # ステータス更新用のコールバック関数を設定
+                    def update_status(status):
+                        print(f"[CALLBACK] Updating status for task {task_id}, progress_key={progress_key}: {status}")
+                        scraping_tasks[task_id]["status"] = status
+                        if status == "paused":
+                            scraping_tasks[task_id]["progress"][progress_key]["status"] = "paused"
+                        elif status == "running":
+                            scraping_tasks[task_id]["progress"][progress_key]["status"] = "running"
+                    
+                    scraper.update_status_callback = update_status
+                    
+                    try:
                         # ページ取得メソッドをオーバーライド（一時停止チェックを追加）
-                        original_fetch_page = scraper.fetch_page
-                        
-                        def fetch_page_with_pause_check(url):
-                            # 一時停止チェック
-                            pause_flag = task_pause_flags.get(task_id)
-                            while pause_flag and pause_flag.is_set():
-                                if scraping_tasks[task_id]["status"] != "paused":
-                                    scraping_tasks[task_id]["status"] = "paused"
-                                    print(f"[{task_id}] Task paused")
-                                time.sleep(0.5)
-                                # 一時停止中でもキャンセルをチェック
-                                cancel_flag = task_cancel_flags.get(task_id)
-                                if cancel_flag and cancel_flag.is_set():
-                                    scraping_tasks[task_id]["status"] = "cancelled"
-                                    scraping_tasks[task_id]["completed_at"] = datetime.now()
-                                    print(f"[{task_id}] Task cancelled while paused")
-                                    raise Exception("Task cancelled")
+                        # 既にオーバーライドされていない場合のみ適用
+                        if not hasattr(scraper, '_fetch_page_overridden'):
+                            original_fetch_page = scraper.fetch_page
                             
-                            # 一時停止から再開した場合
-                            if scraping_tasks[task_id]["status"] == "paused":
-                                scraping_tasks[task_id]["status"] = "running"
-                                print(f"[{task_id}] Task resumed")
+                            def fetch_page_with_pause_check(url):
+                                # 一時停止チェック（待機方式）
+                                if scraper.pause_flag and scraper.pause_flag.is_set():
+                                    print(f"[{task_id}] Paused in fetch_page, waiting...")
+                                    debug_log(f"[{task_id}] fetch_pageで一時停止検出。待機開始...")
+                                    wait_count = 0
+                                    while scraper.pause_flag.is_set():
+                                        if scraper.cancel_flag and scraper.cancel_flag.is_set():
+                                            print(f"[{task_id}] Cancelled during pause in fetch_page")
+                                            raise TaskCancelledException("Task cancelled")
+                                        time.sleep(0.1)
+                                        wait_count += 1
+                                        if wait_count % 50 == 0:  # 5秒ごとにログ
+                                            debug_log(f"[{task_id}] fetch_page待機中... {wait_count/10}秒経過")
+                                    print(f"[{task_id}] Resumed in fetch_page after {wait_count/10} seconds")
+                                    debug_log(f"[{task_id}] fetch_pageで一時停止解除。処理を再開... (待機時間: {wait_count/10}秒)")
+                                
+                                # キャンセルチェック
+                                if scraper.cancel_flag and scraper.cancel_flag.is_set():
+                                    print(f"[{task_id}] Cancelled in fetch_page")
+                                    raise TaskCancelledException("Task cancelled")
+                                
+                                return original_fetch_page(url)
                             
-                            # キャンセルチェック
-                            cancel_flag = task_cancel_flags.get(task_id)
-                            if cancel_flag and cancel_flag.is_set():
-                                scraping_tasks[task_id]["status"] = "cancelled"
-                                scraping_tasks[task_id]["completed_at"] = datetime.now()
-                                print(f"[{task_id}] Task cancelled")
-                                raise Exception("Task cancelled")
-                            
-                            return original_fetch_page(url)
-                        
-                        scraper.fetch_page = fetch_page_with_pause_check
+                            scraper.fetch_page = fetch_page_with_pause_check
+                            scraper._fetch_page_overridden = True
                         
                         # create_or_update_listingメソッドをオーバーライド（ログ記録のみ、統計は二重管理しない）
-                        original_create_or_update = scraper.create_or_update_listing
+                        # 既にオーバーライドされていない場合のみ適用
+                        if not hasattr(scraper, '_create_or_update_overridden'):
+                            original_create_or_update = scraper.create_or_update_listing
                         
-                        def create_or_update_with_logging(*args, **kwargs):
-                            # 簡易的な一時停止・キャンセルチェック
-                            pause_flag = task_pause_flags.get(task_id)
-                            if pause_flag and pause_flag.is_set():
-                                # 一時停止フラグがセットされている場合は例外を投げる
-                                # （詳細なチェックはfetch_pageで行う）
-                                raise Exception("Task paused")
+                            def create_or_update_with_logging(*args, **kwargs):
+                                # 一時停止チェック（待機方式）
+                                if scraper.pause_flag and scraper.pause_flag.is_set():
+                                    print(f"[{task_id}] Paused in create_or_update_listing, waiting...")
+                                    debug_log(f"[{task_id}] create_or_update_listingで一時停止検出。待機開始...")
+                                    wait_count = 0
+                                    while scraper.pause_flag.is_set():
+                                        if scraper.cancel_flag and scraper.cancel_flag.is_set():
+                                            print(f"[{task_id}] Cancelled during pause in create_or_update_listing")
+                                            raise TaskCancelledException("Task cancelled")
+                                        time.sleep(0.1)
+                                        wait_count += 1
+                                        if wait_count % 50 == 0:  # 5秒ごとにログ
+                                            debug_log(f"[{task_id}] create_or_update_listing待機中... {wait_count/10}秒経過")
+                                    print(f"[{task_id}] Resumed in create_or_update_listing after {wait_count/10} seconds")
+                                    debug_log(f"[{task_id}] create_or_update_listingで一時停止解除。処理を再開... (待機時間: {wait_count/10}秒)")
+                                
+                                # キャンセルチェック
+                                if scraper.cancel_flag and scraper.cancel_flag.is_set():
+                                    print(f"[{task_id}] Cancelled in create_or_update_listing")
+                                    raise TaskCancelledException("Task cancelled")
+                                
+                                # URLから既存の掲載を確認
+                                url = args[1] if len(args) > 1 else kwargs.get('url')
+                                existing = scraper.session.query(PropertyListing).filter_by(url=url).first()
+                                
+                                # 既存物件の価格を保存（ログ用）
+                                old_price = existing.current_price if existing else None
+                                
+                                # 元のメソッドを実行
+                                result = original_create_or_update(*args, **kwargs)
+                                
+                                # 物件情報を取得してログに記録
+                                master_property = args[0] if len(args) > 0 else kwargs.get('master_property')
+                                price = args[3] if len(args) > 3 else kwargs.get('price')
+                                title = args[2] if len(args) > 2 else kwargs.get('title')
+                                
+                                # マスター物件から建物情報を取得
+                                building_info = ""
+                                if master_property and hasattr(master_property, 'building') and master_property.building:
+                                    building = master_property.building
+                                    building_info = f"{building.normalized_name}"
+                                    if master_property.room_number:
+                                        building_info += f" {master_property.room_number}"
+                                    if master_property.floor_number:
+                                        building_info += f" {master_property.floor_number}階"
+                                
+                                log_entry = {
+                                    "timestamp": datetime.now().isoformat(),
+                                    "type": "new" if not existing else "update",
+                                    "scraper": scraper_name,
+                                    "area": area_name,
+                                    "url": url,
+                                    "title": title or building_info,
+                                    "price": price,
+                                    "building_info": building_info
+                                }
+                                
+                                # ログメッセージを作成（update_typeに基づく）
+                                should_log = False
+                                update_type = result[1] if isinstance(result, tuple) and len(result) > 1 else 'unknown'
+                                
+                                if update_type == 'new':
+                                    log_entry["message"] = f"新規物件登録: {title} ({price}万円)"
+                                    should_log = True
+                                elif update_type == 'price_changed' or update_type == 'price_updated':
+                                    if existing and old_price is not None:
+                                        log_entry["message"] = f"価格更新: {title} ({old_price}万円 → {price}万円)"
+                                        log_entry["price_change"] = {"old": old_price, "new": price}
+                                    else:
+                                        log_entry["message"] = f"価格更新: {title} (→ {price}万円)"
+                                    should_log = True
+                                elif update_type == 'other_updates':
+                                    log_entry["message"] = f"その他の更新: {title} ({price}万円)"
+                                    should_log = True
+                                elif update_type == 'refetched_unchanged' or update_type == 'skipped':
+                                    # 変更なしの場合、詳細をスキップした場合はログに記録しない
+                                    pass
+                                
+                                # ログを追加（価格変更または新規物件のみ、最新50件のみ保持）
+                                if should_log:
+                                    if "logs" not in scraping_tasks[task_id]:
+                                        scraping_tasks[task_id]["logs"] = []
+                                    scraping_tasks[task_id]["logs"].append(log_entry)
+                                    if len(scraping_tasks[task_id]["logs"]) > 50:
+                                        scraping_tasks[task_id]["logs"] = scraping_tasks[task_id]["logs"][-50:]
+                                
+                                return result
                             
-                            cancel_flag = task_cancel_flags.get(task_id)
-                            if cancel_flag and cancel_flag.is_set():
-                                raise Exception("Task cancelled")
-                            
-                            # URLから既存の掲載を確認
-                            url = args[1] if len(args) > 1 else kwargs.get('url')
-                            existing = scraper.session.query(PropertyListing).filter_by(url=url).first()
-                            
-                            # 元のメソッドを実行
-                            result = original_create_or_update(*args, **kwargs)
-                            
-                            # 物件情報を取得してログに記録
-                            master_property = args[0] if len(args) > 0 else kwargs.get('master_property')
-                            price = args[3] if len(args) > 3 else kwargs.get('price')
-                            title = args[2] if len(args) > 2 else kwargs.get('title')
-                            
-                            # マスター物件から建物情報を取得
-                            building_info = ""
-                            if master_property and hasattr(master_property, 'building') and master_property.building:
-                                building = master_property.building
-                                building_info = f"{building.normalized_name}"
-                                if master_property.room_number:
-                                    building_info += f" {master_property.room_number}"
-                                if master_property.floor_number:
-                                    building_info += f" {master_property.floor_number}階"
-                            
-                            log_entry = {
-                                "timestamp": datetime.now().isoformat(),
-                                "type": "new" if not existing else "update",
-                                "scraper": scraper_name,
-                                "area": area_name,
-                                "url": url,
-                                "title": title or building_info,
-                                "price": price,
-                                "building_info": building_info
-                            }
-                            
-                            # ログメッセージを作成
-                            if not existing:
-                                log_entry["message"] = f"新規物件登録: {title} ({price}万円)"
-                            else:
-                                if existing.current_price != price:
-                                    log_entry["message"] = f"価格更新: {title} ({existing.current_price}万円 → {price}万円)"
-                                    log_entry["price_change"] = {"old": existing.current_price, "new": price}
-                                else:
-                                    log_entry["message"] = f"情報更新: {title} ({price}万円)"
-                            
-                            # ログを追加（最新50件のみ保持）
-                            if "logs" not in scraping_tasks[task_id]:
-                                scraping_tasks[task_id]["logs"] = []
-                            scraping_tasks[task_id]["logs"].append(log_entry)
-                            if len(scraping_tasks[task_id]["logs"]) > 50:
-                                scraping_tasks[task_id]["logs"] = scraping_tasks[task_id]["logs"][-50:]
-                            
-                            return result
+                            scraper.create_or_update_listing = create_or_update_with_logging
+                            scraper._create_or_update_overridden = True
                         
-                        scraper.create_or_update_listing = create_or_update_with_logging
+                        # エラーログ記録用のメソッドを追加（未設定の場合のみ）
+                        if not hasattr(scraper, '_save_error_log'):
+                            def save_error_log(error_info):
+                                if "error_logs" not in scraping_tasks[task_id]:
+                                    scraping_tasks[task_id]["error_logs"] = []
+                                
+                                error_log = {
+                                    "timestamp": error_info.get('timestamp', datetime.now().isoformat()),
+                                    "scraper": scraper_name,
+                                    "area": area_name,
+                                    "url": error_info.get('url', ''),
+                                    "reason": error_info.get('reason', ''),
+                                    "building_name": error_info.get('building_name', ''),
+                                    "price": error_info.get('price', ''),
+                                    "message": f"保存失敗: {error_info.get('reason', '不明')} - URL: {error_info.get('url', '不明')}"
+                                }
+                                
+                                scraping_tasks[task_id]["error_logs"].append(error_log)
+                                # 最新30件のみ保持
+                                if len(scraping_tasks[task_id]["error_logs"]) > 30:
+                                    scraping_tasks[task_id]["error_logs"] = scraping_tasks[task_id]["error_logs"][-30:]
+                            
+                            scraper._save_error_log = save_error_log
+                        
+                        # 詳細取得情報を保持するための属性
+                        scraper._last_property_data = None
                         
                         # update_listing_from_listメソッドは既にスクレイパー本体で統計を記録しているので、
                         # ここでは何もしない（二重カウントを避ける）
@@ -872,18 +1166,12 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
                         
                         # parse_property_listメソッドのオーバーライドも削除（統計の二重管理を避ける）
                         
-                        # スクレイピング実行（max_pagesを計算）
-                        # 各サイトの1ページあたりの物件数
-                        items_per_page_map = {
-                            'suumo': 100,
-                            'homes': 20,
-                            'rehouse': 30,  # 三井のリハウスは約30件/ページ
-                            'nomu': 20
-                        }
-                        items_per_page = items_per_page_map.get(scraper_name, 25)
-                        max_pages = (max_properties + items_per_page - 1) // items_per_page
+                        # スクレイピング実行
+                        print(f"[{task_id}] Starting {scraper_name} scraper for {area_name} (max {max_properties} properties)")
                         
-                        print(f"[{task_id}] Scraping up to {max_pages} pages for {max_properties} properties")
+                        # デバッグ：スクレイパーのフラグ状態を確認
+                        if hasattr(scraper, 'pause_flag') and scraper.pause_flag:
+                            print(f"[{task_id}] DEBUG: Before scrape_area - pause_flag ID: {id(scraper.pause_flag)}, is_set: {scraper.pause_flag.is_set()}")
                         
                         # 統計更新用の別スレッドを開始
                         import threading
@@ -899,28 +1187,39 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
                                     # 統計が存在する場合のみ更新（0で上書きしない）
                                     if current_stats:
                                         updates = {}
-                                        for key, value in {
-                                            "properties_found": current_stats.get('properties_found', 0),
-                                            "properties_processed": current_stats.get('properties_processed', 0),
-                                            "properties_attempted": current_stats.get('properties_attempted', 0),
-                                            "properties_scraped": current_stats.get('detail_fetched', 0),
-                                            "new_listings": current_stats.get('new_listings', 0),
-                                            "updated_listings": current_stats.get('updated_listings', 0),
-                                            "skipped_listings": current_stats.get('detail_skipped', 0),
-                                            "detail_fetch_failed": current_stats.get('detail_fetch_failed', 0),
-                                            "price_missing": current_stats.get('price_missing', 0),
-                                            "building_info_missing": current_stats.get('building_info_missing', 0),
-                                            "other_errors": current_stats.get('other_errors', 0)
-                                        }.items():
-                                            # 現在の値を取得
-                                            current_value = scraping_tasks[task_id]["progress"][progress_key].get(key, 0)
-                                            # 新しい値が0でない、または現在値が0の場合のみ更新
-                                            if value != 0 or current_value == 0:
-                                                updates[key] = value
+                                        # ロックで保護して現在値を取得
+                                        with tasks_lock:
+                                            for key, value in {
+                                                "properties_found": current_stats.get('properties_found', 0),
+                                                "properties_processed": current_stats.get('properties_processed', 0),
+                                                "properties_attempted": current_stats.get('properties_attempted', 0),
+                                                "properties_scraped": current_stats.get('properties_processed', 0),  # 処理済み物件数
+                                                "detail_fetched": current_stats.get('detail_fetched', 0),  # 詳細取得成功数
+                                                "new_listings": current_stats.get('new_listings', 0),
+                                                "price_updated": current_stats.get('price_updated', 0),
+                                                "other_updates": current_stats.get('other_updates', 0),
+                                                "refetched_unchanged": current_stats.get('refetched_unchanged', 0),
+                                                "skipped_listings": current_stats.get('detail_skipped', 0),
+                                                "detail_fetch_failed": current_stats.get('detail_fetch_failed', 0),
+                                                "save_failed": current_stats.get('save_failed', 0),
+                                                "price_missing": current_stats.get('price_missing', 0),
+                                                "building_info_missing": current_stats.get('building_info_missing', 0),
+                                                "other_errors": current_stats.get('other_errors', 0)
+                                            }.items():
+                                                # 現在の値を取得
+                                                if (task_id in scraping_tasks and 
+                                                    progress_key in scraping_tasks[task_id]["progress"]):
+                                                    current_value = scraping_tasks[task_id]["progress"][progress_key].get(key, 0)
+                                                    # 新しい値が0でない、または現在値が0の場合のみ更新
+                                                    if value != 0 or current_value == 0:
+                                                        updates[key] = value
                                         
-                                        # 更新がある場合のみ適用
+                                        # 更新がある場合のみ適用（ロックで保護）
                                         if updates:
-                                            scraping_tasks[task_id]["progress"][progress_key].update(updates)
+                                            with tasks_lock:
+                                                if (task_id in scraping_tasks and 
+                                                    progress_key in scraping_tasks[task_id]["progress"]):
+                                                    scraping_tasks[task_id]["progress"][progress_key].update(updates)
                                 except Exception as e:
                                     print(f"[{task_id}] Error updating stats: {e}")
                                 time_module.sleep(2)  # 2秒ごとに更新
@@ -929,49 +1228,147 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
                         stats_thread.daemon = True
                         stats_thread.start()
                         
+                        # 進行状態を定期的に保存するスレッド
+                        def save_resume_state():
+                            while not stop_stats_update.is_set():
+                                try:
+                                    # 一時停止のタイムアウトをチェック
+                                    if check_pause_timeout(task_id):
+                                        # タイムアウトした場合はスレッドを終了
+                                        print(f"[{task_id}] Pause timeout detected, stopping save_resume_state thread")
+                                        break
+                                    
+                                    # 一時停止状態をチェック（フラグロックで保護）
+                                    with flags_lock:
+                                        pause_flag_set = task_pause_flags.get(task_id) and task_pause_flags[task_id].is_set()
+                                    
+                                    # ステータス更新（タスクロックで保護）
+                                    with tasks_lock:
+                                        if pause_flag_set:
+                                            # 一時停止中の場合、ステータスを更新
+                                            if (task_id in scraping_tasks and 
+                                                scraping_tasks[task_id]["status"] != "paused"):
+                                                scraping_tasks[task_id]["status"] = "paused"
+                                                if progress_key in scraping_tasks[task_id]["progress"]:
+                                                    scraping_tasks[task_id]["progress"][progress_key]["status"] = "paused"
+                                                print(f"[{task_id}] Status updated to paused")
+                                        else:
+                                            # 一時停止が解除された場合、ステータスを更新
+                                            if (task_id in scraping_tasks and 
+                                                scraping_tasks[task_id]["status"] == "paused"):
+                                                scraping_tasks[task_id]["status"] = "running"
+                                                if progress_key in scraping_tasks[task_id]["progress"]:
+                                                    scraping_tasks[task_id]["progress"][progress_key]["status"] = "running"
+                                                print(f"[{task_id}] Status updated to running (resumed)")
+                                    
+                                    # レジューム状態の保存
+                                    if hasattr(scraper, 'get_resume_state'):
+                                        resume_state = scraper.get_resume_state()
+                                        # collected_propertiesのサイズを確認
+                                        collected_size = len(resume_state.get('collected_properties', []))
+                                        if collected_size > 0:
+                                            print(f"[{task_id}] Saving resume state with {collected_size} collected properties")
+                                        
+                                        # レジューム状態を保存（ロックで保護）
+                                        with tasks_lock:
+                                            if (task_id in scraping_tasks and 
+                                                progress_key in scraping_tasks[task_id]["progress"]):
+                                                scraping_tasks[task_id]["progress"][progress_key]["resume_state"] = resume_state
+                                except Exception as e:
+                                    print(f"[{task_id}] Error saving resume state: {e}")
+                                time_module.sleep(5)  # 5秒ごとに保存
+                        
+                        resume_thread = threading.Thread(target=save_resume_state)
+                        resume_thread.daemon = True
+                        resume_thread.start()
+                        
                         try:
-                            scraper.scrape_area(area_code, max_pages=max_pages)
+                            # 再開状態を取得して設定
+                            # was_pausedを使用して一時停止から再開かどうかを判定
+                            if was_paused and instance_key in scraper_instances:
+                                print(f"[{task_id}] Resuming from pause with existing scraper instance")
+                                # スクレイパーの内部状態を確認
+                                if hasattr(scraper, '_scraping_stats'):
+                                    print(f"[{task_id}] Current scraper stats: phase={scraper._scraping_stats.get('phase')}, collected={len(getattr(scraper, '_collected_properties', []))}, processed={getattr(scraper, '_processed_count', 0)}")
+                                    print(f"[{task_id}] Scraper internal stats: {scraper._scraping_stats}")
+                                
+                                # 一時停止から再開の場合、スクレイパーインスタンスは既に
+                                # 最新の状態を保持しているため、set_resume_stateは呼ばない
+                                print(f"[{task_id}] Using existing scraper instance with current state")
+                            else:
+                                # 新規開始または別のタスクから再開の場合
+                                resume_state = scraping_tasks[task_id]["progress"][progress_key].get("resume_state")
+                                if resume_state and hasattr(scraper, 'set_resume_state'):
+                                    scraper.set_resume_state(resume_state)
+                                    print(f"[{task_id}] Setting resume state for scraper")
+                                    print(f"[{task_id}] Resume state details: phase={resume_state.get('phase')}, page={resume_state.get('current_page')}, collected={len(resume_state.get('collected_properties', []))}, processed={resume_state.get('processed_count', 0)}")
+                            
+                            # すべてのスクレイパーにエリアコードを渡す（変換は各スクレイパー内部で実施）
+                            print(f"[{task_id}] Calling scraper.scrape_area({area_code})")
+                            debug_log(f"[{task_id}] Calling scraper.scrape_area({area_code})")
+                            scraper.scrape_area(area_code)
+                            print(f"[{task_id}] scraper.scrape_area({area_code}) returned")
+                            debug_log(f"[{task_id}] scraper.scrape_area({area_code}) returned")
                         finally:
                             # 統計更新スレッドを停止
                             stop_stats_update.set()
                             stats_thread.join(timeout=1)
-                    
-                    # 完了（実際の取得件数を反映）
-                    final_stats = scraper.get_scraping_stats()
-                    final_count = final_stats.get('detail_fetched', 0)
-                    scraping_tasks[task_id]["progress"][progress_key].update({
-                        "status": "completed",
-                        "completed_at": datetime.now().isoformat(),
-                        # 最終的な詳細統計を保存
-                        "properties_found": final_stats.get('properties_found', 0),
-                        "properties_processed": final_stats.get('properties_processed', 0),
-                        "properties_attempted": final_stats.get('properties_attempted', 0),
-                        "detail_fetch_failed": final_stats.get('detail_fetch_failed', 0),
-                        "price_missing": final_stats.get('price_missing', 0),
-                        "building_info_missing": final_stats.get('building_info_missing', 0),
-                        "other_errors": final_stats.get('other_errors', 0),
-                        "properties_scraped": final_count,  # 詳細取得数を保存
-                        "skipped_listings": final_stats.get('detail_skipped', 0)
-                    })
-                    
-                    completed_combinations += 1
-                    print(f"[{task_id}] Completed {scraper_name} scraper for {area_name} ({completed_combinations}/{total_combinations})")
-                    
-                except Exception as e:
-                    # キャンセルされた場合は特別な処理
-                    if "Task cancelled" in str(e):
+                            resume_thread.join(timeout=1)
+                        
+                        # 完了（実際の取得件数を反映）
+                        final_stats = scraper.get_scraping_stats()
+                        final_count = final_stats.get('detail_fetched', 0)
+                        
+                        # キャンセルチェック（最終統計更新前）
+                        cancel_flag = task_cancel_flags.get(task_id)
+                        if cancel_flag and cancel_flag.is_set():
+                            print(f"[{task_id}] Task cancelled before final update")
+                            raise TaskCancelledException("Task cancelled")
+                        
+                        # 最終統計を確実に反映
+                        final_update = {
+                            "status": "completed",
+                            "completed_at": datetime.now().isoformat(),
+                            # 最終的な詳細統計を保存
+                            "properties_found": final_stats.get('properties_found', 0),
+                            "properties_processed": final_stats.get('properties_processed', 0),
+                            "properties_attempted": final_stats.get('properties_attempted', 0),
+                            "detail_fetched": final_stats.get('detail_fetched', 0),  # 詳細取得数
+                            "detail_fetch_failed": final_stats.get('detail_fetch_failed', 0),
+                            "price_missing": final_stats.get('price_missing', 0),
+                            "building_info_missing": final_stats.get('building_info_missing', 0),
+                            "other_errors": final_stats.get('other_errors', 0),
+                            "properties_scraped": final_count,  # 詳細取得数を保存
+                            "skipped_listings": final_stats.get('detail_skipped', 0),
+                            "new_listings": final_stats.get('new_listings', 0),
+                            "price_updated": final_stats.get('price_updated', 0),
+                            "other_updates": final_stats.get('other_updates', 0),
+                            "refetched_unchanged": final_stats.get('refetched_unchanged', 0),
+                            "save_failed": final_stats.get('save_failed', 0)  # 保存失敗数を追加
+                        }
+                        
+                        
+                        scraping_tasks[task_id]["progress"][progress_key].update(final_update)
+                        
+                        completed_combinations += 1
+                        print(f"[{task_id}] Completed {scraper_name} scraper for {area_name} ({completed_combinations}/{total_combinations})")
+                        
+                    except TaskPausedException:
+                        # 一時停止された場合（新しい実装では発生しないはずだが、念のため残す）
+                        print(f"[{task_id}] TaskPausedException caught (should not happen with new implementation)")
+                        # 通常は発生しないはず
+                        pass
+                        
+                    except TaskCancelledException:
+                        # キャンセルされた場合は特別な処理
                         print(f"[{task_id}] Scraping cancelled for {scraper_name} in {area_name}")
                         scraping_tasks[task_id]["progress"][progress_key].update({
                             "status": "cancelled",
                             "completed_at": datetime.now().isoformat()
                         })
-                        # キャンセルされたらループを抜ける
-                        return
-                    elif "Task paused" in str(e):
-                        # 一時停止の場合は、fetch_pageで詳細な処理が行われているので、ここでは何もしない
-                        # 例外を再度発生させて上位で処理
+                        # キャンセルされたら例外を再スロー
                         raise
-                    else:
+                    except Exception as e:
                         error_msg = f"Error in {scraper_name} for {area_name}: {str(e)}"
                         print(f"[{task_id}] {error_msg}")
                         scraping_tasks[task_id]["errors"].append(error_msg)
@@ -980,25 +1377,105 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
                             "error": str(e),
                             "completed_at": datetime.now().isoformat()
                         })
+                        completed_combinations += 1
+                        
+                    finally:
+                        # スクレイパーのセッションをクリーンアップ
+                        # 一時停止の場合はセッションとインスタンスを保持（再利用のため）
+                        # タスク全体のステータスもチェック
+                        task_status = scraping_tasks[task_id]["status"]
+                        progress_status = scraping_tasks[task_id]["progress"][progress_key].get("status")
+                        
+                        # 一時停止フラグがセットされているかも確認
+                        pause_flag = task_pause_flags.get(task_id)
+                        is_paused = (task_status == "paused" or 
+                                   progress_status == "paused" or 
+                                   (pause_flag and pause_flag.is_set()))
+                        
+                        if not is_paused:
+                            if hasattr(scraper, 'session'):
+                                scraper.session.close()
+                            if hasattr(scraper, 'http_session'):
+                                scraper.http_session.close()
+                            # インスタンスも削除
+                            if instance_key in scraper_instances:
+                                del scraper_instances[instance_key]
+                                print(f"[{task_id}] Deleted scraper instance: {instance_key}")
+                                debug_log(f"[{task_id}] Deleted scraper instance: {instance_key}")
+                        else:
+                            print(f"[{task_id}] Keeping scraper instance for resume: {instance_key}")
+                            debug_log(f"[{task_id}] Keeping scraper instance for resume: {instance_key}, is_paused={is_paused}")
+                
+                except TaskCancelledException:
+                    # タスクキャンセルの例外は再スロー
+                    raise
+                except TaskPausedException:
+                    # 一時停止の例外は内部で処理されるので、ここには到達しないはず
+                    print(f"[{task_id}] Unexpected TaskPausedException at outer level")
+                    pass
+                except Exception as outer_e:
+                    # 外側のtryブロックのエラー処理
+                    error_msg = f"Failed to process {scraper_name} for {area_name}: {str(outer_e)}"
+                    print(f"[{task_id}] {error_msg}")
+                    scraping_tasks[task_id]["errors"].append(error_msg)
+                    scraping_tasks[task_id]["progress"][progress_key] = {
+                        "scraper": scraper_name,
+                        "area_code": area_code,
+                        "area_name": area_name,
+                        "status": "failed",
+                        "error": str(outer_e),
+                        "completed_at": datetime.now().isoformat()
+                    }
                     completed_combinations += 1
+                    # エラーの場合は次のエリアへ
+                    area_index += 1
+                else:
+                    # 正常終了の場合のみ次のエリアへ
+                    area_index += 1
+            
+            # 一時停止チェックは削除（スクレイパー内部で処理されるため）
+            # スクレイパーループも継続し、各スクレイパー内部で待機する
+            
+            # 全エリア処理完了後、次のスクレイパーへ
+            scraper_index += 1
         
-        # タスク完了
-        if scraping_tasks[task_id]["status"] != "cancelled":
+        # タスク完了（一時停止中でない場合のみ）
+        # 一時停止フラグがセットされている場合は、pausedステータスに設定
+        pause_flag = task_pause_flags.get(task_id)
+        if pause_flag and pause_flag.is_set():
+            scraping_tasks[task_id]["status"] = "paused"
+            print(f"[{task_id}] Task is paused, keeping status as 'paused'")
+        elif scraping_tasks[task_id]["status"] not in ["cancelled", "paused"]:
             scraping_tasks[task_id]["status"] = "completed"
             scraping_tasks[task_id]["completed_at"] = datetime.now()
             
+    except TaskCancelledException:
+        # キャンセルされた場合
+        scraping_tasks[task_id]["status"] = "cancelled"
+        scraping_tasks[task_id]["completed_at"] = datetime.now()
+        print(f"[{task_id}] Task cancelled")
+        return
+    except TaskPausedException:
+        # 一時停止の場合（通常はここに到達しないはず）
+        print(f"[{task_id}] TaskPausedException at top level - this should not happen")
+        # ステータスをpausedに設定
+        scraping_tasks[task_id]["status"] = "paused"
+        return
     except Exception as e:
         scraping_tasks[task_id]["status"] = "failed"
         scraping_tasks[task_id]["completed_at"] = datetime.now()
-        scraping_tasks[task_id]["errors"].append(f"Failed to import scrapers: {str(e)}")
-        print(f"[{task_id}] Import Error: {e}")
+        scraping_tasks[task_id]["errors"].append(f"Unexpected error during scraping: {str(e)}")
+        print(f"[{task_id}] Unexpected Error: {e}")
         return
-    
-    # 制御フラグをクリーンアップ
-    if task_id in task_cancel_flags:
-        del task_cancel_flags[task_id]
-    if task_id in task_pause_flags:
-        del task_pause_flags[task_id]
+    finally:
+        # 制御フラグをクリーンアップ（キャンセル時のみ）
+        if scraping_tasks[task_id]["status"] in ["cancelled", "failed"]:
+            if task_id in task_cancel_flags:
+                del task_cancel_flags[task_id]
+            if task_id in task_pause_flags:
+                del task_pause_flags[task_id]
+            if task_id in task_pause_timestamps:
+                del task_pause_timestamps[task_id]
 
 
 @router.post("/scraping/start", response_model=ScrapingTaskStatus)
@@ -1010,23 +1487,26 @@ def start_scraping(
     # タスクIDを生成
     task_id = str(uuid.uuid4())
     
-    # タスク情報を初期化
-    scraping_tasks[task_id] = {
-        "task_id": task_id,
-        "status": "pending",
-        "scrapers": request.scrapers,
-        "area_codes": request.area_codes,
-        "max_properties": request.max_properties,
-        "started_at": datetime.now(),
-        "completed_at": None,
-        "progress": {},
-        "errors": [],
-        "logs": []  # 詳細ログを初期化
-    }
+    # タスク情報を初期化（ロックで保護）
+    with tasks_lock:
+        scraping_tasks[task_id] = {
+            "task_id": task_id,
+            "status": "pending",
+            "scrapers": request.scrapers,
+            "area_codes": request.area_codes,
+            "max_properties": request.max_properties,
+            "started_at": datetime.now(),
+            "completed_at": None,
+            "progress": {},
+            "errors": [],
+            "logs": [],  # 詳細ログを初期化
+            "error_logs": []  # エラーログを初期化
+        }
     
-    # 制御フラグを作成
-    task_cancel_flags[task_id] = threading.Event()
-    task_pause_flags[task_id] = threading.Event()
+    # 制御フラグを作成（ロックで保護）
+    with flags_lock:
+        task_cancel_flags[task_id] = threading.Event()
+        task_pause_flags[task_id] = threading.Event()
     
     # バックグラウンドでスクレイピングを実行
     executor.submit(
@@ -1049,9 +1529,39 @@ def get_scraping_status(task_id: str):
     return ScrapingTaskStatus(**scraping_tasks[task_id])
 
 
+@router.get("/scraping/tasks/{task_id}/debug")
+def get_task_debug_info(task_id: str):
+    """タスクのデバッグ情報を取得"""
+    if task_id not in scraping_tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    task = scraping_tasks[task_id]
+    pause_flag = task_pause_flags.get(task_id)
+    cancel_flag = task_cancel_flags.get(task_id)
+    
+    return {
+        "task_id": task_id,
+        "status": task["status"],
+        "pause_flag_exists": pause_flag is not None,
+        "pause_flag_is_set": pause_flag.is_set() if pause_flag else None,
+        "cancel_flag_exists": cancel_flag is not None,
+        "cancel_flag_is_set": cancel_flag.is_set() if cancel_flag else None,
+        "scraper_instances": list(scraper_instances.keys()),
+        "current_combination": task.get("current_combination", None)
+    }
+
 @router.get("/scraping/tasks", response_model=List[ScrapingTaskStatus])
 def get_all_scraping_tasks():
     """全てのスクレイピングタスクを取得"""
+    # デバッグ: 各タスクのステータスを出力
+    for task_id, task in scraping_tasks.items():
+        if task["status"] in ["running", "paused"]:
+            print(f"[TASKS] Task {task_id}: status={task['status']}")
+        # エラーログの確認
+        error_logs = task.get("error_logs", [])
+        if error_logs:
+            print(f"[TASKS] Task {task_id}: error_logs count={len(error_logs)}")
+    
     # 最新10件のみ返す
     sorted_tasks = sorted(
         scraping_tasks.values(),
@@ -1076,6 +1586,50 @@ def get_task_logs(task_id: str, limit: int = 50):
         "task_id": task_id,
         "logs": logs[-limit:] if len(logs) > limit else logs,
         "total_logs": len(logs)
+    }
+
+
+@router.post("/scraping/force-cleanup")
+def force_cleanup_all_tasks():
+    """すべてのタスクを強制的にクリーンアップ（緊急用）"""
+    cleaned_count = 0
+    cleaned_tasks = []
+    
+    # すべてのタスクをチェック
+    for task_id in list(scraping_tasks.keys()):
+        task = scraping_tasks[task_id]
+        if task["status"] in ["running", "paused", "pending"]:
+            # タスクを強制的にキャンセル
+            task["status"] = "cancelled"
+            task["completed_at"] = datetime.now()
+            task["errors"].append("管理者による強制クリーンアップ")
+            
+            # 各スクレイパー・エリアの進行状況も更新
+            for key, progress in task["progress"].items():
+                if progress.get("status") in ["pending", "running", "paused"]:
+                    progress["status"] = "cancelled"
+                    progress["completed_at"] = datetime.now().isoformat()
+            
+            # フラグをクリア/セット
+            if task_id in task_pause_flags:
+                task_pause_flags[task_id].clear()
+            if task_id in task_cancel_flags:
+                task_cancel_flags[task_id].set()
+            
+            # リソースをクリーンアップ
+            cleanup_task_resources(task_id)
+            
+            cleaned_count += 1
+            cleaned_tasks.append({
+                "task_id": task_id,
+                "scrapers": task["scrapers"],
+                "area_codes": task["area_codes"]
+            })
+    
+    return {
+        "success": True,
+        "message": f"{cleaned_count} tasks cleaned up",
+        "cleaned_tasks": cleaned_tasks
     }
 
 
@@ -1121,61 +1675,159 @@ def get_areas():
 @router.post("/scraping/pause/{task_id}")
 def pause_scraping(task_id: str):
     """スクレイピングタスクを一時停止"""
-    if task_id not in scraping_tasks:
-        raise HTTPException(status_code=404, detail="Task not found")
+    print(f"[PAUSE] Received pause request for task: {task_id}")
     
-    if scraping_tasks[task_id]["status"] != "running":
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Task is {scraping_tasks[task_id]['status']}, cannot pause"
-        )
+    with tasks_lock:
+        if task_id not in scraping_tasks:
+            print(f"[PAUSE] Task {task_id} not found in scraping_tasks")
+            print(f"[PAUSE] Available tasks: {list(scraping_tasks.keys())}")
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        current_status = scraping_tasks[task_id]["status"]
+        print(f"[PAUSE] Task {task_id} current status: {current_status}")
+        
+        if current_status != "running":
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Task is {current_status}, cannot pause"
+            )
     
-    # 一時停止フラグをセット
-    if task_id in task_pause_flags:
-        task_pause_flags[task_id].set()
-        return {"success": True, "message": "Pause request sent"}
-    else:
-        return {"success": False, "message": "Task pause flag not found"}
+    # 一時停止フラグをセット（ロックで保護）
+    with flags_lock:
+        if task_id in task_pause_flags:
+            task_pause_flags[task_id].set()
+            print(f"[PAUSE] Pause flag set for task {task_id}, flag ID: {id(task_pause_flags[task_id])}, is_set: {task_pause_flags[task_id].is_set()}")
+            debug_log(f"[PAUSE] Pause flag set for task {task_id}, flag ID: {id(task_pause_flags[task_id])}, is_set: {task_pause_flags[task_id].is_set()}")
+            
+            # 一時停止のタイムスタンプを記録
+            task_pause_timestamps[task_id] = datetime.now()
+            print(f"[PAUSE] Pause timestamp recorded for task {task_id}: {task_pause_timestamps[task_id]}")
+            
+            # スクレイパーインスタンスのフラグ状態も確認
+            with instances_lock:
+                for key, scraper in scraper_instances.items():
+                    if key.startswith(task_id):
+                        if hasattr(scraper, 'pause_flag'):
+                            print(f"[PAUSE] Scraper {key} pause flag ID: {id(scraper.pause_flag)}, is_set: {scraper.pause_flag.is_set()}")
+                            debug_log(f"[PAUSE] Scraper {key} pause flag ID: {id(scraper.pause_flag)}, is_set: {scraper.pause_flag.is_set()}")
+            
+            # ステータスを即座にpausedに変更（タスク全体のステータスのみ変更）
+            with tasks_lock:
+                scraping_tasks[task_id]["status"] = "paused"
+                print(f"[PAUSE] Task {task_id} status changed to paused")
+            
+            return {"success": True, "message": "Pause request sent"}
+        else:
+            print(f"[PAUSE] Task pause flag not found for task {task_id}")
+            print(f"[PAUSE] Available pause flags: {list(task_pause_flags.keys())}")
+            return {"success": False, "message": "Task pause flag not found"}
 
 
 @router.post("/scraping/resume/{task_id}")
 def resume_scraping(task_id: str):
     """スクレイピングタスクを再開"""
+    print(f"[RESUME] Received resume request for task: {task_id}")
+    
     if task_id not in scraping_tasks:
+        print(f"[RESUME] Task {task_id} not found")
         raise HTTPException(status_code=404, detail="Task not found")
     
-    if scraping_tasks[task_id]["status"] != "paused":
+    current_status = scraping_tasks[task_id]["status"]
+    print(f"[RESUME] Task {task_id} current status: {current_status}")
+    
+    if current_status != "paused":
         raise HTTPException(
             status_code=400, 
-            detail=f"Task is {scraping_tasks[task_id]['status']}, cannot resume"
+            detail=f"Task is {current_status}, cannot resume"
         )
     
-    # 一時停止フラグをクリア
+    # 一時停止フラグの存在確認
     if task_id in task_pause_flags:
-        task_pause_flags[task_id].clear()
+        pause_flag = task_pause_flags[task_id]
+        print(f"[RESUME] Pause flag ID for task {task_id}: {id(pause_flag)}")
+        pause_flag.clear()
+        print(f"[RESUME] Pause flag cleared for task {task_id}")
+        
+        # 一時停止のタイムスタンプを削除
+        if task_id in task_pause_timestamps:
+            del task_pause_timestamps[task_id]
+            print(f"[RESUME] Pause timestamp removed for task {task_id}")
+        
+        # ステータスをrunningに変更
+        scraping_tasks[task_id]["status"] = "running"
+        print(f"[RESUME] Task {task_id} status changed to running")
+        
+        # フラグの状態を確認
+        print(f"[RESUME] Pause flag is_set after clear: {pause_flag.is_set()}")
+        debug_log(f"[RESUME] Pause flag is_set after clear: {pause_flag.is_set()}")
+        
+        # スクレイパーインスタンスのフラグIDも確認
+        found_instances = 0
+        for key, scraper in scraper_instances.items():
+            if key.startswith(task_id):
+                found_instances += 1
+                if hasattr(scraper, 'pause_flag'):
+                    print(f"[RESUME] Scraper {key} pause flag ID: {id(scraper.pause_flag)}, is_set: {scraper.pause_flag.is_set()}")
+                    debug_log(f"[RESUME] Scraper {key} pause flag ID: {id(scraper.pause_flag)}, is_set: {scraper.pause_flag.is_set()}")
+                    # フラグが同じオブジェクトか確認
+                    if scraper.pause_flag is pause_flag:
+                        print(f"[RESUME] Scraper {key} has the same pause flag object")
+                        debug_log(f"[RESUME] Scraper {key} has the same pause flag object")
+                    else:
+                        print(f"[RESUME] WARNING: Scraper {key} has a different pause flag object!")
+                        debug_log(f"[RESUME] WARNING: Scraper {key} has a different pause flag object!")
+        
+        print(f"[RESUME] Found {found_instances} scraper instances for task {task_id}")
+        debug_log(f"[RESUME] Found {found_instances} scraper instances for task {task_id}")
+        
+        # 全てのスクレイパーインスタンスのキーを表示
+        all_keys = list(scraper_instances.keys())
+        print(f"[RESUME] All scraper instance keys: {all_keys}")
+        debug_log(f"[RESUME] All scraper instance keys: {all_keys}")
+        
         return {"success": True, "message": "Resume request sent"}
     else:
-        return {"success": False, "message": "Task pause flag not found"}
+        print(f"[RESUME] Task pause flag not found for task {task_id}")
+        print(f"[RESUME] Available pause flags: {list(task_pause_flags.keys())}")
+        # フラグがない場合でもステータスは変更する
+        scraping_tasks[task_id]["status"] = "running"
+        return {"success": False, "message": "Task pause flag not found but status updated"}
 
 
 @router.post("/scraping/cancel/{task_id}")
 def cancel_scraping(task_id: str):
     """スクレイピングタスクをキャンセル"""
-    if task_id not in scraping_tasks:
-        raise HTTPException(status_code=404, detail="Task not found")
+    with tasks_lock:
+        if task_id not in scraping_tasks:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        if scraping_tasks[task_id]["status"] not in ["pending", "running", "paused"]:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Task is already {scraping_tasks[task_id]['status']}"
+            )
     
-    if scraping_tasks[task_id]["status"] not in ["pending", "running", "paused"]:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Task is already {scraping_tasks[task_id]['status']}"
-        )
+    # キャンセルフラグをセット（ロックで保護）
+    with flags_lock:
+        if task_id in task_cancel_flags:
+            task_cancel_flags[task_id].set()
+            # 一時停止フラグもクリアして、待機中のスレッドを解放
+            if task_id in task_pause_flags:
+                task_pause_flags[task_id].clear()
     
-    # キャンセルフラグをセット
-    if task_id in task_cancel_flags:
-        task_cancel_flags[task_id].set()
-        return {"success": True, "message": "Cancel request sent"}
-    else:
-        return {"success": False, "message": "Task cancel flag not found"}
+    # ステータスを更新（ロックで保護）
+    with tasks_lock:
+        # 即座にステータスを更新
+        scraping_tasks[task_id]["status"] = "cancelled"
+        scraping_tasks[task_id]["completed_at"] = datetime.now()
+        
+        # 各スクレイパー・エリアの進行状況も更新
+        for key, progress in scraping_tasks[task_id]["progress"].items():
+            if progress.get("status") in ["pending", "running", "paused"]:
+                progress["status"] = "cancelled"
+                progress["completed_at"] = datetime.now().isoformat()
+    
+    return {"success": True, "message": "Cancel request sent"}
 
 
 @router.get("/property-merge-history")
@@ -1321,6 +1973,18 @@ def revert_property_merge(
         # 履歴を更新
         history.reverted_at = datetime.now()
         history.reverted_by = "admin"  # TODO: 実際のユーザー名を記録
+        
+        # 多数決による建物名更新（掲載情報が移動したため）
+        from app.utils.majority_vote_updater import MajorityVoteUpdater
+        updater = MajorityVoteUpdater(db)
+        
+        # 主物件の建物名を更新（掲載情報が減ったため）
+        if primary_property and primary_property.building_id:
+            updater.update_building_name_by_majority(primary_property.building_id)
+        
+        # 副物件の建物名を更新（掲載情報が戻ったため）
+        if secondary_property and secondary_property.building_id:
+            updater.update_building_name_by_majority(secondary_property.building_id)
         
         db.commit()
         
@@ -1482,9 +2146,16 @@ def update_listing_status(db: Session = Depends(get_db)):
         
         inactive_count = len(inactive_listings)
         
-        # 掲載を非アクティブ化
+        # 掲載を非アクティブ化し、影響を受ける建物IDと物件IDを収集
+        affected_building_ids = set()
+        affected_property_ids = set()
         for listing in inactive_listings:
             listing.is_active = False
+            # 掲載に関連する建物IDと物件IDを収集
+            if listing.master_property:
+                affected_property_ids.add(listing.master_property_id)
+                if listing.master_property.building_id:
+                    affected_building_ids.add(listing.master_property.building_id)
         
         db.flush()
         
@@ -1521,29 +2192,46 @@ def update_listing_status(db: Session = Depends(get_db)):
         
         # 販売終了物件の価格を多数決で更新
         price_update_count = 0
-        if sold_count > 0:
-            try:
-                from ..utils.majority_vote_updater import MajorityVoteUpdater
-                updater = MajorityVoteUpdater(db)
-                
+        building_update_count = 0
+        
+        try:
+            from ..utils.majority_vote_updater import MajorityVoteUpdater
+            updater = MajorityVoteUpdater(db)
+            
+            # 販売終了物件の価格を更新
+            if sold_count > 0:
                 # 今回販売終了となった物件の価格を更新
                 for property in properties_to_check:
                     if property.sold_at == now:  # 今回販売終了となった物件
                         result = updater.update_sold_property_price(property.id)
                         if result:
                             price_update_count += 1
-                
-                db.commit()
-            except Exception as e:
-                # 価格更新のエラーはログに記録するが、メイン処理は成功とする
-                print(f"Error updating sold property prices: {e}")
+            
+            # 掲載状態が変わった物件の情報を更新
+            property_update_count = 0
+            for property_id in affected_property_ids:
+                property = db.query(MasterProperty).get(property_id)
+                if property and updater.update_master_property_by_majority(property):
+                    property_update_count += 1
+            
+            # 掲載状態が変わった建物の名前を更新
+            for building_id in affected_building_ids:
+                if updater.update_building_name_by_majority(building_id):
+                    building_update_count += 1
+            
+            db.commit()
+        except Exception as e:
+            # 更新のエラーはログに記録するが、メイン処理は成功とする
+            print(f"Error updating sold property prices or building names: {e}")
         
         return {
             "success": True,
             "inactive_listings": inactive_count,
             "sold_properties": sold_count,
             "price_updates": price_update_count,
-            "message": f"{inactive_count}件の掲載を終了、{sold_count}件の物件を販売終了としました。{price_update_count}件の価格を多数決で更新しました。",
+            "property_updates": property_update_count,
+            "building_updates": building_update_count,
+            "message": f"{inactive_count}件の掲載を終了、{sold_count}件の物件を販売終了としました。{price_update_count}件の価格、{property_update_count}件の物件情報、{building_update_count}件の建物名を多数決で更新しました。",
             "timestamp": now.isoformat()
         }
         

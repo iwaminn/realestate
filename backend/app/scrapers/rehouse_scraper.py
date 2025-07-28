@@ -16,12 +16,13 @@ import logging
 from bs4 import BeautifulSoup
 import requests
 
+from .constants import SourceSite
 from .base_scraper import BaseScraper
 from ..models import PropertyListing
 from . import (
     normalize_integer, extract_price, extract_area, extract_floor_number,
     normalize_layout, normalize_direction, extract_monthly_fee,
-    format_station_info, extract_built_year, parse_date
+    format_station_info, extract_built_year, parse_date, extract_total_floors
 )
 
 logger = logging.getLogger(__name__)
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 class RehouseScraper(BaseScraper):
     """三井のリハウス用スクレイパー"""
     
-    SOURCE_SITE = "rehouse"
+    SOURCE_SITE = SourceSite.REHOUSE
     BASE_URL = "https://www.rehouse.co.jp"
     
     
@@ -49,8 +50,9 @@ class RehouseScraper(BaseScraper):
         base_url = f"{self.BASE_URL}/buy/mansion/prefecture/{prefecture}/city/{city}/"
         
         # ページングパラメータ
+        # 三井のリハウスは ?page= パラメータを使用
         if page > 1:
-            return f"{base_url}?p={page}"
+            return f"{base_url}?page={page}"
         return base_url
     
     def get_search_url(self, area: str, page: int = 1) -> str:
@@ -130,30 +132,6 @@ class RehouseScraper(BaseScraper):
         if code_match:
             property_data['property_code'] = code_match.group(1)
         
-        # 建物名を探す
-        # h3タグまたはtitleクラスを持つ要素
-        building_name = None
-        name_elem = item.select_one('h3')
-        if name_elem:
-            building_name = name_elem.get_text(strip=True)
-        else:
-            # property-index-card-inner内のテキストから探す
-            inner = item.select_one('.property-index-card-inner')
-            if inner:
-                # 最初の大きなテキスト要素を建物名とする
-                for elem in inner.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'div']):
-                    text = elem.get_text(strip=True)
-                    if text and len(text) > 5 and not any(skip in text for skip in ['詳細を見る', '万円', '㎡', '駅']):
-                        building_name = text
-                        break
-        
-        if building_name:
-            property_data['building_name'] = building_name
-        else:
-            # URLから建物IDを使用
-            code_match = re.search(r'/bkdetail/([^/]+)/', detail_url)
-            if code_match:
-                property_data['building_name'] = f"物件コード: {code_match.group(1)}"
         
         # property-index-card-inner内の情報を取得
         inner = item.select_one('.property-index-card-inner')
@@ -162,13 +140,6 @@ class RehouseScraper(BaseScraper):
         
         # 全テキストを取得
         full_text = inner.get_text(' ', strip=True)
-        
-        # 建物名を抽出（「NEW」「中古マンション」などを除去）
-        name_match = re.match(r'^(?:NEW\s*)?(?:中古マンション\s*)?([^\d]+?)\s*\d+[,\d]*\s*万円', full_text)
-        if name_match:
-            building_name = name_match.group(1).strip()
-            if building_name:
-                property_data['building_name'] = building_name
         
         # 価格
         # データ正規化フレームワークを使用して価格を抽出
@@ -292,12 +263,12 @@ class RehouseScraper(BaseScraper):
                         
                         # 建物構造（「階数 / 階建」で処理した場合はスキップ）
                         elif '構造' in label or '建物' in label:
-                            # 構造情報のみ処理
-                            if 'total_floors' not in property_data:
-                                # 「地上14階建」や「14階建」などのパターンに対応
-                                total_floors_match = re.search(r'(?:地上)?(\d+)階建', value)
-                                if total_floors_match:
-                                    property_data['total_floors'] = int(total_floors_match.group(1))
+                            # データ正規化フレームワークを使用して総階数と地下階数を抽出
+                            total_floors, basement_floors = extract_total_floors(value)
+                            if total_floors is not None and 'total_floors' not in property_data:
+                                property_data['total_floors'] = total_floors
+                            if basement_floors is not None and basement_floors > 0:
+                                property_data['basement_floors'] = basement_floors
                         
                         # 専有面積
                         elif '専有面積' in label or '面積' in label:
@@ -511,6 +482,10 @@ class RehouseScraper(BaseScraper):
             return property_data
             
         except Exception as e:
+            # TaskCancelledExceptionの場合は再スロー
+            from ..utils.exceptions import TaskCancelledException
+            if isinstance(e, TaskCancelledException):
+                raise
             logger.error(f"Error fetching property detail from {url}: {e}")
             return None
     
@@ -572,7 +547,7 @@ class RehouseScraper(BaseScraper):
                 master_property.balcony_area = property_data['balcony_area']
             
             # 掲載情報を作成または更新
-            listing = self.create_or_update_listing(
+            listing, update_type = self.create_or_update_listing(
                 master_property=master_property,
                 url=property_data['url'],
                 title=property_data.get('building_name', ''),
@@ -619,12 +594,20 @@ class RehouseScraper(BaseScraper):
             # 多数決による物件情報更新
             self.update_master_property_by_majority(master_property)
             
+            # 更新タイプをproperty_dataに設定（統計用）
+            property_data['update_type'] = update_type
+            property_data['property_saved'] = True
+            
             # コミットはscrape_areaメソッドで一括で行うので、ここではflushのみ
             self.session.flush()
             print(f"    → 保存成功")
             return True
             
         except Exception as e:
+            # TaskCancelledExceptionの場合は再スロー
+            from ..utils.exceptions import TaskCancelledException
+            if isinstance(e, TaskCancelledException):
+                raise
             print(f"    → 保存エラー: {e}")
             self.session.rollback()
             return False

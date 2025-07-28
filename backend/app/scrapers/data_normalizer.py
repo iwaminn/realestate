@@ -69,25 +69,39 @@ class DataNormalizer:
             12000
             >>> normalizer.extract_price("2億円")
             20000
+            >>> normalizer.extract_price("５，４８０万円")  # 全角数字
+            5480
         """
         if not text:
             return None
-            
-        # 億万円パターン（例: "1億4500万円"）
-        oku_man_match = re.search(r'(\d+)億(\d+(?:,\d{3})*)万円', text)
+        
+        # 全角数字を半角に変換
+        text = text.translate(str.maketrans('０１２３４５６７８９，', '0123456789,'))
+        
+        # 不要な空白を正規化
+        text = re.sub(r'\s+', ' ', text)
+        
+        # 億万円パターン（例: "1億4500万円"、"1億 4,500万円"）
+        oku_man_match = re.search(r'(\d+)\s*億\s*(\d+(?:,\d{3})*)\s*万\s*円', text)
         if oku_man_match:
             oku = int(oku_man_match.group(1))
             man = int(oku_man_match.group(2).replace(',', ''))
             return oku * 10000 + man
         
-        # 億円パターン（例: "2億円"）
-        oku_only_match = re.search(r'(\d+)億円', text)
+        # 億円パターン（例: "2億円"、"3億円"）
+        oku_only_match = re.search(r'(\d+)\s*億\s*円', text)
         if oku_only_match:
             oku = int(oku_only_match.group(1))
             return oku * 10000
         
-        # 万円パターン（例: "5,480万円"）
-        man_match = re.search(r'([\d,]+)万円', text)
+        # 億のみパターン（例: "2億"）- ノムコムなどで使用
+        oku_only_match2 = re.search(r'(\d+)\s*億(?!円|万)', text)
+        if oku_only_match2:
+            oku = int(oku_only_match2.group(1))
+            return oku * 10000
+        
+        # 万円パターン（例: "5,480万円", "5,480 万円", "￥5,480万"）
+        man_match = re.search(r'([\d,]+)\s*万\s*円?', text)
         if man_match:
             return int(man_match.group(1).replace(',', ''))
         
@@ -98,7 +112,7 @@ class DataNormalizer:
         文字列から月額費用を抽出（円単位）
         
         Args:
-            text: 費用を含む文字列（例: "12,000円", "管理費：8,500円/月"）
+            text: 費用を含む文字列（例: "12,000円", "管理費：8,500円/月", "9,580（円/月）"）
             
         Returns:
             円単位の費用（int）またはNone
@@ -106,8 +120,14 @@ class DataNormalizer:
         if not text:
             return None
             
-        # 円パターン
-        fee_match = re.search(r'([\d,]+)円', text)
+        # 全角括弧を半角に変換
+        text = text.replace('（', '(').replace('）', ')')
+        
+        # 円パターン（括弧内の「円」も含む）
+        # パターン1: "12,000円"
+        # パターン2: "12,000(円/月)"
+        # パターン3: "12,000 (円/月)"
+        fee_match = re.search(r'([\d,]+)\s*[（(]?円', text)
         if fee_match:
             return int(fee_match.group(1).replace(',', ''))
         
@@ -194,6 +214,10 @@ class DataNormalizer:
             (21, 1)
             >>> normalizer.extract_total_floors("42階建")
             (42, 0)
+            >>> normalizer.extract_total_floors("14階地下2階建て")
+            (14, 2)
+            >>> normalizer.extract_total_floors("鉄筋コンクリート造 地上29階 地下2階建")
+            (29, 2)
         """
         if not text:
             return None, None
@@ -206,10 +230,28 @@ class DataNormalizer:
         if basement_match:
             basement_floors = int(basement_match.group(1))
         
-        # 総階数を抽出（構造種別の後にある場合も考慮）
-        total_match = re.search(r'(?:地上)?(?:RC|SRC|S造|木造|鉄骨)?(\d+)階(?:地下\d+階)?建', text)
-        if total_match:
-            total_floors = int(total_match.group(1))
+        # 総階数を抽出（複数のパターンに対応）
+        # パターン1: "地上\d+階"
+        ground_match = re.search(r'地上(\d+)階', text)
+        if ground_match:
+            total_floors = int(ground_match.group(1))
+        else:
+            # パターン2: 構造+階数+建 (例: "RC21階地下1階建")
+            struct_match = re.search(r'(?:RC|SRC|S造|木造|鉄骨鉄筋コンクリート造|鉄筋コンクリート造|鉄骨造)\s*(\d+)階', text)
+            if struct_match:
+                total_floors = int(struct_match.group(1))
+            else:
+                # パターン3: 単純な階数+建 (例: "14階建", "14階地下2階建て")
+                simple_match = re.search(r'(\d+)階(?:地下\d+階)?(?:建|建て)', text)
+                if simple_match:
+                    total_floors = int(simple_match.group(1))
+                else:
+                    # パターン4: 単独の階数 (例: "42階")
+                    floor_only_match = re.search(r'(\d+)階(?!部|分)', text)
+                    if floor_only_match:
+                        # "地下"が前にある場合はスキップ
+                        if not re.search(r'地下\s*' + floor_only_match.group(1) + r'階', text):
+                            total_floors = int(floor_only_match.group(1))
         
         return total_floors, basement_floors
 

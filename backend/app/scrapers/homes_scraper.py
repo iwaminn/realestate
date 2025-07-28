@@ -9,8 +9,10 @@ from typing import Dict, List, Optional, Any
 from urllib.parse import urljoin
 from datetime import datetime
 from bs4 import BeautifulSoup
+from .constants import SourceSite
 from .base_scraper import BaseScraper
 from ..models import PropertyListing
+from ..utils.exceptions import TaskPausedException, TaskCancelledException
 from . import (
     normalize_integer, extract_price, extract_area, extract_floor_number,
     normalize_layout, normalize_direction, extract_monthly_fee,
@@ -24,7 +26,64 @@ class HomesScraper(BaseScraper):
     BASE_URL = "https://www.homes.co.jp"
     
     def __init__(self, force_detail_fetch=False, max_properties=None):
-        super().__init__("HOMES", force_detail_fetch, max_properties)
+        super().__init__(SourceSite.HOMES, force_detail_fetch, max_properties)
+        # LIFULL HOME'S用の特別なヘッダー設定
+        self.http_session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+            'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'Cache-Control': 'no-cache',
+            'Pragma': 'no-cache',
+            'Sec-Ch-Ua': '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+            'Sec-Ch-Ua-Mobile': '?0',
+            'Sec-Ch-Ua-Platform': '"Windows"',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Upgrade-Insecure-Requests': '1'
+        })
+    
+    def fetch_page(self, url: str) -> Optional[BeautifulSoup]:
+        """ページを取得してBeautifulSoupオブジェクトを返す（HOMES用にカスタマイズ）"""
+        try:
+            # より長い遅延を設定
+            time.sleep(3)
+            
+            # リファラーを設定
+            if '/list/' in url:
+                # 一覧ページの場合
+                self.http_session.headers['Referer'] = 'https://www.homes.co.jp/'
+            else:
+                # 詳細ページの場合は一覧ページをリファラーに
+                self.http_session.headers['Referer'] = 'https://www.homes.co.jp/mansion/chuko/tokyo/list/'
+            
+            response = self.http_session.get(url, timeout=30, allow_redirects=True)
+            
+            # ステータスコードの詳細確認
+            if response.status_code == 405:
+                self.logger.error(f"405 Method Not Allowed for {url} - HOMES may be blocking automated access")
+                # 別のアプローチを試す
+                self.logger.info("Trying with modified headers...")
+                self.http_session.headers['Sec-Fetch-Site'] = 'same-origin'
+                self.http_session.headers['Sec-Fetch-Mode'] = 'cors'
+                time.sleep(5)  # より長い待機
+                response = self.http_session.get(url, timeout=30)
+            
+            response.raise_for_status()
+            
+            # レスポンスの内容を確認
+            if len(response.content) < 1000:
+                self.logger.warning(f"Response seems too small ({len(response.content)} bytes) for {url}")
+            
+            return BeautifulSoup(response.content, 'html.parser')
+            
+        except Exception as e:
+            self.logger.error(f"Failed to fetch {url}: {type(e).__name__}: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                self.logger.error(f"Response headers: {dict(e.response.headers)}")
+            return None
     
     def get_search_url(self, area: str, page: int = 1) -> str:
         """HOME'Sの検索URLを生成"""
@@ -87,13 +146,20 @@ class HomesScraper(BaseScraper):
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
         """物件詳細を解析"""
         try:
+            self.logger.info(f"[HOMES] parse_property_detail called for URL: {url}")
+            
+            # 建物ページURLの場合は詳細解析をスキップ
+            if '/mansion/b-' in url and not re.search(r'/\d{3,4}[A-Z]?/$', url):
+                self.logger.warning(f"[HOMES] Skipping building page URL in parse_property_detail: {url}")
+                return None
+            
             # アクセス間隔を保つ
             time.sleep(self.delay)
             
             # 詳細ページを取得
             soup = self.fetch_page(url)
             if not soup:
-                self.record_error('detail_page', url=url, phase='parse_property_detail')
+                # record_errorは呼ばない（base_scraperでカウントされるため）
                 return None
                 
             # HTML構造の検証（一時的にスキップ - 新しいHTML構造に対応中）
@@ -236,13 +302,46 @@ class HomesScraper(BaseScraper):
                 property_data['title'] = '物件名不明'
             
             # 価格
-            # 新しいHTML構造に対応（b.text-brand要素）
-            price_elem = soup.select_one('b.text-brand, b[class*="text-brand"], .priceLabel, .price, [class*="price"]')
+            # デバッグ：価格情報の探索
+            self.logger.info(f"[HOMES] Looking for price information on {url}")
+            
+            # 様々なセレクタで価格を探す
+            price_selectors = [
+                'b.text-brand',
+                'b[class*="text-brand"]',
+                '.priceLabel',
+                '.price',
+                '[class*="price"]',
+                'span[class*="price"]',
+                'div[class*="price"]',
+                'p[class*="price"]',
+                '.bukkenPrice',
+                '.detailPrice',
+                '[class*="amount"]'
+            ]
+            
+            price_elem = None
+            for selector in price_selectors:
+                elem = soup.select_one(selector)
+                if elem and '万円' in elem.get_text():
+                    price_elem = elem
+                    self.logger.info(f"[HOMES] Price found with selector: {selector} - {elem.get_text(strip=True)}")
+                    break
+            
             if not price_elem:
                 # さらに別のパターンを試す（b要素で価格を含むもの）
                 for b in soup.select('b'):
                     if '万円' in b.get_text():
                         price_elem = b
+                        self.logger.info(f"[HOMES] Price found in b tag: {b.get_text(strip=True)}")
+                        break
+            
+            if not price_elem:
+                # strong要素も確認
+                for strong in soup.select('strong'):
+                    if '万円' in strong.get_text():
+                        price_elem = strong
+                        self.logger.info(f"[HOMES] Price found in strong tag: {strong.get_text(strip=True)}")
                         break
             
             if price_elem:
@@ -251,20 +350,34 @@ class HomesScraper(BaseScraper):
                 price = extract_price(price_text)
                 if price:
                     property_data['price'] = price
+                    self.logger.info(f"[HOMES] Price extracted: {price}万円")
+                else:
+                    self.logger.warning(f"[HOMES] Failed to extract price from: {price_text}")
             
             # 価格が取得できなかった場合の追加処理
             if 'price' not in property_data:
+                self.logger.warning("[HOMES] Price not found with selectors, searching in full text...")
                 # ページ全体から価格を探す
                 page_text = soup.get_text()
                 # 価格パターンを検索
                 price_matches = re.findall(r'[\d,]+(?:億[\d,]*)?万円', page_text)
                 if price_matches:
+                    self.logger.info(f"[HOMES] Found {len(price_matches)} price patterns in page text")
                     # 最初の妥当な価格を使用
-                    for price_text in price_matches:
+                    for price_text in price_matches[:5]:  # 最初の5件をログ出力
+                        self.logger.info(f"[HOMES] Price candidate: {price_text}")
                         price = extract_price(price_text)
                         if price and price >= 100:  # 100万円以上なら妥当な価格
                             property_data['price'] = price
+                            self.logger.info(f"[HOMES] Selected price: {price}万円")
                             break
+                else:
+                    self.logger.error("[HOMES] No price pattern found in page text")
+                    # HTMLの一部をログ出力してデバッグ
+                    body = soup.find('body')
+                    if body:
+                        text_sample = body.get_text()[:500]
+                        self.logger.info(f"[HOMES] Page text sample: {text_sample}")
             
             # 詳細情報テーブル
             detail_items = soup.select('.detailInfo dl, .mod-detailInfo dl, [class*="detail"] dl')
@@ -313,11 +426,10 @@ class HomesScraper(BaseScraper):
                     if floor_match:
                         property_data['floor_number'] = extract_floor_number(floor_match.group(1))
                         property_data['total_floors'] = normalize_integer(floor_match.group(2))
-                        basement_match = re.search(r'地下(\d+)階', value)
-                        if basement_match:
-                            property_data['basement_floors'] = int(basement_match.group(1))
-                        else:
-                            property_data['basement_floors'] = 0
+                        # 地下階数も抽出
+                        total_floors, basement_floors = extract_total_floors(value)
+                        if basement_floors is not None and basement_floors > 0:
+                            property_data['basement_floors'] = basement_floors
                     else:
                         floor_match = re.search(r'(\d+)階', value)
                         if floor_match:
@@ -441,11 +553,10 @@ class HomesScraper(BaseScraper):
                                 property_data['floor_number'] = int(floor_match.group(1))
                                 # 地下情報も含めて総階数を取得
                                 property_data['total_floors'] = int(floor_match.group(2))
-                                basement_match = re.search(r'地下(\d+)階', value)
-                                if basement_match:
-                                    property_data['basement_floors'] = int(basement_match.group(1))
-                                else:
-                                    property_data['basement_floors'] = 0
+                                # 地下階数を抽出
+                                total_floors, basement_floors = extract_total_floors(value)
+                                if basement_floors is not None and basement_floors > 0:
+                                    property_data['basement_floors'] = basement_floors
                         elif '築年月' in label:
                             # 築年を抽出
                             year_match = re.search(r'(\d{4})年', value)
@@ -638,6 +749,12 @@ class HomesScraper(BaseScraper):
             property_data.setdefault('address', '東京都港区')
             
             # 必須フィールドのチェック
+            # 建物名が必須
+            if not property_data.get('building_name'):
+                self.logger.warning(f"Missing building name in {url}")
+                # base_scraper.pyで既にカウントされるため、ここではカウントしない
+                return None
+            
             # 建物ページの場合は、建物名があればOK（価格は個別物件ページで取得）
             if 'building_name' in property_data or 'title' in property_data:
                 return property_data
@@ -645,6 +762,9 @@ class HomesScraper(BaseScraper):
                 self.logger.warning(f"Required fields missing for {url}")
                 return None
                 
+        except (TaskPausedException, TaskCancelledException):
+            # タスクの一時停止・キャンセル例外は再スロー
+            raise
         except Exception as e:
             self.logger.error(f"Error parsing property detail from {url}: {e}")
             return None
@@ -653,59 +773,369 @@ class HomesScraper(BaseScraper):
         """物件一覧からURLと最小限の情報のみを抽出"""
         properties = []
         
-        # 物件リストを取得（2025年7月版のセレクタ）
-        property_items = soup.select('.mod-mergeBuilding--sale')
+        # デバッグ: HTMLの一部を出力
+        self.logger.info("[HOMES] Parsing property list page")
         
-        if not property_items:
-            # 別のセレクタも試す
-            property_items = soup.select('.mod-mergeBuilding')
+        # まず、ページタイトルを確認
+        title = soup.find('title')
+        if title:
+            self.logger.info(f"[HOMES] Page title: {title.get_text(strip=True)}")
         
-        for item in property_items:
-            property_data = {}
+        # 建物ブロックを探す
+        building_blocks = soup.select('.mod-mergeBuilding--sale')
+        self.logger.info(f"[HOMES] Found {len(building_blocks)} building blocks")
+        
+        for block in building_blocks:
+            # 建物リンクを取得
+            building_link = block.select_one('h3 a, .heading a')
+            if not building_link:
+                continue
             
-            # 物件詳細へのリンク
-            # パターン1: h3.heading内のリンク
-            link = item.select_one('h3.heading a[href*="/mansion/b-"]')
-            if not link:
-                # パターン2: 直接リンク
-                link = item.select_one('a[href*="/mansion/b-"]')
+            # 複数物件に対応：各raSpecRowが1つの物件を表す
+            price_rows = block.select('tr.raSpecRow')
             
-            if link:
-                property_data['url'] = urljoin(self.BASE_URL, link.get('href'))
+            if not price_rows:
+                # raSpecRowがない場合は建物ページから個別物件を取得する必要がある
+                href = building_link.get('href', '')
+                if '/mansion/b-' in href:
+                    full_url = urljoin(self.BASE_URL, href)
+                    self.logger.info(f"[HOMES] Building page found without individual properties: {full_url}")
+                    # 建物ページから個別物件を取得
+                    building_properties = self._fetch_properties_from_building_page(full_url)
+                    if building_properties:
+                        properties.extend(building_properties)
+                        self.logger.info(f"[HOMES] Added {len(building_properties)} properties from building page")
+                    else:
+                        self.logger.warning(f"[HOMES] No properties found in building page: {full_url}")
+            else:
+                # 各物件行を処理
+                for row in price_rows:
+                    # 物件のURLを取得
+                    property_link = row.select_one('a[href*="/mansion/b-"]')
+                    if not property_link:
+                        continue
+                    
+                    href = property_link.get('href', '')
+                    if '/mansion/b-' not in href:
+                        continue
+                    
+                    full_url = urljoin(self.BASE_URL, href)
+                    
+                    # 価格情報を取得（3番目のtd）
+                    price = None
+                    tds = row.select('td')
+                    if len(tds) > 2:
+                        price_text = tds[2].get_text(strip=True)
+                        price = extract_price(price_text)
+                        if price:
+                            self.logger.info(f"[HOMES] Found price: {price}万円 for {href}")
+                    
+                    # 物件データを作成
+                    property_data = {
+                        'url': full_url,
+                        'has_update_mark': False
+                    }
+                    
+                    if price:
+                        property_data['price'] = price
+                    
+                    properties.append(property_data)
+                    
+                    # リアルタイムで統計を更新
+                    if hasattr(self, '_scraping_stats'):
+                        self._scraping_stats['properties_found'] = len(properties)
+                    
+                    # 処理上限チェック
+                    if self.max_properties and len(properties) >= self.max_properties:
+                        self.logger.info(f"[HOMES] Reached max properties limit ({self.max_properties}), stopping collection")
+                        return properties
+        
+        return properties
+    
+    def _fetch_properties_from_building_page(self, building_url: str, building_name: str = None) -> List[Dict[str, Any]]:
+        """建物ページから個別物件を取得"""
+        properties = []
+        
+        self.logger.info(f"[HOMES] Fetching properties from building page: {building_url}")
+        
+        try:
+            # 一時停止チェック
+            if hasattr(self, 'pause_flag') and self.pause_flag and self.pause_flag.is_set():
+                self.logger.info("[HOMES] Task paused during building page fetch")
+                # 一時停止フラグがクリアされるまで待機
+                while self.pause_flag.is_set():
+                    if hasattr(self, 'cancel_flag') and self.cancel_flag and self.cancel_flag.is_set():
+                        raise TaskCancelledException("Task cancelled during pause")
+                    time.sleep(0.1)
+                self.logger.info("[HOMES] Resuming from building page fetch")
+            
+            # 建物ページを取得
+            soup = self.fetch_page(building_url)
+            if not soup:
+                self.logger.warning(f"[HOMES] Failed to fetch building page: {building_url}")
+                return properties
+            
+            # 建物名を建物ページから取得（まだ取得していない場合）
+            if not building_name:
+                # h1要素から建物名を取得
+                h1_elem = soup.select_one('h1')
+                if h1_elem:
+                    h1_text = h1_elem.get_text(strip=True)
+                    # 不要なプレフィックスを削除
+                    if '中古マンション' in h1_text:
+                        building_name = h1_text.replace('中古マンション', '').strip()
+                    else:
+                        building_name = h1_text
+                    
+                    # さらに不要な情報を削除（例：「○○駅 徒歩○分」）
+                    # 駅名パターンを削除
+                    import re
+                    building_name = re.sub(r'^[^（]+駅\s*徒歩\d+分[（）]*[^）]*[）]*の中古マンション$', '', building_name).strip()
+                    
+                    # まだ駅名っぽい場合は、パンくずリストから取得
+                    if '駅' in building_name and '徒歩' in building_name:
+                        breadcrumb = soup.select_one('.breadList, .breadcrumb, nav[aria-label="breadcrumb"]')
+                        if breadcrumb:
+                            breadcrumb_items = breadcrumb.select('li, .breadList__item')
+                            if len(breadcrumb_items) >= 2:
+                                # 最後から2番目のアイテムが建物名の可能性が高い
+                                building_item = breadcrumb_items[-2]
+                                building_text = building_item.get_text(strip=True)
+                                # 建物名パターンを抽出
+                                match = re.search(r'(.+?)の中古マンション', building_text)
+                                if match:
+                                    building_name = match.group(1)
+                                elif '中古マンション' not in building_text:
+                                    building_name = building_text
                 
-                # 建物名を取得（一時的な識別用）
-                building_name = link.get_text(strip=True)
-                if building_name.startswith('中古マンション'):
+                # それでも建物名が取得できない場合は、メタデータやtitleタグから取得
+                if not building_name or ('駅' in building_name and '徒歩' in building_name):
+                    title_elem = soup.select_one('title')
+                    if title_elem:
+                        title_text = title_elem.get_text(strip=True)
+                        # 【ホームズ】を除去
+                        title_text = title_text.replace('【ホームズ】', '').strip()
+                        # ｜または|で分割して最初の部分を取得
+                        if '｜' in title_text:
+                            building_name = title_text.split('｜')[0].strip()
+                        elif '|' in title_text:
+                            building_name = title_text.split('|')[0].strip()
+                
+                # 最終的なクリーンアップ
+                if building_name:
+                    building_name = building_name.replace('の中古マンション', '').strip()
                     building_name = building_name.replace('中古マンション', '').strip()
-                property_data['building_name'] = building_name
+                    
+                self.logger.info(f"[HOMES] Building name extracted: {building_name}")
             
-            # 新着・更新マークを検出（詳細ページ取得の判定用）
-            new_icon = item.select_one('.newIcon, .icon-new')
-            is_new = bool(new_icon and 'NEW' in new_icon.get_text(strip=True))
-            is_updated = bool(item.select_one('.labelUpdate, .label--update, .icon-update, [class*="updateIcon"], [class*="update-label"]'))
-            property_data['has_update_mark'] = is_new or is_updated
+            # 建物名が取得できなかった場合は処理を中断
+            if not building_name:
+                self.logger.warning(f"[HOMES] Could not extract building name from: {building_url}")
+                # 建物ページ処理のエラーは通常の物件処理とは別扱い
+                # （統計には含めない - 建物ページは物件ではないため）
+                
+                # エラー情報を記録（ログのみ）
+                if hasattr(self, '_error_details') and self._error_details is not None:
+                    self._error_details.append({
+                        'type': 'building_page_error',
+                        'url': building_url,
+                        'reason': '建物名なし',
+                        'building_name': '',
+                        'price': '',
+                        'timestamp': datetime.now().isoformat()
+                    })
+                
+                return properties
             
-            # 更新日の取得（もしあれば）
-            update_date_elem = item.select_one('.updateDate, .update-date, [class*="update-time"]')
-            if update_date_elem:
-                update_text = update_date_elem.get_text(strip=True)
-                date_match = re.search(r'(\d{4}[/-]\d{1,2}[/-]\d{1,2})', update_text)
-                if date_match:
-                    property_data['list_update_date'] = date_match.group(1)
+            # 個別物件のリンクを探す
+            # パターン1: テーブル形式の物件一覧（販売中のみ）
+            property_rows = soup.select('tr.prg-row:has(.label--onsale), tr[data-href]:has(.label--onsale), .mod-mergeBuilding__item:has(.label--onsale)')
             
-            # URLと建物名があれば追加（価格は詳細ページから取得）
-            if property_data.get('url') and property_data.get('building_name'):
-                properties.append(property_data)
+            if property_rows:
+                self.logger.info(f"[HOMES] Found {len(property_rows)} properties with onsale label")
+            else:
+                # 販売中ラベルがない場合は通常のセレクタを試す
+                property_rows = soup.select('tr.prg-row, tr[data-href], .mod-mergeBuilding__item')
+                if property_rows:
+                    self.logger.info(f"[HOMES] Found {len(property_rows)} properties")
+            
+            if not property_rows:
+                # パターン2: リスト形式
+                property_rows = soup.select('li.property-item, .bukken-item, .property-unit')
+                if property_rows:
+                    self.logger.info(f"[HOMES] Found {len(property_rows)} properties in list format")
+            
+            if not property_rows:
+                # パターン3: 直接リンクを探す
+                property_links = soup.select('a[href*="/mansion/"]')
+                # 物件詳細ページのURLパターン: /mansion/数字列/
+                property_links = [link for link in property_links 
+                                if '/b-' not in link.get('href', '') 
+                                and re.search(r'/mansion/\d+/?$', link.get('href', ''))]
+                self.logger.info(f"[HOMES] Found {len(property_links)} direct property links")
+                
+                if property_links:
+                    for link in property_links:
+                        property_data = {
+                            'url': urljoin(self.BASE_URL, link.get('href')),
+                            'building_name': building_name,
+                            'has_update_mark': False  # 建物ページからは更新マークを取得できない
+                        }
+                        properties.append(property_data)
+                    return properties
+            
+            # 行形式のデータを処理
+            processed_count = 0
+            for i, row in enumerate(property_rows):
+                # 一時停止チェック
+                if hasattr(self, 'pause_flag') and self.pause_flag and self.pause_flag.is_set():
+                    self.logger.info(f"[HOMES] Task paused during property processing (processed {processed_count} properties)")
+                    # 一時停止フラグがクリアされるまで待機
+                    while self.pause_flag.is_set():
+                        if hasattr(self, 'cancel_flag') and self.cancel_flag and self.cancel_flag.is_set():
+                            raise TaskCancelledException("Task cancelled during pause")
+                        time.sleep(0.1)
+                    self.logger.info(f"[HOMES] Resuming property processing")
+                
+                # 処理上限チェック（全体の上限のみチェック）
+                # 1建物あたりの制限は設けない
+                
+                property_data = {}
+                
+                # URLを取得
+                href = None
+                if row.get('data-href'):
+                    href = row.get('data-href')
+                else:
+                    link = row.select_one('a[href]')
+                    if link:
+                        href = link.get('href')
+                
+                if href and '/mansion/' in href and '/b-' not in href:
+                    property_data['url'] = urljoin(self.BASE_URL, href)
+                    
+                    # URLから物件IDを抽出（例: /mansion/b-1234567890/）
+                    id_match = re.search(r'/mansion/b-([^/]+)/', href)
+                    if id_match:
+                        property_data['site_property_id'] = id_match.group(1)
+                    
+                    # 部屋番号を取得（URLまたは行データから）
+                    # URLから部屋番号を抽出
+                    room_match = re.search(r'/([0-9]{3,4}[A-Z]?)/$', href)
+                    if room_match:
+                        property_data['room_number'] = room_match.group(1)
+                    else:
+                        # 行内のテキストから部屋番号を探す
+                        row_text = row.get_text()
+                        room_match = re.search(r'\b([0-9]{3,4}[A-Z]?)\b', row_text)
+                        if room_match:
+                            property_data['room_number'] = room_match.group(1)
+                    
+                    # 価格情報（建物ページに表示されている場合）
+                    # 様々なセレクタを試す
+                    price_selectors = [
+                        '.price',
+                        'td:nth-child(3)',
+                        '[class*="price"]',
+                        'td:has(.price)',
+                        '.prg-price',
+                        '.bukkenPrice'
+                    ]
+                    
+                    price_elem = None
+                    for selector in price_selectors:
+                        try:
+                            elem = row.select_one(selector)
+                            if elem and '万円' in elem.get_text():
+                                price_elem = elem
+                                break
+                        except:
+                            # :hasなどCSS4セレクタの場合
+                            pass
+                    
+                    # セレクタで見つからない場合は、行全体から価格を探す
+                    if not price_elem:
+                        row_text = row.get_text()
+                        price_match = re.search(r'([\d,]+(?:億[\d,]*)?万円)', row_text)
+                        if price_match:
+                            # 仮想的な要素を作成
+                            class PriceText:
+                                def __init__(self, text):
+                                    self.text = text
+                                def get_text(self, strip=True):
+                                    return self.text
+                            price_elem = PriceText(price_match.group(0))
+                    
+                    if price_elem:
+                        price_text = price_elem.get_text(strip=True)
+                        price = extract_price(price_text)
+                        if price:
+                            property_data['price'] = price  # priceフィールドとして設定（重要）
+                            self.logger.info(f"[HOMES] Price found in building page: {price}万円")
+                    
+                    # 間取り
+                    layout_elem = row.select_one('td:nth-child(4), .layout, [class*="layout"]')
+                    if layout_elem:
+                        property_data['layout'] = layout_elem.get_text(strip=True)
+                    
+                    # 階数
+                    floor_elem = row.select_one('td:nth-child(2), .floor, [class*="floor"]')
+                    if floor_elem:
+                        floor_text = floor_elem.get_text(strip=True)
+                        floor_match = re.search(r'(\d+)階', floor_text)
+                        if floor_match:
+                            property_data['floor_number'] = int(floor_match.group(1))
+                    
+                    property_data['has_update_mark'] = False  # 建物ページからは更新マークを取得できない
+                    
+                    if property_data.get('url'):
+                        properties.append(property_data)
+                        processed_count += 1
+                        
+                        # 進捗更新（必要に応じて）
+                        if hasattr(self, 'update_status_callback') and processed_count % 5 == 0:
+                            self.update_status_callback("running")
+            
+            if not properties:
+                self.logger.warning(f"[HOMES] No properties found on building page: {building_url}")
+            else:
+                self.logger.info(f"[HOMES] Successfully extracted {len(properties)} properties from building page")
+            
+        except Exception as e:
+            self.logger.error(f"[HOMES] Error fetching properties from building page {building_url}: {e}")
         
         return properties
     
     def scrape_area(self, area: str, max_pages: int = 5):
         """エリアの物件をスクレイピング（スマート版）"""
+        self.logger.info(f"[HOMES] Starting scrape for area: {area}, max_pages: {max_pages}, max_properties: {self.max_properties}")
+        
+        # エリアコードの確認
+        from .area_config import get_area_code, get_homes_city_code
+        area_code = get_area_code(area)
+        city_code = get_homes_city_code(area_code)
+        self.logger.info(f"[HOMES] Area conversion: {area} -> {area_code} -> {city_code}")
+        
         # 共通ロジックを使用
         return self.common_scrape_area_logic(area, max_pages)
     
+    def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None):
+        """物件情報を保存（抽象メソッドの実装）"""
+        # process_property_dataメソッドを使用
+        self.process_property_data(property_data, existing_listing)
+    
     def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
         """個別の物件を処理（HOMESスクレイパー固有の実装）"""
+        # 建物ページURLの場合はスキップ
+        url = property_data.get('url', '')
+        if '/mansion/b-' in url and not re.search(r'/\d{3,4}[A-Z]?/$', url):
+            self.logger.warning(f"[HOMES] Skipping building page URL in process_property_data: {url}")
+            # 建物ページURLもスキップとして正しくカウントするため、フラグを設定
+            property_data['detail_fetched'] = False
+            property_data['property_saved'] = True
+            property_data['update_type'] = 'skipped'
+            return True  # Trueを返すことで、base_scraperでカウントされるようにする
+        
         # 共通の詳細チェック処理を使用
         return self.process_property_with_detail_check(
             property_data=property_data,
@@ -716,7 +1146,7 @@ class HomesScraper(BaseScraper):
     
     def _save_property_after_detail(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
         """詳細データ取得後の保存処理（内部メソッド）"""
-        # 共通の保存処理を使用
+        # 共通の保存処理を使用（例外処理はbase_scraperで行う）
         return self.save_property_common(property_data, existing_listing)
     
     def fetch_and_update_detail(self, listing) -> bool:
@@ -830,6 +1260,9 @@ class HomesScraper(BaseScraper):
             self.session.commit()
             return True
             
+        except (TaskPausedException, TaskCancelledException):
+            # タスクの一時停止・キャンセル例外は再スロー
+            raise
         except Exception as e:
             print(f"    詳細ページ取得エラー: {e}")
             return False

@@ -114,3 +114,43 @@ def get_homes_city_code(area_code: str) -> str:
     """
     return HOMES_AREA_MAPPING.get(area_code, "minato-city")
 
+
+def get_area_romaji_from_code(area_code: str) -> str:
+    """
+    区コードからローマ字のエリア名を取得
+    
+    Args:
+        area_code: 5桁の区コード（例: "13103"）
+        
+    Returns:
+        ローマ字のエリア名（例: "minato"）
+    """
+    # 逆引きマップを作成
+    code_to_romaji = {
+        "13101": "chiyoda",
+        "13102": "chuo",
+        "13103": "minato",
+        "13104": "shinjuku",
+        "13105": "bunkyo",
+        "13106": "taito",
+        "13107": "sumida",
+        "13108": "koto",
+        "13109": "shinagawa",
+        "13110": "meguro",
+        "13111": "ota",
+        "13112": "setagaya",
+        "13113": "shibuya",
+        "13114": "nakano",
+        "13115": "suginami",
+        "13116": "toshima",
+        "13117": "kita",
+        "13118": "arakawa",
+        "13119": "itabashi",
+        "13120": "nerima",
+        "13121": "adachi",
+        "13122": "katsushika",
+        "13123": "edogawa"
+    }
+    
+    return code_to_romaji.get(area_code, "minato")  # デフォルトは港区
+
