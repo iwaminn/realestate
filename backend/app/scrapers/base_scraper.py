@@ -15,7 +15,7 @@ import jaconv
 from .constants import SourceSite
 from ..database import SessionLocal
 from ..models import (
-    Building, BuildingAlias, MasterProperty, PropertyListing, 
+    Building, MasterProperty, PropertyListing, 
     ListingPriceHistory, PropertyImage, BuildingExternalId, Url404Retry
 )
 from ..utils.building_normalizer import BuildingNameNormalizer
@@ -1026,22 +1026,6 @@ class BaseScraper(ABC):
                     return building_with_address
             return building
         
-        # canonical_nameで見つからない場合は、エイリアスから検索（後方互換性）
-        # これは移行期間中のみ必要
-        all_aliases = self.session.query(BuildingAlias).all()
-        for alias in all_aliases:
-            alias_key = self.get_search_key_for_building(alias.alias_name)
-            if alias_key == search_key:
-                building = self.session.query(Building).filter(
-                    Building.id == alias.building_id
-                ).first()
-                if building:
-                    # canonical_nameを設定して次回から高速検索できるようにする
-                    if not building.canonical_name:
-                        building.canonical_name = search_key
-                        self.session.flush()
-                    return building
-        
         return None
     
     def get_or_create_building(self, building_name: str, address: str = None, external_property_id: str = None, 
@@ -1069,9 +1053,6 @@ class BaseScraper(ABC):
                     print(f"[既存] 外部IDで建物を発見: {building.normalized_name} (ID: {building.id})")
                     # 建物名から部屋番号を抽出
                     _, extracted_room_number = self.normalizer.extract_room_number(building_name)
-                    
-                    # エイリアスを追加（新しい建物名のバリエーション）
-                    self._add_building_alias(building.id, original_building_name)
                     
                     # 建物情報を更新（より詳細な情報があれば）
                     updated = False
@@ -1122,8 +1103,6 @@ class BaseScraper(ABC):
             
             if building:
                 print(f"[INFO] 住所で既存建物を発見: {building.normalized_name} at {address}")
-                # エイリアスを追加
-                self._add_building_alias(building.id, original_building_name)
                 return building, extracted_room_number
             else:
                 # 新規作成（住所必須）
@@ -1137,8 +1116,6 @@ class BaseScraper(ABC):
             
             if building:
                 print(f"[INFO] 既存建物を発見: {building.normalized_name} (ID: {building.id})")
-                # エイリアスを追加
-                self._add_building_alias(building.id, original_building_name)
                 
                 # 建物情報を更新（より詳細な情報があれば）
                 updated = False
@@ -1219,9 +1196,6 @@ class BaseScraper(ABC):
         self.session.add(building)
         self.session.flush()
         
-        # エイリアスを追加
-        self._add_building_alias(building.id, original_building_name)
-        
         # 外部IDを追加（ある場合）
         if external_property_id:
             # 既存の外部IDをチェック
@@ -1253,40 +1227,6 @@ class BaseScraper(ABC):
                         print(f"[WARNING] 外部ID {external_property_id} は既に建物ID {existing.building_id} に紐付いています")
         
         return building, extracted_room_number
-    
-    def _add_building_alias(self, building_id: int, alias_name: str):
-        """建物エイリアスを追加（重複チェック付き）"""
-        # 既存のエイリアスをチェック
-        existing_alias = self.session.query(BuildingAlias).filter(
-            BuildingAlias.building_id == building_id,
-            BuildingAlias.alias_name == alias_name,
-            BuildingAlias.source == str(self.source_site)
-        ).first()
-        
-        if existing_alias:
-            # 既存のエイリアスがある場合は出現回数を増やす
-            existing_alias.occurrence_count = (existing_alias.occurrence_count or 0) + 1
-            self.session.flush()
-            print(f"[INFO] エイリアス出現回数更新: '{alias_name}' (count={existing_alias.occurrence_count})")
-        else:
-            # 新規エイリアスを追加
-            alias = BuildingAlias(
-                building_id=building_id,
-                alias_name=alias_name,
-                source=str(self.source_site),
-                occurrence_count=1
-            )
-            self.session.add(alias)
-            self.session.flush()  # エイリアスを確定
-            print(f"[INFO] エイリアス追加: '{alias_name}' (from {self.source_site})")
-            
-            # 新しいエイリアスを追加した場合、建物名を多数決で更新
-            try:
-                self.majority_updater.update_building_name_by_majority(building_id)
-                self.session.flush()  # 変更を確定
-            except Exception as e:
-                # エラーが発生しても処理は続行（ログに記録）
-                self.logger.warning(f"建物名の更新に失敗しました (building_id={building_id}): {e}")
     
     def get_or_create_master_property(self, building: Building, room_number: str = None,
                                     floor_number: int = None, area: float = None,
@@ -1580,6 +1520,14 @@ class BaseScraper(ABC):
                 except Exception as e:
                     # エラーが発生しても処理は続行（ログに記録）
                     self.logger.warning(f"建物情報の更新に失敗しました (building_id={master_property.building_id}): {e}")
+                
+                # 物件の表示用建物名を多数決で更新
+                try:
+                    self.majority_updater.update_property_building_name_by_majority(master_property.id)
+                    self.session.flush()  # 変更を確定
+                except Exception as e:
+                    # エラーが発生しても処理は続行（ログに記録）
+                    self.logger.warning(f"物件建物名の更新に失敗しました (property_id={master_property.id}): {e}")
         
         return listing, update_type
     

@@ -224,6 +224,7 @@ class PropertyDetail(BaseModel):
     id: int
     building_id: int
     building_name: str
+    display_building_name: Optional[str]  # 物件独自の表示用建物名
     room_number: Optional[str]
     floor_number: Optional[int]
     area: Optional[float]
@@ -239,6 +240,183 @@ class MergeRequest(BaseModel):
     """物件統合リクエスト"""
     primary_property_id: int
     secondary_property_id: int
+
+
+@router.get("/duplicate-groups")
+def get_duplicate_groups(
+    min_similarity: float = 0.8,
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """重複候補の物件グループを取得"""
+    
+    # 除外リストを取得
+    exclusions = db.query(PropertyMergeExclusion).all()
+    excluded_pairs = set()
+    for exclusion in exclusions:
+        excluded_pairs.add((exclusion.property1_id, exclusion.property2_id))
+        excluded_pairs.add((exclusion.property2_id, exclusion.property1_id))
+    
+    # 重複候補を検出（グループ化用）
+    query = text("""
+        WITH property_details AS (
+            SELECT 
+                mp.id,
+                mp.building_id,
+                mp.room_number,
+                mp.floor_number,
+                mp.area,
+                mp.layout,
+                mp.direction,
+                b.normalized_name as building_name,
+                MAX(pl.current_price) as current_price,
+                STRING_AGG(DISTINCT pl.agency_name, ', ') as agency_names,
+                COUNT(DISTINCT pl.id) as listing_count,
+                COUNT(DISTINCT pl.source_site) as source_count,
+                bool_or(pl.is_active) as has_active_listing
+            FROM master_properties mp
+            JOIN buildings b ON mp.building_id = b.id
+            LEFT JOIN property_listings pl ON mp.id = pl.master_property_id
+            GROUP BY mp.id, mp.building_id, mp.room_number, mp.floor_number, mp.area, mp.layout, mp.direction, b.normalized_name
+        )
+        SELECT 
+            pd.id,
+            pd.building_id,
+            pd.building_name,
+            pd.room_number,
+            pd.floor_number,
+            pd.area,
+            pd.layout,
+            pd.direction,
+            pd.current_price,
+            pd.agency_names,
+            pd.listing_count,
+            pd.source_count,
+            pd.has_active_listing,
+            -- グループ識別用のキー
+            pd.building_id || '-' || pd.floor_number || '-' || COALESCE(pd.layout, '') as group_key
+        FROM property_details pd
+        WHERE 
+            -- 部屋番号がない物件のみ
+            (pd.room_number IS NULL OR pd.room_number = '')
+            -- アクティブな掲載がある
+            AND pd.has_active_listing = true
+        ORDER BY pd.building_name, pd.floor_number, pd.area
+    """)
+    
+    result = db.execute(query)
+    all_properties = list(result)
+    
+    print(f"[DEBUG] Found {len(all_properties)} properties for grouping")
+    
+    # グループ化処理（処理済みの物件を追跡）
+    groups = {}
+    processed_properties = set()
+    
+    for i, prop in enumerate(all_properties):
+        if prop.id in processed_properties:
+            continue
+            
+        # 新しいグループを作成
+        group_id = f"group_{len(groups) + 1}"
+        group = [prop]
+        processed_properties.add(prop.id)
+        
+        # 残りの物件から類似物件を探す
+        for j in range(i + 1, len(all_properties)):
+            other_prop = all_properties[j]
+            if other_prop.id in processed_properties:
+                continue
+                
+            # 類似度を計算
+            similarity = calculate_similarity(prop, other_prop)
+            if similarity >= min_similarity:
+                # 除外ペアチェック
+                if (prop.id, other_prop.id) not in excluded_pairs and (other_prop.id, prop.id) not in excluded_pairs:
+                    # グループ内の他の物件とも類似度をチェック
+                    can_add = True
+                    for group_prop in group:
+                        if (other_prop.id, group_prop.id) in excluded_pairs or (group_prop.id, other_prop.id) in excluded_pairs:
+                            can_add = False
+                            break
+                        if calculate_similarity(other_prop, group_prop) < min_similarity:
+                            can_add = False
+                            break
+                    
+                    if can_add:
+                        group.append(other_prop)
+                        processed_properties.add(other_prop.id)
+        
+        groups[group_id] = group
+    
+    print(f"[DEBUG] Created {len(groups)} groups")
+    print(f"[DEBUG] Groups with 2+ properties: {sum(1 for g in groups.values() if len(g) >= 2)}")
+    
+    # 2件以上の物件を持つグループのみ返す
+    duplicate_groups = []
+    for group_id, properties in groups.items():
+        if len(properties) >= 2:
+            duplicate_groups.append({
+                "group_id": group_id,
+                "property_count": len(properties),
+                "building_name": properties[0].building_name,
+                "floor_number": properties[0].floor_number,
+                "layout": properties[0].layout,
+                "properties": sorted([
+                    {
+                        "id": p.id,
+                        "room_number": p.room_number,
+                        "area": p.area,
+                        "direction": p.direction,
+                        "current_price": p.current_price,
+                        "agency_names": p.agency_names,
+                        "listing_count": p.listing_count,
+                        "source_count": p.source_count
+                    }
+                    for p in properties
+                ], key=lambda x: (
+                    # 1. 掲載数が多い順（重要な物件を優先）
+                    -(x["listing_count"] or 0),
+                    # 2. 価格がある物件を優先
+                    0 if x["current_price"] else 1,
+                    # 3. 価格順（安い順）
+                    x["current_price"] or float('inf'),
+                    # 4. 物件ID順（一定の順序を保証）
+                    x["id"]
+                ))
+            })
+    
+    # 物件数の多い順にソート
+    duplicate_groups.sort(key=lambda x: x["property_count"], reverse=True)
+    
+    return duplicate_groups[:limit]
+
+
+def calculate_similarity(prop1, prop2):
+    """2つの物件の類似度を計算"""
+    # 同じ建物、同じ階
+    if prop1.building_id != prop2.building_id or prop1.floor_number != prop2.floor_number:
+        return 0.0
+    
+    # 間取りが同じ
+    if prop1.layout != prop2.layout:
+        return 0.0
+    
+    # 面積の差（より緩い条件に）
+    area_diff = abs((prop1.area or 0) - (prop2.area or 0))
+    if area_diff >= 1.0:  # 0.5から1.0に緩和
+        return 0.7  # 完全に除外せず、低い類似度を返す
+    
+    # 方角の類似度
+    if prop1.direction == prop2.direction:
+        return 1.0
+    elif prop1.direction and prop2.direction:
+        if prop1.direction in prop2.direction or prop2.direction in prop1.direction:
+            return 0.9
+        else:
+            return 0.8
+    else:
+        return 0.85  # 片方が方角情報なし
 
 
 @router.get("/duplicate-candidates", response_model=List[DuplicateCandidate])
@@ -526,6 +704,7 @@ def get_property_detail_for_admin(property_id: int, db: Session = Depends(get_db
         id=property.id,
         building_id=property.building_id,
         building_name=building.normalized_name,
+        display_building_name=property.display_building_name,
         room_number=property.room_number,
         floor_number=property.floor_number,
         area=property.area,

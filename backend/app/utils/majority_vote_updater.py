@@ -9,7 +9,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 from sqlalchemy import func, and_, String
 from sqlalchemy.orm import Session
-from ..models import Building, BuildingAlias, MasterProperty, PropertyListing, ListingPriceHistory
+from ..models import Building, MasterProperty, PropertyListing, ListingPriceHistory
 import logging
 
 logger = logging.getLogger(__name__)
@@ -359,7 +359,7 @@ class MajorityVoteUpdater:
     
     def update_building_name_by_majority(self, building_id: int) -> bool:
         """
-        建物名を関連する全ての情報から多数決で決定
+        建物名を関連する掲載情報から直接多数決で決定
         
         Args:
             building_id: 建物ID
@@ -371,105 +371,93 @@ class MajorityVoteUpdater:
         if not building:
             return False
         
-        # まず、アクティブな掲載情報があるかチェック
-        active_listings_exist = self.session.query(PropertyListing).join(
+        # property_listings から直接建物名を取得
+        # アクティブな掲載情報があるかチェック
+        active_listings = self.session.query(
+            PropertyListing.listing_building_name,
+            PropertyListing.source_site,
+            func.count(PropertyListing.id).label('count')
+        ).join(
             MasterProperty
         ).filter(
             MasterProperty.building_id == building_id,
-            PropertyListing.is_active == True
-        ).first() is not None
+            PropertyListing.is_active == True,
+            PropertyListing.listing_building_name.isnot(None)
+        ).group_by(
+            PropertyListing.listing_building_name,
+            PropertyListing.source_site
+        ).all()
         
-        # BuildingAliasから名前を取得する際に、掲載状態を考慮
-        if active_listings_exist:
-            # アクティブな掲載情報がある場合は、アクティブな掲載からのエイリアスのみを使用
-            alias_votes = self.session.query(
-                BuildingAlias.alias_name,
-                BuildingAlias.source,
-                func.sum(BuildingAlias.occurrence_count).label('count')
-            ).join(
-                PropertyListing,
-                and_(
-                    func.cast(PropertyListing.source_site, String) == BuildingAlias.source,
-                    PropertyListing.is_active == True
-                )
+        if active_listings:
+            # アクティブな掲載情報から建物名を取得
+            building_name_votes = active_listings
+        else:
+            # 全ての掲載が非アクティブの場合
+            one_week_ago = datetime.now() - timedelta(days=7)
+            
+            # 販売終了から1週間以内の掲載情報を取得
+            recent_listings = self.session.query(
+                PropertyListing.listing_building_name,
+                PropertyListing.source_site,
+                func.count(PropertyListing.id).label('count')
             ).join(
                 MasterProperty
             ).filter(
                 MasterProperty.building_id == building_id,
-                BuildingAlias.building_id == building_id
-            ).group_by(
-                BuildingAlias.alias_name,
-                BuildingAlias.source
-            ).all()
-        else:
-            # 全ての掲載が非アクティブの場合
-            # 販売終了日から1週間以内の掲載情報を持つエイリアスを使用
-            one_week_ago = datetime.now() - timedelta(days=7)
-            
-            # 建物に関連する販売終了物件を取得
-            sold_properties = self.session.query(MasterProperty).filter(
-                MasterProperty.building_id == building_id,
                 MasterProperty.sold_at.isnot(None),
-                MasterProperty.sold_at >= one_week_ago
+                MasterProperty.sold_at >= one_week_ago,
+                PropertyListing.listing_building_name.isnot(None)
+            ).group_by(
+                PropertyListing.listing_building_name,
+                PropertyListing.source_site
             ).all()
             
-            if sold_properties:
-                # 販売終了から1週間以内の物件がある場合、その期間の掲載情報からエイリアスを取得
-                alias_votes = self.session.query(
-                    BuildingAlias.alias_name,
-                    BuildingAlias.source,
-                    func.sum(BuildingAlias.occurrence_count).label('count')
-                ).join(
-                    PropertyListing,
-                    func.cast(PropertyListing.source_site, String) == BuildingAlias.source
+            if recent_listings:
+                building_name_votes = recent_listings
+            else:
+                # 販売終了から1週間以上経過している場合は、全ての掲載情報を使用
+                all_listings = self.session.query(
+                    PropertyListing.listing_building_name,
+                    PropertyListing.source_site,
+                    func.count(PropertyListing.id).label('count')
                 ).join(
                     MasterProperty
                 ).filter(
                     MasterProperty.building_id == building_id,
-                    BuildingAlias.building_id == building_id,
-                    PropertyListing.last_confirmed_at >= one_week_ago
+                    PropertyListing.listing_building_name.isnot(None)
                 ).group_by(
-                    BuildingAlias.alias_name,
-                    BuildingAlias.source
+                    PropertyListing.listing_building_name,
+                    PropertyListing.source_site
                 ).all()
-            else:
-                # 販売終了から1週間以上経過している場合は、全てのエイリアスを使用（従来の動作）
-                alias_votes = self.session.query(
-                    BuildingAlias.alias_name,
-                    BuildingAlias.source,
-                    func.sum(BuildingAlias.occurrence_count).label('count')
-                ).filter(
-                    BuildingAlias.building_id == building_id
-                ).group_by(
-                    BuildingAlias.alias_name,
-                    BuildingAlias.source
-                ).all()
+                
+                building_name_votes = all_listings
         
-        if not alias_votes:
+        if not building_name_votes:
+            # 掲載情報から建物名が取得できない場合
             return False
         
         # 重み付け投票の準備
         weighted_votes = {}
         
-        for alias_name, source, count in alias_votes:
+        for building_name, source_site, count in building_name_votes:
             # 基本的な重み（出現回数）
             weight = count
             
             # ソースによる重み付け（優先度の高いサイトほど高い重み）
-            site_priority = self.get_site_priority(source)
+            site_priority = self.get_site_priority(str(source_site))
             if site_priority < len(self.SITE_PRIORITY):
                 # 優先度が高いサイトには追加の重みを付与
                 weight *= (len(self.SITE_PRIORITY) - site_priority + 1)
             
             # 広告文っぽい名前は重みを下げる
-            if self._is_advertising_text(alias_name):
+            if self._is_advertising_text(building_name):
                 weight *= 0.1
             
             # 集計
-            if alias_name in weighted_votes:
-                weighted_votes[alias_name] += weight
+            if building_name in weighted_votes:
+                weighted_votes[building_name] += weight
             else:
-                weighted_votes[alias_name] = weight
+                weighted_votes[building_name] = weight
         
         # 最も重みの高い名前を選択
         if weighted_votes:
@@ -485,6 +473,87 @@ class MajorityVoteUpdater:
                 return True
         
         return False
+    
+    def update_property_building_name_by_majority(self, property_id: int) -> bool:
+        """
+        物件の表示用建物名を関連する掲載情報から多数決で決定
+        
+        Args:
+            property_id: 物件ID
+            
+        Returns:
+            更新があった場合True
+        """
+        property_obj = self.session.query(MasterProperty).filter_by(id=property_id).first()
+        if not property_obj:
+            return False
+        
+        # アクティブな掲載情報があるかチェック
+        active_listings = self.session.query(PropertyListing).filter(
+            PropertyListing.master_property_id == property_id,
+            PropertyListing.is_active == True
+        ).all()
+        
+        if active_listings:
+            # アクティブな掲載情報から建物名を取得
+            building_name_votes = {}
+            
+            for listing in active_listings:
+                if listing.listing_building_name:
+                    # ソースによる重み付け
+                    weight = self.get_site_priority_weight(listing.source_site)
+                    
+                    # 広告文っぽい名前は重みを下げる
+                    if self._is_advertising_text(listing.listing_building_name):
+                        weight *= 0.1
+                    
+                    if listing.listing_building_name in building_name_votes:
+                        building_name_votes[listing.listing_building_name] += weight
+                    else:
+                        building_name_votes[listing.listing_building_name] = weight
+        else:
+            # すべて非アクティブの場合、最近の掲載情報を使用
+            recent_listings = self.session.query(PropertyListing).filter(
+                PropertyListing.master_property_id == property_id,
+                PropertyListing.listing_building_name.isnot(None)
+            ).order_by(PropertyListing.last_scraped_at.desc()).limit(10).all()
+            
+            building_name_votes = {}
+            
+            for listing in recent_listings:
+                if listing.listing_building_name:
+                    # ソースによる重み付け
+                    weight = self.get_site_priority_weight(listing.source_site)
+                    
+                    # 広告文っぽい名前は重みを下げる
+                    if self._is_advertising_text(listing.listing_building_name):
+                        weight *= 0.1
+                    
+                    if listing.listing_building_name in building_name_votes:
+                        building_name_votes[listing.listing_building_name] += weight
+                    else:
+                        building_name_votes[listing.listing_building_name] = weight
+        
+        # 最も重みの高い名前を選択
+        if building_name_votes:
+            best_name = max(building_name_votes.items(), key=lambda x: x[1])[0]
+            
+            # 現在の名前と異なる場合は更新
+            if best_name != property_obj.display_building_name:
+                logger.info(
+                    f"物件建物名更新: '{property_obj.display_building_name}' → '{best_name}' "
+                    f"(物件ID: {property_id}, votes: {dict(sorted(building_name_votes.items(), key=lambda x: x[1], reverse=True)[:3])})"
+                )
+                property_obj.display_building_name = best_name
+                return True
+        
+        return False
+    
+    def get_site_priority_weight(self, source_site: str) -> int:
+        """サイト優先度に基づく重みを取得"""
+        site_priority = self.get_site_priority(source_site)
+        # 優先度が高いサイトほど大きい重み
+        return len(self.SITE_PRIORITY) - site_priority
     
     def _is_advertising_text(self, text: str) -> bool:
         """広告的なテキストかどうかを判定"""

@@ -35,33 +35,12 @@ class Building(Base):
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
     
     # リレーションシップ
-    aliases = relationship("BuildingAlias", back_populates="building")
     properties = relationship("MasterProperty", back_populates="building")
     external_ids = relationship("BuildingExternalId", back_populates="building")
     
     __table_args__ = (
         Index('idx_buildings_normalized_name', 'normalized_name'),
         Index('idx_buildings_address', 'address'),
-    )
-
-
-class BuildingAlias(Base):
-    """建物名エイリアステーブル"""
-    __tablename__ = "building_aliases"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    building_id = Column(Integer, ForeignKey("buildings.id", ondelete="CASCADE"), nullable=False)
-    alias_name = Column(String(255), nullable=False)      # 実際に使われている建物名
-    source = Column(String(50))                            # どのサイトで使われているか
-    occurrence_count = Column(Integer, default=1)          # この表記の出現回数
-    created_at = Column(DateTime, server_default=func.now())
-    
-    # リレーションシップ
-    building = relationship("Building", back_populates="aliases")
-    
-    __table_args__ = (
-        Index('idx_building_aliases_alias_name', 'alias_name'),
-        Index('idx_building_aliases_building_id', 'building_id'),
     )
 
 
@@ -107,6 +86,7 @@ class MasterProperty(Base):
     management_fee = Column(Integer)                      # 管理費（月額・円）- 多数決で決定
     repair_fund = Column(Integer)                         # 修繕積立金（月額・円）- 多数決で決定
     station_info = Column(Text)                           # 交通情報 - 多数決で決定
+    display_building_name = Column(String(255))            # 表示用建物名 - この物件の掲載情報から多数決で決定
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
     
@@ -156,6 +136,7 @@ class PropertyListing(Base):
     listing_built_year = Column(Integer)                  # この掲載での築年
     listing_balcony_area = Column(Float)                  # この掲載でのバルコニー面積
     listing_address = Column(Text)                        # この掲載での住所
+    listing_building_name = Column(String(255))            # この掲載での建物名
     
     # 掲載状態
     is_active = Column(Boolean, default=True)             # 掲載中かどうか

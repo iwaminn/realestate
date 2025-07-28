@@ -17,7 +17,7 @@ import re
 
 from backend.app.database import get_db, init_db
 from backend.app.models import (
-    Building, BuildingAlias, MasterProperty, PropertyListing, 
+    Building, MasterProperty, PropertyListing, 
     ListingPriceHistory, PropertyImage, BuildingExternalId,
     BuildingMergeExclusion, BuildingMergeHistory
 )
@@ -263,15 +263,11 @@ async def get_properties_v2(
     if layout:
         query = query.filter(MasterProperty.layout == layout)
     if building_name:
-        # 建物名、読み仮名、または建物エイリアスで部分一致検索
-        alias_subquery = db.query(BuildingAlias.building_id).filter(
-            BuildingAlias.alias_name.ilike(f"%{building_name}%")
-        )
+        # 建物名、読み仮名で部分一致検索
         query = query.filter(
             or_(
                 Building.normalized_name.ilike(f"%{building_name}%"),
-                Building.reading.ilike(f"%{building_name}%"),
-                Building.id.in_(alias_subquery)
+                Building.reading.ilike(f"%{building_name}%")
             )
         )
     if max_building_age is not None:
@@ -1093,28 +1089,7 @@ async def merge_buildings(
                 "properties_moved": 0
             }
             
-            # エイリアスを追加
-            if secondary.normalized_name != primary.normalized_name:
-                # 既存のエイリアスをチェック
-                existing = db.query(BuildingAlias).filter(
-                    BuildingAlias.building_id == primary_id,
-                    BuildingAlias.alias_name == secondary.normalized_name
-                ).first()
-                
-                if not existing:
-                    alias = BuildingAlias(
-                        building_id=primary_id,
-                        alias_name=secondary.normalized_name,
-                        source='MERGE'
-                    )
-                    db.add(alias)
-                    merge_details["aliases_added"].append(secondary.normalized_name)
-            
-            # 副建物のエイリアスを移動
-            alias_count = db.query(BuildingAlias).filter(
-                BuildingAlias.building_id == secondary.id
-            ).update({"building_id": primary_id})
-            merge_details["aliases_moved"] += alias_count
+            # 副建物の名前は記録しない（BuildingAlias削除済み）
             
             # 物件を移動
             count = db.query(MasterProperty).filter(
@@ -1512,8 +1487,7 @@ async def suggest_buildings(
     if len(q) < 1:
         return []
     
-    # エイリアスから建物を検索し、正規化された名前のみを返す
-    # まず建物名で直接検索
+    # 建物名で直接検索
     direct_matches = db.query(Building).filter(
         Building.normalized_name.ilike(f"%{q}%")
     ).all()
@@ -1523,16 +1497,9 @@ async def suggest_buildings(
         Building.reading.ilike(f"%{q}%")
     ).all()
     
-    # エイリアスから建物を検索
-    alias_matches = db.query(Building).join(
-        BuildingAlias, Building.id == BuildingAlias.building_id
-    ).filter(
-        BuildingAlias.alias_name.ilike(f"%{q}%")
-    ).distinct().all()
-    
     # 結果を結合して重複を除去
     all_buildings = {}
-    for building in direct_matches + reading_matches + alias_matches:
+    for building in direct_matches + reading_matches:
         all_buildings[building.id] = building.normalized_name
     
     # ユニークな建物名のリスト

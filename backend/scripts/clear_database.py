@@ -27,7 +27,6 @@ def clear_database():
             'property_listings',
             'master_properties',
             'building_external_ids',
-            'building_aliases',
             'buildings'
         ]
         
@@ -45,7 +44,6 @@ def clear_database():
         # シーケンスをリセット
         sequences = [
             'buildings_id_seq',
-            'building_aliases_id_seq', 
             'building_external_ids_id_seq',
             'master_properties_id_seq',
             'property_listings_id_seq',
