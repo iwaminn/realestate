@@ -148,9 +148,9 @@ class HomesScraper(BaseScraper):
         try:
             self.logger.info(f"[HOMES] parse_property_detail called for URL: {url}")
             
-            # 建物ページURLの場合は詳細解析をスキップ
+            # 建物ページURLの場合はエラー（ここには来ないはず）
             if '/mansion/b-' in url and not re.search(r'/\d{3,4}[A-Z]?/$', url):
-                self.logger.warning(f"[HOMES] Skipping building page URL in parse_property_detail: {url}")
+                self.logger.error(f"[HOMES] Unexpected building page URL in parse_property_detail: {url}")
                 return None
             
             # アクセス間隔を保つ
@@ -821,25 +821,39 @@ class HomesScraper(BaseScraper):
                     
                     full_url = urljoin(self.BASE_URL, href)
                     
-                    # 価格情報を取得（3番目のtd）
-                    price = None
-                    tds = row.select('td')
-                    if len(tds) > 2:
-                        price_text = tds[2].get_text(strip=True)
-                        price = extract_price(price_text)
+                    # URLが建物ページ（部屋番号なし）か個別物件ページ（部屋番号あり）かを判定
+                    is_individual_property = re.search(r'/\d{3,4}[A-Z]?/$', href)
+                    
+                    if is_individual_property:
+                        # 個別物件ページの場合はそのまま追加
+                        # 価格情報を取得（3番目のtd）
+                        price = None
+                        tds = row.select('td')
+                        if len(tds) > 2:
+                            price_text = tds[2].get_text(strip=True)
+                            price = extract_price(price_text)
+                            if price:
+                                self.logger.info(f"[HOMES] Found price: {price}万円 for {href}")
+                        
+                        # 物件データを作成
+                        property_data = {
+                            'url': full_url,
+                            'has_update_mark': False
+                        }
+                        
                         if price:
-                            self.logger.info(f"[HOMES] Found price: {price}万円 for {href}")
-                    
-                    # 物件データを作成
-                    property_data = {
-                        'url': full_url,
-                        'has_update_mark': False
-                    }
-                    
-                    if price:
-                        property_data['price'] = price
-                    
-                    properties.append(property_data)
+                            property_data['price'] = price
+                        
+                        properties.append(property_data)
+                    else:
+                        # 建物ページの場合は、その建物の全物件を取得
+                        self.logger.info(f"[HOMES] Found building page, fetching individual properties: {full_url}")
+                        building_properties = self._fetch_properties_from_building_page(full_url)
+                        if building_properties:
+                            properties.extend(building_properties)
+                            self.logger.info(f"[HOMES] Added {len(building_properties)} properties from building page")
+                        else:
+                            self.logger.warning(f"[HOMES] No properties found in building page: {full_url}")
                     
                     # リアルタイムで統計を更新
                     if hasattr(self, '_scraping_stats'):
@@ -1126,15 +1140,15 @@ class HomesScraper(BaseScraper):
     
     def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
         """個別の物件を処理（HOMESスクレイパー固有の実装）"""
-        # 建物ページURLの場合はスキップ
+        # 建物ページURLの場合はエラー（parse_property_listで既に処理されているはず）
         url = property_data.get('url', '')
         if '/mansion/b-' in url and not re.search(r'/\d{3,4}[A-Z]?/$', url):
-            self.logger.warning(f"[HOMES] Skipping building page URL in process_property_data: {url}")
-            # 建物ページURLもスキップとして正しくカウントするため、フラグを設定
+            self.logger.error(f"[HOMES] Unexpected building page URL in process_property_data: {url}")
+            # エラーとして処理
             property_data['detail_fetched'] = False
-            property_data['property_saved'] = True
-            property_data['update_type'] = 'skipped'
-            return True  # Trueを返すことで、base_scraperでカウントされるようにする
+            property_data['property_saved'] = False
+            property_data['update_type'] = 'error'
+            return False
         
         # 共通の詳細チェック処理を使用
         return self.process_property_with_detail_check(
