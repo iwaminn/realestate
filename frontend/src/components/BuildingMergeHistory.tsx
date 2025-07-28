@@ -78,12 +78,13 @@ const BuildingMergeHistory: React.FC = () => {
 
     setReverting(true);
     try {
-      await propertyApi.revertMerge(historyId);
+      await propertyApi.revertBuildingMerge(historyId);
       alert('統合を取り消しました');
       fetchHistories();
-    } catch (error) {
-      console.error('Failed to revert merge:', error);
-      alert('取り消しに失敗しました');
+    } catch (error: any) {
+      console.error('Failed to revert building merge:', error);
+      const errorMessage = error.response?.data?.detail || '取り消しに失敗しました';
+      alert(errorMessage);
     } finally {
       setReverting(false);
       setSelectedHistory(null);

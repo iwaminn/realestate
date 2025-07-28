@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from backend.app.database import get_db
 from backend.app.utils.debug_logger import debug_log
-from backend.app.models import MasterProperty, PropertyListing, Building, ListingPriceHistory, PropertyMergeHistory, PropertyMergeExclusion
+from backend.app.models import MasterProperty, PropertyListing, Building, ListingPriceHistory, PropertyMergeHistory, PropertyMergeExclusion, BuildingMergeHistory, BuildingExternalId
 from sqlalchemy import func, or_, and_
 from backend.app.auth import verify_admin_credentials
 
@@ -2086,6 +2086,94 @@ def get_property_merge_history(
         })
     
     return {"histories": result, "total": len(result)}
+
+
+@router.post("/revert-building-merge/{history_id}")
+def revert_building_merge(
+    history_id: int,
+    db: Session = Depends(get_db)
+):
+    """建物統合を取り消す"""
+    history = db.query(BuildingMergeHistory).filter(
+        BuildingMergeHistory.id == history_id
+    ).first()
+    
+    if not history:
+        raise HTTPException(status_code=404, detail="統合履歴が見つかりません")
+    
+    if history.reverted_at:
+        raise HTTPException(status_code=400, detail="既に取り消し済みです")
+    
+    try:
+        # 主建物の存在確認
+        primary_building = db.query(Building).filter(
+            Building.id == history.primary_building_id
+        ).first()
+        
+        if not primary_building:
+            raise HTTPException(status_code=404, detail="主建物が見つかりません")
+        
+        # 統合された建物を復元
+        merged_building_ids = history.merged_building_ids
+        merge_details = history.merge_details or {}
+        
+        restored_buildings = []
+        for building_id in merged_building_ids:
+            # merge_detailsから建物情報を取得
+            building_data = merge_details.get("merged_buildings", {}).get(str(building_id), {})
+            
+            if building_data:
+                # 建物を復元
+                restored_building = Building(
+                    id=building_id,
+                    normalized_name=building_data.get("normalized_name"),
+                    canonical_name=building_data.get("canonical_name"),
+                    address=building_data.get("address"),
+                    built_year=building_data.get("built_year"),
+                    total_floors=building_data.get("total_floors"),
+                    basement_floors=building_data.get("basement_floors"),
+                    total_units=building_data.get("total_units"),
+                    structure=building_data.get("structure"),
+                    land_rights=building_data.get("land_rights"),
+                    parking_info=building_data.get("parking_info")
+                )
+                db.add(restored_building)
+                restored_buildings.append(building_id)
+                
+                # 外部IDを復元
+                external_ids = merge_details.get("external_ids", {}).get(str(building_id), [])
+                for ext_id_data in external_ids:
+                    external_id = BuildingExternalId(
+                        building_id=building_id,
+                        source_site=ext_id_data["source_site"],
+                        external_id=ext_id_data["external_id"]
+                    )
+                    db.add(external_id)
+        
+        # 移動された物件を元に戻す
+        moved_property_ids = merge_details.get("moved_property_ids", [])
+        for property_id, original_building_id in moved_property_ids:
+            property = db.query(MasterProperty).filter(
+                MasterProperty.id == property_id
+            ).first()
+            if property and property.building_id == history.primary_building_id:
+                property.building_id = original_building_id
+        
+        # 履歴を更新
+        history.reverted_at = datetime.now()
+        history.reverted_by = "admin"  # TODO: 実際のユーザー名を記録
+        
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": f"建物統合を取り消しました。{len(restored_buildings)}件の建物を復元しました。",
+            "restored_buildings": restored_buildings
+        }
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.post("/revert-property-merge/{history_id}")

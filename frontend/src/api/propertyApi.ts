@@ -148,7 +148,16 @@ export const propertyApi = {
     success: boolean;
     message: string;
   }> => {
-    const response = await api.post(`/admin/revert-merge/${historyId}`);
+    const response = await api.post(`/admin/revert-property-merge/${historyId}`);
+    return response.data;
+  },
+
+  // 建物統合を取り消し
+  revertBuildingMerge: async (historyId: number): Promise<{
+    success: boolean;
+    message: string;
+  }> => {
+    const response = await api.post(`/admin/revert-building-merge/${historyId}`);
     return response.data;
   },
 
