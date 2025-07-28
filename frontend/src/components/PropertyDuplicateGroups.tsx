@@ -30,6 +30,7 @@ import {
   FormControlLabel,
   Tooltip,
   Checkbox,
+  Snackbar,
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -230,17 +231,33 @@ const PropertyDuplicateGroups: React.FC = () => {
   const handleMerge = async () => {
     if (!selectedGroup || !primaryProperty || selectedProperties.size < 2) return;
 
+    console.log('Starting merge:', {
+      primaryProperty,
+      selectedProperties: Array.from(selectedProperties),
+      selectedGroup
+    });
+
     setMerging(true);
     try {
       // 選択された物件の中で統合先以外を統合
       const secondaryProperties = Array.from(selectedProperties)
         .filter(id => id !== primaryProperty);
 
+      console.log('Secondary properties to merge:', secondaryProperties);
+
       for (const secondaryId of secondaryProperties) {
-        await axios.post('/api/admin/merge-properties', {
-          primary_property_id: primaryProperty,
-          secondary_property_id: secondaryId
-        });
+        console.log(`Merging ${secondaryId} into ${primaryProperty}...`);
+        try {
+          const response = await axios.post('/api/admin/merge-properties', {
+            primary_property_id: primaryProperty,
+            secondary_property_id: secondaryId
+          });
+          console.log(`Merge response:`, response.data);
+        } catch (error: any) {
+          console.error(`Failed to merge ${secondaryId}:`, error);
+          console.error('Error response:', error.response?.data);
+          throw error;
+        }
       }
 
       setSnackbar({ 
@@ -269,9 +286,10 @@ const PropertyDuplicateGroups: React.FC = () => {
       
       setSelectedGroup(null);
       setPropertyDetails({});
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to merge properties:', error);
-      setSnackbar({ open: true, message: '物件の統合に失敗しました', severity: 'error' });
+      const errorMessage = error.response?.data?.detail || error.message || '物件の統合に失敗しました';
+      setSnackbar({ open: true, message: errorMessage, severity: 'error' });
     } finally {
       setMerging(false);
     }
@@ -817,6 +835,16 @@ const PropertyDuplicateGroups: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+      
+      <Snackbar
+        open={snackbar.open}
+        autoHideDuration={6000}
+        onClose={() => setSnackbar({ ...snackbar, open: false })}
+      >
+        <Alert onClose={() => setSnackbar({ ...snackbar, open: false })} severity={snackbar.severity}>
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </>
   );
 };
