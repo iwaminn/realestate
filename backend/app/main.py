@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, or_, and_, distinct
+from sqlalchemy import func, or_, and_, distinct, String
 from difflib import SequenceMatcher
 import os
 import re
@@ -177,7 +177,7 @@ async def get_properties_v2(
         func.min(PropertyListing.current_price).label('min_price'),
         func.max(PropertyListing.current_price).label('max_price'),
         func.count(distinct(PropertyListing.id)).label('listing_count'),
-        func.string_agg(distinct(PropertyListing.source_site), ',').label('source_sites'),
+        func.string_agg(distinct(func.cast(PropertyListing.source_site, String)), ',').label('source_sites'),
         func.bool_or(PropertyListing.is_active).label('has_active_listing'),
         func.max(PropertyListing.last_confirmed_at).label('last_confirmed_at'),
         func.max(PropertyListing.delisted_at).label('delisted_at'),
@@ -338,7 +338,9 @@ async def get_properties_v2(
             "has_active_listing": has_active,
             "last_confirmed_at": str(last_confirmed) if last_confirmed else None,
             "delisted_at": str(delisted) if delisted else None,
-            "station_info": station_info,
+            "station_info": mp.station_info if mp.station_info else station_info,
+            "management_fee": mp.management_fee,
+            "repair_fund": mp.repair_fund,
             "earliest_published_at": earliest_published_at,
             "latest_price_update": str(latest_price_update) if latest_price_update else None,
             "sold_at": mp.sold_at.isoformat() if mp.sold_at else None,
@@ -375,18 +377,36 @@ async def get_property_detail_v2(
     all_listings = master_property.listings
     active_listings = [l for l in all_listings if l.is_active]
     
-    # 価格の集計
-    prices = [l.current_price for l in active_listings if l.current_price]
-    min_price = min(prices) if prices else None
-    max_price = max(prices) if prices else None
+    # 多数決更新クラスをインポート
+    from backend.app.utils.majority_vote_updater import MajorityVoteUpdater
+    updater = MajorityVoteUpdater(db)
+    
+    # 販売終了物件の場合は非アクティブも含める
+    include_inactive = master_property.sold_at is not None
+    info = updater.collect_property_info_from_listings(master_property, include_inactive)
+    
+    # 価格の集計（価格は範囲表示）
+    if info['prices']:
+        price_range = updater.get_price_range(info['prices'])
+        if price_range:
+            min_price, max_price = price_range
+        else:
+            min_price = max_price = None
+    else:
+        min_price = max_price = None
     
     # 販売終了物件の場合はlast_sale_priceを使用
     if master_property.sold_at and master_property.last_sale_price:
         min_price = master_property.last_sale_price
         max_price = master_property.last_sale_price
     
-    # ソースサイトのリスト
+    # ソースサイトのリスト（アクティブな掲載のみ）
     source_sites = list(set(l.source_site for l in active_listings))
+    
+    # 交通情報を多数決で決定（マスター物件に保存されていない場合のみ）
+    station_info = master_property.station_info
+    if not station_info and info['station_infos']:
+        station_info = updater.get_majority_value(info['station_infos'])
     
     # 統合価格履歴を作成（物件単位）
     # 全掲載の価格履歴を時系列で統合
@@ -433,13 +453,7 @@ async def get_property_detail_v2(
                 'prices': {str(price): sources for price, sources in unique_prices.items()}
             })
     
-    # 最初のアクティブな掲載から交通情報を取得
-    station_info = None
-    for listing in active_listings:
-        if listing.station_info:
-            station_info = listing.station_info
-            print(f"DEBUG: Found station_info: {station_info}")  # デバッグ用
-            break
+    # 交通情報はすでに多数決で決定済み（上記で処理）
     
     # 最も古い情報提供日を取得
     earliest_published_at = None
@@ -466,6 +480,8 @@ async def get_property_detail_v2(
         "listing_count": len(active_listings),
         "source_sites": source_sites,
         "station_info": station_info,
+        "management_fee": master_property.management_fee,
+        "repair_fund": master_property.repair_fund,
         "earliest_published_at": earliest_published_at,
         "sold_at": master_property.sold_at,
         "last_sale_price": master_property.last_sale_price,
@@ -542,7 +558,7 @@ async def get_building_properties_by_name(
         func.min(PropertyListing.current_price).label('min_price'),
         func.max(PropertyListing.current_price).label('max_price'),
         func.count(distinct(PropertyListing.id)).label('listing_count'),
-        func.string_agg(distinct(PropertyListing.source_site), ',').label('source_sites'),
+        func.string_agg(distinct(func.cast(PropertyListing.source_site, String)), ',').label('source_sites'),
         func.min(func.coalesce(PropertyListing.first_published_at, PropertyListing.published_at, PropertyListing.first_seen_at)).label('earliest_published_at')
     )
     
@@ -633,7 +649,8 @@ async def get_building_properties_v2(
         PropertyListing.master_property_id,
         func.min(PropertyListing.current_price).label('min_price'),
         func.max(PropertyListing.current_price).label('max_price'),
-        func.count(distinct(PropertyListing.id)).label('listing_count')
+        func.count(distinct(PropertyListing.id)).label('listing_count'),
+        func.max(PropertyListing.last_confirmed_at).label('last_confirmed_at')
     ).filter(
         PropertyListing.is_active == True
     ).group_by(
@@ -643,7 +660,7 @@ async def get_building_properties_v2(
     # ソースサイト情報を含むサブクエリ
     source_sites_subquery = db.query(
         PropertyListing.master_property_id,
-        func.string_agg(distinct(PropertyListing.source_site), ',').label('source_sites')
+        func.string_agg(distinct(func.cast(PropertyListing.source_site, String)), ',').label('source_sites')
     ).filter(
         PropertyListing.is_active == True
     ).group_by(
@@ -655,6 +672,7 @@ async def get_building_properties_v2(
         price_subquery.c.min_price,
         price_subquery.c.max_price,
         price_subquery.c.listing_count,
+        price_subquery.c.last_confirmed_at,
         source_sites_subquery.c.source_sites
     ).join(
         price_subquery, MasterProperty.id == price_subquery.c.master_property_id
@@ -669,7 +687,7 @@ async def get_building_properties_v2(
     
     # 結果を整形
     property_list = []
-    for mp, min_price, max_price, listing_count, source_sites in properties:
+    for mp, min_price, max_price, listing_count, last_confirmed_at, source_sites in properties:
         property_list.append({
             "id": mp.id,
             "room_number": mp.room_number,
@@ -684,7 +702,8 @@ async def get_building_properties_v2(
             "min_price": min_price,
             "max_price": max_price,
             "listing_count": listing_count,
-            "source_sites": source_sites.split(',') if source_sites else []
+            "source_sites": source_sites.split(',') if source_sites else [],
+            "last_confirmed_at": last_confirmed_at.isoformat() if last_confirmed_at else None
         })
     
     return {
@@ -1386,6 +1405,22 @@ async def revert_merge(
         # 履歴を更新
         history.reverted_at = datetime.now()
         history.reverted_by = "admin"  # TODO: 実際のユーザー名を記録
+        
+        # 多数決による建物名更新（エイリアスが変更されたため）
+        from backend.app.utils.majority_vote_updater import MajorityVoteUpdater
+        updater = MajorityVoteUpdater(db)
+        
+        # 主建物の名前を更新（統合時に追加されたエイリアスが削除されたため）
+        if primary_building:
+            updater.update_building_name_by_majority(primary_building.id)
+        
+        # 復元された建物の名前も更新
+        for merged_building in history.merge_details.get("merged_buildings", []):
+            building_id = merged_building["id"]
+            # 復元された建物が存在する場合
+            restored_building = db.query(Building).filter(Building.id == building_id).first()
+            if restored_building:
+                updater.update_building_name_by_majority(building_id)
         
         db.commit()
         

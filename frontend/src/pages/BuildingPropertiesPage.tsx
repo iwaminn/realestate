@@ -58,12 +58,12 @@ type OrderBy = 'earliest_published_at' | 'floor_number' | 'area' | 'min_price' |
 type Order = 'asc' | 'desc';
 
 const BuildingPropertiesPage: React.FC = () => {
-  const { buildingName } = useParams<{ buildingName: string }>();
+  const { buildingId } = useParams<{ buildingId: string }>();
   const location = useLocation();
   const navigate = useNavigate();
   
   console.log('[BuildingPropertiesPage] Component mounting:', {
-    buildingName,
+    buildingId,
     location_pathname: location.pathname,
     location_search: location.search
   });
@@ -76,6 +76,7 @@ const BuildingPropertiesPage: React.FC = () => {
   const [viewMode, setViewMode] = useState<ViewMode>('table');
   const [orderBy, setOrderBy] = useState<OrderBy>('earliest_published_at');
   const [order, setOrder] = useState<Order>('desc');
+  const [maxFloorFromProperties, setMaxFloorFromProperties] = useState<number | null>(null);
   
   // URLパラメータからincludeInactiveを取得
   const getIncludeInactiveFromUrl = () => {
@@ -93,15 +94,14 @@ const BuildingPropertiesPage: React.FC = () => {
 
   useEffect(() => {
     console.log('[BuildingPropertiesPage] useEffect triggered:', {
-      buildingName,
-      decodedBuildingName: buildingName ? decodeURIComponent(buildingName) : null,
+      buildingId,
       includeInactive,
       location_search: location.search
     });
-    if (buildingName) {
+    if (buildingId) {
       fetchBuildingProperties();
     }
-  }, [buildingName, includeInactive]);
+  }, [buildingId, includeInactive]);
 
   // URLパラメータが変更された時の処理
   useEffect(() => {
@@ -115,12 +115,12 @@ const BuildingPropertiesPage: React.FC = () => {
     try {
       setLoading(true);
       // デバッグログ
-      console.log('[BuildingPropertiesPage] Fetching properties for:', buildingName);
+      console.log('[BuildingPropertiesPage] Fetching properties for building ID:', buildingId);
       console.log('[BuildingPropertiesPage] includeInactive:', includeInactive);
       console.log('[BuildingPropertiesPage] URL search params:', location.search);
       
-      // 建物名専用のAPIで物件を取得
-      const response = await propertyApi.getBuildingProperties(decodeURIComponent(buildingName!), includeInactive);
+      // 建物IDで物件を取得
+      const response = await propertyApi.getBuildingProperties(parseInt(buildingId!), includeInactive);
       
       setProperties(response.properties);
       setBuilding(response.building);
@@ -142,11 +142,19 @@ const BuildingPropertiesPage: React.FC = () => {
           .map(p => p.area)
           .filter((a): a is number => a !== undefined && a !== null);
         
+        // 物件の階数情報から最大階数を計算
+        const floors = response.properties
+          .map(p => p.floor_number)
+          .filter((f): f is number => f !== undefined && f !== null);
+        const maxFloor = floors.length > 0 ? Math.max(...floors) : null;
+        setMaxFloorFromProperties(maxFloor);
+        
         console.log('[BuildingPropertiesPage] Stats calculation:', {
           prices,
           areas,
           properties_with_price: prices.length,
-          properties_with_area: areas.length
+          properties_with_area: areas.length,
+          max_floor_from_properties: maxFloor
         });
         
         if (prices.length > 0 && areas.length > 0) {
@@ -415,42 +423,58 @@ const BuildingPropertiesPage: React.FC = () => {
             <Grid item xs={6} sm={3}>
               <Box textAlign="center">
                 <Typography variant="h4" color="primary">
-                  {stats.total_floors || '-'}
+                  {stats.total_floors ? `${stats.total_floors}` : maxFloorFromProperties ? `${maxFloorFromProperties}+` : '-'}
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  階建て
+                  {stats.total_floors ? '階建て' : maxFloorFromProperties ? '階以上（推定）' : '階数情報なし'}
                 </Typography>
               </Box>
             </Grid>
             <Grid item xs={6} sm={3}>
               <Box textAlign="center">
-                <Typography variant="body1">
-                  {formatPrice(stats.price_range.min)}
-                </Typography>
-                <Typography variant="body1">
-                  〜
-                </Typography>
-                <Typography variant="body1">
-                  {formatPrice(stats.price_range.max)}
-                </Typography>
+                {stats.price_range.min === stats.price_range.max ? (
+                  <Typography variant="h4" color="primary">
+                    {formatPrice(stats.price_range.min)}
+                  </Typography>
+                ) : (
+                  <>
+                    <Typography variant="body1">
+                      {formatPrice(stats.price_range.min)}
+                    </Typography>
+                    <Typography variant="body1">
+                      〜
+                    </Typography>
+                    <Typography variant="body1">
+                      {formatPrice(stats.price_range.max)}
+                    </Typography>
+                  </>
+                )}
                 <Typography variant="body2" color="text.secondary">
-                  価格帯
+                  価格{stats.price_range.min === stats.price_range.max ? '' : '帯'}
                 </Typography>
               </Box>
             </Grid>
             <Grid item xs={6} sm={3}>
               <Box textAlign="center">
-                <Typography variant="body1">
-                  {stats.area_range.min.toFixed(1)}㎡
-                </Typography>
-                <Typography variant="body1">
-                  〜
-                </Typography>
-                <Typography variant="body1">
-                  {stats.area_range.max.toFixed(1)}㎡
-                </Typography>
+                {stats.area_range.min === stats.area_range.max ? (
+                  <Typography variant="h4" color="primary">
+                    {stats.area_range.min.toFixed(1)}㎡
+                  </Typography>
+                ) : (
+                  <>
+                    <Typography variant="body1">
+                      {stats.area_range.min.toFixed(1)}㎡
+                    </Typography>
+                    <Typography variant="body1">
+                      〜
+                    </Typography>
+                    <Typography variant="body1">
+                      {stats.area_range.max.toFixed(1)}㎡
+                    </Typography>
+                  </>
+                )}
                 <Typography variant="body2" color="text.secondary">
-                  専有面積
+                  専有面積{stats.area_range.min === stats.area_range.max ? '' : '範囲'}
                 </Typography>
               </Box>
             </Grid>
@@ -572,10 +596,10 @@ const BuildingPropertiesPage: React.FC = () => {
               {sortedProperties.map((property) => (
                 <TableRow key={property.id} hover sx={{ opacity: property.sold_at ? 0.7 : 1 }}>
                   <TableCell component="th" scope="row">
-                    {formatDate(property.earliest_published_at)}
+                    {formatDate(property.last_confirmed_at || property.earliest_published_at)}
                   </TableCell>
                   <TableCell align="right">
-                    {calculateDaysFromPublished(property.earliest_published_at)}
+                    {calculateDaysFromPublished(property.last_confirmed_at || property.earliest_published_at)}
                   </TableCell>
                   <TableCell>
                     {property.sold_at ? formatDate(property.sold_at) : '-'}

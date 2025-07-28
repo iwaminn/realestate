@@ -33,7 +33,7 @@ services:
       - PYTHONUNBUFFERED=1
       - DATABASE_URL=postgresql://realestate:realestate_pass@postgres:5432/realestate
       - TZ=Asia/Tokyo
-    command: poetry run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: poetry run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
     depends_on:
       - postgres
     networks:

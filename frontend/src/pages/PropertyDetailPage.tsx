@@ -605,12 +605,12 @@ const PropertyDetailPage: React.FC = () => {
           startIcon={<Apartment />}
           onClick={() => {
             console.log('[PropertyDetailPage] Navigating to building properties:', {
+              building_id: building.id,
               building_name: building.normalized_name,
-              encoded_name: encodeURIComponent(building.normalized_name),
               sold_at: property.sold_at,
               has_active_listing: property.has_active_listing
             });
-            const url = `/buildings/${encodeURIComponent(building.normalized_name)}/properties`;
+            const url = `/buildings/${building.id}/properties`;
             // 販売終了物件や掲載終了物件の場合は、includeInactive=trueを追加
             if (property.sold_at || property.has_active_listing === false) {
               console.log('[PropertyDetailPage] Adding includeInactive=true');

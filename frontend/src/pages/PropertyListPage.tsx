@@ -31,6 +31,7 @@ const PropertyListPage: React.FC = () => {
   const [totalCount, setTotalCount] = useState(0);
   const [includeInactive, setIncludeInactive] = useState(false);
   const [soldCount, setSoldCount] = useState(0);
+  const [initialLoading, setInitialLoading] = useState(true);
   
   // URLパラメータから初期状態を取得
   const getInitialParams = (): SearchParams => {
@@ -107,7 +108,10 @@ const PropertyListPage: React.FC = () => {
     shouldUpdateUrl = true,
     includeInactiveParam?: boolean
   ) => {
-    setLoading(true);
+    // 初回ロード時のみローディング表示、それ以外は既存の表示を維持
+    if (initialLoading) {
+      setLoading(true);
+    }
     setError(null);
     try {
       const includeInactiveValue = includeInactiveParam !== undefined ? includeInactiveParam : includeInactive;
@@ -139,6 +143,11 @@ const PropertyListPage: React.FC = () => {
       // URLパラメータを更新（フラグがtrueの場合のみ）
       if (shouldUpdateUrl) {
         updateUrlParams(params, page, includeInactiveValue);
+      }
+      
+      // 初回ロード完了
+      if (initialLoading) {
+        setInitialLoading(false);
       }
     } catch (err) {
       setError('物件の取得に失敗しました。');
@@ -189,7 +198,7 @@ const PropertyListPage: React.FC = () => {
         物件検索
       </Typography>
 
-      <SearchForm onSearch={handleSearch} loading={loading} initialValues={searchParams} />
+      <SearchForm onSearch={handleSearch} loading={loading && !initialLoading} initialValues={searchParams} />
 
       {error && (
         <Alert severity="error" sx={{ mb: 3 }}>
@@ -269,11 +278,11 @@ const PropertyListPage: React.FC = () => {
         />
       </Box>
 
-      {loading ? (
+      {initialLoading && loading ? (
         <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
           <CircularProgress />
         </Box>
-      ) : properties.length === 0 ? (
+      ) : properties.length === 0 && !loading ? (
         <Box sx={{ textAlign: 'center', py: 8 }}>
           <Typography variant="h6" color="text.secondary">
             物件が見つかりませんでした
@@ -281,13 +290,35 @@ const PropertyListPage: React.FC = () => {
         </Box>
       ) : (
         <>
-          <Grid container spacing={3}>
-            {properties.map((property) => (
-              <Grid item key={property.id} xs={12} sm={6} md={4}>
-                <PropertyCard property={property} />
-              </Grid>
-            ))}
-          </Grid>
+          <Box sx={{ position: 'relative' }}>
+            {/* ページ遷移中は半透明のオーバーレイを表示 */}
+            {!initialLoading && loading && (
+              <Box
+                sx={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  backgroundColor: 'rgba(255, 255, 255, 0.7)',
+                  zIndex: 1,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <CircularProgress />
+              </Box>
+            )}
+            
+            <Grid container spacing={3} sx={{ opacity: !initialLoading && loading ? 0.5 : 1, transition: 'opacity 0.2s' }}>
+              {properties.map((property) => (
+                <Grid item key={property.id} xs={12} sm={6} md={4}>
+                  <PropertyCard property={property} />
+                </Grid>
+              ))}
+            </Grid>
+          </Box>
 
           {totalPages > 1 && (
             <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
@@ -297,6 +328,7 @@ const PropertyListPage: React.FC = () => {
                 onChange={handlePageChange}
                 color="primary"
                 size="large"
+                disabled={loading}
               />
             </Box>
           )}

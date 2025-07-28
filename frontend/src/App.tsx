@@ -49,7 +49,7 @@ function App() {
               <Route path="/" element={<PropertyListPage />} />
               <Route path="/properties" element={<PropertyListPage />} />
               <Route path="/properties/:id" element={<PropertyDetailPage />} />
-              <Route path="/buildings/:buildingName/properties" element={<BuildingPropertiesPage />} />
+              <Route path="/buildings/:buildingId/properties" element={<BuildingPropertiesPage />} />
               <Route path="/admin" element={<Admin />} />
               <Route path="/admin/login" element={<AdminLogin />} />
             </Routes>

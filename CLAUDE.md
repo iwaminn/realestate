@@ -2,6 +2,10 @@
 
 このプロジェクトは、FastAPI (Python) と React (TypeScript) を使用した不動産検索サービスです。
 
+## 重要な指示
+
+**このプロジェクトでの会話は必ず日本語で行ってください。** コードのコメントも日本語で記述してください。
+
 ## 技術スタック
 
 - Python 3.10+ (Poetry環境)
@@ -53,6 +57,28 @@ realestate/
   - 新しいフィールドを追加した場合は、APIレスポンスに含めるか検討
   - フロントエンドの型定義ファイル (`types/property.ts`) も合わせて更新
 
+### 🚨 base_scraper.py 変更時の重要な注意事項
+
+**`backend/app/scrapers/base_scraper.py` は全てのスクレイパーの基底クラスです。このファイルへの変更は、以下のすべてのスクレイパーに影響します：**
+
+- SUUMO (`suumo_scraper.py`)
+- LIFULL HOME'S (`homes_scraper.py`)
+- 三井のリハウス (`rehouse_scraper.py`)
+- ノムコム (`nomu_scraper.py`)
+- 東急リバブル (`livable_scraper.py`)
+
+#### 変更前に必ず確認すること：
+1. **影響範囲の確認**: 変更するメソッドが各スクレイパーでどのように使われているか確認
+2. **後方互換性**: 既存のスクレイパーが正常に動作することを確認
+3. **テストの実行**: 少なくとも2つ以上のスクレイパーで動作確認
+4. **エラーハンドリング**: 共通処理のエラーが各スクレイパーで適切に処理されることを確認
+
+#### よくある問題：
+- 統計カウントの不整合（例：今回の`update_type`の問題）
+- 必須フィールドの検証ロジック変更による既存スクレイパーの動作不良
+- データベーストランザクション処理の変更による保存エラー
+- 例外処理の変更による予期しない動作
+
 ### 🚨 重要：Docker環境のデータベース使用について
 
 **必ずDocker環境のPostgreSQLデータベースを使用すること！**
@@ -82,7 +108,7 @@ psql -U realestate -d realestate
 - Docker環境の追加（Docker Composeで簡単起動）
 - PostgreSQL 15を使用（開発・本番共通）
 - FastAPI + Reactによるフルスタック構成
-- SUUMO、AtHome、LIFULL HOME'Sのスクレイパー実装
+- SUUMO、LIFULL HOME'Sのスクレイパー実装
 - 階数・方角情報の追加
 - 建物別物件一覧機能
 - 価格履歴グラフ表示
@@ -136,6 +162,14 @@ docker exec -it realestate-postgres psql -U realestate -d realestate
 5. **マルチソース対応**: 各不動産サイトへの直接リンク提供
 6. **詳細情報の取得**: 不動産会社情報、バルコニー面積、備考の取得・要約
 7. **販売終了物件の価格多数決**: 販売終了前1週間の価格履歴から最も多く掲載されていた価格を最終価格として決定
+
+### 重要仕様書
+
+**重要**: システムの複雑な仕様については必ず `docs/CRITICAL_SPECIFICATIONS.md` を参照してください。特に以下の仕様は必読です：
+- 建物名管理システム（多数決、リアルタイム更新）
+- 物件ハッシュ生成ルール（部屋番号を含まない）
+- スマートスクレイピング（価格変更ベース）
+- 掲載状態を考慮した多数決ロジック
 
 ### 物件ハッシュ（property_hash）の仕様
 
@@ -219,7 +253,7 @@ docker compose exec backend poetry run python backend/scripts/init_v2_schema.py
 - 東急リバブル (`livable`): 2025年7月追加
 
 ### 無効化されたスクレイパー
-- AtHome: CAPTCHA対策により2025年1月23日に無効化
+- AtHome: CAPTCHA対策により2025年1月23日に無効化（削除済み）
 - 楽待: ユーザー要望により除外
 
 詳細は `docs/ACTIVE_SCRAPERS.md` を参照してください。

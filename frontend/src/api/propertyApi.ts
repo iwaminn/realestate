@@ -36,17 +36,17 @@ export const propertyApi = {
   },
 
   // 建物別物件一覧取得
-  getBuildingProperties: async (buildingName: string, includeInactive: boolean = false): Promise<{
+  getBuildingProperties: async (buildingId: number, includeInactive: boolean = false): Promise<{
     building: any;
     properties: Property[];
     total: number;
   }> => {
     console.log('[propertyApi] getBuildingProperties called with:', {
-      buildingName,
+      buildingId,
       includeInactive,
       params: { include_inactive: includeInactive }
     });
-    const response = await api.get(`/v2/buildings/by-name/${encodeURIComponent(buildingName)}/properties`, {
+    const response = await api.get(`/v2/buildings/${buildingId}/properties`, {
       params: { include_inactive: includeInactive }
     });
     console.log('[propertyApi] Response properties count:', response.data.properties?.length);
