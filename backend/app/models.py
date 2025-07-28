@@ -3,14 +3,16 @@
 重複排除と複数サイト管理に対応
 """
 
-from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Index, Boolean, UniqueConstraint, JSON, Date
+from sqlalchemy import Column, Integer, String, Float, DateTime, Text, ForeignKey, Index, Boolean, UniqueConstraint, JSON, Date, Enum as SQLEnum
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 
 try:
     from .database import Base
+    from .scrapers.constants import SourceSite
 except ImportError:
     from backend.app.database import Base
+    from backend.app.scrapers.constants import SourceSite
 
 
 class Building(Base):
@@ -19,6 +21,7 @@ class Building(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     normalized_name = Column(String(255), nullable=False)  # 標準化された建物名
+    canonical_name = Column(String(255), index=True)       # 検索用の正規化名（内部使用）
     reading = Column(String(255), index=True)              # 読み仮名（ひらがな）
     address = Column(String(500))                          # 標準化された住所
     total_floors = Column(Integer)                         # 総階数（地上階数）
@@ -47,9 +50,10 @@ class BuildingAlias(Base):
     __tablename__ = "building_aliases"
     
     id = Column(Integer, primary_key=True, index=True)
-    building_id = Column(Integer, ForeignKey("buildings.id"), nullable=False)
+    building_id = Column(Integer, ForeignKey("buildings.id", ondelete="CASCADE"), nullable=False)
     alias_name = Column(String(255), nullable=False)      # 実際に使われている建物名
     source = Column(String(50))                            # どのサイトで使われているか
+    occurrence_count = Column(Integer, default=1)          # この表記の出現回数
     created_at = Column(DateTime, server_default=func.now())
     
     # リレーションシップ
@@ -66,8 +70,8 @@ class BuildingExternalId(Base):
     __tablename__ = "building_external_ids"
     
     id = Column(Integer, primary_key=True, index=True)
-    building_id = Column(Integer, ForeignKey("buildings.id"), nullable=False)
-    source_site = Column(String(50), nullable=False)      # SUUMO, AtHome, HOMES
+    building_id = Column(Integer, ForeignKey("buildings.id", ondelete="CASCADE"), nullable=False)
+    source_site = Column(SQLEnum(SourceSite, values_callable=lambda obj: [e.value for e in obj]), nullable=False)  # スクレイピング対象サイト
     external_id = Column(String(255), nullable=False)     # サイト固有の建物ID
     created_at = Column(DateTime, server_default=func.now())
     
@@ -85,7 +89,7 @@ class MasterProperty(Base):
     __tablename__ = "master_properties"
     
     id = Column(Integer, primary_key=True, index=True)
-    building_id = Column(Integer, ForeignKey("buildings.id"), nullable=False)
+    building_id = Column(Integer, ForeignKey("buildings.id", ondelete="CASCADE"), nullable=False)
     room_number = Column(String(50))                      # 部屋番号
     floor_number = Column(Integer)                        # 階数
     area = Column(Float)                                  # 専有面積
@@ -98,6 +102,11 @@ class MasterProperty(Base):
     is_resale = Column(Boolean, default=False)            # 買い取り再販フラグ
     sold_at = Column(DateTime)                            # 販売終了日（全掲載が終了した日）
     last_sale_price = Column(Integer)                     # 最終販売価格（販売終了時の価格）
+    
+    # 多数決で決定される情報
+    management_fee = Column(Integer)                      # 管理費（月額・円）- 多数決で決定
+    repair_fund = Column(Integer)                         # 修繕積立金（月額・円）- 多数決で決定
+    station_info = Column(Text)                           # 交通情報 - 多数決で決定
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
     
@@ -116,10 +125,10 @@ class PropertyListing(Base):
     __tablename__ = "property_listings"
     
     id = Column(Integer, primary_key=True, index=True)
-    master_property_id = Column(Integer, ForeignKey("master_properties.id"), nullable=False)
-    source_site = Column(String(50), nullable=False)      # SUUMO, AtHome, HOMES
+    master_property_id = Column(Integer, ForeignKey("master_properties.id", ondelete="CASCADE"), nullable=False)
+    source_site = Column(SQLEnum(SourceSite, values_callable=lambda obj: [e.value for e in obj]), nullable=False)  # スクレイピング対象サイト
     site_property_id = Column(String(255))                # サイト内の物件ID
-    url = Column(String(1000), nullable=False, unique=True)
+    url = Column(String(1000), nullable=False)  # uniqueは複合制約で定義
     title = Column(String(500))                           # 掲載タイトル
     description = Column(Text)                            # 物件説明
     
@@ -175,9 +184,12 @@ class PropertyListing(Base):
     images = relationship("PropertyImage", back_populates="listing")
     
     __table_args__ = (
+        UniqueConstraint('source_site', 'site_property_id', name='property_listings_site_property_unique'),
         Index('idx_property_listings_master_property_id', 'master_property_id'),
         Index('idx_property_listings_source_site', 'source_site'),
         Index('idx_property_listings_is_active', 'is_active'),
+        Index('idx_property_listings_url_source', 'url', 'source_site'),
+        Index('idx_property_listings_site_property_source', 'site_property_id', 'source_site'),
     )
 
 
@@ -186,7 +198,7 @@ class ListingPriceHistory(Base):
     __tablename__ = "listing_price_history"
     
     id = Column(Integer, primary_key=True, index=True)
-    property_listing_id = Column(Integer, ForeignKey("property_listings.id"), nullable=False)
+    property_listing_id = Column(Integer, ForeignKey("property_listings.id", ondelete="CASCADE"), nullable=False)
     price = Column(Integer, nullable=False)               # 価格（万円）
     management_fee = Column(Integer)                      # 管理費
     repair_fund = Column(Integer)                         # 修繕積立金
@@ -206,7 +218,7 @@ class PropertyImage(Base):
     __tablename__ = "property_images"
     
     id = Column(Integer, primary_key=True, index=True)
-    property_listing_id = Column(Integer, ForeignKey("property_listings.id"), nullable=False)
+    property_listing_id = Column(Integer, ForeignKey("property_listings.id", ondelete="CASCADE"), nullable=False)
     image_url = Column(String(1000))
     image_type = Column(String(50))                       # 外観、間取り図、室内など
     display_order = Column(Integer)
@@ -305,6 +317,26 @@ class PropertyMergeExclusion(Base):
     __table_args__ = (
         UniqueConstraint('property1_id', 'property2_id', name='unique_property_exclusion'),
         Index('idx_property_merge_exclusions_properties', 'property1_id', 'property2_id'),
+    )
+
+
+class Url404Retry(Base):
+    """404エラーURL再試行管理テーブル"""
+    __tablename__ = "url_404_retries"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    url = Column(String(512), nullable=False)
+    source_site = Column(String(50), nullable=False)
+    first_error_at = Column(DateTime, nullable=False, server_default=func.now())
+    last_error_at = Column(DateTime, nullable=False, server_default=func.now())
+    error_count = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('url', 'source_site', name='unique_url_source_site'),
+        Index('idx_url_404_retries_url_source', 'url', 'source_site'),
+        Index('idx_url_404_retries_last_error', 'last_error_at'),
     )
 
 

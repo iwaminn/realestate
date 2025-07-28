@@ -9,13 +9,14 @@ from urllib.parse import urljoin
 from datetime import datetime
 from bs4 import BeautifulSoup
 
+from .constants import SourceSite
 from .base_scraper import BaseScraper
 from ..models import PropertyListing
 from .data_normalizer import DataNormalizer
 from . import (
     normalize_integer, extract_price, extract_area, extract_floor_number,
     normalize_layout, normalize_direction, extract_monthly_fee,
-    format_station_info, extract_built_year, parse_date
+    format_station_info, extract_built_year, parse_date, extract_total_floors
 )
 
 
@@ -25,7 +26,7 @@ class LivableScraper(BaseScraper):
     BASE_URL = "https://www.livable.co.jp"
     
     def __init__(self, force_detail_fetch=False, max_properties=None):
-        super().__init__("東急リバブル", force_detail_fetch, max_properties)
+        super().__init__(SourceSite.LIVABLE, force_detail_fetch, max_properties)
     
     def scrape_area(self, area: str, max_pages: int = 5):
         """エリアの物件をスクレイピング"""
@@ -89,11 +90,6 @@ class LivableScraper(BaseScraper):
             new_tag = item.select_one('.a-tag--new-date')
             property_data['has_update_mark'] = bool(new_tag)
             
-            # 建物名を取得
-            headline = item.select_one('.o-product-list__headline')
-            if headline:
-                property_data['building_name'] = headline.get_text(strip=True)
-            
             # 価格を取得
             price_elem = item.select_one('.o-product-list__info-body--price')
             if price_elem:
@@ -103,9 +99,6 @@ class LivableScraper(BaseScraper):
             
             # URLが取得できた物件を追加
             if property_data.get('url'):
-                # 建物名がない場合は仮の名前を設定
-                if not property_data.get('building_name'):
-                    property_data['building_name'] = f"物件_{property_data.get('site_property_id', 'unknown')}"
                 properties.append(property_data)
         
         return properties
@@ -122,171 +115,12 @@ class LivableScraper(BaseScraper):
     
     def _save_property_after_detail(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
         """詳細データ取得後の保存処理（内部メソッド）"""
-        # save_propertyメソッドを呼び出す
-        self.save_property(property_data, existing_listing)
-        return True
+        # 共通の保存処理を使用
+        return self.save_property_common(property_data, existing_listing)
     
-    def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None):
-        """物件情報を保存（旧メソッド - 互換性のため残す）"""
-        try:
-            print(f"  URL: {property_data.get('url', 'URLなし')}")
-            
-            # 詳細データ取得後の完全な検証
-            if not self.enhanced_validate_property_data(property_data):
-                validation_errors = []
-                if not property_data.get('building_name'):
-                    validation_errors.append('建物名が不足')
-                if not property_data.get('price'):
-                    validation_errors.append('価格が不足')
-                
-                self.record_error(
-                    error_type='validation',
-                    url=property_data.get('url'),
-                    building_name=property_data.get('building_name'),
-                    property_data=property_data,
-                    phase='enhanced_validation'
-                )
-                
-                if validation_errors:
-                    self.error_logger.log_validation_error(
-                        property_data=property_data,
-                        validation_errors=validation_errors,
-                        field_names=list(property_data.keys())
-                    )
-                return
-            
-            # 価格が存在しない場合は保存しない
-            if not property_data.get('price'):
-                print(f"  → 価格情報なし、スキップ")
-                self.record_price_missing()
-                return
-            
-            # 建物を取得または作成
-            # 詳細情報を取得
-            detail_info = property_data.get('detail_info', {})
-            
-            # DataNormalizerを使用してtotal_floorsを正規化
-            building_total_floors = normalize_integer(
-                detail_info.get('total_floors'),
-                field_name='total_floors'
-            )
-            
-            # 建物を取得または作成
-            building, extracted_room_number = self.get_or_create_building(
-                building_name=property_data['building_name'],
-                address=property_data.get('address'),
-                built_year=property_data.get('built_year'),
-                total_floors=building_total_floors,
-                basement_floors=detail_info.get('basement_floors'),
-                total_units=detail_info.get('total_units'),
-                structure=detail_info.get('structure'),
-                land_rights=detail_info.get('land_rights'),
-                parking_info=detail_info.get('parking_info')
-            )
-            
-            if not building:
-                print(f"  → 建物情報が不足")
-                self.record_building_info_missing()
-                return
-            
-            # 部屋番号の決定（詳細ページから取得したものを優先）
-            room_number = property_data.get('room_number') or extracted_room_number
-            
-            # マスター物件を取得または作成
-            master_property = self.get_or_create_master_property(
-                building=building,
-                room_number=room_number,
-                floor_number=property_data.get('floor_number'),
-                area=property_data.get('area'),
-                layout=property_data.get('layout'),
-                direction=property_data.get('direction'),
-                url=property_data['url'],
-                current_price=property_data['price']
-            )
-            
-            # 新規作成かどうかを事前に判定
-            is_new_listing = existing_listing is None
-            
-            # DataNormalizerを使用してlisting_total_floorsを正規化
-            listing_total_floors = normalize_integer(
-                property_data.get('detail_info', {}).get('total_floors'),
-                field_name='listing_total_floors'
-            )
-            
-            # 掲載情報を作成または更新（カウントは自動で行わない）
-            listing = self.create_or_update_listing(
-                master_property=master_property,
-                url=property_data['url'],
-                title=property_data.get('title', property_data['building_name']),
-                price=property_data['price'],
-                agency_name=property_data.get('agency_name', '東急リバブル'),
-                site_property_id=property_data.get('site_property_id'),
-                description=property_data.get('description'),
-                station_info=property_data.get('station_info'),
-                features=property_data.get('features'),
-                management_fee=property_data.get('management_fee'),
-                repair_fund=property_data.get('repair_fund'),
-                published_at=property_data.get('published_at'),
-                first_published_at=property_data.get('first_published_at'),
-                # 掲載サイトごとの物件属性
-                listing_floor_number=property_data.get('floor_number'),
-                listing_area=property_data.get('area'),
-                listing_layout=property_data.get('layout'),
-                listing_direction=property_data.get('direction'),
-                listing_total_floors=listing_total_floors,
-                listing_balcony_area=property_data.get('balcony_area'),
-                listing_address=property_data.get('address'),
-                record_stats=False  # 手動でカウントするため自動カウントは無効化
-            )
-            
-            # agency_telは別途保存が必要な場合は、listingのカスタムフィールドに保存
-            if property_data.get('agency_tel'):
-                listing.detail_info = listing.detail_info or {}
-                listing.detail_info['agency_tel'] = property_data['agency_tel']
-            
-            # 一覧ページのデータで更新
-            self.update_listing_from_list(listing, property_data)
-            
-            # 画像を追加
-            if property_data.get('image_urls'):
-                self.add_property_images(listing, property_data['image_urls'])
-            
-            # 詳細情報を保存
-            listing.detail_info = property_data.get('detail_info', {})
-            listing.detail_fetched_at = datetime.now()
-            
-            # 多数決による物件情報更新
-            self.update_master_property_by_majority(master_property)
-            
-            # 新規/更新の記録（詳細取得が成功した場合のみ）
-            if is_new_listing:
-                self.record_listing_created()
-            else:
-                self.record_listing_updated()
-            
-            print(f"  → 保存完了")
-            self.record_success()
-            
-        except Exception as e:
-            print(f"  → エラー: {e}")
-            import traceback
-            traceback.print_exc()
-            
-            # SQLAlchemyのセッションエラーの場合はロールバック
-            if hasattr(self, '_session') and self._session:
-                try:
-                    self._session.rollback()
-                except:
-                    pass
-            
-            self.record_error(
-                error_type='saving',
-                url=property_data.get('url'),
-                building_name=property_data.get('building_name'),
-                property_data=property_data,
-                error=e,
-                phase='save_property'
-            )
+    def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
+        """物件情報を保存（共通ロジックを使用）"""
+        return self.save_property_common(property_data, existing_listing)
     
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
         """物件詳細を解析"""
@@ -295,9 +129,11 @@ class LivableScraper(BaseScraper):
             time.sleep(self.delay)
             
             # 詳細ページを取得
+            self.logger.info(f"詳細ページを取得中: {url}")
             soup = self.fetch_page(url)
             if not soup:
-                self.record_error('detail_page')
+                # record_errorは呼ばない（base_scraperでカウントされるため）
+                self.logger.error(f"詳細ページの取得に失敗: {url}")
                 return None
             
             # URLパターンによってHTML構造を判定
@@ -306,19 +142,29 @@ class LivableScraper(BaseScraper):
             if is_grantact:
                 # grantactパターンの場合はテーブル構造を確認
                 tables = soup.find_all('table')
-                if len(tables) < 2:
+                if len(tables) < 1:  # 最低1つのテーブルがあればOK（以前は2つ以上必要だった）
                     print(f"  → grantactページでテーブルが不足: {len(tables)}個")
-                    self.record_error('parsing')
                     return None
             else:
                 # 通常パターンの場合は既存のセレクタを確認
-                required_selectors = {
-                    '物件情報': '.p-detail__content, .o-detail-header, .m-status-table',
-                    'タイトル': '.o-detail-header__headline, h1, h2',
-                }
+                # 少なくとも1つの要素が存在することを確認
+                required_elements = [
+                    '.p-detail__content',
+                    '.o-detail-header', 
+                    '.m-status-table',
+                    'h1',
+                    'h2'
+                ]
                 
-                if not self.validate_html_structure(soup, required_selectors):
-                    self.record_error('parsing')
+                found = False
+                for selector in required_elements:
+                    elem = soup.select_one(selector)
+                    if elem:
+                        found = True
+                        break
+                
+                if not found:
+                    print(f"  → 必要な要素が見つかりません: {url}")
                     return None
             
             property_data = {
@@ -465,12 +311,6 @@ class LivableScraper(BaseScraper):
             
         except Exception as e:
             print(f"  → 詳細ページ解析エラー: {e}")
-            self.record_error(
-                error_type='parsing',
-                url=url,
-                error=e,
-                phase='parse_detail'
-            )
             return None
     
     def _extract_property_info(self, label: str, value: str, property_data: Dict[str, Any], detail_info: Dict[str, Any]):
@@ -492,24 +332,34 @@ class LivableScraper(BaseScraper):
             floor_number = extract_floor_number(value)
             if floor_number is not None:
                 property_data['floor_number'] = floor_number
+            
+            # "8階／地上12階"のような形式から総階数も抽出
+            if '地上' in value or '地下' in value:
+                total_floors, basement_floors = extract_total_floors(value)
+                if total_floors is not None:
+                    detail_info['total_floors'] = total_floors
+                    print(f"    [DEBUG] 所在階数から総階数を抽出: {detail_info['total_floors']}階")
+                if basement_floors is not None and basement_floors > 0:
+                    detail_info['basement_floors'] = basement_floors
+                    print(f"    [DEBUG] 所在階数から地下階数を抽出: {detail_info['basement_floors']}階")
         
         # 総階数
         elif '総階数' in label or '建物階数' in label:
-            # 総階数は文字列として保存（"14階地下1階建"のような形式に対応）
-            detail_info['total_floors'] = value
+            # 総階数から数値を抽出
+            total_floors_match = re.search(r'(\d+)階', value)
+            if total_floors_match:
+                detail_info['total_floors'] = int(total_floors_match.group(1))
         
         # 構造
         elif '構造' in label:
             detail_info['structure'] = value
-            # 総階数がまだ設定されていない場合、構造から抽出
-            if 'total_floors' not in detail_info:
-                # "14階地下1階建"のような形式を保持
-                if '階建' in value:
-                    detail_info['total_floors'] = value
-            # 地下階数も抽出
-            basement_match = re.search(r'地下(\d+)階', value)
-            if basement_match:
-                detail_info['basement_floors'] = int(basement_match.group(1))
+            # 構造フィールドから総階数と地下階数を抽出
+            if '階建' in value or '階' in value:
+                total_floors, basement_floors = extract_total_floors(value)
+                if total_floors is not None and 'total_floors' not in detail_info:
+                    detail_info['total_floors'] = total_floors
+                if basement_floors is not None and basement_floors > 0:
+                    detail_info['basement_floors'] = basement_floors
         
         # 専有面積（バルコニー面積を除外）
         elif ('専有面積' in label or '面積' in label) and 'バルコニー' not in label and '敷地' not in label:
@@ -642,12 +492,6 @@ class LivableScraper(BaseScraper):
             
         except Exception as e:
             print(f"  → grantact詳細ページ解析エラー: {e}")
-            self.record_error(
-                error_type='parsing',
-                url=property_data.get('url'),
-                error=e,
-                phase='parse_grantact_detail'
-            )
             return None
     
     def _extract_grantact_info(self, label: str, value: str, property_data: Dict[str, Any], detail_info: Dict[str, Any]):
@@ -694,11 +538,12 @@ class LivableScraper(BaseScraper):
         
         # 建物階数
         elif '建物階数' in label:
-            detail_info['total_floors'] = value
-            # 地下階数も抽出
-            basement_match = re.search(r'地下(\d+)階', value)
-            if basement_match:
-                detail_info['basement_floors'] = int(basement_match.group(1))
+            # データ正規化フレームワークを使用
+            total_floors, basement_floors = extract_total_floors(value)
+            if total_floors is not None:
+                detail_info['total_floors'] = total_floors
+            if basement_floors is not None and basement_floors > 0:
+                detail_info['basement_floors'] = basement_floors
         
         # 総戸数
         elif '総戸数' in label:

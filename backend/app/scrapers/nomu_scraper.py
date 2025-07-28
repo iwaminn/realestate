@@ -10,6 +10,7 @@ from urllib.parse import urljoin, quote
 from datetime import datetime
 from bs4 import BeautifulSoup
 
+from .constants import SourceSite
 from .base_scraper import BaseScraper
 from ..models import PropertyListing
 from . import (
@@ -25,18 +26,16 @@ class NomuScraper(BaseScraper):
     BASE_URL = "https://www.nomu.com"
     
     def __init__(self, force_detail_fetch=False, max_properties=None):
-        super().__init__("NOMU", force_detail_fetch, max_properties)
+        super().__init__(SourceSite.NOMU, force_detail_fetch, max_properties)
     
     def get_search_url(self, area_code: str, page: int = 1) -> str:
         """検索URLを生成"""
-        # ノムコムの検索URLフォーマット
-        # https://www.nomu.com/mansion/area_tokyo/13103/?page=2
-        
-        # ページ番号は2から開始（1ページ目はパラメータなし）
-        if page == 1:
-            return f"{self.BASE_URL}/mansion/area_tokyo/{area_code}/"
-        else:
-            return f"{self.BASE_URL}/mansion/area_tokyo/{area_code}/?page={page}"
+        # ノムコムはGETパラメータでページングを行う
+        base_url = f"{self.BASE_URL}/mansion/area_tokyo/{area_code}/"
+        if page > 1:
+            return f"{base_url}?pager_page={page}"
+        return base_url
+    
     
     def scrape_area(self, area_code: str, max_pages: int = 5):
         """エリアの物件をスクレイピング"""
@@ -74,9 +73,15 @@ class NomuScraper(BaseScraper):
         if title_elem:
             link = title_elem.find("a")
             if link:
-                property_data['title'] = link.get_text(strip=True)
-                property_data['building_name'] = self.extract_building_name(property_data['title'])
+                building_name = link.get_text(strip=True)
+                property_data['title'] = building_name
+                property_data['building_name'] = building_name  # save_property用に追加
                 property_data['url'] = urljoin(self.BASE_URL, link['href'])
+                
+                # URLから物件IDを抽出（例: /chukomap/xxxxxxxx.html）
+                id_match = re.search(r'/chukomap/([^/]+)\.html', link['href'])
+                if id_match:
+                    property_data['site_property_id'] = id_match.group(1)
         
         # テーブルから情報を抽出
         table = card.find("table")
@@ -86,27 +91,47 @@ class NomuScraper(BaseScraper):
             if price_cell:
                 price_elem = price_cell.find("p", class_="item_price")
                 if price_elem:
+                    # まず全体のテキストを取得してみる
+                    full_price_text = price_elem.get_text(strip=True)
+                    
                     # span要素から価格を組み立てる
                     spans = price_elem.find_all("span")
                     price_parts = []
                     for span in spans:
-                        if span.get("class") and "num" in span.get("class"):
-                            price_parts.append(span.get_text(strip=True))
-                        elif span.get("class") and "unit" in span.get("class"):
-                            unit = span.get_text(strip=True)
-                            if unit == "億":
-                                price_parts.append("億")
+                        span_text = span.get_text(strip=True)
+                        if span_text:  # 空でないテキストのみ追加
+                            # クラスリストを取得
+                            class_list = span.get("class", [])
+                            class_str = " ".join(class_list) if isinstance(class_list, list) else str(class_list)
+                            
+                            # numクラスまたは数字を含む場合
+                            if "num" in class_str or re.search(r'\d', span_text):
+                                price_parts.append(span_text)
+                            # unitクラスまたは「億」「万円」を含む場合
+                            elif "unit" in class_str or "yen" in class_str or span_text in ["億", "万円", "万"]:
+                                price_parts.append(span_text)
                     
                     # 価格文字列を構築
-                    price_text = "".join(price_parts)
+                    if price_parts:
+                        price_text = "".join(price_parts)
+                    else:
+                        # span要素から組み立てられない場合は全体テキストを使用
+                        price_text = full_price_text
+                    
                     # 万円を追加（extract_priceが処理するため）
-                    if price_text and "万円" not in price_text:
-                        price_text += "万円"
+                    # ただし、すでに「円」で終わっている場合や「億」のみの場合は追加しない
+                    if price_text and not price_text.endswith("円") and "万" not in price_text:
+                        # 「億」で終わっている場合はそのまま
+                        if not price_text.endswith("億"):
+                            price_text += "万円"
                     
                     # データ正規化フレームワークを使用して価格を抽出
                     price = extract_price(price_text)
                     if price:
                         property_data['price'] = price
+                    else:
+                        # 価格抽出に失敗した場合、デバッグ情報を出力
+                        print(f"価格抽出失敗: full_text='{full_price_text}', constructed='{price_text}', parts={price_parts}")
             
             # 面積・間取り・方角（item_4 セル）
             detail_cell = table.find("td", class_="item_td item_4")
@@ -171,17 +196,6 @@ class NomuScraper(BaseScraper):
         
         return property_data if property_data.get('url') else None
     
-    def extract_building_name(self, title: str) -> str:
-        """タイトルから建物名を抽出"""
-        # 部屋番号や階数を除去
-        building_name = re.sub(r'\s*\d+階.*$', '', title)
-        building_name = re.sub(r'\s*[A-Z]?\d+号室.*$', '', building_name)
-        
-        # 不要な記号を除去
-        building_name = building_name.strip()
-        
-        return building_name
-    
     def normalize_address(self, address: str) -> str:
         """住所を正規化"""
         # 不要な空白を除去
@@ -214,61 +228,21 @@ class NomuScraper(BaseScraper):
             detail_data['url'] = url
         return detail_data
     
-    def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None):
+    def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
         """物件情報を保存"""
-        # 建物を取得または作成
-        building, room_number = self.get_or_create_building(
-            building_name=property_data['building_name'],
-            address=property_data.get('address')
-        )
-        
-        if not building:
-            print(f"  → 建物の作成に失敗しました")
-            return
-        
-        # マスター物件を取得または作成
-        master_property = self.get_or_create_master_property(
-            building=building,
-            room_number=room_number,
-            floor_number=property_data.get('floor_number'),
-            area=property_data.get('area'),
-            layout=property_data.get('layout'),
-            direction=property_data.get('direction'),
-            url=property_data['url']
-        )
-        
-        # 掲載情報を作成または更新
-        listing = self.create_or_update_listing(
-            master_property=master_property,
-            url=property_data['url'],
-            title=property_data.get('title', property_data['building_name']),
-            price=property_data['price'],
-            agency_name=property_data.get('agency_name', '野村不動産アーバンネット'),
-            site_property_id=property_data.get('site_property_id'),
-            description=property_data.get('description'),
-            station_info=property_data.get('station_info'),
-            features=property_data.get('features'),
-            management_fee=property_data.get('management_fee'),
-            repair_fund=property_data.get('repair_fund'),
-            # 掲載サイトごとの物件属性
-            listing_floor_number=property_data.get('floor_number'),
-            listing_area=property_data.get('area'),
-            listing_layout=property_data.get('layout'),
-            listing_direction=property_data.get('direction'),
-            listing_total_floors=property_data.get('total_floors'),
-            listing_balcony_area=property_data.get('balcony_area'),
-            listing_address=property_data.get('address')
-        )
-        
-        
-        # 多数決による物件情報更新
-        self.update_master_property_by_majority(master_property)
-        
-        print(f"  → 保存完了")
+        # 共通の保存処理を使用
+        return self.save_property_common(property_data, existing_listing)
     
     def parse_property_detail(self, soup: BeautifulSoup) -> Optional[Dict[str, Any]]:
         """物件詳細ページを解析"""
         detail_data = {}
+        
+        # 建物名を取得
+        h1_elem = soup.find("h1", class_="item_title")
+        if h1_elem:
+            building_name = h1_elem.get_text(strip=True)
+            if building_name:
+                detail_data['building_name'] = building_name
         
         # 住所を取得
         address_th = soup.find("th", text="所在地")
@@ -343,10 +317,13 @@ class NomuScraper(BaseScraper):
             floors_value = floors_elem.find_next("td") if floors_elem.name == "th" else floors_elem.parent
             if floors_value:
                 floors_text = floors_value.get_text(strip=True)
-                # 地下階を含むパターンにも対応（例: "14階地下2階建て"）
-                floors_match = re.search(r'(\d+)階', floors_text)
-                if floors_match:
-                    detail_data['total_floors'] = int(floors_match.group(1))
+                # データ正規化フレームワークを使用
+                from . import extract_total_floors
+                total_floors, basement_floors = extract_total_floors(floors_text)
+                if total_floors is not None:
+                    detail_data['total_floors'] = total_floors
+                if basement_floors is not None and basement_floors > 0:
+                    detail_data['basement_floors'] = basement_floors
         
         # 構造（item_tableクラスのテーブルも含めて探す）
         structure_found = False
@@ -361,11 +338,13 @@ class NomuScraper(BaseScraper):
                         
                         # 実際の構造情報（RC造、SRC造など）が含まれている場合のみ処理
                         if re.search(r'(RC造|SRC造|S造|木造|鉄骨造|鉄筋コンクリート造|鉄骨鉄筋コンクリート造)', structure_text):
-                            # 構造フィールドから総階数も抽出（例: "RC造14階地下2階建て"）
-                            if not detail_data.get('total_floors'):
-                                floors_in_structure = re.search(r'(\d+)階(?:地下\d+階)?建', structure_text)
-                                if floors_in_structure:
-                                    detail_data['total_floors'] = int(floors_in_structure.group(1))
+                            # 構造フィールドから総階数と地下階数も抽出
+                            from . import extract_total_floors
+                            total_floors, basement_floors = extract_total_floors(structure_text)
+                            if total_floors is not None and not detail_data.get('total_floors'):
+                                detail_data['total_floors'] = total_floors
+                            if basement_floors is not None and basement_floors > 0 and not detail_data.get('basement_floors'):
+                                detail_data['basement_floors'] = basement_floors
                             
                             # 構造情報のみを抽出（RC造、SRC造など）
                             structure_match = re.search(r'(RC造|SRC造|S造|木造|鉄骨造|鉄筋コンクリート造|鉄骨鉄筋コンクリート造)', structure_text)
