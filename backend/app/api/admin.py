@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Optional, Dict, Any
 from datetime import datetime
-from ..utils.exceptions import TaskPausedException, TaskCancelledException
+from backend.app.utils.exceptions import TaskPausedException, TaskCancelledException
 from pydantic import BaseModel
 import asyncio
 import threading
@@ -17,11 +17,11 @@ import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 
-from ..database import get_db
-from ..utils.debug_logger import debug_log
-from ..models import MasterProperty, PropertyListing, Building, ListingPriceHistory, PropertyMergeHistory, PropertyMergeExclusion
+from backend.app.database import get_db
+from backend.app.utils.debug_logger import debug_log
+from backend.app.models import MasterProperty, PropertyListing, Building, ListingPriceHistory, PropertyMergeHistory, PropertyMergeExclusion
 from sqlalchemy import func, or_, and_
-from ..auth import verify_admin_credentials
+from backend.app.auth import verify_admin_credentials
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(verify_admin_credentials)])
 
@@ -833,7 +833,7 @@ def merge_properties(
         
         # プロパティが更新された場合、property_hashを再生成
         if primary_updates:
-            from ..scrapers.base_scraper import BaseScraper
+            from backend.app.scrapers.base_scraper import BaseScraper
             scraper = BaseScraper("ADMIN")
             scraper.session = db
             
@@ -919,7 +919,7 @@ def merge_properties(
         db.delete(secondary)
         
         # 多数決による物件情報更新
-        from ..utils.majority_vote_updater import MajorityVoteUpdater
+        from backend.app.utils.majority_vote_updater import MajorityVoteUpdater
         updater = MajorityVoteUpdater(db)
         updater.update_master_property_by_majority(primary)
         
@@ -1017,11 +1017,11 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
     
     # スクレイパーのインポート（エラーハンドリングを分離）
     try:
-        from ..scrapers.suumo_scraper import SuumoScraper
-        from ..scrapers.homes_scraper import HomesScraper
-        from ..scrapers.rehouse_scraper import RehouseScraper
-        from ..scrapers.nomu_scraper import NomuScraper
-        from ..scrapers.livable_scraper import LivableScraper
+        from backend.app.scrapers.suumo_scraper import SuumoScraper
+        from backend.app.scrapers.homes_scraper import HomesScraper
+        from backend.app.scrapers.rehouse_scraper import RehouseScraper
+        from backend.app.scrapers.nomu_scraper import NomuScraper
+        from backend.app.scrapers.livable_scraper import LivableScraper
         # エリア変換は各スクレイパー内部で実施するため不要
     except Exception as e:
         scraping_tasks[task_id]["status"] = "failed"
@@ -1147,7 +1147,7 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
                         print(f"[{task_id}] Reusing existing scraper instance for {scraper_name} in {area_name}")
                         # セッションがクローズされている場合は新しいセッションを作成
                         if hasattr(scraper, 'session'):
-                            from ..database import SessionLocal
+                            from backend.app.database import SessionLocal
                             scraper.session = SessionLocal()
                         if hasattr(scraper, 'http_session') and scraper.http_session is None:
                             import requests
@@ -2154,7 +2154,7 @@ def revert_property_merge(
         history.reverted_by = "admin"  # TODO: 実際のユーザー名を記録
         
         # 多数決による建物名更新（掲載情報が移動したため）
-        from ..utils.majority_vote_updater import MajorityVoteUpdater
+        from backend.app.utils.majority_vote_updater import MajorityVoteUpdater
         updater = MajorityVoteUpdater(db)
         
         # 主物件の建物名を更新（掲載情報が減ったため）
@@ -2374,7 +2374,7 @@ def update_listing_status(db: Session = Depends(get_db)):
         building_update_count = 0
         
         try:
-            from ..utils.majority_vote_updater import MajorityVoteUpdater
+            from backend.app.utils.majority_vote_updater import MajorityVoteUpdater
             updater = MajorityVoteUpdater(db)
             
             # 販売終了物件の価格を更新
@@ -2430,7 +2430,7 @@ def update_sold_property_prices(
     """販売終了物件の価格を多数決で更新"""
     
     try:
-        from ..utils.majority_vote_updater import MajorityVoteUpdater
+        from backend.app.utils.majority_vote_updater import MajorityVoteUpdater
         
         updater = MajorityVoteUpdater(db)
         
