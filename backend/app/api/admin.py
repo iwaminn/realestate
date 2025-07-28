@@ -833,7 +833,7 @@ def merge_properties(
         
         # プロパティが更新された場合、property_hashを再生成
         if primary_updates:
-            from app.scrapers.base_scraper import BaseScraper
+            from ..scrapers.base_scraper import BaseScraper
             scraper = BaseScraper("ADMIN")
             scraper.session = db
             
@@ -919,7 +919,7 @@ def merge_properties(
         db.delete(secondary)
         
         # 多数決による物件情報更新
-        from app.utils.majority_vote_updater import MajorityVoteUpdater
+        from ..utils.majority_vote_updater import MajorityVoteUpdater
         updater = MajorityVoteUpdater(db)
         updater.update_master_property_by_majority(primary)
         
@@ -2154,7 +2154,7 @@ def revert_property_merge(
         history.reverted_by = "admin"  # TODO: 実際のユーザー名を記録
         
         # 多数決による建物名更新（掲載情報が移動したため）
-        from app.utils.majority_vote_updater import MajorityVoteUpdater
+        from ..utils.majority_vote_updater import MajorityVoteUpdater
         updater = MajorityVoteUpdater(db)
         
         # 主物件の建物名を更新（掲載情報が減ったため）
