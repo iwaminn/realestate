@@ -148,10 +148,10 @@ class HomesScraper(BaseScraper):
         try:
             self.logger.info(f"[HOMES] parse_property_detail called for URL: {url}")
             
-            # 建物ページURLの場合はエラー（ここには来ないはず）
+            # 建物ページURLでも処理を続行（リダイレクトされるため）
+            # ログは出力するが、エラーにはしない
             if '/mansion/b-' in url and not re.search(r'/\d{3,4}[A-Z]?/$', url):
-                self.logger.error(f"[HOMES] Unexpected building page URL in parse_property_detail: {url}")
-                return None
+                self.logger.info(f"[HOMES] Building URL detected, will be redirected to property: {url}")
             
             # アクセス間隔を保つ
             time.sleep(self.delay)
@@ -795,18 +795,18 @@ class HomesScraper(BaseScraper):
             price_rows = block.select('tr.raSpecRow')
             
             if not price_rows:
-                # raSpecRowがない場合は建物ページから個別物件を取得する必要がある
+                # raSpecRowがない場合も建物URLを物件URLとして扱う
                 href = building_link.get('href', '')
                 if '/mansion/b-' in href:
                     full_url = urljoin(self.BASE_URL, href)
-                    self.logger.info(f"[HOMES] Building page found without individual properties: {full_url}")
-                    # 建物ページから個別物件を取得
-                    building_properties = self._fetch_properties_from_building_page(full_url)
-                    if building_properties:
-                        properties.extend(building_properties)
-                        self.logger.info(f"[HOMES] Added {len(building_properties)} properties from building page")
-                    else:
-                        self.logger.warning(f"[HOMES] No properties found in building page: {full_url}")
+                    self.logger.info(f"[HOMES] Building URL without price rows (will redirect to property): {full_url}")
+                    
+                    # 物件データを作成
+                    property_data = {
+                        'url': full_url,
+                        'has_update_mark': False
+                    }
+                    properties.append(property_data)
             else:
                 # 各物件行を処理
                 for row in price_rows:
@@ -846,14 +846,29 @@ class HomesScraper(BaseScraper):
                         
                         properties.append(property_data)
                     else:
-                        # 建物ページの場合は、その建物の全物件を取得
-                        self.logger.info(f"[HOMES] Found building page, fetching individual properties: {full_url}")
-                        building_properties = self._fetch_properties_from_building_page(full_url)
-                        if building_properties:
-                            properties.extend(building_properties)
-                            self.logger.info(f"[HOMES] Added {len(building_properties)} properties from building page")
-                        else:
-                            self.logger.warning(f"[HOMES] No properties found in building page: {full_url}")
+                        # 建物ページURLの場合でも、実際には個別物件にリダイレクトされるため
+                        # そのまま物件URLとして扱う
+                        self.logger.info(f"[HOMES] Found building URL (will redirect to property): {full_url}")
+                        
+                        # 価格情報を取得（3番目のtd）
+                        price = None
+                        tds = row.select('td')
+                        if len(tds) > 2:
+                            price_text = tds[2].get_text(strip=True)
+                            price = extract_price(price_text)
+                            if price:
+                                self.logger.info(f"[HOMES] Found price: {price}万円 for {href}")
+                        
+                        # 物件データを作成（建物URLでもparse_property_detailが処理する）
+                        property_data = {
+                            'url': full_url,
+                            'has_update_mark': False
+                        }
+                        
+                        if price:
+                            property_data['price'] = price
+                        
+                        properties.append(property_data)
                     
                     # リアルタイムで統計を更新
                     if hasattr(self, '_scraping_stats'):
@@ -888,6 +903,22 @@ class HomesScraper(BaseScraper):
             if not soup:
                 self.logger.warning(f"[HOMES] Failed to fetch building page: {building_url}")
                 return properties
+            
+            # リダイレクトされた場合のチェック（建物ページが個別物件ページにリダイレクトされることがある）
+            # 現在のURLを取得（リダイレクト後のURL）
+            current_url = building_url  # fetch_pageではリダイレクト後のURLを取得できないため、HTMLから推測
+            canonical_link = soup.select_one('link[rel="canonical"]')
+            if canonical_link and canonical_link.get('href'):
+                current_url = canonical_link.get('href')
+                if re.search(r'/mansion/b-[^/]+/\d{3,4}[A-Z]?/?$', current_url):
+                    # 個別物件ページにリダイレクトされた場合
+                    self.logger.info(f"[HOMES] Building page redirected to property page: {current_url}")
+                    property_data = {
+                        'url': current_url,
+                        'has_update_mark': False
+                    }
+                    properties.append(property_data)
+                    return properties
             
             # 建物名を建物ページから取得（まだ取得していない場合）
             if not building_name:
@@ -962,6 +993,12 @@ class HomesScraper(BaseScraper):
                 return properties
             
             # 個別物件のリンクを探す
+            # まず、すべてのリンクをデバッグ出力
+            all_links = soup.select('a[href*="/mansion/b-"]')
+            self.logger.info(f"[HOMES] Total links with /mansion/b-: {len(all_links)}")
+            for i, link in enumerate(all_links[:5]):  # 最初の5件だけログ出力
+                self.logger.info(f"[HOMES] Link {i}: {link.get('href', '')}")
+            
             # パターン1: テーブル形式の物件一覧（販売中のみ）
             property_rows = soup.select('tr.prg-row:has(.label--onsale), tr[data-href]:has(.label--onsale), .mod-mergeBuilding__item:has(.label--onsale)')
             
@@ -981,11 +1018,10 @@ class HomesScraper(BaseScraper):
             
             if not property_rows:
                 # パターン3: 直接リンクを探す
-                property_links = soup.select('a[href*="/mansion/"]')
-                # 物件詳細ページのURLパターン: /mansion/数字列/
+                property_links = soup.select('a[href*="/mansion/b-"]')
+                # 物件詳細ページのURLパターン: /mansion/b-XXXXX/部屋番号/
                 property_links = [link for link in property_links 
-                                if '/b-' not in link.get('href', '') 
-                                and re.search(r'/mansion/\d+/?$', link.get('href', ''))]
+                                if re.search(r'/mansion/b-[^/]+/\d{3,4}[A-Z]?/?$', link.get('href', ''))]
                 self.logger.info(f"[HOMES] Found {len(property_links)} direct property links")
                 
                 if property_links:
@@ -1140,15 +1176,10 @@ class HomesScraper(BaseScraper):
     
     def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
         """個別の物件を処理（HOMESスクレイパー固有の実装）"""
-        # 建物ページURLの場合はエラー（parse_property_listで既に処理されているはず）
+        # 建物ページURLでも処理を続行（リダイレクトされるため）
         url = property_data.get('url', '')
         if '/mansion/b-' in url and not re.search(r'/\d{3,4}[A-Z]?/$', url):
-            self.logger.error(f"[HOMES] Unexpected building page URL in process_property_data: {url}")
-            # エラーとして処理
-            property_data['detail_fetched'] = False
-            property_data['property_saved'] = False
-            property_data['update_type'] = 'error'
-            return False
+            self.logger.info(f"[HOMES] Processing building URL (will redirect to property): {url}")
         
         # 共通の詳細チェック処理を使用
         return self.process_property_with_detail_check(
