@@ -16,7 +16,7 @@ from ..utils.exceptions import TaskPausedException, TaskCancelledException
 from . import (
     normalize_integer, extract_price, extract_area, extract_floor_number,
     normalize_layout, normalize_direction, extract_monthly_fee,
-    format_station_info, extract_built_year, parse_date
+    format_station_info, extract_built_year, parse_date, extract_total_floors
 )
 
 
