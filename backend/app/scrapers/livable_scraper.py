@@ -328,10 +328,11 @@ class LivableScraper(BaseScraper):
             property_data['address'] = value
         
         # 階数（所在階）
-        elif '階数' in label or '所在階' in label and '総階数' not in label:
+        elif ('階数' in label or '所在階' in label) and '総階数' not in label:
             floor_number = extract_floor_number(value)
             if floor_number is not None:
                 property_data['floor_number'] = floor_number
+                print(f"    [DEBUG] 所在階を抽出: {floor_number}階")
             
             # "8階／地上12階"のような形式から総階数も抽出
             if '地上' in value or '地下' in value:

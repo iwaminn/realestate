@@ -1766,7 +1766,9 @@ class BaseScraper(ABC):
                 first_published_at=property_data.get('first_published_at'),
                 remarks=property_data.get('remarks'),
                 # summary_remarksはMasterPropertyのフィールドなので、PropertyListingには渡さない
-                agency_tel=property_data.get('agency_tel')
+                agency_tel=property_data.get('agency_tel'),
+                # 建物名を追加（物件独自の表示用建物名の多数決に使用）
+                listing_building_name=property_data.get('building_name')
             )
             
             # 更新タイプをproperty_dataに設定（外部で使用するため）

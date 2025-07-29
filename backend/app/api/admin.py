@@ -26,7 +26,8 @@ from backend.app.auth import verify_admin_credentials
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(verify_admin_credentials)])
 
 # タスクの永続化ファイル
-TASKS_FILE = "/app/backend/scraping_tasks.json"
+# dataディレクトリに保存することで、コンテナ再起動後も保持される
+TASKS_FILE = "/app/data/scraping_tasks.json"
 
 # グローバルロック（スレッドセーフな操作のため）
 tasks_lock = threading.Lock()
