@@ -513,19 +513,17 @@ const BuildingDuplicateManager: React.FC = () => {
               </Box>
 
               <Alert severity="info" sx={{ mt: 2 }}>
-                {selectedMasterId && (
+                {selectedMasterId ? (
                   <>
                     選択されたマスター建物「
                     {selectedMasterId === selectedGroup.primary.id 
                       ? selectedGroup.primary.normalized_name 
                       : selectedGroup.candidates.find(c => c.id === selectedMasterId)?.normalized_name}
-                    」に、他の建物の全ての物件とエイリアスが統合されます。
+                    」に、他の建物の全ての物件が統合されます。
                   </>
+                ) : (
+                  '統合先の建物を選択してください。'
                 )}
-              </Alert>
-
-              <Alert severity="info" sx={{ mt: 2 }}>
-                選択された建物の全ての物件とエイリアスが主建物に移動されます。
               </Alert>
             </Box>
           )}

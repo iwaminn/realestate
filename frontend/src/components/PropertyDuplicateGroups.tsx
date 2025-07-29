@@ -31,6 +31,7 @@ import {
   Tooltip,
   Checkbox,
   Snackbar,
+  TextField,
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -486,14 +487,18 @@ const PropertyDuplicateGroups: React.FC = () => {
             />
           </Grid>
           <Grid item xs={12} md={4}>
-            <FormControl fullWidth>
-              <InputLabel>表示件数</InputLabel>
-              <Select value={limit} onChange={(e) => setLimit(e.target.value as number)}>
-                <MenuItem value={20}>20件</MenuItem>
-                <MenuItem value={50}>50件</MenuItem>
-                <MenuItem value={100}>100件</MenuItem>
-              </Select>
-            </FormControl>
+            <TextField
+              select
+              fullWidth
+              label="表示件数"
+              value={limit}
+              onChange={(e) => setLimit(Number(e.target.value))}
+              variant="outlined"
+            >
+              <MenuItem value={20}>20件</MenuItem>
+              <MenuItem value={50}>50件</MenuItem>
+              <MenuItem value={100}>100件</MenuItem>
+            </TextField>
           </Grid>
           <Grid item xs={12} md={2}>
             <Button 

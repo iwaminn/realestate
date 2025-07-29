@@ -2118,9 +2118,19 @@ def revert_building_merge(
         merge_details = history.merge_details or {}
         
         restored_buildings = []
+        
+        # merged_buildingsはリストとして保存されている
+        merged_buildings_list = merge_details.get("merged_buildings", [])
+        
+        # リストを辞書に変換（IDをキーにする）
+        merged_buildings_dict = {}
+        for building_data in merged_buildings_list:
+            if isinstance(building_data, dict) and "id" in building_data:
+                merged_buildings_dict[building_data["id"]] = building_data
+        
         for building_id in merged_building_ids:
             # merge_detailsから建物情報を取得
-            building_data = merge_details.get("merged_buildings", {}).get(str(building_id), {})
+            building_data = merged_buildings_dict.get(building_id, {})
             
             if building_data:
                 # 建物を復元
@@ -2151,13 +2161,20 @@ def revert_building_merge(
                     db.add(external_id)
         
         # 移動された物件を元に戻す
-        moved_property_ids = merge_details.get("moved_property_ids", [])
-        for property_id, original_building_id in moved_property_ids:
-            property = db.query(MasterProperty).filter(
-                MasterProperty.id == property_id
-            ).first()
-            if property and property.building_id == history.primary_building_id:
-                property.building_id = original_building_id
+        # 各建物から移動された物件数に基づいて物件を戻す
+        for building_id in merged_building_ids:
+            building_data = merged_buildings_dict.get(building_id, {})
+            properties_moved = building_data.get("properties_moved", 0)
+            
+            if properties_moved > 0:
+                # この建物から移動された物件を元に戻す
+                # 主建物に現在ある物件のうち、指定された数だけを元の建物に戻す
+                properties_to_restore = db.query(MasterProperty).filter(
+                    MasterProperty.building_id == history.primary_building_id
+                ).limit(properties_moved).all()
+                
+                for property in properties_to_restore:
+                    property.building_id = building_id
         
         # 履歴を更新
         history.reverted_at = datetime.now()
