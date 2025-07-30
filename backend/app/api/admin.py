@@ -2491,6 +2491,30 @@ def delete_scraping_task(
         raise HTTPException(status_code=500, detail=f"タスクの削除に失敗しました: {str(e)}")
 
 
+@router.delete("/scraping/all-tasks")
+def delete_all_scraping_tasks(
+    db: Session = Depends(get_db)
+):
+    """すべてのスクレイピング履歴を削除"""
+    try:
+        # 最初に進捗情報を削除
+        deleted_progress = db.query(ScrapingTaskProgress).delete()
+        
+        # タスク本体を削除
+        deleted_tasks = db.query(ScrapingTask).delete()
+        
+        db.commit()
+        
+        return {
+            "message": f"すべてのスクレイピング履歴を削除しました",
+            "deleted_tasks": deleted_tasks,
+            "deleted_progress": deleted_progress
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"履歴の削除に失敗しました: {str(e)}")
+
+
 @router.post("/revert-building-merge/{history_id}")
 def revert_building_merge(
     history_id: int,

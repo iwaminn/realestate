@@ -513,6 +513,11 @@ class BaseScraper(ABC):
             if i < self._processed_count:
                 continue
             
+            # 処理範囲の確認
+            if self.max_properties and i >= self.max_properties:
+                self.logger.info(f"処理上限 {self.max_properties} に達したため終了")
+                break
+            
             # ループの開始をログ出力
             if i % 10 == 0:  # 10件ごとにログ
                 self.logger.info(f"[DEBUG] 処理中: {i}/{len(all_properties)}件目")
@@ -573,6 +578,9 @@ class BaseScraper(ABC):
                 if not property_data.get('url'):
                     self.logger.warning(f"物件 {i+1}: URLがありません")
                     self._scraping_stats['other_errors'] += 1
+                    total_properties += 1  # 処理件数としてカウント
+                    skipped += 1  # スキップとしてカウント
+                    self._scraping_stats['detail_skipped'] += 1  # スキップとしてカウント
                     continue
                 
                 # サイトごとの固有処理（process_property_dataメソッドを実装）
@@ -678,8 +686,8 @@ class BaseScraper(ABC):
                     elif property_data.get('property_saved') is False:
                         # 保存失敗の場合（Noneはキャンセルなので除外）
                         if property_data.get('detail_fetched', False):
-                            # 詳細を取得したが保存に失敗した場合は、保存失敗としてカウント
-                            self._scraping_stats['save_failed'] = self._scraping_stats.get('save_failed', 0) + 1
+                            # 詳細を取得したが保存に失敗した場合
+                            # save_failedは既にvalidate_property_dataまたはsave_property_commonでカウント済みなので、ここではカウントしない
                             self.logger.info(f"物件保存失敗（詳細取得済み）: URL={property_data.get('url', '不明')}, この時点でdetail_fetched={detail_fetched}, 統計={self._scraping_stats['detail_fetched']}")
                         else:
                             # 詳細を取得していない場合（スキップした場合）は統計カウント外
@@ -712,7 +720,9 @@ class BaseScraper(ABC):
                 
                 # 最後の物件の場合、特別なログを出力
                 if i == len(all_properties) - 1:
-                    self.logger.info(f"[DEBUG] 最後の物件({i})の処理完了。統計: detail_fetched={detail_fetched}, detail_skipped={skipped}, エラー={self._scraping_stats.get('detail_fetch_failed', 0) + self._scraping_stats.get('save_failed', 0)}, 合計={detail_fetched + skipped + self._scraping_stats.get('detail_fetch_failed', 0) + self._scraping_stats.get('save_failed', 0)}")
+                    total_errors = self._scraping_stats.get('detail_fetch_failed', 0) + self._scraping_stats.get('save_failed', 0) + self._scraping_stats.get('other_errors', 0)
+                    total_counted = detail_fetched + skipped + self._scraping_stats.get('detail_fetch_failed', 0)
+                    self.logger.info(f"[DEBUG] 最後の物件({i})の処理完了。統計: detail_fetched={detail_fetched}, detail_skipped={skipped}, detail_fetch_failed={self._scraping_stats.get('detail_fetch_failed', 0)}, save_failed={self._scraping_stats.get('save_failed', 0)}, other_errors={self._scraping_stats.get('other_errors', 0)}, 合計={total_counted} (期待値={total_properties})")
             
             except TaskPausedException as e:
                 # タスクの一時停止例外は再スロー
@@ -731,6 +741,8 @@ class BaseScraper(ABC):
                 self.logger.error(f"物件 {i+1} の処理中にエラー ({error_type_name}): {e}")
                 errors += 1
                 self._scraping_stats['other_errors'] += 1
+                total_properties += 1  # 処理件数としてカウント
+                self._scraping_stats['detail_fetch_failed'] += 1  # 詳細取得失敗としてカウント
                 
                 # トランザクションエラーの場合はロールバック
                 if "current transaction is aborted" in str(e) or "InFailedSqlTransaction" in str(e):
@@ -757,8 +769,12 @@ class BaseScraper(ABC):
         except Exception as e:
             self.logger.warning(f"最終コミットエラー: {e}")
         
-        # 実際の処理済み件数で統計を更新
-        self._scraping_stats['properties_processed'] = total_properties
+        # properties_processedとtotal_propertiesの一致を確認
+        if self._scraping_stats['properties_processed'] != total_properties:
+            self.logger.warning(
+                f"処理件数の不一致: properties_processed={self._scraping_stats['properties_processed']}, "
+                f"total_properties={total_properties}"
+            )
         
         # 最終進捗更新（100%の状態を確実に送信）
         self._update_progress()
@@ -794,10 +810,18 @@ class BaseScraper(ABC):
         }
         
         # 詳細な統計ログ
+        detail_fetch_failed = self._scraping_stats.get('detail_fetch_failed', 0)
+        other_errors = self._scraping_stats.get('other_errors', 0)
+        total_calculated = detail_fetched + skipped + detail_fetch_failed
         self.logger.info(
-            f"スクレイピング完了: 合計={total_properties}件, "
-            f"詳細取得={detail_fetched}件, スキップ={skipped}件, エラー={errors}件"
+            f"スクレイピング完了: 処理総数={total_properties}件 "
+            f"(詳細取得成功={detail_fetched}件, 詳細スキップ={skipped}件, 詳細取得失敗={detail_fetch_failed}件) "
+            f"計算合計={total_calculated}件"
         )
+        if total_properties != total_calculated:
+            self.logger.warning(f"統計の不一致: 処理総数({total_properties}) != 計算合計({total_calculated})")
+        if other_errors > 0:
+            self.logger.info(f"その他のエラー（URLなしなど）: {other_errors}件")
         
         # HTML構造エラーの統計を表示（全スクレイパー共通）
         html_errors = self._scraping_stats.get('html_structure_errors', {})
@@ -1155,6 +1179,8 @@ class BaseScraper(ABC):
     
     def validate_property_data(self, property_data: Dict[str, Any]) -> bool:
         """物件データの妥当性をチェック"""
+        from .data_normalizer import validate_price, validate_area, validate_floor_number
+        
         # 必須フィールドのチェック
         if not property_data.get('building_name'):
             self.logger.warning(f"建物名がありません: URL={property_data.get('url', '不明')}")
@@ -1164,27 +1190,27 @@ class BaseScraper(ABC):
             self.logger.warning(f"価格情報がありません: URL={property_data.get('url', '不明')}, building_name={property_data.get('building_name', '不明')}")
             return False
         
-        # 価格の妥当性チェック
+        # 価格の妥当性チェック（data_normalizerのvalidate_priceを使用）
         price = property_data.get('price', 0)
-        if price < 100 or price > 10000000:  # 100万円未満または100億円超
+        if not validate_price(price):
             self.logger.warning(f"価格が異常です: {price}万円, URL={property_data.get('url', '不明')}")
             return False
         
-        # 面積の妥当性チェック
+        # 面積の妥当性チェック（data_normalizerのvalidate_areaを使用）
         area = property_data.get('area', 0)
-        if area and (area < 10 or area > 500):  # 10㎡未満または500㎡超
+        if area and not validate_area(area):
             self.logger.warning(f"面積が異常です: {area}㎡")
             return False
         
-        # データ整合性チェック
-        if 'floor_number' in property_data and 'total_floors' in property_data:
-            if property_data['floor_number'] and property_data['total_floors']:
-                if property_data['floor_number'] > property_data['total_floors']:
-                    self.logger.warning(
-                        f"階数の整合性エラー: {property_data['floor_number']}階/"
-                        f"{property_data['total_floors']}階建て"
-                    )
-                    return False
+        # 階数の妥当性チェック（data_normalizerのvalidate_floor_numberを使用）
+        floor_number = property_data.get('floor_number')
+        total_floors = property_data.get('total_floors')
+        if floor_number is not None and not validate_floor_number(floor_number, total_floors):
+            self.logger.warning(
+                f"階数の整合性エラー: {floor_number}階/"
+                f"{total_floors}階建て"
+            )
+            return False
         
         return True
     
@@ -1984,7 +2010,13 @@ class BaseScraper(ABC):
                 property_data['property_saved'] = True
                 return True
             
-            # データの妥当性チェック
+            # 詳細取得していない場合（新規物件なのに詳細取得失敗など）は妥当性チェックをスキップ
+            if not property_data.get('detail_fetched', False):
+                # 詳細取得失敗の場合は既にエラーカウント済みなので、ここでは追加カウントしない
+                property_data['property_saved'] = False
+                return False
+            
+            # データの妥当性チェック（詳細取得済みの場合のみ）
             if not self.validate_property_data(property_data):
                 # 失敗理由の特定とログ記録
                 url = property_data.get('url', '不明')
@@ -2002,12 +2034,28 @@ class BaseScraper(ABC):
                     self.record_field_extraction_error('building_name', url, log_error=False)
                 else:
                     self._scraping_stats['other_errors'] += 1
-                    failure_reason = "その他の必須情報不足"
+                    missing_fields = []
                     # 面積と間取りもチェック
                     if not property_data.get('area'):
+                        missing_fields.append('area')
                         self.record_field_extraction_error('area', url, log_error=False)
                     if not property_data.get('layout'):
+                        missing_fields.append('layout')
                         self.record_field_extraction_error('layout', url, log_error=False)
+                    
+                    if missing_fields:
+                        failure_reason = f"必須情報不足: {', '.join(missing_fields)}"
+                    else:
+                        failure_reason = "その他の必須情報不足"
+                    
+                    # デバッグ情報を出力
+                    self.logger.warning(
+                        f"物件データ検証失敗 - URL: {url}, "
+                        f"price: {property_data.get('price')}, "
+                        f"building_name: {property_data.get('building_name')}, "
+                        f"area: {property_data.get('area')}, "
+                        f"layout: {property_data.get('layout')}"
+                    )
                 
                 # エラーログを記録
                 self.logger.error(f"物件保存失敗 - {failure_reason}: URL={url}")

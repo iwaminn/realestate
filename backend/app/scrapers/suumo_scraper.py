@@ -150,6 +150,10 @@ class SuumoScraper(BaseScraper):
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
         """物件詳細を解析"""
         try:
+            # 特定物件のデバッグログ
+            if 'nc_76583217' in url:
+                self.logger.info(f"[DEBUG] nc_76583217の詳細ページ取得開始: {url}")
+            
             # アクセス間隔を保つ
             time.sleep(self.delay)
             
@@ -264,9 +268,19 @@ class SuumoScraper(BaseScraper):
                             # データ正規化フレームワークを使用して総階数と地下階数を抽出
                             from . import extract_total_floors
                             total_floors, basement_floors = extract_total_floors(value)
-                            if total_floors is not None:
+                            
+                            # 明らかに間違った総階数（1階など）の場合は無視
+                            # 「RC1階地下2階建」のようなパターンは総階数が正しく抽出できない
+                            if total_floors is not None and total_floors > 1:
                                 detail_info['total_floors'] = total_floors
                                 print(f"    総階数: {detail_info['total_floors']}階")
+                            elif total_floors == 1 and '地下' in value:
+                                # 地下があるのに総階数1階は不自然なのでスキップ
+                                print(f"    総階数: 不明（構造情報から正確に抽出できません: {value}）")
+                            elif total_floors is not None:
+                                detail_info['total_floors'] = total_floors
+                                print(f"    総階数: {detail_info['total_floors']}階")
+                                
                             if basement_floors is not None:
                                 detail_info['basement_floors'] = basement_floors
                                 if basement_floors > 0:
@@ -344,17 +358,27 @@ class SuumoScraper(BaseScraper):
                         
                         # 間取り
                         elif '間取り' in label:
+                            # デバッグ: 特定物件の間取り取得
+                            if 'nc_76583217' in url:
+                                self.logger.info(f"[DEBUG] nc_76583217 - 間取りフィールド発見: label='{label}', value='{value}'")
                             # データ正規化フレームワークを使用して間取りを正規化
                             layout = normalize_layout(value)
                             if layout:
                                 property_data['layout'] = layout
+                                if 'nc_76583217' in url:
+                                    self.logger.info(f"[DEBUG] nc_76583217 - 間取り設定: {layout}")
                         
                         # 専有面積
                         elif '専有面積' in label:
+                            # デバッグ: 特定物件の面積取得
+                            if 'nc_76583217' in url:
+                                self.logger.info(f"[DEBUG] nc_76583217 - 専有面積フィールド発見: label='{label}', value='{value}'")
                             # データ正規化フレームワークを使用して面積を抽出
                             area = extract_area(value)
                             if area:
                                 property_data['area'] = area
+                                if 'nc_76583217' in url:
+                                    self.logger.info(f"[DEBUG] nc_76583217 - 面積設定: {area}㎡")
                         
                         # 築年月から築年を取得
                         elif '築年月' in label:
@@ -661,6 +685,15 @@ class SuumoScraper(BaseScraper):
                         self._scraping_stats['building_name_from_fallback'] += 1
                     # property_dataから削除（DBに保存する必要はない）
                     del property_data['building_name_source']
+                
+                # デバッグ: 特定物件の最終データ
+                if 'nc_76583217' in url:
+                    self.logger.info(f"[DEBUG] nc_76583217 - 最終データ: "
+                                   f"price={property_data.get('price')}, "
+                                   f"building_name={property_data.get('building_name')}, "
+                                   f"area={property_data.get('area')}, "
+                                   f"layout={property_data.get('layout')}")
+                
                 return property_data
             else:
                 # 価格が取得できない場合

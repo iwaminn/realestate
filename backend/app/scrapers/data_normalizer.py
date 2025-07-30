@@ -19,6 +19,12 @@ from decimal import Decimal, InvalidOperation
 class DataNormalizer:
     """データ正規化のメインクラス"""
     
+    # 妥当性チェックの定数
+    MIN_PRICE = 100  # 最小価格: 100万円
+    MAX_PRICE = 1000000  # 最大価格: 100億円（1000000万円）
+    MIN_AREA = 10.0  # 最小面積: 10㎡
+    MAX_AREA = 500.0  # 最大面積: 500㎡
+    
     def __init__(self):
         """初期化"""
         # 路線名のパターン（駅情報フォーマット用）
@@ -493,16 +499,16 @@ class DataNormalizer:
     # ========== バリデーション ==========
     
     def validate_price(self, price: Optional[int]) -> bool:
-        """価格の妥当性を検証（100万円以上、10億円以下）"""
+        """価格の妥当性を検証（100万円以上、100億円以下）"""
         if price is None:
             return False
-        return 100 <= price <= 100000
+        return self.MIN_PRICE <= price <= self.MAX_PRICE
 
     def validate_area(self, area: Optional[float]) -> bool:
         """面積の妥当性を検証（10㎡以上、500㎡以下）"""
         if area is None:
             return False
-        return 10.0 <= area <= 500.0
+        return self.MIN_AREA <= area <= self.MAX_AREA
 
     def validate_floor_number(self, floor: Optional[int], total_floors: Optional[int] = None) -> bool:
         """階数の妥当性を検証"""
@@ -763,6 +769,21 @@ def extract_built_year(text: str) -> Optional[int]:
 def parse_date(text: str) -> Optional[datetime]:
     """文字列から日付を抽出してdatetimeオブジェクトに変換"""
     return _normalizer.parse_date(text)
+
+
+def validate_price(price: Optional[int]) -> bool:
+    """価格の妥当性を検証（100万円以上、100億円以下）"""
+    return _normalizer.validate_price(price)
+
+
+def validate_area(area: Optional[float]) -> bool:
+    """面積の妥当性を検証（10㎡以上、500㎡以下）"""
+    return _normalizer.validate_area(area)
+
+
+def validate_floor_number(floor: Optional[int], total_floors: Optional[int] = None) -> bool:
+    """階数の妥当性を検証"""
+    return _normalizer.validate_floor_number(floor, total_floors)
 
 
 # 使用例

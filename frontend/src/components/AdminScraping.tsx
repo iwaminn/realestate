@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Paper,
@@ -43,6 +43,7 @@ import {
   Delete as DeleteIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
+import DeleteConfirmDialog from './DeleteConfirmDialog';
 
 interface Area {
   code: string;
@@ -138,6 +139,7 @@ const AdminScraping: React.FC = () => {
   const [loadingButtons, setLoadingButtons] = useState<{ [key: string]: boolean }>({});
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const scraperOptions = [
     { value: 'suumo', label: 'SUUMO' },
@@ -161,6 +163,11 @@ const AdminScraping: React.FC = () => {
 
   // 自動更新の制御（実行中のタスクがある場合のみ）
   useEffect(() => {
+    // ダイアログが開いている場合は自動更新を停止
+    if (deleteDialogOpen) {
+      return;
+    }
+    
     if (autoRefreshEnabled) {
       // 実行中のタスクがあるかチェック
       const hasRunningTasks = tasks.some(task => 
@@ -173,7 +180,7 @@ const AdminScraping: React.FC = () => {
         return () => clearInterval(interval);
       }
     }
-  }, [autoRefreshEnabled, tasks]);
+  }, [autoRefreshEnabled, tasks, deleteDialogOpen]);
 
   // ボタン操作中は自動更新を停止
   useEffect(() => {
@@ -454,6 +461,30 @@ const AdminScraping: React.FC = () => {
     } finally {
       setLoadingButtons(prev => ({ ...prev, [`delete-${taskId}`]: false }));
     }
+  };
+
+  const deleteAllTasks = () => {
+    setDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    setDeleteDialogOpen(false);
+    setLoading(true);
+    
+    try {
+      const response = await axios.delete('/api/admin/scraping/all-tasks');
+      alert(`${response.data.deleted_tasks}件のタスクと${response.data.deleted_progress}件の進捗情報を削除しました`);
+      await fetchTasks();
+    } catch (error: any) {
+      console.error('Failed to delete all tasks:', error);
+      alert(`履歴の削除に失敗しました: ${error.response?.data?.detail || error.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteDialogOpen(false);
   };
 
   const toggleTaskExpansion = (taskId: string) => {
@@ -746,7 +777,17 @@ const AdminScraping: React.FC = () => {
       <Paper sx={{ p: 3 }}>
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
           <Typography variant="h6">実行中のタスク</Typography>
-          <Box display="flex" alignItems="center">
+          <Box display="flex" alignItems="center" gap={1}>
+            <Button
+              variant="outlined"
+              color="error"
+              size="small"
+              startIcon={<DeleteIcon />}
+              onClick={deleteAllTasks}
+              disabled={loading || tasks.length === 0}
+            >
+              すべての履歴を削除
+            </Button>
             <Tooltip title="タスク一覧を更新（停止タスクも自動チェック）">
               <IconButton 
                 onClick={() => fetchTasks(false, true)}
@@ -1049,7 +1090,7 @@ const AdminScraping: React.FC = () => {
                                                     詳細スキップ: {progress.detail_skipped || progress.skipped_listings || 0}件
                                                   </Box>
                                                   <Box color="text.secondary">
-                                                    エラー: {(progress.detail_fetch_failed || 0) + (progress.save_failed || 0)}件
+                                                    エラー: {progress.errors || ((progress.detail_fetch_failed || 0) + (progress.save_failed || 0) + (progress.other_errors || 0))}件
                                                   </Box>
                                                 </Box>
                                               }
@@ -1344,6 +1385,13 @@ const AdminScraping: React.FC = () => {
           </TableContainer>
         )}
       </Paper>
+
+      {/* 削除確認ダイアログ */}
+      <DeleteConfirmDialog
+        open={deleteDialogOpen}
+        onClose={handleDeleteCancel}
+        onConfirm={handleDeleteConfirm}
+      />
     </Box>
   );
 };
