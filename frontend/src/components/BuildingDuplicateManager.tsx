@@ -75,12 +75,12 @@ const BuildingDuplicateManager: React.FC = () => {
   });
 
   useEffect(() => {
-    console.log('BuildingDuplicateManager mounted');
+    // console.log('BuildingDuplicateManager mounted');
     fetchDuplicateBuildings();
   }, []);
 
   const fetchDuplicateBuildings = async (search?: string, similarity?: number) => {
-    console.log('Fetching duplicate buildings...');
+    // console.log('Fetching duplicate buildings...');
     setLoading(true);
     try {
       const params: any = { 
@@ -91,7 +91,7 @@ const BuildingDuplicateManager: React.FC = () => {
         params.search = search;
       }
       const response = await propertyApi.getDuplicateBuildings(params);
-      console.log('Response:', response);
+      // console.log('Response:', response);
       setDuplicateGroups(response.duplicate_groups);
     } catch (error) {
       console.error('Failed to fetch duplicate buildings:', error);

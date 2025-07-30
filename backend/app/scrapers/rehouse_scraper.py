@@ -507,8 +507,16 @@ class RehouseScraper(BaseScraper):
         """物件情報をデータベースに保存"""
         try:
             # 必須フィールドの確認
-            if not property_data.get('building_name') or not property_data.get('price'):
-                print(f"    → 必須情報不足（建物名: {property_data.get('building_name')}, 価格: {property_data.get('price')}）")
+            if not property_data.get('building_name'):
+                # 基底クラスのメソッドを使用してエラーを記録
+                self.record_field_extraction_error('building_name', property_data.get('url', ''))
+                print(f"    → 必須情報不足（建物名なし）")
+                return False
+                
+            if not property_data.get('price'):
+                # 基底クラスのメソッドを使用してエラーを記録
+                self.record_field_extraction_error('price', property_data.get('url', ''))
+                print(f"    → 必須情報不足（価格なし）")
                 return False
             
             print(f"    → 価格: {property_data['price']}万円, 面積: {property_data.get('area', '不明')}㎡, 階数: {property_data.get('floor_number', '不明')}階")

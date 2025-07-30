@@ -176,22 +176,8 @@ class HomesScraper(BaseScraper):
                 'url': url
             }
             
-            # デバッグ：ページ全体から情報公開日を探す
+            # ページ全体のテキストを取得（後で日付検索に使用）
             page_text = soup.get_text()
-            if '情報公開日' in page_text:
-                print("    [DEBUG] ページに'情報公開日'というテキストが含まれています")
-                # 情報公開日の周辺テキストを表示
-                index = page_text.find('情報公開日')
-                print(f"    [DEBUG] 周辺テキスト: ...{page_text[max(0, index-50):index+100]}...")
-            
-            # デバッグ：不動産会社情報を探す
-            if '会社情報' in page_text or '情報提供元' in page_text or '取扱会社' in page_text:
-                print("    [DEBUG] ページに会社情報が含まれています")
-                # 会社情報の周辺テキストを表示
-                for keyword in ['会社情報', '情報提供元', '取扱会社', '不動産会社']:
-                    if keyword in page_text:
-                        index = page_text.find(keyword)
-                        print(f"    [DEBUG] {keyword}の周辺: ...{page_text[max(0, index-20):index+150]}...")
             
             # タイトルと建物名、部屋番号
             # まずh1タグから情報を取得（新しいHTML構造）
@@ -494,8 +480,6 @@ class HomesScraper(BaseScraper):
                         day = int(date_match.group(3))
                         property_data['first_published_at'] = datetime(year, month, day)
                         print(f"    売出確認日: {property_data['first_published_at'].strftime('%Y-%m-%d')}")
-                    else:
-                        print(f"    [DEBUG] 情報公開日のラベルを検出したが、日付パターンがマッチしませんでした: {value}")
                 
                 # 情報提供日を取得（最新の更新日）
                 elif '情報提供日' in label or '情報更新日' in label or '登録日' in label:
@@ -507,11 +491,6 @@ class HomesScraper(BaseScraper):
                         day = int(date_match.group(3))
                         property_data['published_at'] = datetime(year, month, day)
                         print(f"    情報提供日: {property_data['published_at'].strftime('%Y-%m-%d')}")
-                    else:
-                        print(f"    [DEBUG] 情報提供日のラベルを検出したが、日付パターンがマッチしませんでした: {value}")
-                elif '更新日' in label or '登録' in label or '掲載' in label:
-                    # デバッグ用：関連しそうなラベルをログ出力
-                    print(f"    [DEBUG] 日付関連ラベル検出: {label} = {value}")
             
             # テーブル形式の詳細情報も解析（HOMESの一般的なtableも含む）
             all_tables = soup.select('table')
@@ -522,10 +501,6 @@ class HomesScraper(BaseScraper):
                     if len(cells) >= 2:
                         label = cells[0].get_text(strip=True)
                         value = cells[1].get_text(strip=True)
-                        
-                        # デバッグ：全てのラベルを出力して情報公開日を探す
-                        if '情報' in label or '公開' in label or '更新' in label or '登録' in label or '掲載' in label:
-                            print(f"    [DEBUG] 日付関連ラベル発見: {label} = {value}")
                         
                         if '所在地' in label:
                             property_data['address'] = value
@@ -597,7 +572,6 @@ class HomesScraper(BaseScraper):
             for elem in date_elements:
                 text = elem.get_text(strip=True)
                 if '情報公開日' in text or '掲載日' in text or '登録日' in text:
-                    print(f"    [DEBUG] 日付要素発見: {text}")
                     # 日付パターンを探す
                     date_match = re.search(r'(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?', text)
                     if date_match:
@@ -630,7 +604,6 @@ class HomesScraper(BaseScraper):
                         label = dt.get_text(strip=True)
                         value = dd_elements[i].get_text(strip=True)
                         if '情報公開日' in label or '掲載日' in label or '登録日' in label:
-                            print(f"    [DEBUG] DL形式で日付発見: {label} = {value}")
                             date_match = re.search(r'(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?', value)
                             if date_match:
                                 year = int(date_match.group(1))
@@ -644,7 +617,6 @@ class HomesScraper(BaseScraper):
             # パターン1: 会社情報セクション内のテーブルから
             company_sections = soup.select('.companyInfo, .company-info, [class*="company"]')
             for company_section in company_sections:
-                print("    [DEBUG] 会社情報セクションを発見")
                 # テーブル形式の情報を探す
                 company_tables = company_section.select('table')
                 for table in company_tables:
@@ -751,7 +723,9 @@ class HomesScraper(BaseScraper):
             # 必須フィールドのチェック
             # 建物名が必須
             if not property_data.get('building_name'):
-                self.logger.warning(f"Missing building name in {url}")
+                # 基底クラスのメソッドを使用してエラーを記録
+                self.record_field_extraction_error('building_name', url)
+                print(f"    [ERROR] 建物名が取得できませんでした")
                 # base_scraper.pyで既にカウントされるため、ここではカウントしない
                 return None
             

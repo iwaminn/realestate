@@ -20,8 +20,30 @@ from concurrent.futures import ThreadPoolExecutor
 from backend.app.database import get_db
 from backend.app.utils.debug_logger import debug_log
 from backend.app.models import MasterProperty, PropertyListing, Building, ListingPriceHistory, PropertyMergeHistory, PropertyMergeExclusion, BuildingMergeHistory, BuildingExternalId
+from backend.app.models_scraping_task import ScrapingTask, ScrapingTaskProgress
 from sqlalchemy import func, or_, and_
 from backend.app.auth import verify_admin_credentials
+
+# 並列スクレイピングのインポート（エラー処理付き）
+try:
+    import sys
+    import os
+    # Docker環境での正しいパス設定
+    # /app/backend/app/api/admin.py から /app/backend/scripts へ
+    backend_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+    scripts_path = os.path.join(backend_path, 'scripts')
+    if scripts_path not in sys.path:
+        sys.path.insert(0, scripts_path)
+    
+    # DB版を使用
+    from backend.scripts.run_scrapers_parallel import ParallelScrapingManagerDB as ParallelScrapingManager
+    PARALLEL_SCRAPING_ENABLED = True
+    print(f"Successfully imported ParallelScrapingManagerDB (Database version) from {scripts_path}")
+except ImportError as e:
+    print(f"Warning: Could not import ParallelScrapingManagerDB: {e}")
+    print(f"Attempted path: {scripts_path if 'scripts_path' in locals() else 'undefined'}")
+    PARALLEL_SCRAPING_ENABLED = False
+    ParallelScrapingManager = None
 
 router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(verify_admin_credentials)])
 
@@ -308,8 +330,6 @@ def get_duplicate_groups(
     result = db.execute(query)
     all_properties = list(result)
     
-    print(f"[DEBUG] Found {len(all_properties)} properties for grouping")
-    
     # グループ化処理（処理済みの物件を追跡）
     groups = {}
     processed_properties = set()
@@ -349,9 +369,6 @@ def get_duplicate_groups(
                         processed_properties.add(other_prop.id)
         
         groups[group_id] = group
-    
-    print(f"[DEBUG] Created {len(groups)} groups")
-    print(f"[DEBUG] Groups with 2+ properties: {sum(1 for g in groups.values() if len(g) >= 2)}")
     
     # 2件以上の物件を持つグループのみ返す
     duplicate_groups = []
@@ -987,6 +1004,7 @@ class ScrapingRequest(BaseModel):
 class ScrapingTaskStatus(BaseModel):
     """スクレイピングタスクの状態"""
     task_id: str
+    type: Optional[str] = "serial"  # "serial" or "parallel"
     status: str  # "pending", "running", "paused", "completed", "failed", "cancelled"
     scrapers: List[str]
     area_codes: List[str]
@@ -1671,6 +1689,7 @@ def start_scraping(
     with tasks_lock:
         scraping_tasks[task_id] = {
             "task_id": task_id,
+            "type": "serial",
             "status": "pending",
             "scrapers": request.scrapers,
             "area_codes": request.area_codes,
@@ -1731,9 +1750,11 @@ def get_task_debug_info(task_id: str):
     }
 
 @router.get("/scraping/tasks", response_model=List[ScrapingTaskStatus])
-def get_all_scraping_tasks():
+def get_all_scraping_tasks(active_only: bool = False):
     """全てのスクレイピングタスクを取得"""
-    # デバッグ: 各タスクのステータスを出力
+    all_tasks = []
+    
+    # 通常のタスクを追加
     for task_id, task in scraping_tasks.items():
         if task["status"] in ["running", "paused"]:
             print(f"[TASKS] Task {task_id}: status={task['status']}")
@@ -1741,15 +1762,152 @@ def get_all_scraping_tasks():
         error_logs = task.get("error_logs", [])
         if error_logs:
             print(f"[TASKS] Task {task_id}: error_logs count={len(error_logs)}")
+        all_tasks.append(task)
     
-    # 最新10件のみ返す
+    # 並列タスクも追加
+    if PARALLEL_SCRAPING_ENABLED:
+        try:
+            # DB版の場合はデータベースから取得
+            if hasattr(parallel_manager, '__class__') and 'DB' in parallel_manager.__class__.__name__:
+                from backend.app.database import SessionLocal
+                from backend.app.models_scraping_task import ScrapingTask, ScrapingTaskProgress
+                
+                db = SessionLocal()
+                try:
+                    # データベースからタスクを取得（時系列順）
+                    db_tasks = db.query(ScrapingTask).order_by(ScrapingTask.created_at.desc()).all()
+                    
+                    for db_task in db_tasks:
+                        # 進捗情報を取得
+                        progress_records = db.query(ScrapingTaskProgress).filter(
+                            ScrapingTaskProgress.task_id == db_task.task_id
+                        ).all()
+                        
+                        # 進捗情報を辞書形式に変換
+                        progress = {}
+                        for p in progress_records:
+                            key = f"{p.scraper}_{p.area}"
+                            progress[key] = p.to_dict()
+                        
+                        # タスク情報を構築
+                        task = {
+                            'task_id': db_task.task_id,
+                            'type': 'parallel',
+                            'status': db_task.status,
+                            'scrapers': db_task.scrapers,
+                            'area_codes': db_task.areas,
+                            'max_properties': db_task.max_properties,
+                            'started_at': db_task.started_at.isoformat() if db_task.started_at else None,
+                            'completed_at': db_task.completed_at.isoformat() if db_task.completed_at else None,
+                            'progress': progress,
+                            'errors': [
+                                error['error'] if isinstance(error, dict) and 'error' in error else str(error)
+                                for error in (db_task.error_logs or [])
+                            ],
+                            'logs': db_task.logs or [],
+                            'error_logs': db_task.error_logs or [],
+                            'created_at': db_task.created_at.isoformat() if db_task.created_at else None,
+                            'statistics': {
+                                'total_processed': db_task.total_processed,
+                                'total_new': db_task.total_new,
+                                'total_updated': db_task.total_updated,
+                                'total_errors': db_task.total_errors,
+                                'elapsed_time': db_task.elapsed_time
+                            },
+                            'force_detail_fetch': db_task.force_detail_fetch
+                        }
+                        all_tasks.append(task)
+                        
+                finally:
+                    db.close()
+        except Exception as e:
+            print(f"[ERROR] 並列タスクの読み込みエラー: {e}")
+    
+    # 最新10件のみ返す（started_atがない場合はcreated_atを使用）
+    def get_sort_key(task):
+        # started_at または created_at を取得
+        timestamp = task.get("started_at") or task.get("created_at") or ""
+        # datetime オブジェクトの場合はそのまま、文字列の場合は datetime に変換
+        if isinstance(timestamp, datetime):
+            return timestamp
+        elif isinstance(timestamp, str) and timestamp:
+            try:
+                return datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            except:
+                return datetime.min
+        else:
+            return datetime.min
+    
+    # active_onlyが指定されている場合は実行中のタスクのみ返す
+    if active_only:
+        active_statuses = {'running', 'pending', 'paused'}
+        all_tasks = [task for task in all_tasks if task.get('status') in active_statuses]
+    
     sorted_tasks = sorted(
-        scraping_tasks.values(),
-        key=lambda x: x["started_at"],
+        all_tasks,
+        key=get_sort_key,
         reverse=True
-    )[:10]
+    )[:30]  # 最新30件に増やす
     
     return [ScrapingTaskStatus(**task) for task in sorted_tasks]
+
+
+@router.get("/scraping/tasks/{task_id}")
+def get_single_task(task_id: str, db: Session = Depends(get_db)):
+    """特定のタスクの詳細を取得"""
+    # まずメモリ内のタスクを確認
+    if task_id in scraping_tasks:
+        return scraping_tasks[task_id]
+    
+    # データベースから取得（並列タスク）
+    try:
+        from backend.app.models_scraping_task import ScrapingTask, ScrapingTaskProgress
+        
+        db_task = db.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
+        if not db_task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        # 進捗情報を取得
+        progress_records = db.query(ScrapingTaskProgress).filter(
+            ScrapingTaskProgress.task_id == task_id
+        ).all()
+        
+        # 進捗情報を辞書形式に変換
+        progress = {}
+        for p in progress_records:
+            key = f"{p.scraper}_{p.area}"
+            progress[key] = p.to_dict()
+        
+        # タスク情報を構築
+        return {
+            'task_id': db_task.task_id,
+            'type': 'parallel',
+            'status': db_task.status,
+            'scrapers': db_task.scrapers,
+            'area_codes': db_task.areas,
+            'max_properties': db_task.max_properties,
+            'started_at': db_task.started_at.isoformat() if db_task.started_at else None,
+            'completed_at': db_task.completed_at.isoformat() if db_task.completed_at else None,
+            'progress': progress,
+            'errors': [
+                error['error'] if isinstance(error, dict) and 'error' in error else str(error)
+                for error in (db_task.error_logs or [])
+            ],
+            'logs': db_task.logs or [],
+            'error_logs': db_task.error_logs or [],
+            'created_at': db_task.created_at.isoformat() if db_task.created_at else None,
+            'statistics': {
+                'total_processed': db_task.total_processed,
+                'total_new': db_task.total_new,
+                'total_updated': db_task.total_updated,
+                'total_errors': db_task.total_errors,
+                'elapsed_time': db_task.elapsed_time
+            },
+            'force_detail_fetch': db_task.force_detail_fetch
+        }
+    except Exception as e:
+        logger.error(f"Error fetching task {task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/scraping/task/{task_id}/logs")
@@ -2087,6 +2245,250 @@ def get_property_merge_history(
         })
     
     return {"histories": result, "total": len(result)}
+
+
+# 並列スクレイピング管理インスタンス
+parallel_manager = ParallelScrapingManager() if PARALLEL_SCRAPING_ENABLED else None
+
+
+class ParallelScrapingRequest(BaseModel):
+    """並列スクレイピングリクエスト"""
+    scrapers: List[str]
+    area_codes: List[str]
+    max_properties: int = 100
+    force_detail_fetch: bool = False
+
+
+@router.post("/scraping/start-parallel")
+def start_parallel_scraping(
+    request: ParallelScrapingRequest,
+    background_tasks: BackgroundTasks = BackgroundTasks()
+):
+    """並列スクレイピングを開始"""
+    if not PARALLEL_SCRAPING_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="並列スクレイピング機能は現在利用できません。Dockerコンテナを再起動してください。"
+        )
+    
+    task_id = f"parallel_{uuid.uuid4().hex[:8]}"
+    
+    # エリアコードから区名に変換
+    code_to_area = {v: k for k, v in AREA_CODES.items()}
+    areas = [code_to_area.get(code, code) for code in request.area_codes]
+    
+    # タスク情報を登録（並列タスクはparallel_managerでのみ管理）
+    # scraping_tasksには追加しない
+    task_info = {
+        "task_id": task_id,
+        "type": "parallel",
+        "status": "running",
+        "scrapers": request.scrapers,
+        "area_codes": request.area_codes,
+        "areas": areas,
+        "max_properties": request.max_properties,
+            "force_detail_fetch": request.force_detail_fetch,
+            "started_at": datetime.now().isoformat(),  # started_atを追加
+            "created_at": datetime.now().isoformat(),
+            "completed_at": None,
+            "progress": {},
+            "errors": [],
+            "logs": []
+        }
+    
+    # バックグラウンドで並列実行
+    def run_parallel_task():
+        try:
+            
+            # 並列スクレイピングを実行（parallel_managerが状態を管理）
+            result = parallel_manager.run_parallel(
+                task_id=task_id,
+                areas=areas,
+                scrapers=request.scrapers,
+                max_properties=request.max_properties,
+                force_detail_fetch=request.force_detail_fetch
+            )
+            
+        except Exception as e:
+            logger.error(f"並列スクレイピングエラー: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # ThreadPoolExecutorで実行
+    future = executor.submit(run_parallel_task)
+    
+    # 通常のタスク形式に合わせたレスポンスを返す
+    return {
+        "task_id": task_id,
+        "status": "running",
+        "scrapers": request.scrapers,
+        "area_codes": request.area_codes,
+        "areas": areas,
+        "max_properties": request.max_properties,
+        "started_at": datetime.now().isoformat(),
+        "completed_at": None,
+        "progress": {},
+        "errors": [],
+        "message": "並列スクレイピングを開始しました"
+    }
+
+
+@router.get("/scraping/parallel-status/{task_id}")
+def get_parallel_scraping_status(task_id: str):
+    """並列スクレイピングのステータスを取得"""
+    if not PARALLEL_SCRAPING_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="並列スクレイピング機能は現在利用できません。"
+        )
+    
+    # データベースから直接タスク情報を取得
+    from backend.app.database import SessionLocal
+    from backend.app.models_scraping_task import ScrapingTask, ScrapingTaskProgress
+    
+    db = SessionLocal()
+    try:
+        task = db.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
+        
+        if task:
+            # 進捗情報を取得
+            progress_records = db.query(ScrapingTaskProgress).filter(
+                ScrapingTaskProgress.task_id == task_id
+            ).all()
+            
+            # 進捗情報を辞書形式に変換
+            progress = {}
+            for p in progress_records:
+                key = f"{p.scraper}_{p.area}"
+                progress[key] = p.to_dict()
+            
+            # レスポンスデータを構築
+            response_data = {
+                'task_id': task.task_id,
+                'type': 'parallel',
+                'status': task.status,
+                'scrapers': task.scrapers,
+                'area_codes': task.areas,
+                'max_properties': task.max_properties,
+                'started_at': task.started_at.isoformat() if task.started_at else None,
+                'completed_at': task.completed_at.isoformat() if task.completed_at else None,
+                'progress': progress,
+                'errors': [
+                    error['error'] if isinstance(error, dict) and 'error' in error else str(error)
+                    for error in (task.error_logs or [])
+                ],
+                'logs': [],
+                'error_logs': [],
+                'created_at': task.created_at.isoformat() if task.created_at else None,
+                'statistics': {
+                    'total_processed': task.total_processed,
+                    'total_new': task.total_new,
+                    'total_updated': task.total_updated,
+                    'total_errors': task.total_errors,
+                    'elapsed_time': task.elapsed_time
+                },
+                'force_detail_fetch': task.force_detail_fetch
+            }
+            
+            return response_data
+        else:
+            raise HTTPException(status_code=404, detail="タスクが見つかりません")
+    finally:
+        db.close()
+
+
+@router.post("/scraping/pause-parallel/{task_id}")
+def pause_parallel_scraping(task_id: str):
+    """並列スクレイピングを一時停止"""
+    if not PARALLEL_SCRAPING_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="並列スクレイピング機能は現在利用できません。"
+        )
+    
+    try:
+        # parallel_managerのDB版メソッドを使用
+        result = parallel_manager.pause_task(task_id)
+        
+        return {
+            "task_id": task_id,
+            "message": "タスクを一時停止しました"
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/scraping/resume-parallel/{task_id}")
+def resume_parallel_scraping(task_id: str):
+    """並列スクレイピングを再開"""
+    if not PARALLEL_SCRAPING_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="並列スクレイピング機能は現在利用できません。"
+        )
+    
+    try:
+        # parallel_managerのDB版メソッドを使用
+        result = parallel_manager.resume_task(task_id)
+        
+        return {
+            "task_id": task_id,
+            "message": "タスクを再開しました"
+        }
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/scraping/cancel-parallel/{task_id}")
+def cancel_parallel_scraping(task_id: str):
+    """並列スクレイピングをキャンセル"""
+    if not PARALLEL_SCRAPING_ENABLED:
+        raise HTTPException(
+            status_code=503,
+            detail="並列スクレイピング機能は現在利用できません。"
+        )
+    
+    parallel_manager.cancel_task(task_id)
+    
+    return {
+        "task_id": task_id,
+        "message": "タスクをキャンセルしました"
+    }
+
+
+@router.delete("/scraping/tasks/{task_id}")
+def delete_scraping_task(
+    task_id: str,
+    db: Session = Depends(get_db)
+):
+    """完了またはキャンセルされたタスクを削除"""
+    # データベースからタスクを取得
+    task = db.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
+    
+    if not task:
+        raise HTTPException(status_code=404, detail="タスクが見つかりません")
+    
+    # completedまたはcancelledのタスクのみ削除可能
+    if task.status not in ["completed", "cancelled", "error"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"タスクのステータスが'{task.status}'のため削除できません。completedまたはcancelledのタスクのみ削除可能です。"
+        )
+    
+    try:
+        # 関連する進捗情報も削除
+        db.query(ScrapingTaskProgress).filter(
+            ScrapingTaskProgress.task_id == task_id
+        ).delete()
+        
+        # タスク本体を削除
+        db.delete(task)
+        db.commit()
+        
+        return {"message": f"タスク {task_id} を削除しました"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"タスクの削除に失敗しました: {str(e)}")
 
 
 @router.post("/revert-building-merge/{history_id}")
@@ -2579,3 +2981,85 @@ def update_sold_property_prices(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/scraping/check-stalled-tasks")
+def check_stalled_tasks(
+    threshold_minutes: int = 10,
+    db: Session = Depends(get_db)
+):
+    """停止したタスクを検出してエラーステータスに変更"""
+    from datetime import datetime, timedelta
+    from backend.app.config.scraping_config import STALLED_PAUSED_TASK_THRESHOLD_MINUTES
+    
+    now = datetime.now()
+    threshold = now - timedelta(minutes=threshold_minutes)
+    
+    # runningまたはpausedステータスのタスクを取得
+    active_tasks = db.query(ScrapingTask).filter(
+        ScrapingTask.status.in_(['running', 'paused'])
+    ).all()
+    
+    stalled_tasks = []
+    
+    for task in active_tasks:
+        # タスクの進捗を確認
+        latest_progress = db.query(ScrapingTaskProgress).filter(
+            ScrapingTaskProgress.task_id == task.task_id
+        ).order_by(
+            ScrapingTaskProgress.last_updated.desc()
+        ).first()
+        
+        if latest_progress:
+            # 最終更新時刻をチェック
+            if latest_progress.last_updated < threshold:
+                time_since_update = now - latest_progress.last_updated
+                minutes_since_update = time_since_update.total_seconds() / 60
+                
+                # pausedステータスの場合は、より長い時間待つ
+                if task.status == 'paused':
+                    # pausedの場合は設定値（デフォルト30分）待つ
+                    if minutes_since_update > STALLED_PAUSED_TASK_THRESHOLD_MINUTES:
+                        stalled_tasks.append(task)
+                else:
+                    stalled_tasks.append(task)
+        else:
+            # 進捗レコードがない場合
+            if task.started_at and task.started_at < threshold:
+                stalled_tasks.append(task)
+    
+    # 停止したタスクをエラーステータスに変更
+    updated_count = 0
+    for task in stalled_tasks:
+        # タスクステータスを更新
+        task.status = 'error'
+        task.completed_at = now
+        
+        # エラーログを追加
+        error_logs = task.error_logs or []
+        error_logs.append({
+            'error': 'Task stalled - no progress updates',
+            'timestamp': now.isoformat(),
+            'details': f'No updates for more than {threshold_minutes} minutes'
+        })
+        task.error_logs = error_logs
+        
+        # 進捗ステータスも更新（completed, cancelled以外をerrorに）
+        db.query(ScrapingTaskProgress).filter(
+            ScrapingTaskProgress.task_id == task.task_id,
+            ScrapingTaskProgress.status.in_(['running', 'pending', 'paused'])
+        ).update({
+            'status': 'error',
+            'completed_at': now
+        })
+        
+        updated_count += 1
+    
+    if stalled_tasks:
+        db.commit()
+    
+    return {
+        "checked_tasks": len(active_tasks),
+        "stalled_tasks": updated_count,
+        "threshold_minutes": threshold_minutes,
+        "message": f"{updated_count}個のタスクをエラーステータスに変更しました"
+    }

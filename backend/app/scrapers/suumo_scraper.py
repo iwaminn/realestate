@@ -28,6 +28,8 @@ class SuumoScraper(BaseScraper):
     
     def __init__(self, force_detail_fetch=False, max_properties=None):
         super().__init__(SourceSite.SUUMO, force_detail_fetch, max_properties)
+        # 建物名取得エラーの履歴（メモリ内管理）
+        self._building_name_error_cache = {}  # {url: timestamp}
     
     def scrape_area(self, area: str, max_pages: int = None):
         """エリアの物件をスクレイピング
@@ -36,14 +38,8 @@ class SuumoScraper(BaseScraper):
             area: エリアコード（13101, 13102など）
             max_pages: 最大ページ数（使用しない）
         """
-        # エリアコードからローマ字に変換
-        from ..scrapers.area_config import get_area_romaji_from_code
-        area_romaji = get_area_romaji_from_code(area)
-        
-        # 内部的にはローマ字を使用
-        self._area_romaji = area_romaji
-        
         # 共通ロジックを使用（エリアコードを渡す）
+        # 注意: _area_romajiの設定は削除（スレッドセーフでないため）
         return self.common_scrape_area_logic(area)
     
     def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
@@ -75,10 +71,7 @@ class SuumoScraper(BaseScraper):
         # pc=100で100件表示を指定
         
         # エリアコードからローマ字を取得
-        # 既にローマ字の場合（_area_romajiが設定されている場合）はそのまま使用
-        if hasattr(self, '_area_romaji'):
-            area_romaji = self._area_romaji
-        elif area.isdigit() and len(area) == 5:
+        if area.isdigit() and len(area) == 5:
             # エリアコードの場合はローマ字に変換
             from ..scrapers.area_config import get_area_romaji_from_code
             area_romaji = get_area_romaji_from_code(area)
@@ -250,7 +243,6 @@ class SuumoScraper(BaseScraper):
                         
                         # 所在階/構造・階建（複合フィールド - フォールバック用）
                         elif '所在階' in label and '構造' in label and 'floor_number' not in property_data:
-                            print(f"    [DEBUG] 所在階/構造・階建フィールド発見: {label} = {value}")
                             # 「4階/SRC9階建一部RC」のようなパターンから所在階と総階数を抽出
                             floor_pattern = re.search(r'^(\d+)階/', value)
                             if floor_pattern:
@@ -294,7 +286,6 @@ class SuumoScraper(BaseScraper):
                         
                         # 建物の総階数を取得（別形式のフィールドから）
                         elif '構造' in label and '階建' in label and '所在階' not in label and 'total_floors' not in detail_info:
-                            print(f"    [DEBUG] 構造・階建フィールド発見（別形式）: {label} = {value}")
                             # スラッシュで分割してからパターンマッチ
                             parts = value.split('/')
                             structure_part = parts[-1] if len(parts) > 1 else value
@@ -327,6 +318,7 @@ class SuumoScraper(BaseScraper):
                         # 物件名（建物名）を取得
                         if '物件名' in label:
                             property_data['building_name'] = value
+                            property_data['building_name_source'] = 'table'  # 取得元を記録
                             print(f"    物件名: {property_data['building_name']}")
                         
                         # 部屋番号を取得
@@ -336,11 +328,9 @@ class SuumoScraper(BaseScraper):
                         
                         # バルコニー面積
                         if 'バルコニー' in label or 'バルコニー' in value or ('その他面積' in label):
-                            print(f"    [DEBUG] バルコニー関連フィールド発見: {label} = {value}")
                             # データ正規化フレームワークを使用して面積を抽出
                             balcony_area = extract_area(value)
                             if balcony_area:
-                                print(f"    [DEBUG] バルコニー面積を抽出: {balcony_area}㎡")
                                 property_data['balcony_area'] = balcony_area
                                 print(f"    バルコニー面積: {balcony_area}㎡")
                         
@@ -572,9 +562,58 @@ class SuumoScraper(BaseScraper):
                 property_data['parking_info'] = detail_info['parking_info']
             
             # タイトルと説明文
-            title_elem = soup.select_one('h1, .property-title')
+            title_elem = soup.select_one('h1, .property-title, h2.section_h1-header-title')
             if title_elem:
                 property_data['title'] = title_elem.get_text(strip=True)
+                
+                # 建物名が取得できていない場合、タイトルから抽出を試みる
+                if 'building_name' not in property_data and property_data.get('title'):
+                    # タイトルから建物名を抽出する
+                    # 例: "パークリュクス御茶ノ水 7階" -> "パークリュクス御茶ノ水"
+                    title_text = property_data['title']
+                    # 階数情報を除去
+                    building_name_match = re.match(r'^([^0-9]+?)(?:\s*\d+階)?(?:\s|$)', title_text)
+                    if building_name_match:
+                        building_name = building_name_match.group(1).strip()
+                        # 一般的な接尾辞を除去
+                        for suffix in ['の物件詳細', 'の詳細', '物件詳細', '詳細']:
+                            if building_name.endswith(suffix):
+                                building_name = building_name[:-len(suffix)].strip()
+                        if building_name:
+                            # タイトルから取得した場合は警告を出して処理を中断
+                            # 初回のみエラーログを出力
+                            if not self._has_recent_building_name_error(url):
+                                self.logger.error(
+                                    f"建物名がテーブルから取得できませんでした。"
+                                    f"HTML構造が変更された可能性があります: {url}"
+                                )
+                                self._record_building_name_error(url)
+                                self._scraping_stats['building_name_missing_new'] += 1
+                            else:
+                                self.logger.debug(f"建物名取得エラー（既知）: {url}")
+                                
+                            print(f"    [ERROR] 物件名がテーブルから取得できませんでした")
+                            print(f"    [INFO] タイトルには「{building_name}」とありますが、信頼性が低いため使用しません")
+                            # 統計情報を更新
+                            self._scraping_stats['building_name_missing'] += 1
+                            # 詳細取得失敗として扱う
+                            return None
+            
+            # 建物名が全く取得できない場合も同様
+            if 'building_name' not in property_data:
+                # 初回のみエラーログを出力（過去24時間以内に同じURLでエラーが記録されていない場合）
+                if not self._has_recent_building_name_error(url):
+                    self.logger.error(f"建物名が取得できませんでした。HTML構造の確認が必要です: {url}")
+                    self._record_building_name_error(url)
+                    self._scraping_stats['building_name_missing_new'] += 1
+                else:
+                    self.logger.debug(f"建物名取得エラー（既知）: {url}")
+                    
+                print(f"    [ERROR] 物件名が取得できませんでした")
+                # 統計情報を更新
+                self._scraping_stats['building_name_missing'] = self._scraping_stats.get('building_name_missing', 0) + 1
+                # 詳細取得失敗として扱う
+                return None
             
             # 価格が取得できていない場合は、ページ全体から探す
             if 'price' not in property_data:
@@ -586,10 +625,49 @@ class SuumoScraper(BaseScraper):
                     print(f"    価格（ページ全体から）: {property_data['price']}万円")
             
             # 必須フィールドのチェック
+            missing_fields = []
+            
+            # 価格のチェック
+            if 'price' not in property_data:
+                missing_fields.append('price')
+            
+            # 専有面積のチェック（新規物件の場合は必須）
+            if 'area' not in property_data and not existing_listing:
+                missing_fields.append('area')
+                
+            # 間取りのチェック（新規物件の場合は必須）
+            if 'layout' not in property_data and not existing_listing:
+                missing_fields.append('layout')
+            
+            # エラーがある場合の処理
+            if missing_fields:
+                for field in missing_fields:
+                    # 基底クラスのメソッドを使用してエラーを記録
+                    self.record_field_extraction_error(field, url)
+                
+                print(f"    [ERROR] 必須フィールドが取得できませんでした: {', '.join(missing_fields)}")
+                return None
+            
+            # すべての必須フィールドが揃っている場合
             if 'price' in property_data:
+                # 建物名取得元の統計を更新
+                if property_data.get('building_name_source'):
+                    source = property_data['building_name_source']
+                    if source == 'table':
+                        self._scraping_stats['building_name_from_table'] += 1
+                    elif source == 'title':
+                        self._scraping_stats['building_name_from_title'] += 1
+                    elif source == 'fallback':
+                        self._scraping_stats['building_name_from_fallback'] += 1
+                    # property_dataから削除（DBに保存する必要はない）
+                    del property_data['building_name_source']
                 return property_data
             else:
-                self.logger.warning(f"Price not found for {url}")
+                # 価格が取得できない場合
+                # 基底クラスのメソッドを使用してエラーを記録
+                self.record_field_extraction_error('price', url)
+                
+                print(f"    [ERROR] 価格が取得できませんでした")
                 return None
             
         except (TaskPausedException, TaskCancelledException):
@@ -657,3 +735,42 @@ class SuumoScraper(BaseScraper):
         except Exception as e:
             print(f"    詳細ページ取得エラー: {e}")
             return False
+    
+    def _has_recent_building_name_error(self, url: str) -> bool:
+        """最近（24時間以内）に建物名取得エラーが記録されているかチェック"""
+        if url in self._building_name_error_cache:
+            error_time = self._building_name_error_cache[url]
+            hours_since_error = (datetime.now() - error_time).total_seconds() / 3600
+            # 24時間以内のエラーは既知として扱う
+            return hours_since_error < 24
+        return False
+    
+    def should_skip_due_to_building_name_error(self, url: str) -> bool:
+        """建物名取得エラーのためスキップすべきかチェック（一覧処理用）"""
+        return self._has_recent_building_name_error(url)
+    
+    def _record_building_name_error(self, url: str):
+        """建物名取得エラーを記録"""
+        self._building_name_error_cache[url] = datetime.now()
+        
+        # キャッシュサイズが大きくなりすぎないよう、古いエントリを削除
+        if len(self._building_name_error_cache) > 1000:
+            # 24時間以上前のエントリを削除
+            now = datetime.now()
+            old_urls = [
+                u for u, t in self._building_name_error_cache.items()
+                if (now - t).total_seconds() > 86400  # 24時間
+            ]
+            for u in old_urls:
+                del self._building_name_error_cache[u]
+    
+    
+    def has_critical_errors(self, url: str) -> bool:
+        """重要項目でエラーが発生している物件かチェック（後方互換性のため）"""
+        # 基底クラスのメソッドを使用
+        if self.has_critical_field_errors(url):
+            return True
+        # 後方互換性のため建物名エラーキャッシュもチェック
+        if self._has_recent_building_name_error(url):
+            return True
+        return False

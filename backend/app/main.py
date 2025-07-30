@@ -168,8 +168,6 @@ async def get_properties_v2(
 ):
     """物件一覧を取得（重複排除済み）"""
     
-    # デバッグ用ログ
-    print(f"[DEBUG] include_inactive parameter: {include_inactive}")
     
     # サブクエリ：各マスター物件の最新価格を取得
     price_query = db.query(
@@ -221,12 +219,10 @@ async def get_properties_v2(
     # フィルター条件
     # include_inactiveがFalseの場合は販売終了物件を除外
     if not include_inactive:
-        print(f"[DEBUG] Filtering out sold properties (sold_at IS NULL)")
         query = query.filter(MasterProperty.sold_at.is_(None))
         # また、アクティブな掲載がある物件のみに限定
         query = query.filter(price_subquery.c.master_property_id.isnot(None))
     else:
-        print(f"[DEBUG] Including sold properties")
         # 販売終了物件を含める場合でも、掲載情報が一つもない物件は除外
         # （sold_atがNULLかつ掲載情報がない物件は無効なデータ）
         query = query.filter(
@@ -279,7 +275,6 @@ async def get_properties_v2(
     
     # 総件数を取得
     total_count = query.count()
-    print(f"[DEBUG] Total count after filters: {total_count}")
     
     # ソート
     if sort_by == "price":
@@ -940,8 +935,6 @@ async def get_duplicate_buildings(
             # 制限に達したら終了
             if len(duplicates) >= limit:
                 break
-    
-    print(f"[DEBUG] Total buildings: {len(buildings_with_count)}, Total comparisons: {total_comparisons}")
     
     return {
         "duplicate_groups": duplicates,

@@ -1,5 +1,10 @@
 import axios from 'axios';
 
+// APIのベースURLを設定（開発環境）
+if (process.env.NODE_ENV === 'development') {
+  axios.defaults.baseURL = 'http://localhost:8000';
+}
+
 // Axiosのインターセプターを設定
 axios.interceptors.request.use(
   (config) => {

@@ -39,6 +39,12 @@ scrape: ## スクレイピングを実行
 scrape-suumo: ## SUUMOのみスクレイピング
 	docker-compose -f docker-compose.dev.yml exec backend poetry run python backend/scripts/run_scrapers.py --scraper suumo
 
+scrape-parallel: ## 並列スクレイピングを実行（全サイト・全エリア）
+	docker-compose -f docker-compose.dev.yml exec backend poetry run python backend/scripts/run_scrapers_parallel.py
+
+scrape-parallel-test: ## 並列スクレイピングのテスト実行（2サイト・2エリア）
+	docker-compose -f docker-compose.dev.yml exec backend poetry run python backend/scripts/test_parallel_scraping.py
+
 db-shell: ## PostgreSQLデータベースに接続
 	docker-compose -f docker-compose.dev.yml exec postgres psql -U realestate -d realestate_db
 

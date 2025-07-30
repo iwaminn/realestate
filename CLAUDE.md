@@ -57,6 +57,37 @@ realestate/
   - 新しいフィールドを追加した場合は、APIレスポンスに含めるか検討
   - フロントエンドの型定義ファイル (`types/property.ts`) も合わせて更新
 
+### 🚨 Dockerコンテナ再起動が必要な変更
+
+**以下の変更を行った場合は、必ずDockerコンテナを再起動すること！**
+
+1. **Pythonコードの変更**
+   - `backend/app/api/` 配下のAPIエンドポイント
+   - `backend/app/models.py` などのモデル定義
+   - `backend/app/scrapers/` 配下のスクレイパー
+   - `backend/scripts/` 配下のスクリプト
+
+2. **新しいPythonパッケージの追加**
+   - `pyproject.toml` への依存関係追加
+   - 新しいモジュールのインポート
+
+3. **環境変数の変更**
+   - `.env` ファイルの更新
+
+#### 再起動コマンド：
+```bash
+# バックエンドのみ再起動
+docker restart realestate-backend
+
+# 全コンテナ再起動
+docker-compose restart
+
+# または
+make restart
+```
+
+**注意**: コンテナを再起動しないと、変更が反映されずに古いコードが実行され続けます！
+
 ### 🚨 base_scraper.py 変更時の重要な注意事項
 
 **`backend/app/scrapers/base_scraper.py` は全てのスクレイパーの基底クラスです。このファイルへの変更は、以下のすべてのスクレイパーに影響します：**
@@ -113,6 +144,10 @@ psql -U realestate -d realestate
 - 建物別物件一覧機能
 - 価格履歴グラフ表示
 - データベース名を`realestate`に統一
+- **並列スクレイピングのDB版完全移行（2025年7月）**
+  - タスク情報・進捗はすべてデータベースで管理
+  - ファイルベースの旧実装は削除済み
+  - 直列実行モードを削除、常に並列実行を使用
 
 ## デプロイ・保守
 
@@ -266,6 +301,25 @@ docker compose exec backend poetry run python backend/scripts/init_v2_schema.py
 - 楽待: ユーザー要望により除外
 
 詳細は `docs/ACTIVE_SCRAPERS.md` を参照してください。
+
+### 並列スクレイピング機能（2025年1月追加）
+
+異なるサイトを並列で実行し、スクレイピング時間を大幅に短縮：
+
+```bash
+# 並列実行（全サイト・全エリア）
+make scrape-parallel
+
+# テスト実行（2サイト・2エリア）
+make scrape-parallel-test
+```
+
+**特徴**：
+- 異なるサイト（SUUMO、LIFULL HOME'S等）は並列実行
+- 同一サイトの異なるエリアは直列実行（レート制限遵守）
+- 約5倍の高速化を実現（230分→46分）
+- 各スクレイパーごとの一時停止・再開・キャンセル機能
+- スレッドセーフな進捗管理とデータベース接続
 
 ### スマートスクレイピング機能（2025年1月改訂）
 

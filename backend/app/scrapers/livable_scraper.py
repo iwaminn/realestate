@@ -35,13 +35,41 @@ class LivableScraper(BaseScraper):
     
     def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
         """個別の物件を処理"""
+        # 一覧ページの価格を保存（価格不一致チェック用）
+        list_page_price = property_data.get('price')
+        
         # 共通の詳細チェック処理を使用
-        return self.process_property_with_detail_check(
+        result = self.process_property_with_detail_check(
             property_data=property_data,
             existing_listing=existing_listing,
             parse_detail_func=self.parse_property_detail,
             save_property_func=self._save_property_after_detail
         )
+        
+        # 詳細ページ取得後の価格不一致チェック
+        if result and property_data.get('detail_fetched') and list_page_price is not None:
+            detail_page_price = property_data.get('price')
+            site_id = property_data.get('site_property_id')
+            
+            if detail_page_price is not None and list_page_price != detail_page_price and site_id:
+                # 価格不一致を検出
+                price_diff = abs(list_page_price - detail_page_price) / list_page_price if list_page_price > 0 else 0
+                self.logger.warning(
+                    f"東急リバブル価格不一致 - ID: {site_id}, "
+                    f"一覧: {list_page_price}万円, 詳細: {detail_page_price}万円 "
+                    f"(差: {price_diff*100:.1f}%)"
+                )
+                
+                # 価格不一致を記録
+                self._record_price_mismatch(
+                    site_id,
+                    property_data['url'],
+                    list_page_price,
+                    detail_page_price,
+                    retry_days=7
+                )
+        
+        return result
     
     def get_search_url(self, area: str, page: int = 1) -> str:
         """東急リバブルの検索URLを生成"""
@@ -85,6 +113,10 @@ class LivableScraper(BaseScraper):
                 property_data['url'] = urljoin(self.BASE_URL, href)
                 # URLから物件IDを抽出
                 property_data['site_property_id'] = self.extract_property_id(href)
+                
+                # デバッグ: 特定物件のリンク情報
+                if property_data['site_property_id'] in ['C13252J13', 'C13249B30']:
+                    self.logger.info(f"DEBUG: 一覧ページItem#{i} - ID: {property_data['site_property_id']}, URL: {property_data['url']}")
             
             # 新着・更新マークを検出
             new_tag = item.select_one('.a-tag--new-date')
@@ -96,10 +128,44 @@ class LivableScraper(BaseScraper):
                 price_text = price_elem.get_text(strip=True)
                 # DataNormalizerを使用して価格を解析
                 property_data['price'] = extract_price(price_text)
+                
+                # デバッグ: 特定物件の価格取得
+                if property_data.get('site_property_id') in ['C13252J13', 'C13249B30']:
+                    # 価格要素の内部HTMLも確認
+                    self.logger.info(f"DEBUG: 一覧ページ価格取得 - ID: {property_data['site_property_id']}, "
+                                   f"price_text: '{price_text}', extracted: {property_data['price']}万円")
+                    # 価格要素の親要素も確認して、正しい物件の価格を取得しているか検証
+                    parent = price_elem.find_parent(class_='o-product-list__item')
+                    if parent:
+                        parent_link = parent.select_one('a[href*="/mansion/"], a[href*="/grantact/"]')
+                        if parent_link:
+                            parent_id = self.extract_property_id(parent_link.get('href', ''))
+                            if parent_id != property_data['site_property_id']:
+                                self.logger.warning(f"価格要素の親物件IDが異なる: 期待={property_data['site_property_id']}, 実際={parent_id}")
+            else:
+                # 価格要素が見つからない場合のデバッグ
+                if property_data.get('site_property_id') in ['C13252J13', 'C13249B30']:
+                    self.logger.info(f"DEBUG: 一覧ページ価格要素なし - ID: {property_data['site_property_id']}")
             
             # URLが取得できた物件を追加
             if property_data.get('url'):
                 properties.append(property_data)
+        
+        # デバッグ: 物件IDの重複チェック
+        property_ids = [p.get('site_property_id') for p in properties if p.get('site_property_id')]
+        id_counts = {}
+        for pid in property_ids:
+            id_counts[pid] = id_counts.get(pid, 0) + 1
+        
+        duplicates = {pid: count for pid, count in id_counts.items() if count > 1}
+        if duplicates:
+            self.logger.warning(f"一覧ページで重複物件ID検出: {duplicates}")
+        
+        # 特定物件の出現状況
+        for target_id in ['C13252J13', 'C13249B30']:
+            if target_id in property_ids:
+                count = id_counts.get(target_id, 0)
+                self.logger.info(f"DEBUG: 物件ID {target_id} の出現回数: {count}")
         
         return properties
     
@@ -109,7 +175,13 @@ class LivableScraper(BaseScraper):
         match = re.search(r'/mansion/([A-Z0-9]+)/?', url)
         if match:
             return match.group(1)
-        # パターン2: 最後の部分を取得（フォールバック）
+        
+        # パターン2: /grantact/detail/XXXXXXXX
+        match = re.search(r'/grantact/detail/([A-Z0-9]+)', url)
+        if match:
+            return match.group(1)
+            
+        # パターン3: 最後の部分を取得（フォールバック）
         parts = url.rstrip('/').split('/')
         return parts[-1] if parts else 'unknown'
     
@@ -137,13 +209,16 @@ class LivableScraper(BaseScraper):
                 return None
             
             # URLパターンによってHTML構造を判定
-            is_grantact = '/grantact/detail/' in url
+            is_grantact = '/grantact/detail/' in url or 'gt-www.livable.co.jp' in url
             
             if is_grantact:
                 # grantactパターンの場合はテーブル構造を確認
                 tables = soup.find_all('table')
                 if len(tables) < 1:  # 最低1つのテーブルがあればOK（以前は2つ以上必要だった）
-                    print(f"  → grantactページでテーブルが不足: {len(tables)}個")
+                    self.logger.warning(f"grantactページでテーブルが不足: {len(tables)}個 - {url}")
+                    # HTMLの内容を一部ログに出力して構造を確認
+                    html_preview = str(soup)[:500]
+                    self.logger.debug(f"HTML構造プレビュー: {html_preview}")
                     return None
             else:
                 # 通常パターンの場合は既存のセレクタを確認
@@ -164,7 +239,7 @@ class LivableScraper(BaseScraper):
                         break
                 
                 if not found:
-                    print(f"  → 必要な要素が見つかりません: {url}")
+                    self.logger.warning(f"必要な要素が見つかりません: {url}")
                     return None
             
             property_data = {
@@ -209,6 +284,8 @@ class LivableScraper(BaseScraper):
                 if price:
                     property_data['price'] = price
                     price_found = True
+                else:
+                    self.logger.warning(f"価格抽出失敗 - パターン1: '{price_text}' from {url}")
             
             # パターン2: テーブルから価格を探す
             if not price_found:
@@ -227,6 +304,12 @@ class LivableScraper(BaseScraper):
                                     property_data['price'] = int(price_match.group(1).replace(',', ''))
                                     price_found = True
                                     break
+            
+            # 価格が見つからなかった場合の警告
+            if not price_found:
+                self.logger.warning(f"価格情報を取得できませんでした: {url}")
+                # フィールドエラーを記録
+                self.record_field_extraction_error('price', url, log_error=True)
             
             # 物件詳細情報を抽出
             # m-status-tableクラスのテーブルから情報を取得
@@ -290,12 +373,24 @@ class LivableScraper(BaseScraper):
             if image_urls:
                 property_data['image_urls'] = image_urls
             
+            # 建物名が取得できなかった場合の警告
+            if not property_data.get('building_name'):
+                self.logger.warning(f"建物名を取得できませんでした: {url}")
+                # フィールドエラーを記録
+                self.record_field_extraction_error('building_name', url, log_error=True)
+            
             # 詳細情報を保存
             property_data['detail_info'] = detail_info
             
-            # detail_infoの重要な情報をproperty_dataにも含める（後方互換性のため）
+            # detail_infoの重要な情報をproperty_dataにも含める（後方互換性のため、数値型を確保）
             if 'total_floors' in detail_info:
-                property_data['total_floors'] = detail_info['total_floors']
+                # 文字列の場合は数値を抽出
+                if isinstance(detail_info['total_floors'], str):
+                    total_floors, _ = extract_total_floors(detail_info['total_floors'])
+                    if total_floors is not None:
+                        property_data['total_floors'] = total_floors
+                else:
+                    property_data['total_floors'] = detail_info['total_floors']
             if 'basement_floors' in detail_info:
                 property_data['basement_floors'] = detail_info['basement_floors']
             if 'total_units' in detail_info:
@@ -310,14 +405,14 @@ class LivableScraper(BaseScraper):
             return property_data
             
         except Exception as e:
-            print(f"  → 詳細ページ解析エラー: {e}")
+            self.logger.error(f"詳細ページ解析エラー: {url} - {str(e)}")
+            import traceback
+            self.logger.debug(f"トレースバック: {traceback.format_exc()}")
             return None
     
     def _extract_property_info(self, label: str, value: str, property_data: Dict[str, Any], detail_info: Dict[str, Any]):
         """ラベルと値から物件情報を抽出"""
         
-        # デバッグ出力
-        print(f"    [DEBUG] ラベル: '{label}' -> 値: '{value}'")
         
         # 建物名/物件名
         if '物件名' in label or '建物名' in label:
@@ -332,17 +427,14 @@ class LivableScraper(BaseScraper):
             floor_number = extract_floor_number(value)
             if floor_number is not None:
                 property_data['floor_number'] = floor_number
-                print(f"    [DEBUG] 所在階を抽出: {floor_number}階")
             
             # "8階／地上12階"のような形式から総階数も抽出
             if '地上' in value or '地下' in value:
                 total_floors, basement_floors = extract_total_floors(value)
                 if total_floors is not None:
                     detail_info['total_floors'] = total_floors
-                    print(f"    [DEBUG] 所在階数から総階数を抽出: {detail_info['total_floors']}階")
                 if basement_floors is not None and basement_floors > 0:
                     detail_info['basement_floors'] = basement_floors
-                    print(f"    [DEBUG] 所在階数から地下階数を抽出: {detail_info['basement_floors']}階")
         
         # 総階数
         elif '総階数' in label or '建物階数' in label:
@@ -368,7 +460,6 @@ class LivableScraper(BaseScraper):
             area_value = extract_area(value)
             if area_value:
                 property_data['area'] = area_value
-                print(f"    [DEBUG] 専有面積: {area_value}㎡")
         
         # バルコニー面積
         elif 'バルコニー' in label:
@@ -475,15 +566,31 @@ class LivableScraper(BaseScraper):
                 if h1:
                     property_data['building_name'] = h1.get_text(strip=True)
             
+            # 価格が取得できなかった場合の警告
+            if not property_data.get('price'):
+                self.logger.warning(f"[grantact] 価格情報を取得できませんでした: {property_data['url']}")
+                self.record_field_extraction_error('price', property_data['url'], log_error=True)
+            
+            # 建物名が取得できなかった場合の警告
+            if not property_data.get('building_name'):
+                self.logger.warning(f"[grantact] 建物名を取得できませんでした: {property_data['url']}")
+                self.record_field_extraction_error('building_name', property_data['url'], log_error=True)
+            
             # 不動産会社情報
             property_data['agency_name'] = '東急リバブル'
             
             # 詳細情報を保存
             property_data['detail_info'] = detail_info
             
-            # detail_infoの重要な情報をproperty_dataにも含める
+            # detail_infoの重要な情報をproperty_dataにも含める（数値型を確保）
             if 'total_floors' in detail_info:
-                property_data['total_floors'] = detail_info['total_floors']
+                # 文字列の場合は数値を抽出
+                if isinstance(detail_info['total_floors'], str):
+                    total_floors, _ = extract_total_floors(detail_info['total_floors'])
+                    if total_floors is not None:
+                        property_data['total_floors'] = total_floors
+                else:
+                    property_data['total_floors'] = detail_info['total_floors']
             if 'basement_floors' in detail_info:
                 property_data['basement_floors'] = detail_info['basement_floors']
             if 'total_units' in detail_info:
@@ -492,14 +599,13 @@ class LivableScraper(BaseScraper):
             return property_data
             
         except Exception as e:
-            print(f"  → grantact詳細ページ解析エラー: {e}")
+            self.logger.error(f"grantact詳細ページ解析エラー: {property_data['url']} - {str(e)}")
+            import traceback
+            self.logger.debug(f"トレースバック: {traceback.format_exc()}")
             return None
     
     def _extract_grantact_info(self, label: str, value: str, property_data: Dict[str, Any], detail_info: Dict[str, Any]):
         """grantactページから情報を抽出"""
-        
-        # デバッグ出力
-        print(f"    [DEBUG-GRANTACT] ラベル: '{label}' -> 値: '{value}'")
         
         # マンション名/建物名
         if 'マンション名' in label:
@@ -519,6 +625,10 @@ class LivableScraper(BaseScraper):
             price = extract_price(value)
             if price:
                 property_data['price'] = price
+                # デバッグ: 特定物件の価格
+                if property_data.get('site_property_id') in ['C13252J13', 'C13249B30']:
+                    self.logger.info(f"DEBUG: grantact詳細価格 - ID: {property_data['site_property_id']}, "
+                                   f"label: '{label}', value: '{value}', extracted: {price}")
         
         # 間取り
         elif label == '間取':
@@ -529,7 +639,6 @@ class LivableScraper(BaseScraper):
             area = extract_area(value)
             if area:
                 property_data['area'] = area
-                print(f"    [DEBUG-GRANTACT] 専有面積: {area}㎡")
         
         # バルコニー面積
         elif 'バルコニー面積' in label:

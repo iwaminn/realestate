@@ -40,6 +40,7 @@ import {
   Refresh as RefreshIcon,
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
 
@@ -50,15 +51,18 @@ interface Area {
 
 interface ScrapingTask {
   task_id: string;
+  type?: 'serial' | 'parallel';
   status: string;
   scrapers: string[];
   area_codes: string[];
   max_properties: number;
   started_at: string;
   completed_at: string | null;
+  created_at?: string;
   progress: {
     [key: string]: {
       scraper: string;
+      area?: string;  // 並列タスクで使用
       area_code: string;
       area_name: string;
       status: string;
@@ -69,16 +73,25 @@ interface ScrapingTask {
       refetched_unchanged?: number;  // 再取得（変更なし）
       other_updates?: number;  // その他更新
       skipped_listings: number;
+      // 並列タスクのフィールド
+      processed?: number;
+      new?: number;
+      updated?: number;
+      errors?: number;
       // 詳細統計
       properties_found?: number;
       properties_processed?: number;
       properties_attempted?: number;
       detail_fetched?: number;  // 詳細取得成功数
+      detail_skipped?: number;  // 詳細スキップ数
       detail_fetch_failed?: number;
       save_failed?: number;
       price_missing?: number;
       building_info_missing?: number;
       other_errors?: number;
+      // 時刻情報
+      start_time?: string;
+      end_time?: string;
       started_at: string;
       completed_at: string | null;
       error: string | null;
@@ -124,6 +137,7 @@ const AdminScraping: React.FC = () => {
   const [logTabValues, setLogTabValues] = useState<{ [taskId: string]: number }>({});
   const [loadingButtons, setLoadingButtons] = useState<{ [key: string]: boolean }>({});
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const scraperOptions = [
     { value: 'suumo', label: 'SUUMO' },
@@ -134,17 +148,32 @@ const AdminScraping: React.FC = () => {
   ];
 
   useEffect(() => {
-    fetchAreas();
-    fetchTasks();
+    const init = async () => {
+      try {
+        await fetchAreas();
+        await fetchTasks();
+      } catch (error) {
+        console.error('初期化エラー:', error);
+      }
+    };
+    init();
   }, []);
 
-  // 自動更新の制御
+  // 自動更新の制御（実行中のタスクがある場合のみ）
   useEffect(() => {
     if (autoRefreshEnabled) {
-      const interval = setInterval(fetchTasks, 3000);
-      return () => clearInterval(interval);
+      // 実行中のタスクがあるかチェック
+      const hasRunningTasks = tasks.some(task => 
+        task.status === 'running' || task.status === 'pending' || task.status === 'initializing'
+      );
+      
+      if (hasRunningTasks) {
+        // 実行中のタスクのみを更新（5秒ごと）
+        const interval = setInterval(() => fetchTasks(true), 5000);
+        return () => clearInterval(interval);
+      }
     }
-  }, [autoRefreshEnabled]);
+  }, [autoRefreshEnabled, tasks]);
 
   // ボタン操作中は自動更新を停止
   useEffect(() => {
@@ -156,24 +185,111 @@ const AdminScraping: React.FC = () => {
     try {
       const response = await axios.get('/api/admin/areas');
       setAreas(response.data.areas);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to fetch areas:', error);
+      if (error.response?.status === 401) {
+        setError('認証エラー: 管理画面にログインしてください');
+        window.location.href = '/admin/login';
+      } else {
+        setError(`エリア取得エラー: ${error.message}`);
+      }
     }
   };
 
-  const fetchTasks = async () => {
+  const fetchTasks = async (activeOnly: boolean = false, checkStalled: boolean = false) => {
     try {
-      const response = await axios.get('/api/admin/scraping/tasks');
-      console.log('Fetched tasks:', response.data); // デバッグ用ログ
-      // error_logsの存在を確認
-      response.data.forEach((task: any) => {
-        if (task.error_logs && task.error_logs.length > 0) {
-          console.log(`Task ${task.task_id} has ${task.error_logs.length} error logs`);
+      // 停止タスクチェック（リクエストされた場合のみ）
+      if (checkStalled) {
+        try {
+          const checkResponse = await axios.post('/api/admin/scraping/check-stalled-tasks', {
+            threshold_minutes: 10
+          });
+          if (checkResponse.data.stalled_tasks > 0) {
+            console.log(`${checkResponse.data.stalled_tasks}個の停止タスクを検出してエラーステータスに変更しました`);
+          }
+        } catch (error) {
+          console.error('停止タスクチェックエラー:', error);
         }
-      });
-      setTasks(response.data);
-    } catch (error) {
+      }
+      
+      // タスク一覧取得
+      const url = activeOnly 
+        ? '/api/admin/scraping/tasks?active_only=true'
+        : '/api/admin/scraping/tasks';
+      const response = await axios.get(url);
+      
+      // 実行中のタスクのみの場合
+      if (activeOnly) {
+        // 現在のタスクを取得
+        const currentTasks = tasks;
+        const activeTaskIds = new Set(response.data.map((t: ScrapingTask) => t.task_id));
+        
+        // 完了したタスクを検出（以前はrunning/pendingだったが、今回activeでない）
+        const completedTaskIds = currentTasks
+          .filter(task => 
+            (task.status === 'running' || task.status === 'pending') && 
+            !activeTaskIds.has(task.task_id)
+          )
+          .map(task => task.task_id);
+        
+        // 完了したタスクの最終状態を取得
+        const finalStates = await Promise.all(
+          completedTaskIds.map(async taskId => {
+            try {
+              const finalResponse = await axios.get(`/api/admin/scraping/tasks/${taskId}`);
+              return finalResponse.data;
+            } catch (error) {
+              console.error(`Failed to fetch final state for task ${taskId}:`, error);
+              return null;
+            }
+          })
+        );
+        
+        // タスクリストを更新
+        setTasks(prev => {
+          // 既存のタスクを更新
+          const updatedTasks = prev.map(existingTask => {
+            // アクティブなタスクは最新データで更新
+            const activeTask = response.data.find((t: ScrapingTask) => t.task_id === existingTask.task_id);
+            if (activeTask) {
+              return activeTask;
+            }
+            
+            // 完了したタスクは最終状態で更新
+            const finalState = finalStates.find(fs => fs && fs.task_id === existingTask.task_id);
+            if (finalState) {
+              return finalState;
+            }
+            
+            // その他はそのまま保持
+            return existingTask;
+          });
+          
+          // 新しいアクティブタスクを追加
+          const existingTaskIds = new Set(prev.map(t => t.task_id));
+          const newTasks = response.data.filter((t: ScrapingTask) => !existingTaskIds.has(t.task_id));
+          
+          return [...updatedTasks, ...newTasks];
+        });
+      } else {
+        // 初回または手動更新時は全タスクを取得
+        // 並列タスクの詳細情報は既にバックエンドで含まれているため、追加のAPIリクエストは不要
+        setTasks(response.data);
+      }
+    } catch (error: any) {
       console.error('Failed to fetch tasks:', error);
+      // エラーの詳細を設定
+      if (error.response?.status === 401) {
+        setError('認証エラー: 管理画面にログインしてください');
+        // ログインページにリダイレクト
+        window.location.href = '/admin/login';
+      } else if (error.response?.data?.detail) {
+        setError(`APIエラー: ${error.response.data.detail}`);
+      } else {
+        setError(`タスク取得エラー: ${error.message}`);
+      }
+      // エラー時は空の配列をセット
+      setTasks([]);
     }
   };
 
@@ -190,7 +306,8 @@ const AdminScraping: React.FC = () => {
 
     setLoading(true);
     try {
-      const response = await axios.post('/api/admin/scraping/start', {
+      // 常に並列実行を使用
+      const response = await axios.post('/api/admin/scraping/start-parallel', {
         scrapers: selectedScrapers,
         area_codes: selectedAreas,
         max_properties: maxProperties,
@@ -210,14 +327,11 @@ const AdminScraping: React.FC = () => {
   };
 
   const pauseTask = async (taskId: string) => {
-    console.log(`Pausing task ${taskId}...`);
-    console.log('Current axios headers:', axios.defaults.headers);
     setLoadingButtons(prev => ({ ...prev, [`pause-${taskId}`]: true }));
     try {
-      // APIコールを実行
-      console.log(`Making POST request to /api/admin/scraping/pause/${taskId}`);
-      const response = await axios.post(`/api/admin/scraping/pause/${taskId}`);
-      console.log('Pause response:', response.data);
+      // APIコールを実行（すべて並列動作）
+      const endpoint = `/api/admin/scraping/pause-parallel/${taskId}`;
+      await axios.post(endpoint);
       
       // タスク状態が更新されるまでポーリング
       let attempts = 0;
@@ -229,7 +343,6 @@ const AdminScraping: React.FC = () => {
         const updatedTask = response.data.find((t: ScrapingTask) => t.task_id === taskId);
         
         if (updatedTask && updatedTask.status === 'paused') {
-          console.log(`Task ${taskId} is now paused`);
           setTasks(response.data);
           break;
         }
@@ -242,11 +355,6 @@ const AdminScraping: React.FC = () => {
       }
     } catch (error: any) {
       console.error('Failed to pause task:', error);
-      console.error('Error details:', {
-        message: error.message,
-        response: error.response?.data,
-        status: error.response?.status
-      });
       alert(`タスクの一時停止に失敗しました: ${error.response?.data?.detail || error.message}`);
     } finally {
       setLoadingButtons(prev => ({ ...prev, [`pause-${taskId}`]: false }));
@@ -254,11 +362,11 @@ const AdminScraping: React.FC = () => {
   };
 
   const resumeTask = async (taskId: string) => {
-    console.log(`Resuming task ${taskId}...`);
     setLoadingButtons(prev => ({ ...prev, [`resume-${taskId}`]: true }));
     try {
-      // APIコールを実行
-      await axios.post(`/api/admin/scraping/resume/${taskId}`);
+      // APIコールを実行（すべて並列動作）
+      const endpoint = `/api/admin/scraping/resume-parallel/${taskId}`;
+      await axios.post(endpoint);
       
       // タスク状態が更新されるまでポーリング
       let attempts = 0;
@@ -270,7 +378,6 @@ const AdminScraping: React.FC = () => {
         const updatedTask = response.data.find((t: ScrapingTask) => t.task_id === taskId);
         
         if (updatedTask && updatedTask.status === 'running') {
-          console.log(`Task ${taskId} is now running`);
           setTasks(response.data);
           break;
         }
@@ -293,11 +400,11 @@ const AdminScraping: React.FC = () => {
     if (!confirm('タスクをキャンセルしてもよろしいですか？')) {
       return;
     }
-    console.log(`Cancelling task ${taskId}...`);
     setLoadingButtons(prev => ({ ...prev, [`cancel-${taskId}`]: true }));
     try {
-      const response = await axios.post(`/api/admin/scraping/cancel/${taskId}`);
-      console.log('Cancel response:', response.data);
+      // APIコールを実行（すべて並列動作）
+      const endpoint = `/api/admin/scraping/cancel-parallel/${taskId}`;
+      await axios.post(endpoint);
       
       // タスク状態が更新されるまでポーリング
       let attempts = 0;
@@ -309,7 +416,6 @@ const AdminScraping: React.FC = () => {
         const updatedTask = tasksResponse.data.find((t: ScrapingTask) => t.task_id === taskId);
         
         if (updatedTask && (updatedTask.status === 'cancelled' || updatedTask.status === 'completed')) {
-          console.log(`Task ${taskId} is now ${updatedTask.status}`);
           setTasks(tasksResponse.data);
           break;
         }
@@ -325,6 +431,28 @@ const AdminScraping: React.FC = () => {
       alert(`タスクのキャンセルに失敗しました: ${error.response?.data?.detail || error.message}`);
     } finally {
       setLoadingButtons(prev => ({ ...prev, [`cancel-${taskId}`]: false }));
+    }
+  };
+
+  const deleteTask = async (taskId: string) => {
+    if (!confirm('タスクを削除してもよろしいですか？')) {
+      return;
+    }
+    setLoadingButtons(prev => ({ ...prev, [`delete-${taskId}`]: true }));
+    try {
+      await axios.delete(`/api/admin/scraping/tasks/${taskId}`);
+      
+      // タスクリストからすぐに削除
+      setTasks(prev => prev.filter(t => t.task_id !== taskId));
+      
+      // 念のため最新のタスクリストを取得
+      await fetchTasks();
+      
+    } catch (error: any) {
+      console.error('Failed to delete task:', error);
+      alert(`タスクの削除に失敗しました: ${error.response?.data?.detail || error.message}`);
+    } finally {
+      setLoadingButtons(prev => ({ ...prev, [`delete-${taskId}`]: false }));
     }
   };
 
@@ -362,6 +490,19 @@ const AdminScraping: React.FC = () => {
   };
 
   const calculateProgress = (task: ScrapingTask) => {
+    // 並列タスクの場合、統計情報から進捗を計算
+    if (task.type === 'parallel' && (task as any).statistics) {
+      const stats = (task as any).statistics;
+      if (task.status === 'completed') return 100;
+      if (task.status === 'cancelled') return 100;
+      
+      // 処理済み数 / 予想総数で計算
+      const expectedTotal = task.scrapers.length * task.area_codes.length * task.max_properties;
+      const processed = stats.total_processed || 0;
+      return Math.min((processed / expectedTotal) * 100, 99);
+    }
+    
+    // 従来の直列タスクの計算
     const progressItems = Object.values(task.progress);
     if (progressItems.length === 0) return 0;
     
@@ -370,8 +511,9 @@ const AdminScraping: React.FC = () => {
     const totalProgress = progressItems.reduce((sum, progress) => {
       if (progress.status === 'completed') return sum + 100;
       if (progress.status === 'running' || progress.status === 'paused') {
-        // 常に処理上限数を分母として使用
-        const attemptedRatio = (progress.properties_attempted || 0) / task.max_properties;
+        // 処理予定数（発見数と上限数の小さい方）を分母として使用
+        const denominator = progress.properties_processed || progress.properties_found || task.max_properties;
+        const attemptedRatio = (progress.properties_attempted || 0) / denominator;
         return sum + Math.min(attemptedRatio * 100, 95);
       }
       return sum;
@@ -381,6 +523,21 @@ const AdminScraping: React.FC = () => {
   };
   
   const getTaskStats = (task: ScrapingTask) => {
+    // 並列タスクの場合、統計情報から取得
+    if (task.type === 'parallel' && (task as any).statistics) {
+      const stats = (task as any).statistics;
+      return {
+        total: stats.total_processed || 0,
+        new: stats.total_new || 0,
+        price_updated: stats.total_updated || 0,
+        other_updates: 0,
+        refetched_unchanged: 0,
+        skipped: 0,
+        save_failed: stats.total_errors || 0
+      };
+    }
+    
+    // 従来の直列タスクの計算
     const progressItems = Object.values(task.progress);
     return progressItems.reduce((stats, progress) => ({
       total: stats.total + (progress.properties_scraped || 0),
@@ -433,6 +590,12 @@ const AdminScraping: React.FC = () => {
       <Typography variant="h5" gutterBottom>
         スクレイピング管理
       </Typography>
+      
+      {error && (
+        <Alert severity="error" sx={{ mb: 2 }} onClose={() => setError(null)}>
+          {error}
+        </Alert>
+      )}
 
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>
@@ -530,9 +693,15 @@ const AdminScraping: React.FC = () => {
               freeSolo
               options={[100, 200, 300, 400, 500, 1000, 2000, 3000, 4000, 5000, 10000]}
               value={maxProperties}
+              getOptionLabel={(option) => option.toString()}
               onChange={(_, newValue) => {
                 if (typeof newValue === 'number') {
                   setMaxProperties(newValue);
+                } else if (typeof newValue === 'string') {
+                  const value = parseInt(newValue);
+                  if (!isNaN(value) && value > 0 && value <= 10000) {
+                    setMaxProperties(value);
+                  }
                 }
               }}
               onInputChange={(_, newInputValue) => {
@@ -577,9 +746,16 @@ const AdminScraping: React.FC = () => {
       <Paper sx={{ p: 3 }}>
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
           <Typography variant="h6">実行中のタスク</Typography>
-          <IconButton onClick={fetchTasks}>
-            <RefreshIcon />
-          </IconButton>
+          <Box display="flex" alignItems="center">
+            <Tooltip title="タスク一覧を更新（停止タスクも自動チェック）">
+              <IconButton 
+                onClick={() => fetchTasks(false, true)}
+                color="primary"
+              >
+                <RefreshIcon />
+              </IconButton>
+            </Tooltip>
+          </Box>
         </Box>
 
         {tasks.length === 0 ? (
@@ -600,7 +776,8 @@ const AdminScraping: React.FC = () => {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {tasks.map(task => (
+                {tasks.map(task => {
+                  return (
                   <React.Fragment key={task.task_id}>
                     <TableRow>
                       <TableCell>
@@ -613,31 +790,33 @@ const AdminScraping: React.FC = () => {
                       </TableCell>
                       <TableCell>
                         <Box>
-                          {task.area_codes.length > 2 ? (
+                          {task.area_codes && task.area_codes.length > 2 ? (
                             <Tooltip title={getAreaNames(task.area_codes)}>
-                              <Typography variant="body2">
+                              <span>
                                 {getAreaName(task.area_codes[0])} 他{task.area_codes.length - 1}件
-                              </Typography>
+                              </span>
                             </Tooltip>
                           ) : (
-                            <Typography variant="body2">
-                              {getAreaNames(task.area_codes)}
-                            </Typography>
+                            <span>
+                              {task.area_codes ? getAreaNames(task.area_codes) : 'N/A'}
+                            </span>
                           )}
                         </Box>
                       </TableCell>
                       <TableCell>
-                        {task.scrapers.map(s => (
+                        {task.scrapers ? task.scrapers.map(s => (
                           <Chip key={s} label={s} size="small" sx={{ mr: 0.5 }} />
-                        ))}
+                        )) : null}
                       </TableCell>
                       <TableCell>{task.max_properties}</TableCell>
                       <TableCell>
-                        <Chip
-                          label={task.status}
-                          color={getStatusColor(task.status)}
-                          size="small"
-                        />
+                        <Box display="flex" gap={0.5} alignItems="center">
+                          <Chip
+                            label={task.status}
+                            color={getStatusColor(task.status)}
+                            size="small"
+                          />
+                        </Box>
                       </TableCell>
                       <TableCell sx={{ minWidth: 200 }}>
                         <Box>
@@ -651,14 +830,12 @@ const AdminScraping: React.FC = () => {
                               {Math.round(calculateProgress(task))}%
                             </Typography>
                           </Box>
-                          <Box display="flex" gap={1}>
+                          <Box display="flex" gap={1} flexWrap="wrap">
                             {(() => {
                               const stats = getTaskStats(task);
+                              
                               return (
                                 <>
-                                  <Typography variant="caption" color="text.secondary">
-                                    詳細取得: {stats.total}
-                                  </Typography>
                                   <Typography variant="caption" color="success.main">
                                     新規: {stats.new}
                                   </Typography>
@@ -683,7 +860,9 @@ const AdminScraping: React.FC = () => {
                         </Box>
                       </TableCell>
                       <TableCell>
-                        {new Date(task.started_at).toLocaleString('ja-JP')}
+                        {task.started_at ? new Date(task.started_at).toLocaleString('ja-JP') : 
+                         task.created_at ? new Date(task.created_at).toLocaleString('ja-JP') :
+                         'N/A'}
                       </TableCell>
                       <TableCell align="center">
                         {task.status === 'running' && (
@@ -752,6 +931,28 @@ const AdminScraping: React.FC = () => {
                             </Tooltip>
                           </>
                         )}
+                        {(task.status === 'completed' || task.status === 'cancelled' || task.status === 'error') && (
+                          <Tooltip title="削除">
+                            <span>
+                              <IconButton
+                                size="small"
+                                color="error"
+                                onClick={() => deleteTask(task.task_id)}
+                                disabled={loadingButtons[`delete-${task.task_id}`]}
+                                sx={{ 
+                                  '&:hover': { backgroundColor: 'action.hover' },
+                                  transition: 'all 0.3s'
+                                }}
+                              >
+                                {loadingButtons[`delete-${task.task_id}`] ? (
+                                  <CircularProgress size={20} />
+                                ) : (
+                                  <DeleteIcon />
+                                )}
+                              </IconButton>
+                            </span>
+                          </Tooltip>
+                        )}
                       </TableCell>
                     </TableRow>
                     
@@ -774,12 +975,27 @@ const AdminScraping: React.FC = () => {
                             
                             {(logTabValues[task.task_id] || 0) === 0 && (
                               <Grid container spacing={2}>
-                              {Object.entries(task.progress).map(([key, progress]) => (
+                              {(() => {
+                                if (!task.progress) {
+                                  return <Typography>進捗情報がありません</Typography>;
+                                }
+                                // スクレイパーの順序を保持するため、task.scrapersの順序でソート
+                                const sortedProgress = Object.entries(task.progress).sort(([keyA], [keyB]) => {
+                                  const scraperA = keyA.split('_')[0];
+                                  const scraperB = keyB.split('_')[0];
+                                  const indexA = task.scrapers.indexOf(scraperA);
+                                  const indexB = task.scrapers.indexOf(scraperB);
+                                  // scrapers配列の順序でソート
+                                  if (indexA !== indexB) return indexA - indexB;
+                                  // 同じスクレイパーの場合はエリアでソート
+                                  return keyA.localeCompare(keyB);
+                                });
+                                return sortedProgress.map(([key, progress]) => (
                                 <Grid item xs={12} md={4} key={key}>
                                   <Paper variant="outlined" sx={{ p: 2 }}>
-                                    <Typography variant="subtitle2" gutterBottom>
-                                      {progress.scraper} - {progress.area_name}
-                                    </Typography>
+                                    <Box component="div" fontWeight="medium" fontSize="0.875rem" gutterBottom>
+                                      {progress.scraper || 'N/A'} - {progress.area || progress.area_name || 'N/A'}
+                                    </Box>
                                     <List dense>
                                       <ListItem>
                                         <ListItemText
@@ -815,26 +1031,26 @@ const AdminScraping: React.FC = () => {
                                               primary="処理進捗"
                                               secondary={
                                                 <Box>
-                                                  <Typography variant="body2" color="text.secondary">
+                                                  <Box color="text.secondary">
                                                     一覧ページから発見: {progress.properties_found || 0}件
-                                                  </Typography>
-                                                  <Typography variant="body2" color="text.secondary">
-                                                    処理状況: {progress.properties_attempted || 0} / {progress.properties_found || 0} 件
-                                                    {(progress.properties_found || 0) > 0 && (
+                                                  </Box>
+                                                  <Box color="text.secondary">
+                                                    処理状況: {progress.properties_attempted || 0} / {progress.properties_processed || progress.properties_found || task.max_properties} 件
+                                                    {(progress.properties_processed || progress.properties_found || task.max_properties) > 0 && (
                                                       <span style={{ marginLeft: '8px', color: '#666' }}>
-                                                        ({Math.round(((progress.properties_attempted || 0) / (progress.properties_found || 0)) * 100)}%)
+                                                        ({Math.round(((progress.properties_attempted || 0) / (progress.properties_processed || progress.properties_found || task.max_properties)) * 100)}%)
                                                       </span>
                                                     )}
-                                                  </Typography>
-                                                  <Typography variant="body2" color="text.secondary">
+                                                  </Box>
+                                                  <Box color="text.secondary">
                                                     詳細取得成功: {progress.detail_fetched || 0}件
-                                                  </Typography>
-                                                  <Typography variant="body2" color="text.secondary">
-                                                    詳細スキップ: {progress.skipped_listings || 0}件
-                                                  </Typography>
-                                                  <Typography variant="body2" color="text.secondary">
+                                                  </Box>
+                                                  <Box color="text.secondary">
+                                                    詳細スキップ: {progress.detail_skipped || progress.skipped_listings || 0}件
+                                                  </Box>
+                                                  <Box color="text.secondary">
                                                     エラー: {(progress.detail_fetch_failed || 0) + (progress.save_failed || 0)}件
-                                                  </Typography>
+                                                  </Box>
                                                 </Box>
                                               }
                                             />
@@ -845,13 +1061,37 @@ const AdminScraping: React.FC = () => {
                                               secondary={
                                                 <Box>
                                                   <Box sx={{ pl: 2 }}>
-                                                    <Typography variant="body2" color="success.main">
-                                                      • 新規登録: {progress.new_listings || 0}件
-                                                    </Typography>
-                                                    <Typography variant="body2" color="info.main">
+                                                    <Box color="success.main">
+                                                      • 新規登録: {progress.new || progress.new_listings || 0}件
+                                                    </Box>
+                                                    <Box color="info.main">
                                                       • 価格更新: {progress.price_updated || 0}件
-                                                    </Typography>
-                                                    <Typography variant="body2" color="primary.main">
+                                                    </Box>
+                                                    <Box color="primary.main">
+                                                      • その他更新: {progress.other_updates || 0}件
+                                                    </Box>
+                                                    <Box color="text.secondary">
+                                                      • 再取得（変更なし）: {progress.refetched_unchanged || 0}件
+                                                    </Box>
+                                                  </Box>
+                                                </Box>
+                                              }
+                                            />
+                                          </ListItem>
+                                          {false && progress.new_listings !== undefined && (
+                                            <ListItem>
+                                              <ListItemText
+                                                primary="詳細取得した物件の内訳"
+                                                secondary={
+                                                  <Box>
+                                                    <Box sx={{ pl: 2 }}>
+                                                      <Typography variant="body2" color="success.main">
+                                                        • 新規登録: {progress.new_listings || 0}件
+                                                      </Typography>
+                                                      <Typography variant="body2" color="info.main">
+                                                        • 価格更新: {progress.price_updated || 0}件
+                                                      </Typography>
+                                                      <Typography variant="body2" color="primary.main">
                                                       • その他更新: {progress.other_updates || 0}件
                                                     </Typography>
                                                     <Typography variant="body2" color="text.secondary">
@@ -862,6 +1102,7 @@ const AdminScraping: React.FC = () => {
                                               }
                                             />
                                           </ListItem>
+                                          )}
                                           {((progress.detail_fetch_failed || 0) > 0 || 
                                             (progress.save_failed || 0) > 0 || 
                                             (progress.price_missing || 0) > 0 || 
@@ -934,10 +1175,33 @@ const AdminScraping: React.FC = () => {
                                           />
                                         </ListItem>
                                       )}
+                                      {/* 開始・終了時刻 */}
+                                      {(progress.start_time || progress.end_time) && (
+                                        <ListItem>
+                                          <ListItemText
+                                            primary="実行時間"
+                                            secondary={
+                                              <Box>
+                                                {progress.start_time && (
+                                                  <Typography variant="caption" color="text.secondary">
+                                                    開始: {new Date(progress.start_time).toLocaleString('ja-JP')}
+                                                  </Typography>
+                                                )}
+                                                {progress.end_time && (
+                                                  <Typography variant="caption" color="text.secondary">
+                                                    終了: {new Date(progress.end_time).toLocaleString('ja-JP')}
+                                                  </Typography>
+                                                )}
+                                              </Box>
+                                            }
+                                          />
+                                        </ListItem>
+                                      )}
                                     </List>
                                   </Paper>
                                 </Grid>
-                              ))}
+                              ));
+                              })()}
                               </Grid>
                             )}
                             
@@ -1059,7 +1323,11 @@ const AdminScraping: React.FC = () => {
                                   </Typography>
                                   <ul>
                                     {task.errors.map((error, index) => (
-                                      <li key={index}>{error}</li>
+                                      <li key={index}>
+                                        {typeof error === 'string' 
+                                          ? error 
+                                          : error.error || JSON.stringify(error)}
+                                      </li>
                                     ))}
                                   </ul>
                                 </Alert>
@@ -1070,7 +1338,7 @@ const AdminScraping: React.FC = () => {
                       </TableCell>
                     </TableRow>
                   </React.Fragment>
-                ))}
+                )})}
               </TableBody>
             </Table>
           </TableContainer>
