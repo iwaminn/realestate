@@ -96,15 +96,37 @@ def create_unified_price_timeline(price_records: List[Dict[str, Any]]) -> Dict[s
         
         prev_price = current_price
     
+    # 現在価格を計算（アクティブな掲載の最新価格から多数決）
+    current_prices = {}
+    for record in price_records:
+        if record.get('is_active', True) and record.get('price'):
+            source = record['source_site']
+            # 各ソースの最新価格を保持
+            if source not in current_prices or record['recorded_at'] > current_prices[source]['recorded_at']:
+                current_prices[source] = {
+                    'price': record['price'],
+                    'recorded_at': record['recorded_at']
+                }
+    
+    # 現在価格の多数決
+    if current_prices:
+        active_prices = [p['price'] for p in current_prices.values()]
+        price_counts = {p: active_prices.count(p) for p in set(active_prices)}
+        max_count = max(price_counts.values())
+        most_common_prices = [p for p, c in price_counts.items() if c == max_count]
+        current_price = min(most_common_prices)  # 同数の場合は最小値
+    else:
+        current_price = timeline[-1]['price'] if timeline else None
+
     return {
         "timeline": timeline,
         "price_changes": price_changes,
         "summary": {
             "initial_price": timeline[0]['price'] if timeline else None,
-            "current_price": timeline[-1]['price'] if timeline else None,
+            "current_price": current_price,
             "lowest_price": min(entry['price'] for entry in timeline) if timeline else None,
             "highest_price": max(entry['price'] for entry in timeline) if timeline else None,
-            "total_change": timeline[-1]['price'] - timeline[0]['price'] if len(timeline) >= 2 else 0,
+            "total_change": current_price - timeline[0]['price'] if timeline and current_price else 0,
             "discrepancy_count": sum(1 for entry in timeline if entry['has_discrepancy'])
         }
     }
