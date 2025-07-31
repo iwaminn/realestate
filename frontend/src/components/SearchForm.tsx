@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   Paper,
   Grid,
@@ -13,9 +13,11 @@ import {
   Autocomplete,
   CircularProgress,
   SelectChangeEvent,
+  Chip,
+  OutlinedInput,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
-import { SearchParams } from '../types/property';
+import { SearchParams, Area } from '../types/property';
 import { propertyApi } from '../api/propertyApi';
 import { debounce } from 'lodash';
 
@@ -31,15 +33,33 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
     max_price: initialValues?.max_price || undefined,
     min_area: initialValues?.min_area || undefined,
     max_area: initialValues?.max_area || undefined,
-    layout: initialValues?.layout || '',
+    layouts: initialValues?.layouts || [],
     building_name: initialValues?.building_name || '',
     max_building_age: initialValues?.max_building_age || undefined,
+    wards: initialValues?.wards || [],
   });
 
   // Autocomplete用の状態
   const [buildingOptions, setBuildingOptions] = useState<string[]>([]);
   const [buildingLoading, setBuildingLoading] = useState(false);
   const [buildingInputValue, setBuildingInputValue] = useState('');
+
+  // エリア一覧の状態
+  const [areas, setAreas] = useState<Area[]>([]);
+
+  // エリア一覧を取得
+  useEffect(() => {
+    const fetchAreas = async () => {
+      try {
+        const areaList = await propertyApi.getAreas();
+        console.log('Fetched areas:', areaList);
+        setAreas(areaList);
+      } catch (error) {
+        console.error('Failed to fetch areas:', error);
+      }
+    };
+    fetchAreas();
+  }, []);
 
   // 建物名サジェストAPIを呼び出す関数（デバウンス付き）
   const fetchBuildingSuggestions = useCallback(
@@ -71,23 +91,15 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
         max_price: initialValues.max_price || undefined,
         min_area: initialValues.min_area || undefined,
         max_area: initialValues.max_area || undefined,
-        layout: initialValues.layout || '',
+        layouts: initialValues.layouts || [],
         building_name: initialValues.building_name || '',
         max_building_age: initialValues.max_building_age || undefined,
+        wards: initialValues.wards || [],
       });
       setBuildingInputValue(initialValues.building_name || '');
     }
   }, [initialValues]);
 
-  const handleChange = (field: keyof SearchParams) => (
-    event: React.ChangeEvent<HTMLInputElement | { value: unknown }>
-  ) => {
-    const value = event.target.value;
-    setSearchParams({
-      ...searchParams,
-      [field]: value === '' ? undefined : value,
-    });
-  };
 
   const handleSelectChange = (field: keyof SearchParams) => (
     event: SelectChangeEvent<string | number>
@@ -96,6 +108,18 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
     setSearchParams({
       ...searchParams,
       [field]: value === '' ? undefined : value,
+    });
+  };
+
+  const handleMultiSelectChange = (field: keyof SearchParams) => (
+    event: SelectChangeEvent<string[]>
+  ) => {
+    const value = event.target.value;
+    // On autofill we get a string of comma separated values
+    const values = typeof value === 'string' ? value.split(',') : value;
+    setSearchParams({
+      ...searchParams,
+      [field]: values,
     });
   };
 
@@ -110,9 +134,10 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
       max_price: undefined,
       min_area: undefined,
       max_area: undefined,
-      layout: '',
+      layouts: [],
       building_name: '',
       max_building_age: undefined,
+      wards: [],
     });
     setBuildingInputValue('');
     setBuildingOptions([]);
@@ -172,67 +197,195 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
             />
           </Grid>
 
-          <Grid item xs={12} sm={6} md={3}>
-            <TextField
-              fullWidth
-              label="最低価格"
-              type="number"
-              value={searchParams.min_price || ''}
-              onChange={handleChange('min_price')}
-              InputProps={{
-                endAdornment: <InputAdornment position="end">万円</InputAdornment>,
-              }}
-            />
-          </Grid>
-
-          <Grid item xs={12} sm={6} md={3}>
-            <TextField
-              fullWidth
-              label="最高価格"
-              type="number"
-              value={searchParams.max_price || ''}
-              onChange={handleChange('max_price')}
-              InputProps={{
-                endAdornment: <InputAdornment position="end">万円</InputAdornment>,
-              }}
-            />
-          </Grid>
-
-          <Grid item xs={12} sm={6} md={3}>
-            <TextField
-              fullWidth
-              label="最低面積"
-              type="number"
-              value={searchParams.min_area || ''}
-              onChange={handleChange('min_area')}
-              InputProps={{
-                endAdornment: <InputAdornment position="end">㎡</InputAdornment>,
-              }}
-            />
-          </Grid>
-
-          <Grid item xs={12} sm={6} md={3}>
-            <TextField
-              fullWidth
-              label="最高面積"
-              type="number"
-              value={searchParams.max_area || ''}
-              onChange={handleChange('max_area')}
-              InputProps={{
-                endAdornment: <InputAdornment position="end">㎡</InputAdornment>,
-              }}
-            />
-          </Grid>
-
-          <Grid item xs={12} sm={6} md={3}>
+          <Grid item xs={12} sm={12} md={6}>
             <FormControl fullWidth>
-              <InputLabel>間取り</InputLabel>
+              <InputLabel id="area-multiple-chip-label">エリア</InputLabel>
               <Select
-                value={searchParams.layout || ''}
-                onChange={handleSelectChange('layout')}
-                label="間取り"
+                labelId="area-multiple-chip-label"
+                id="area-multiple-chip"
+                multiple
+                value={searchParams.wards || []}
+                onChange={handleMultiSelectChange('wards')}
+                input={<OutlinedInput id="select-multiple-chip" label="エリア" />}
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                    {selected.map((value) => (
+                      <Chip key={value} label={value} size="small" />
+                    ))}
+                  </Box>
+                )}
+                MenuProps={{
+                  PaperProps: {
+                    style: {
+                      maxHeight: 48 * 4.5 + 8,
+                      width: 250,
+                    },
+                  },
+                }}
               >
-                <MenuItem value="">すべて</MenuItem>
+                {areas.map((area) => (
+                  <MenuItem key={area.name} value={area.name}>
+                    {area.name} ({area.property_count}件)
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Grid>
+
+          <Grid item xs={12} sm={6} md={3}>
+            <Autocomplete
+              freeSolo
+              options={[1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 15000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000]}
+              value={searchParams.min_price || null}
+              onChange={(_, newValue) => {
+                setSearchParams({
+                  ...searchParams,
+                  min_price: typeof newValue === 'number' ? newValue : newValue ? parseInt(newValue) : undefined,
+                });
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  fullWidth
+                  label="最低価格"
+                  type="number"
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {params.InputProps.endAdornment}
+                        <InputAdornment position="end">万円</InputAdornment>
+                      </>
+                    ),
+                  }}
+                />
+              )}
+              getOptionLabel={(option) => option.toString()}
+            />
+          </Grid>
+
+          <Grid item xs={12} sm={6} md={3}>
+            <Autocomplete
+              freeSolo
+              options={[2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 15000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000]}
+              value={searchParams.max_price || null}
+              onChange={(_, newValue) => {
+                setSearchParams({
+                  ...searchParams,
+                  max_price: typeof newValue === 'number' ? newValue : newValue ? parseInt(newValue) : undefined,
+                });
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  fullWidth
+                  label="最高価格"
+                  type="number"
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {params.InputProps.endAdornment}
+                        <InputAdornment position="end">万円</InputAdornment>
+                      </>
+                    ),
+                  }}
+                />
+              )}
+              getOptionLabel={(option) => option.toString()}
+            />
+          </Grid>
+
+          <Grid item xs={12} sm={6} md={3}>
+            <Autocomplete
+              freeSolo
+              options={[30, 40, 50, 60, 70, 80, 90, 100, 120]}
+              value={searchParams.min_area || null}
+              onChange={(_, newValue) => {
+                setSearchParams({
+                  ...searchParams,
+                  min_area: typeof newValue === 'number' ? newValue : newValue ? parseFloat(newValue) : undefined,
+                });
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  fullWidth
+                  label="最低面積"
+                  type="number"
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {params.InputProps.endAdornment}
+                        <InputAdornment position="end">㎡</InputAdornment>
+                      </>
+                    ),
+                  }}
+                />
+              )}
+              getOptionLabel={(option) => option.toString()}
+            />
+          </Grid>
+
+          <Grid item xs={12} sm={6} md={3}>
+            <Autocomplete
+              freeSolo
+              options={[40, 50, 60, 70, 80, 90, 100, 120, 150]}
+              value={searchParams.max_area || null}
+              onChange={(_, newValue) => {
+                setSearchParams({
+                  ...searchParams,
+                  max_area: typeof newValue === 'number' ? newValue : newValue ? parseFloat(newValue) : undefined,
+                });
+              }}
+              renderInput={(params) => (
+                <TextField
+                  {...params}
+                  fullWidth
+                  label="最高面積"
+                  type="number"
+                  InputProps={{
+                    ...params.InputProps,
+                    endAdornment: (
+                      <>
+                        {params.InputProps.endAdornment}
+                        <InputAdornment position="end">㎡</InputAdornment>
+                      </>
+                    ),
+                  }}
+                />
+              )}
+              getOptionLabel={(option) => option.toString()}
+            />
+          </Grid>
+
+          <Grid item xs={12} sm={6} md={6}>
+            <FormControl fullWidth>
+              <InputLabel id="layout-multiple-chip-label">間取り</InputLabel>
+              <Select
+                labelId="layout-multiple-chip-label"
+                id="layout-multiple-chip"
+                multiple
+                value={searchParams.layouts || []}
+                onChange={handleMultiSelectChange('layouts')}
+                input={<OutlinedInput id="select-multiple-layout-chip" label="間取り" />}
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                    {selected.map((value) => (
+                      <Chip key={value} label={value} size="small" />
+                    ))}
+                  </Box>
+                )}
+                MenuProps={{
+                  PaperProps: {
+                    style: {
+                      maxHeight: 48 * 4.5 + 8,
+                      width: 250,
+                    },
+                  },
+                }}
+              >
                 <MenuItem value="1R">1R</MenuItem>
                 <MenuItem value="1K">1K</MenuItem>
                 <MenuItem value="1DK">1DK</MenuItem>
@@ -243,7 +396,8 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                 <MenuItem value="3K">3K</MenuItem>
                 <MenuItem value="3DK">3DK</MenuItem>
                 <MenuItem value="3LDK">3LDK</MenuItem>
-                <MenuItem value="4LDK">4LDK以上</MenuItem>
+                <MenuItem value="4LDK">4LDK</MenuItem>
+                <MenuItem value="4LDK以上">4LDK以上</MenuItem>
               </Select>
             </FormControl>
           </Grid>

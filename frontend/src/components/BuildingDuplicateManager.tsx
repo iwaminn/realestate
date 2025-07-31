@@ -27,6 +27,7 @@ import {
   InputAdornment,
   Tooltip,
   Slider,
+  MenuItem,
 } from '@mui/material';
 import {
   Merge as MergeIcon,
@@ -35,6 +36,7 @@ import {
   Search as SearchIcon,
   Block as BlockIcon,
   History as HistoryIcon,
+  Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import { propertyApi } from '../api/propertyApi';
 
@@ -68,6 +70,7 @@ const BuildingDuplicateManager: React.FC = () => {
   const [selectedMasterId, setSelectedMasterId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [minSimilarity, setMinSimilarity] = useState(0.94); // 単独の「棟」がある場合も検出できるレベル
+  const [limit, setLimit] = useState(30); // 表示件数
   const [snackbar, setSnackbar] = useState({ 
     open: false, 
     message: '', 
@@ -79,12 +82,12 @@ const BuildingDuplicateManager: React.FC = () => {
     fetchDuplicateBuildings();
   }, []);
 
-  const fetchDuplicateBuildings = async (search?: string, similarity?: number) => {
+  const fetchDuplicateBuildings = async (search?: string, similarity?: number, displayLimit?: number) => {
     // console.log('Fetching duplicate buildings...');
     setLoading(true);
     try {
       const params: any = { 
-        limit: 30, // 初期表示件数を減らす
+        limit: displayLimit || limit,
         min_similarity: similarity || minSimilarity
       };
       if (search) {
@@ -106,7 +109,7 @@ const BuildingDuplicateManager: React.FC = () => {
   };
 
   const handleSearch = () => {
-    fetchDuplicateBuildings(searchQuery, minSimilarity);
+    fetchDuplicateBuildings(searchQuery, minSimilarity, limit);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -204,18 +207,14 @@ const BuildingDuplicateManager: React.FC = () => {
     return 'info';
   };
 
-  if (loading) {
-    return (
-      <Box display="flex" justifyContent="center" p={4}>
-        <CircularProgress />
-      </Box>
-    );
-  }
-
   return (
     <Box>
-      <Grid container spacing={2} sx={{ mb: 3 }}>
-        <Grid item xs={12} md={8}>
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Typography variant="h6" gutterBottom>
+          建物重複管理
+        </Typography>
+        <Grid container spacing={2} sx={{ mb: 3 }}>
+          <Grid item xs={12} md={6}>
           <TextField
             fullWidth
             placeholder="建物名で検索（例：白金ザスカイ）"
@@ -234,15 +233,16 @@ const BuildingDuplicateManager: React.FC = () => {
                     variant="contained" 
                     onClick={handleSearch}
                     disabled={loading}
+                    startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon />}
                   >
-                    検索
+                    {loading ? '読み込み中...' : '検索'}
                   </Button>
                 </InputAdornment>
               ),
             }}
           />
         </Grid>
-        <Grid item xs={12} md={4}>
+        <Grid item xs={12} md={3}>
           <Box sx={{ px: 2 }}>
             <Typography variant="body2" color="textSecondary" gutterBottom>
               類似度: {(minSimilarity * 100).toFixed(0)}%
@@ -250,7 +250,7 @@ const BuildingDuplicateManager: React.FC = () => {
             <Slider
               value={minSimilarity}
               onChange={(_, value) => setMinSimilarity(value as number)}
-              onChangeCommitted={() => fetchDuplicateBuildings(searchQuery, minSimilarity)}
+              onChangeCommitted={() => fetchDuplicateBuildings(searchQuery, minSimilarity, limit)}
               min={0.85}
               max={1.0}
               step={0.01}
@@ -265,28 +265,64 @@ const BuildingDuplicateManager: React.FC = () => {
             />
           </Box>
         </Grid>
+        <Grid item xs={12} md={3}>
+          <TextField
+            select
+            fullWidth
+            label="表示件数"
+            value={limit}
+            onChange={(e) => {
+              const newLimit = Number(e.target.value);
+              setLimit(newLimit);
+              fetchDuplicateBuildings(searchQuery, minSimilarity, newLimit);
+            }}
+          >
+            <MenuItem value={20}>20件</MenuItem>
+            <MenuItem value={30}>30件</MenuItem>
+            <MenuItem value={50}>50件</MenuItem>
+            <MenuItem value={100}>100件</MenuItem>
+          </TextField>
+        </Grid>
       </Grid>
+      </Paper>
 
-      <Alert severity="info" sx={{ mb: 2 }}>
-        {duplicateGroups.length}グループの重複候補が見つかりました。
-        各グループを展開して詳細を確認し、統合する建物を選択してください。
-      </Alert>
+      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Alert severity="info" sx={{ flex: 1, mr: 2 }}>
+          {duplicateGroups.length}グループの重複候補が見つかりました。
+          各グループを展開して詳細を確認し、統合する建物を選択してください。
+        </Alert>
+        <IconButton 
+          onClick={() => fetchDuplicateBuildings(searchQuery, minSimilarity, limit)}
+          disabled={loading}
+          color="primary"
+          sx={{ bgcolor: 'action.hover' }}
+        >
+          <Tooltip title="リロード">
+            {loading ? <CircularProgress size={24} /> : <RefreshIcon />}
+          </Tooltip>
+        </IconButton>
+      </Box>
 
-      <TableContainer component={Paper}>
-        <Table>
-          <TableHead>
-            <TableRow>
-              <TableCell width={50}></TableCell>
-              <TableCell>主建物名</TableCell>
-              <TableCell>住所</TableCell>
-              <TableCell align="center">階数</TableCell>
-              <TableCell align="center">物件数</TableCell>
-              <TableCell align="center">候補数</TableCell>
-              <TableCell align="center">操作</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {duplicateGroups.map((group, index) => (
+      {loading ? (
+        <Box display="flex" justifyContent="center" p={4}>
+          <CircularProgress />
+        </Box>
+      ) : (
+        <TableContainer component={Paper}>
+          <Table>
+            <TableHead>
+              <TableRow>
+                <TableCell width={50}></TableCell>
+                <TableCell>主建物名</TableCell>
+                <TableCell>住所</TableCell>
+                <TableCell align="center">階数</TableCell>
+                <TableCell align="center">物件数</TableCell>
+                <TableCell align="center">候補数</TableCell>
+                <TableCell align="center">操作</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {duplicateGroups.map((group, index) => (
               <React.Fragment key={`group-${group.primary.id}`}>
                 <TableRow>
                   <TableCell>
@@ -408,6 +444,7 @@ const BuildingDuplicateManager: React.FC = () => {
           </TableBody>
         </Table>
       </TableContainer>
+      )}
 
       <Dialog open={!!selectedGroup} onClose={() => setSelectedGroup(null)} maxWidth="md" fullWidth>
         <DialogTitle>

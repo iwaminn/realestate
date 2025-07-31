@@ -51,7 +51,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const checkAuth = async () => {
     try {
       // 管理APIにアクセスして認証を確認
-      await axios.get('/api/admin/areas');
+      await axios.get('/api/admin/areas', { timeout: 10000 }); // 10秒のタイムアウト
       setIsAuthenticated(true);
       const storedUsername = localStorage.getItem('adminUsername');
       setUsername(storedUsername);
@@ -63,6 +63,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         delete axios.defaults.headers.common['Authorization'];
         localStorage.removeItem('adminAuth');
         localStorage.removeItem('adminUsername');
+      } else if (error.code === 'ECONNABORTED') {
+        // タイムアウトエラーの場合は認証状態を維持
+        console.warn('Auth check timeout - maintaining current auth state');
       }
       // その他のエラー（ネットワークエラー等）は無視
       console.error('Auth check error:', error);

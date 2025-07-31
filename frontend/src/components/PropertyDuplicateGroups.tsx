@@ -32,6 +32,7 @@ import {
   Checkbox,
   Snackbar,
   TextField,
+  InputAdornment,
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -40,6 +41,8 @@ import {
   Info as InfoIcon,
   Block as BlockIcon,
   Check as CheckIcon,
+  Refresh as RefreshIcon,
+  Search as SearchIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
 
@@ -47,6 +50,7 @@ interface PropertyInGroup {
   id: number;
   room_number: string | null;
   area: number | null;
+  layout: string | null;
   direction: string | null;
   current_price: number | null;
   agency_names: string | null;
@@ -95,23 +99,56 @@ const PropertyDuplicateGroups: React.FC = () => {
   const [primaryProperty, setPrimaryProperty] = useState<number | null>(null);
   const [selectedProperties, setSelectedProperties] = useState<Set<number>>(new Set());
   const [merging, setMerging] = useState(false);
-  const [minSimilarity, setMinSimilarity] = useState(0.8);
+  const [minSimilarity, setMinSimilarity] = useState(0.85);
   const [limit, setLimit] = useState(50);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' as 'success' | 'error' });
+  const [currentOffset, setCurrentOffset] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
+  const [totalGroups, setTotalGroups] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     fetchGroups();
   }, [minSimilarity, limit]);
 
-  const fetchGroups = async () => {
+  const fetchGroups = async (search?: string, displayLimit?: number) => {
     setLoading(true);
+    setError(null);
+    
     try {
+      const params: any = { 
+        min_similarity: minSimilarity, 
+        limit: displayLimit || limit
+      };
+      if (search || searchQuery) {
+        params.building_name = search || searchQuery;
+      }
+      
       const response = await axios.get('/api/admin/duplicate-groups', {
-        params: { min_similarity: minSimilarity, limit }
+        params
       });
-      setGroups(response.data);
-    } catch (error) {
+      
+      console.log('API Response:', response.data);
+      
+      // 古い形式（配列）と新しい形式（オブジェクト）の両方に対応
+      if (Array.isArray(response.data)) {
+        setGroups(response.data);
+        setHasMore(false);
+        setTotalGroups(response.data.length);
+      } else {
+        setGroups(response.data.groups || []);
+        setHasMore(response.data.has_more || false);
+        setTotalGroups(response.data.total || 0);
+      }
+    } catch (error: any) {
       console.error('Failed to fetch duplicate groups:', error);
+      if (error.response?.status === 401) {
+        setError('認証エラー: 管理画面に再度ログインしてください');
+      } else {
+        setError('データの読み込みに失敗しました。ページを再読み込みしてください。');
+      }
+      setGroups([]);
     } finally {
       setLoading(false);
     }
@@ -204,22 +241,37 @@ const PropertyDuplicateGroups: React.FC = () => {
       });
       
       // グループを更新
+      let shouldFetchMore = false;
+      
       if (unselectedIds.length <= 1) {
         // 残りが1件以下の場合はグループごと削除
         setGroups(prev => prev.filter(g => g.group_id !== selectedGroup.group_id));
+        shouldFetchMore = true;
       } else {
         // 残りが2件以上の場合は選択された物件を除外してグループを更新
         setGroups(prev => prev.map(g => {
           if (g.group_id === selectedGroup.group_id) {
+            const remainingProperties = g.properties.filter(p => !selectedProperties.has(p.id));
+            // グループ内の物件が1件以下になった場合は削除
+            if (remainingProperties.length <= 1) {
+              shouldFetchMore = true;
+              return null;
+            }
             return {
               ...g,
-              properties: g.properties.filter(p => !selectedProperties.has(p.id)),
-              property_count: g.properties.filter(p => !selectedProperties.has(p.id)).length
+              properties: remainingProperties,
+              property_count: remainingProperties.length
             };
           }
           return g;
-        }));
+        }).filter(g => g !== null) as DuplicateGroup[]);
       }
+      
+      // 削除されたグループの数だけ追加データを取得
+      // TODO: 追加ロード機能を後で実装
+      // if (shouldFetchMore && hasMore && groups.length < limit) {
+      //   await fetchGroups(true);
+      // }
       
       setSelectedGroup(null);
       setPropertyDetails({});
@@ -268,22 +320,37 @@ const PropertyDuplicateGroups: React.FC = () => {
       });
       
       // グループから統合した物件を削除
+      let shouldFetchMore = false;
+      
       if (selectedProperties.size === selectedGroup.properties.length) {
         // 全物件を統合した場合はグループごと削除
         setGroups(prev => prev.filter(g => g.group_id !== selectedGroup.group_id));
+        shouldFetchMore = true;
       } else {
         // 一部の物件を統合した場合はグループを更新
         setGroups(prev => prev.map(g => {
           if (g.group_id === selectedGroup.group_id) {
+            const remainingProperties = g.properties.filter(p => !selectedProperties.has(p.id) || p.id === primaryProperty);
+            // グループ内の物件が1件以下になった場合は削除
+            if (remainingProperties.length <= 1) {
+              shouldFetchMore = true;
+              return null;
+            }
             return {
               ...g,
-              properties: g.properties.filter(p => !selectedProperties.has(p.id) || p.id === primaryProperty),
-              property_count: g.properties.filter(p => !selectedProperties.has(p.id) || p.id === primaryProperty).length
+              properties: remainingProperties,
+              property_count: remainingProperties.length
             };
           }
           return g;
-        }));
+        }).filter(g => g !== null) as DuplicateGroup[]);
       }
+      
+      // 削除されたグループの数だけ追加データを取得
+      // TODO: 追加ロード機能を後で実装
+      // if (shouldFetchMore && hasMore && groups.length < limit) {
+      //   await fetchGroups(true);
+      // }
       
       setSelectedGroup(null);
       setPropertyDetails({});
@@ -392,6 +459,10 @@ const PropertyDuplicateGroups: React.FC = () => {
               </Grid>
             )}
             <Grid item xs={6}>
+              <Typography variant="caption" color="text.secondary" display="block">間取り</Typography>
+              <Typography variant="body2" fontWeight="medium">{property.layout || detail?.layout || '-'}</Typography>
+            </Grid>
+            <Grid item xs={6}>
               <Typography variant="caption" color="text.secondary" display="block">面積</Typography>
               <Typography variant="body2" fontWeight="medium">{property.area}㎡</Typography>
             </Grid>
@@ -473,42 +544,79 @@ const PropertyDuplicateGroups: React.FC = () => {
         <Typography variant="h6" gutterBottom>
           物件重複グループ管理
         </Typography>
-        <Grid container spacing={3} alignItems="center">
+        <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={12} md={6}>
-            <Typography gutterBottom>類似度しきい値: {minSimilarity}</Typography>
-            <Slider
-              value={minSimilarity}
-              onChange={(_, value) => setMinSimilarity(value as number)}
-              min={0.5}
-              max={1}
-              step={0.05}
-              marks
-              valueLabelDisplay="auto"
+            <TextField
+              fullWidth
+              placeholder="建物名で検索（例：白金ザスカイ）"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              onKeyPress={(e) => {
+                if (e.key === 'Enter') {
+                  fetchGroups(searchQuery);
+                }
+              }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon />
+                  </InputAdornment>
+                ),
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <Button 
+                      variant="contained" 
+                      onClick={() => fetchGroups(searchQuery)}
+                      disabled={loading}
+                      startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <RefreshIcon />}
+                    >
+                      {loading ? '読み込み中...' : '検索'}
+                    </Button>
+                  </InputAdornment>
+                ),
+              }}
             />
           </Grid>
-          <Grid item xs={12} md={4}>
+          <Grid item xs={12} md={3}>
+            <Box sx={{ px: 2 }}>
+              <Typography variant="body2" color="textSecondary" gutterBottom>
+                類似度: {(minSimilarity * 100).toFixed(0)}%
+              </Typography>
+              <Slider
+                value={minSimilarity}
+                onChange={(_, value) => setMinSimilarity(value as number)}
+                onChangeCommitted={() => fetchGroups(searchQuery)}
+                min={0.5}
+                max={1.0}
+                step={0.05}
+                marks={[
+                  { value: 0.5, label: '50%' },
+                  { value: 0.7, label: '70%' },
+                  { value: 0.85, label: '85%' },
+                  { value: 1.0, label: '100%' },
+                ]}
+                valueLabelDisplay="auto"
+                valueLabelFormat={(value) => `${(value * 100).toFixed(0)}%`}
+              />
+            </Box>
+          </Grid>
+          <Grid item xs={12} md={3}>
             <TextField
               select
               fullWidth
               label="表示件数"
               value={limit}
-              onChange={(e) => setLimit(Number(e.target.value))}
-              variant="outlined"
+              onChange={(e) => {
+                const newLimit = Number(e.target.value);
+                setLimit(newLimit);
+                fetchGroups(searchQuery, newLimit);
+              }}
             >
               <MenuItem value={20}>20件</MenuItem>
+              <MenuItem value={30}>30件</MenuItem>
               <MenuItem value={50}>50件</MenuItem>
               <MenuItem value={100}>100件</MenuItem>
             </TextField>
-          </Grid>
-          <Grid item xs={12} md={2}>
-            <Button 
-              variant="contained" 
-              fullWidth 
-              onClick={fetchGroups}
-              disabled={loading}
-            >
-              再検索
-            </Button>
           </Grid>
         </Grid>
       </Paper>
@@ -517,11 +625,28 @@ const PropertyDuplicateGroups: React.FC = () => {
         <Box display="flex" justifyContent="center" p={4}>
           <CircularProgress />
         </Box>
+      ) : error ? (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          {error}
+        </Alert>
       ) : (
         <>
-          <Alert severity="info" sx={{ mb: 2 }}>
-            {groups.length}個の重複グループが見つかりました（合計{groups.reduce((sum, g) => sum + g.property_count, 0)}件の物件）
-          </Alert>
+          <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <Alert severity="info" sx={{ flex: 1, mr: 2 }}>
+              {groups.length}グループの重複候補が見つかりました。
+              各グループを展開して詳細を確認し、統合する物件を選択してください。
+            </Alert>
+            <IconButton 
+              onClick={() => fetchGroups(searchQuery, limit)}
+              disabled={loading}
+              color="primary"
+              sx={{ bgcolor: 'action.hover' }}
+            >
+              <Tooltip title="リロード">
+                {loading ? <CircularProgress size={24} /> : <RefreshIcon />}
+              </Tooltip>
+            </IconButton>
+          </Box>
 
           <TableContainer component={Paper}>
             <Table>
@@ -682,7 +807,12 @@ const PropertyDuplicateGroups: React.FC = () => {
                 </Box>
                 
                 <Grid container spacing={2}>
-                  {selectedGroup?.properties.map((prop) => (
+                  {selectedGroup?.properties
+                    .sort((a, b) => {
+                      // 掲載数が多い順（降順）でソート
+                      return (b.listing_count || 0) - (a.listing_count || 0);
+                    })
+                    .map((prop) => (
                     <Grid item xs={12} sm={6} lg={4} key={prop.id}>
                       <Box sx={{ 
                         position: 'relative',

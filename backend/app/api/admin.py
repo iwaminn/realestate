@@ -269,9 +269,15 @@ class MergeRequest(BaseModel):
 def get_duplicate_groups(
     min_similarity: float = 0.8,
     limit: int = 50,
+    offset: int = 0,
+    building_name: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
     """重複候補の物件グループを取得"""
+    
+    # min_similarityが0.85以上の場合は簡易的なグループ化を使用
+    if min_similarity >= 0.85:
+        return get_duplicate_groups_simple(db, limit, offset, building_name)
     
     # 除外リストを取得
     exclusions = db.query(PropertyMergeExclusion).all()
@@ -280,8 +286,18 @@ def get_duplicate_groups(
         excluded_pairs.add((exclusion.property1_id, exclusion.property2_id))
         excluded_pairs.add((exclusion.property2_id, exclusion.property1_id))
     
+    # 建物名フィルタリング用の条件
+    building_filter_cte = ""
+    building_filter_where = ""
+    params = {}
+    
+    if building_name:
+        building_filter_cte = "AND b.normalized_name ILIKE :building_name"
+        building_filter_where = "AND pd.building_name ILIKE :building_name"
+        params["building_name"] = f"%{building_name}%"
+    
     # 重複候補を検出（グループ化用）
-    query = text("""
+    query = text(f"""
         WITH property_details AS (
             SELECT 
                 mp.id,
@@ -385,6 +401,7 @@ def get_duplicate_groups(
                         "id": p.id,
                         "room_number": p.room_number,
                         "area": p.area,
+                        "layout": p.layout,
                         "direction": p.direction,
                         "current_price": p.current_price,
                         "agency_names": p.agency_names,
@@ -407,7 +424,163 @@ def get_duplicate_groups(
     # 物件数の多い順にソート
     duplicate_groups.sort(key=lambda x: x["property_count"], reverse=True)
     
-    return duplicate_groups[:limit]
+    # offsetとlimitを適用
+    start_idx = offset
+    end_idx = offset + limit
+    result = duplicate_groups[start_idx:end_idx]
+    
+    return {
+        "groups": result,
+        "total": len(duplicate_groups),
+        "has_more": end_idx < len(duplicate_groups)
+    }
+
+
+def get_duplicate_groups_simple(db: Session, limit: int, offset: int, building_name: Optional[str] = None):
+    """簡易的な重複グループ取得（高速版）"""
+    # 建物名フィルタリング用の条件
+    building_filter = ""
+    params = {"limit": limit, "offset": offset}
+    
+    if building_name:
+        building_filter = "AND b.normalized_name ILIKE :building_name"
+        params["building_name"] = f"%{building_name}%"
+    
+    # SQLで面積を基準にした重複グループを検出（間取りが異なる場合も含む）
+    query = text(f"""
+        WITH property_candidates AS (
+            -- 部屋番号なしでアクティブな物件を取得
+            SELECT 
+                mp.id,
+                mp.building_id,
+                mp.floor_number,
+                mp.layout,
+                mp.area,
+                mp.direction,
+                b.normalized_name as building_name
+            FROM master_properties mp
+            JOIN buildings b ON mp.building_id = b.id
+            JOIN property_listings pl ON mp.id = pl.master_property_id
+            WHERE 
+                (mp.room_number IS NULL OR mp.room_number = '')
+                AND pl.is_active = true
+                {building_filter}
+        ),
+        property_groups AS (
+            -- 建物・階でグループ化し、面積の範囲を確認
+            SELECT 
+                building_id,
+                floor_number,
+                building_name,
+                -- 間取りが複数ある場合は代表的なものを表示
+                (ARRAY_AGG(DISTINCT layout ORDER BY layout))[1] as layout,
+                STRING_AGG(DISTINCT layout, ', ' ORDER BY layout) as all_layouts,
+                MIN(COALESCE(area, 0)) as min_area,
+                MAX(COALESCE(area, 0)) as max_area,
+                ARRAY_AGG(DISTINCT id ORDER BY id) as property_ids,
+                COUNT(DISTINCT id) as property_count
+            FROM property_candidates
+            GROUP BY building_id, floor_number, building_name
+            HAVING COUNT(DISTINCT id) >= 2
+                AND MAX(COALESCE(area, 0)) - MIN(COALESCE(area, 0)) < 0.5  -- グループ内の面積差が0.5㎡未満（厳しく）
+        )
+        SELECT 
+            pg.*,
+            ROUND(CAST((min_area + max_area) / 2 AS numeric), 2) as avg_area
+        FROM property_groups pg
+        ORDER BY property_count DESC, building_name, floor_number
+        LIMIT :limit OFFSET :offset
+    """)
+    
+    result = db.execute(query, params)
+    groups = []
+    
+    for row in result:
+        # 各グループの物件詳細を取得（方角でソート）
+        property_query = text("""
+            SELECT 
+                mp.id,
+                mp.room_number,
+                mp.area,
+                mp.layout,
+                mp.direction,
+                MAX(pl.current_price) as current_price,
+                STRING_AGG(DISTINCT pl.agency_name, ', ') as agency_names,
+                COUNT(DISTINCT pl.id) as listing_count,
+                COUNT(DISTINCT pl.source_site) as source_count
+            FROM master_properties mp
+            LEFT JOIN property_listings pl ON mp.id = pl.master_property_id
+            WHERE mp.id = ANY(:ids)
+            GROUP BY mp.id, mp.room_number, mp.area, mp.layout, mp.direction
+            ORDER BY 
+                mp.direction NULLS LAST,  -- 方角がある物件を優先
+                mp.area,
+                mp.id
+        """)
+        
+        properties = []
+        prop_result = db.execute(property_query, {"ids": row.property_ids})
+        for prop in prop_result:
+            properties.append({
+                "id": prop.id,
+                "room_number": prop.room_number,
+                "area": prop.area,
+                "layout": prop.layout,
+                "direction": prop.direction,
+                "current_price": prop.current_price,
+                "agency_names": prop.agency_names,
+                "listing_count": prop.listing_count,
+                "source_count": prop.source_count
+            })
+        
+        groups.append({
+            "group_id": f"group_{row.building_id}_{row.floor_number}_{row.layout}_{int(row.avg_area)}",
+            "property_count": row.property_count,
+            "building_name": row.building_name,
+            "floor_number": row.floor_number,
+            "layout": row.layout,
+            "properties": properties
+        })
+    
+    # 全体の件数を取得
+    count_query = text(f"""
+        WITH property_candidates AS (
+            SELECT 
+                mp.id,
+                mp.building_id,
+                mp.floor_number,
+                mp.area
+            FROM master_properties mp
+            JOIN buildings b ON mp.building_id = b.id
+            JOIN property_listings pl ON mp.id = pl.master_property_id
+            WHERE 
+                (mp.room_number IS NULL OR mp.room_number = '')
+                AND pl.is_active = true
+                {building_filter}
+        ),
+        property_groups AS (
+            SELECT 
+                building_id,
+                floor_number,
+                MIN(COALESCE(area, 0)) as min_area,
+                MAX(COALESCE(area, 0)) as max_area,
+                COUNT(DISTINCT id) as property_count
+            FROM property_candidates
+            GROUP BY building_id, floor_number
+            HAVING COUNT(DISTINCT id) >= 2
+                AND MAX(COALESCE(area, 0)) - MIN(COALESCE(area, 0)) < 0.5
+        )
+        SELECT COUNT(*) as total FROM property_groups
+    """)
+    
+    total_result = db.execute(count_query, params).fetchone()
+    total = total_result.total if total_result else 0
+    
+    return {
+        "groups": groups,
+        "total": total,
+        "has_more": offset + limit < total
+    }
 
 
 def calculate_similarity(prop1, prop2):
@@ -416,14 +589,21 @@ def calculate_similarity(prop1, prop2):
     if prop1.building_id != prop2.building_id or prop1.floor_number != prop2.floor_number:
         return 0.0
     
-    # 間取りが同じ
-    if prop1.layout != prop2.layout:
-        return 0.0
-    
-    # 面積の差（より緩い条件に）
+    # 面積の差
     area_diff = abs((prop1.area or 0) - (prop2.area or 0))
-    if area_diff >= 1.0:  # 0.5から1.0に緩和
-        return 0.7  # 完全に除外せず、低い類似度を返す
+    
+    # 間取りが異なる場合の特別処理
+    if prop1.layout != prop2.layout:
+        # 面積が非常に近い（0.5㎡以内）場合は、間取り表記の違いの可能性
+        if area_diff < 0.5:
+            # 例: "1LDK"と"1SLDK"、"2DK"と"2LDK"などの表記ゆれ
+            return 0.75  # 中程度の類似度
+        else:
+            return 0.0  # 面積も異なる場合は別物件
+    
+    # 以下、間取りが同じ場合の処理
+    if area_diff >= 1.0:
+        return 0.7  # 面積差が大きい
     
     # 方角の類似度
     if prop1.direction == prop2.direction:

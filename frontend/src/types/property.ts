@@ -87,14 +87,21 @@ export interface SearchParams {
   max_price?: number;
   min_area?: number;
   max_area?: number;
-  layout?: string;
+  layouts?: string[];
   building_name?: string;
   max_building_age?: number;
+  wards?: string[];
   sort_by?: string;
   sort_order?: string;
   page?: number;
   per_page?: number;
   include_inactive?: boolean;
+}
+
+export interface Area {
+  name: string;
+  code?: string;
+  property_count: number;
 }
 
 export interface ApiResponse<T> {

@@ -30,7 +30,7 @@ export const propertyApi = {
   },
 
   // エリア一覧取得
-  getAreas: async (): Promise<{ areas: Area[] }> => {
+  getAreas: async (): Promise<Area[]> => {
     const response = await api.get('/v2/areas');
     return response.data;
   },

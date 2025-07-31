@@ -150,15 +150,57 @@ app.include_router(admin.router)
 async def root():
     return {"message": "不動産横断検索API v2", "version": "2.0.0"}
 
+@app.get("/api/v2/areas", response_model=List[Dict[str, Any]])
+async def get_areas(db: Session = Depends(get_db)):
+    """物件が存在する区の一覧を取得"""
+    # 住所から区名を抽出し、物件数をカウント
+    query = db.query(
+        func.substring(Building.address, r'東京都([^区]+区)').label('ward'),
+        func.count(distinct(MasterProperty.id)).label('property_count')
+    ).join(
+        MasterProperty, Building.id == MasterProperty.building_id
+    ).filter(
+        Building.address.like('東京都%'),
+        Building.address.isnot(None)
+    ).group_by(
+        func.substring(Building.address, r'東京都([^区]+区)')
+    ).having(
+        func.substring(Building.address, r'東京都([^区]+区)').isnot(None)
+    ).order_by(
+        'ward'
+    )
+    
+    results = query.all()
+    
+    # area_config.pyの定義も含めて返す
+    from .scrapers.area_config import TOKYO_AREA_CODES
+    
+    area_list = []
+    for ward, property_count in results:
+        if ward:
+            # 区コードを取得
+            area_code = TOKYO_AREA_CODES.get(ward, None)
+            area_list.append({
+                "name": ward,
+                "code": area_code,
+                "property_count": property_count
+            })
+    
+    # 区名順でソート
+    area_list.sort(key=lambda x: x["name"])
+    
+    return area_list
+
 @app.get("/api/v2/properties", response_model=Dict[str, Any])
 async def get_properties_v2(
     min_price: Optional[int] = Query(None, description="最低価格（万円）"),
     max_price: Optional[int] = Query(None, description="最高価格（万円）"),
     min_area: Optional[float] = Query(None, description="最低面積（㎡）"),
     max_area: Optional[float] = Query(None, description="最高面積（㎡）"),
-    layout: Optional[str] = Query(None, description="間取り"),
+    layouts: Optional[List[str]] = Query(None, description="間取りリスト"),
     building_name: Optional[str] = Query(None, description="建物名"),
     max_building_age: Optional[int] = Query(None, description="築年数以内"),
+    wards: Optional[List[str]] = Query(None, description="区名リスト（例: 港区、中央区）"),
     include_inactive: bool = Query(False, description="削除済み物件も含む"),
     page: int = Query(1, ge=1, description="ページ番号"),
     per_page: int = Query(20, ge=1, le=100, description="1ページあたりの件数"),
@@ -256,8 +298,9 @@ async def get_properties_v2(
         query = query.filter(MasterProperty.area >= min_area)
     if max_area:
         query = query.filter(MasterProperty.area <= max_area)
-    if layout:
-        query = query.filter(MasterProperty.layout == layout)
+    if layouts:
+        # 間取りリストでフィルター
+        query = query.filter(MasterProperty.layout.in_(layouts))
     if building_name:
         # 建物名、読み仮名で部分一致検索
         query = query.filter(
@@ -272,6 +315,15 @@ async def get_properties_v2(
         current_year = datetime.now().year
         min_built_year = current_year - max_building_age
         query = query.filter(Building.built_year >= min_built_year)
+    
+    if wards:
+        # 区名リストでフィルター（例: ["港区", "中央区"]）
+        # 複数の区名でOR条件を構築
+        ward_conditions = []
+        for ward in wards:
+            ward_conditions.append(Building.address.like(f"東京都{ward}%"))
+        if ward_conditions:
+            query = query.filter(or_(*ward_conditions))
     
     # 総件数を取得
     total_count = query.count()

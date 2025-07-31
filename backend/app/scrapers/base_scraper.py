@@ -1497,6 +1497,10 @@ class BaseScraper(ABC):
             direction=direction
         )
         
+        # デバッグログ
+        self.logger.info(f"Property hash calculation: building_id={building.id}, floor={floor_number}, "
+                        f"area={area}, layout={layout}, direction={direction}, hash={property_hash}")
+        
         # 既存のマスター物件を検索
         master_property = self.session.query(MasterProperty).filter(
             MasterProperty.property_hash == property_hash
@@ -1541,7 +1545,29 @@ class BaseScraper(ABC):
             property_hash=property_hash
         )
         self.session.add(master_property)
-        self.session.flush()
+        
+        try:
+            self.session.flush()
+        except Exception as e:
+            # 重複エラーの場合はロールバックして再検索
+            if "duplicate key value violates unique constraint" in str(e):
+                self.logger.warning(f"Duplicate property_hash detected, rolling back and retrying: {property_hash}")
+                self.session.rollback()
+                
+                # 再度検索
+                master_property = self.session.query(MasterProperty).filter(
+                    MasterProperty.property_hash == property_hash
+                ).first()
+                
+                if master_property:
+                    self.logger.info(f"Found existing master property after rollback: id={master_property.id}")
+                    return master_property
+                else:
+                    # それでも見つからない場合はエラーを再発生
+                    raise
+            else:
+                # その他のエラーは再発生
+                raise
         
         return master_property
     
