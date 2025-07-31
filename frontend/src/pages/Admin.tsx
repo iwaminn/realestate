@@ -44,6 +44,7 @@ import ManualBuildingMerger from '../components/ManualBuildingMerger';
 import ManualPropertyMerger from '../components/ManualPropertyMerger';
 import PropertyDuplicateGroups from '../components/PropertyDuplicateGroups';
 import PropertyExclusionHistory from '../components/PropertyExclusionHistory';
+import BuildingExclusionHistory from '../components/BuildingExclusionHistory';
 
 
 const Admin: React.FC = () => {
@@ -141,6 +142,7 @@ const Admin: React.FC = () => {
             <Tabs value={buildingSubTab} onChange={(_, value) => setBuildingSubTab(value)}>
               <Tab label="重複候補" />
               <Tab label="統合履歴" />
+              <Tab label="除外履歴" />
             </Tabs>
           </Paper>
 
@@ -153,6 +155,10 @@ const Admin: React.FC = () => {
 
           {buildingSubTab === 1 && (
             <BuildingMergeHistory />
+          )}
+
+          {buildingSubTab === 2 && (
+            <BuildingExclusionHistory />
           )}
         </Box>
       )}

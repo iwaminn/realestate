@@ -99,6 +99,7 @@ const PropertyExclusionHistory: React.FC = () => {
 
   const formatDate = (dateString: string) => {
     try {
+      // サーバーから日本時間で返される
       return new Date(dateString).toLocaleString('ja-JP');
     } catch (e) {
       return dateString;

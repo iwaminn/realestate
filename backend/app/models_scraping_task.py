@@ -38,6 +38,7 @@ class ScrapingTask(Base):
     # 詳細な進捗情報（JSON形式）
     progress_detail = Column(JSON, nullable=True)  # 各スクレイパー・エリアごとの進捗
     error_logs = Column(JSON, nullable=True)  # エラーログ
+    warning_logs = Column(JSON, nullable=True)  # 警告ログ（重複物件など）
     logs = Column(JSON, nullable=True)  # 物件処理ログ（新規登録・更新など）
     
     # 追加の統計情報
@@ -72,6 +73,7 @@ class ScrapingTask(Base):
             'elapsed_time': self.elapsed_time,
             'progress_detail': self.progress_detail,
             'error_logs': self.error_logs,
+            'warning_logs': self.warning_logs,
             'logs': self.logs,
             'properties_found': self.properties_found,
             'detail_fetched': self.detail_fetched,

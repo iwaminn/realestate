@@ -211,4 +211,32 @@ export const propertyApi = {
     });
     return response.data;
   },
+
+  // 建物除外履歴取得
+  getBuildingExclusions: async (params?: {
+    limit?: number;
+  }): Promise<{
+    exclusions: Array<{
+      id: number;
+      building1: {
+        id: number;
+        normalized_name: string;
+        address: string;
+        property_count: number;
+      };
+      building2: {
+        id: number;
+        normalized_name: string;
+        address: string;
+        property_count: number;
+      };
+      reason: string;
+      excluded_by: string;
+      created_at: string;
+    }>;
+    total: number;
+  }> => {
+    const response = await api.get('/admin/building-exclusions', { params });
+    return response.data;
+  },
 };

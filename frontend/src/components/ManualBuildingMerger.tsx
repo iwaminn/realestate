@@ -27,6 +27,7 @@ import {
   Delete as DeleteIcon,
   Merge as MergeIcon,
   Info as InfoIcon,
+  Clear as ClearIcon,
 } from '@mui/icons-material';
 import { propertyApi } from '../api/propertyApi';
 
@@ -146,6 +147,15 @@ const ManualBuildingMerger: React.FC = () => {
                   ),
                   endAdornment: (
                     <InputAdornment position="end">
+                      {searchQuery && (
+                        <IconButton
+                          size="small"
+                          onClick={() => setSearchQuery('')}
+                          sx={{ mr: 1 }}
+                        >
+                          <ClearIcon />
+                        </IconButton>
+                      )}
                       <Button
                         variant="contained"
                         onClick={handleSearch}

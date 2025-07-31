@@ -19,7 +19,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from backend.app.database import get_db
 from backend.app.utils.debug_logger import debug_log
-from backend.app.models import MasterProperty, PropertyListing, Building, ListingPriceHistory, PropertyMergeHistory, PropertyMergeExclusion, BuildingMergeHistory, BuildingExternalId
+from backend.app.models import MasterProperty, PropertyListing, Building, ListingPriceHistory, PropertyMergeHistory, PropertyMergeExclusion, BuildingMergeHistory, BuildingExternalId, BuildingMergeExclusion
 from backend.app.models_scraping_task import ScrapingTask, ScrapingTaskProgress
 from sqlalchemy import func, or_, and_
 from backend.app.auth import verify_admin_credentials
@@ -45,7 +45,7 @@ except ImportError as e:
     PARALLEL_SCRAPING_ENABLED = False
     ParallelScrapingManager = None
 
-router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[Depends(verify_admin_credentials)])
+router = APIRouter(prefix="/api/admin", tags=["admin"], dependencies=[])
 
 # タスクの永続化ファイル
 # dataディレクトリに保存することで、コンテナ再起動後も保持される
@@ -292,9 +292,74 @@ def get_duplicate_groups(
     params = {}
     
     if building_name:
-        building_filter_cte = "AND b.normalized_name ILIKE :building_name"
-        building_filter_where = "AND pd.building_name ILIKE :building_name"
-        params["building_name"] = f"%{building_name}%"
+        from backend.app.utils.search_normalizer import normalize_search_text, create_search_patterns
+        
+        # 検索文字列を正規化してAND検索用に分割
+        normalized_search = normalize_search_text(building_name)
+        search_terms = normalized_search.split()
+        
+        # 検索条件を生成
+        param_count = 0
+        
+        if len(search_terms) > 1:
+            # 複数の検索語がある場合：AND条件と完全一致の両方
+            and_cte_conditions = []
+            and_where_conditions = []
+            
+            # 各単語のAND条件
+            for term in search_terms:
+                term_cte_conditions = []
+                term_where_conditions = []
+                term_patterns = create_search_patterns(term)
+                for pattern in term_patterns:
+                    param_name = f"building_name_{param_count}"
+                    term_cte_conditions.append(f"b.normalized_name ILIKE :{param_name}")
+                    term_where_conditions.append(f"pd.building_name ILIKE :{param_name}")
+                    params[param_name] = f"%{pattern}%"
+                    param_count += 1
+                if term_cte_conditions:
+                    and_cte_conditions.append(f"({' OR '.join(term_cte_conditions)})")
+                    and_where_conditions.append(f"({' OR '.join(term_where_conditions)})")
+            
+            # 完全な文字列でも検索
+            full_patterns = create_search_patterns(building_name)
+            full_cte_conditions = []
+            full_where_conditions = []
+            for pattern in full_patterns:
+                param_name = f"building_name_{param_count}"
+                full_cte_conditions.append(f"b.normalized_name ILIKE :{param_name}")
+                full_where_conditions.append(f"pd.building_name ILIKE :{param_name}")
+                params[param_name] = f"%{pattern}%"
+                param_count += 1
+            
+            # AND条件と完全一致をORで結合
+            all_cte_conditions = []
+            all_where_conditions = []
+            if and_cte_conditions:
+                all_cte_conditions.append(f"({' AND '.join(and_cte_conditions)})")
+                all_where_conditions.append(f"({' AND '.join(and_where_conditions)})")
+            if full_cte_conditions:
+                all_cte_conditions.extend(full_cte_conditions)
+                all_where_conditions.extend(full_where_conditions)
+            
+            if all_cte_conditions:
+                building_filter_cte = f"AND ({' OR '.join(all_cte_conditions)})"
+                building_filter_where = f"AND ({' OR '.join(all_where_conditions)})"
+        else:
+            # 単一の検索語の場合
+            search_patterns = create_search_patterns(building_name)
+            cte_conditions = []
+            where_conditions = []
+            for pattern in search_patterns:
+                param_name = f"building_name_{param_count}"
+                cte_conditions.append(f"b.normalized_name ILIKE :{param_name}")
+                where_conditions.append(f"pd.building_name ILIKE :{param_name}")
+                params[param_name] = f"%{pattern}%"
+                param_count += 1
+            
+            if cte_conditions:
+                building_filter_cte = f"AND ({' OR '.join(cte_conditions)})"
+                building_filter_where = f"AND ({' OR '.join(where_conditions)})"
     
     # 重複候補を検出（グループ化用）
     query = text(f"""
@@ -443,8 +508,62 @@ def get_duplicate_groups_simple(db: Session, limit: int, offset: int, building_n
     params = {"limit": limit, "offset": offset}
     
     if building_name:
-        building_filter = "AND b.normalized_name ILIKE :building_name"
-        params["building_name"] = f"%{building_name}%"
+        from backend.app.utils.building_search import create_building_search_params
+        from backend.app.utils.search_normalizer import normalize_search_text
+        
+        # 検索文字列を正規化してAND検索用に分割
+        normalized_search = normalize_search_text(building_name)
+        search_terms = normalized_search.split()
+        
+        # 検索条件を生成
+        if len(search_terms) > 1:
+            # 複数の検索語がある場合：AND条件と完全一致の両方
+            and_conditions = []
+            param_count = 0
+            
+            # 各単語のAND条件
+            for term in search_terms:
+                term_conditions = []
+                from backend.app.utils.search_normalizer import create_search_patterns
+                term_patterns = create_search_patterns(term)
+                for pattern in term_patterns:
+                    param_name = f"building_name_{param_count}"
+                    term_conditions.append(f"b.normalized_name ILIKE :{param_name}")
+                    params[param_name] = f"%{pattern}%"
+                    param_count += 1
+                if term_conditions:
+                    and_conditions.append(f"({' OR '.join(term_conditions)})")
+            
+            # 完全な文字列でも検索
+            full_patterns = create_search_patterns(building_name)
+            full_conditions = []
+            for pattern in full_patterns:
+                param_name = f"building_name_{param_count}"
+                full_conditions.append(f"b.normalized_name ILIKE :{param_name}")
+                params[param_name] = f"%{pattern}%"
+                param_count += 1
+            
+            # AND条件と完全一致をORで結合
+            all_conditions = []
+            if and_conditions:
+                all_conditions.append(f"({' AND '.join(and_conditions)})")
+            if full_conditions:
+                all_conditions.extend(full_conditions)
+            
+            if all_conditions:
+                building_filter = f"AND ({' OR '.join(all_conditions)})"
+        else:
+            # 単一の検索語の場合
+            from backend.app.utils.search_normalizer import create_search_patterns
+            search_patterns = create_search_patterns(building_name)
+            conditions = []
+            for i, pattern in enumerate(search_patterns):
+                param_name = f"building_name_{i}"
+                conditions.append(f"b.normalized_name ILIKE :{param_name}")
+                params[param_name] = f"%{pattern}%"
+            
+            if conditions:
+                building_filter = f"AND ({' OR '.join(conditions)})"
     
     # SQLで面積を基準にした重複グループを検出（間取りが異なる場合も含む）
     query = text(f"""
@@ -481,8 +600,9 @@ def get_duplicate_groups_simple(db: Session, limit: int, offset: int, building_n
                 COUNT(DISTINCT id) as property_count
             FROM property_candidates
             GROUP BY building_id, floor_number, building_name
-            HAVING COUNT(DISTINCT id) >= 2
-                AND MAX(COALESCE(area, 0)) - MIN(COALESCE(area, 0)) < 0.5  -- グループ内の面積差が0.5㎡未満（厳しく）
+            HAVING 
+                COUNT(DISTINCT id) >= 2  -- 2件以上のグループのみ
+                AND MAX(COALESCE(area, 0)) - MIN(COALESCE(area, 0)) < 0.5  -- グループ内の面積差が0.5㎡未満
         )
         SELECT 
             pg.*,
@@ -567,7 +687,8 @@ def get_duplicate_groups_simple(db: Session, limit: int, offset: int, building_n
                 COUNT(DISTINCT id) as property_count
             FROM property_candidates
             GROUP BY building_id, floor_number
-            HAVING COUNT(DISTINCT id) >= 2
+            HAVING 
+                COUNT(DISTINCT id) >= 2
                 AND MAX(COALESCE(area, 0)) - MIN(COALESCE(area, 0)) < 0.5
         )
         SELECT COUNT(*) as total FROM property_groups
@@ -787,8 +908,11 @@ def search_properties_for_merge(
             })
     
     # 建物名で検索
-    # スペースで分割してAND検索 または スペースを除去した検索
-    search_terms = query.replace('　', ' ').split()
+    from backend.app.utils.search_normalizer import create_search_patterns, normalize_search_text
+    
+    # 検索文字列を正規化
+    normalized_query = normalize_search_text(query)
+    search_terms = normalized_query.split()
     
     name_query = db.query(MasterProperty).join(
         Building, MasterProperty.building_id == Building.id
@@ -796,29 +920,38 @@ def search_properties_for_merge(
     
     if len(search_terms) > 1:
         # 複数の検索語がある場合
-        # 1. 各単語を含む建物を検索（AND条件）
-        # 2. スペースを除去した全体文字列でも検索（OR条件）
+        # 各検索語のパターンを生成
+        all_conditions = []
         
-        # AND検索条件
+        # AND条件（全ての単語を含む）
         and_conditions = []
         for term in search_terms:
-            and_conditions.append(Building.normalized_name.ilike(f"%{term}%"))
+            term_patterns = create_search_patterns(term)
+            term_conditions = []
+            for pattern in term_patterns:
+                term_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
+            if term_conditions:
+                and_conditions.append(or_(*term_conditions))
         
-        # スペースを除去した検索
-        search_no_space = query.replace(' ', '').replace('　', '')
+        if and_conditions:
+            all_conditions.append(and_(*and_conditions))
         
-        # 複合条件
-        name_query = name_query.filter(
-            or_(
-                and_(*and_conditions),  # 全ての単語を含む
-                Building.normalized_name.ilike(f"%{search_no_space}%")  # スペースを除去した文字列に一致
-            )
-        )
+        # 全体文字列のパターンでも検索
+        full_patterns = create_search_patterns(query)
+        for pattern in full_patterns:
+            all_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
+        
+        if all_conditions:
+            name_query = name_query.filter(or_(*all_conditions))
     else:
         # 単一の検索語の場合
-        name_query = name_query.filter(
-            Building.normalized_name.ilike(f"%{query}%")
-        )
+        search_patterns = create_search_patterns(query)
+        search_conditions = []
+        for pattern in search_patterns:
+            search_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
+        
+        if search_conditions:
+            name_query = name_query.filter(or_(*search_conditions))
     
     properties = name_query.limit(limit).all()
     
@@ -1195,6 +1328,7 @@ class ScrapingTaskStatus(BaseModel):
     errors: List[str]
     logs: Optional[List[Dict[str, Any]]] = []  # 詳細ログ
     error_logs: Optional[List[Dict[str, Any]]] = []  # エラーログ
+    warning_logs: Optional[List[Dict[str, Any]]] = []  # 警告ログ
 
 
 def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], max_properties: int):
@@ -1986,6 +2120,7 @@ def get_all_scraping_tasks(active_only: bool = False):
                             ],
                             'logs': db_task.logs or [],
                             'error_logs': db_task.error_logs or [],
+                            'warning_logs': db_task.warning_logs or [],
                             'created_at': db_task.created_at.isoformat() if db_task.created_at else None,
                             'statistics': {
                                 'total_processed': db_task.total_processed,
@@ -2075,6 +2210,7 @@ def get_single_task(task_id: str, db: Session = Depends(get_db)):
             ],
             'logs': db_task.logs or [],
             'error_logs': db_task.error_logs or [],
+            'warning_logs': db_task.warning_logs or [],
             'created_at': db_task.created_at.isoformat() if db_task.created_at else None,
             'statistics': {
                 'total_processed': db_task.total_processed,
@@ -2355,6 +2491,8 @@ def get_property_merge_history(
     db: Session = Depends(get_db)
 ):
     """物件統合履歴を取得"""
+    from backend.app.utils.datetime_utils import to_jst_string
+    
     query = db.query(PropertyMergeHistory)
     
     if not include_reverted:
@@ -2418,9 +2556,9 @@ def get_property_merge_history(
             "secondary_property": secondary_data,
             "moved_listings": history.moved_listings,
             "merge_details": history.merge_details,
-            "merged_at": history.merged_at.isoformat() if history.merged_at else None,
+            "merged_at": to_jst_string(history.merged_at),
             "merged_by": history.merged_by,
-            "reverted_at": history.reverted_at.isoformat() if history.reverted_at else None,
+            "reverted_at": to_jst_string(history.reverted_at),
             "reverted_by": history.reverted_by
         })
     
@@ -2700,7 +2838,7 @@ def revert_building_merge(
     history_id: int,
     db: Session = Depends(get_db)
 ):
-    """建物統合を取り消す"""
+    """建物統合を取り消す（個別ロールバック）"""
     history = db.query(BuildingMergeHistory).filter(
         BuildingMergeHistory.id == history_id
     ).first()
@@ -2720,68 +2858,74 @@ def revert_building_merge(
         if not primary_building:
             raise HTTPException(status_code=404, detail="主建物が見つかりません")
         
-        # 統合された建物を復元
-        merged_building_ids = history.merged_building_ids
-        merge_details = history.merge_details or {}
+        # 復元する建物のIDを取得（新しい形式と古い形式の両方に対応）
+        building_id_to_restore = None
+        building_data = None
+        restored_buildings = []  # 後方互換性のため
         
-        restored_buildings = []
-        
-        # merged_buildingsはリストとして保存されている
-        merged_buildings_list = merge_details.get("merged_buildings", [])
-        
-        # リストを辞書に変換（IDをキーにする）
-        merged_buildings_dict = {}
-        for building_data in merged_buildings_list:
-            if isinstance(building_data, dict) and "id" in building_data:
-                merged_buildings_dict[building_data["id"]] = building_data
-        
-        for building_id in merged_building_ids:
+        # 新しい形式（secondary_building_id）
+        if hasattr(history, 'secondary_building_id') and history.secondary_building_id:
+            building_id_to_restore = history.secondary_building_id
             # merge_detailsから建物情報を取得
-            building_data = merged_buildings_dict.get(building_id, {})
+            if history.merge_details and "merged_buildings" in history.merge_details:
+                for data in history.merge_details["merged_buildings"]:
+                    if data.get("id") == building_id_to_restore:
+                        building_data = data
+                        break
+        # 古い形式（merged_building_ids）
+        elif hasattr(history, 'merged_building_ids') and history.merged_building_ids:
+            # 最初の建物のみを復元（古い形式では1件ずつ処理できないため）
+            building_id_to_restore = history.merged_building_ids[0]
+            if history.merge_details and "merged_buildings" in history.merge_details:
+                building_data = history.merge_details["merged_buildings"][0] if history.merge_details["merged_buildings"] else None
+        
+        if not building_id_to_restore:
+            raise HTTPException(status_code=400, detail="復元する建物IDが見つかりません")
+        
+        # 既に存在するかチェック
+        existing = db.query(Building).filter(Building.id == building_id_to_restore).first()
+        if existing:
+            raise HTTPException(status_code=400, detail=f"建物ID {building_id_to_restore} は既に存在します")
+        
+        # 建物を復元
+        if building_data:
+            # 読み仮名を生成
+            from backend.app.utils.reading_generator import generate_reading
+            restored_building = Building(
+                id=building_id_to_restore,
+                normalized_name=building_data.get("normalized_name"),
+                canonical_name=building_data.get("canonical_name"),
+                address=building_data.get("address"),
+                built_year=building_data.get("built_year"),
+                total_floors=building_data.get("total_floors"),
+                basement_floors=building_data.get("basement_floors"),
+                total_units=building_data.get("total_units"),
+                structure=building_data.get("structure"),
+                land_rights=building_data.get("land_rights"),
+                parking_info=building_data.get("parking_info")
+            )
+            db.add(restored_building)
             
-            if building_data:
-                # 建物を復元
-                restored_building = Building(
-                    id=building_id,
-                    normalized_name=building_data.get("normalized_name"),
-                    canonical_name=building_data.get("canonical_name"),
-                    address=building_data.get("address"),
-                    built_year=building_data.get("built_year"),
-                    total_floors=building_data.get("total_floors"),
-                    basement_floors=building_data.get("basement_floors"),
-                    total_units=building_data.get("total_units"),
-                    structure=building_data.get("structure"),
-                    land_rights=building_data.get("land_rights"),
-                    parking_info=building_data.get("parking_info")
+            # 外部IDを復元
+            external_ids = history.merge_details.get("external_ids", {}).get(str(building_id_to_restore), [])
+            for ext_id_data in external_ids:
+                external_id = BuildingExternalId(
+                    building_id=building_id_to_restore,
+                    source_site=ext_id_data["source_site"],
+                    external_id=ext_id_data["external_id"]
                 )
-                db.add(restored_building)
-                restored_buildings.append(building_id)
-                
-                # 外部IDを復元
-                external_ids = merge_details.get("external_ids", {}).get(str(building_id), [])
-                for ext_id_data in external_ids:
-                    external_id = BuildingExternalId(
-                        building_id=building_id,
-                        source_site=ext_id_data["source_site"],
-                        external_id=ext_id_data["external_id"]
-                    )
-                    db.add(external_id)
+                db.add(external_id)
         
         # 移動された物件を元に戻す
-        # 各建物から移動された物件数に基づいて物件を戻す
-        for building_id in merged_building_ids:
-            building_data = merged_buildings_dict.get(building_id, {})
-            properties_moved = building_data.get("properties_moved", 0)
+        if building_data and building_data.get("properties_moved", 0) > 0:
+            # この建物から移動された物件を元に戻す
+            # 主建物に現在ある物件のうち、指定された数だけを元の建物に戻す
+            properties_to_restore = db.query(MasterProperty).filter(
+                MasterProperty.building_id == history.primary_building_id
+            ).limit(building_data["properties_moved"]).all()
             
-            if properties_moved > 0:
-                # この建物から移動された物件を元に戻す
-                # 主建物に現在ある物件のうち、指定された数だけを元の建物に戻す
-                properties_to_restore = db.query(MasterProperty).filter(
-                    MasterProperty.building_id == history.primary_building_id
-                ).limit(properties_moved).all()
-                
-                for property in properties_to_restore:
-                    property.building_id = building_id
+            for property in properties_to_restore:
+                property.building_id = building_id_to_restore
         
         # 履歴を更新
         history.reverted_at = datetime.now()
@@ -2791,8 +2935,8 @@ def revert_building_merge(
         
         return {
             "success": True,
-            "message": f"建物統合を取り消しました。{len(restored_buildings)}件の建物を復元しました。",
-            "restored_buildings": restored_buildings
+            "message": f"建物統合を取り消しました。建物ID {building_id_to_restore} を復元しました。",
+            "restored_building_id": building_id_to_restore
         }
         
     except Exception as e:
@@ -2897,6 +3041,13 @@ class ExcludePropertiesRequest(BaseModel):
     reason: Optional[str] = None
 
 
+class ExcludeBuildingsRequest(BaseModel):
+    """建物除外リクエスト"""
+    building1_id: int
+    building2_id: int
+    reason: Optional[str] = None
+
+
 @router.post("/exclude-properties")
 def exclude_properties(
     request: ExcludePropertiesRequest,
@@ -2967,6 +3118,8 @@ def get_property_exclusions(
     db: Session = Depends(get_db)
 ):
     """物件除外リストを取得"""
+    from backend.app.utils.datetime_utils import to_jst_string
+    
     exclusions = db.query(PropertyMergeExclusion).order_by(
         PropertyMergeExclusion.created_at.desc()
     ).limit(limit).all()
@@ -3011,7 +3164,127 @@ def get_property_exclusions(
             },
             "reason": exclusion.reason,
             "excluded_by": exclusion.excluded_by,
-            "created_at": exclusion.created_at.isoformat() if exclusion.created_at else None
+            "created_at": to_jst_string(exclusion.created_at)
+        })
+    
+    return {"exclusions": result, "total": len(result)}
+
+
+class ExcludeBuildingsRequest(BaseModel):
+    building1_id: int
+    building2_id: int
+    reason: Optional[str] = None
+
+
+@router.post("/exclude-buildings")
+def exclude_buildings(
+    request: ExcludeBuildingsRequest,
+    db: Session = Depends(get_db)
+):
+    """建物ペアを統合候補から除外"""
+    building1_id = request.building1_id
+    building2_id = request.building2_id
+    reason = request.reason
+    
+    # 既に除外されているかチェック
+    existing = db.query(BuildingMergeExclusion).filter(
+        or_(
+            and_(
+                BuildingMergeExclusion.building1_id == building1_id,
+                BuildingMergeExclusion.building2_id == building2_id
+            ),
+            and_(
+                BuildingMergeExclusion.building1_id == building2_id,
+                BuildingMergeExclusion.building2_id == building1_id
+            )
+        )
+    ).first()
+    
+    if existing:
+        return {"success": False, "message": "既に除外済みです"}
+    
+    # 小さいIDを building1_id として保存（一貫性のため）
+    if building1_id > building2_id:
+        building1_id, building2_id = building2_id, building1_id
+    
+    exclusion = BuildingMergeExclusion(
+        building1_id=building1_id,
+        building2_id=building2_id,
+        reason=reason,
+        excluded_by="admin"  # TODO: 実際のユーザー名を設定
+    )
+    db.add(exclusion)
+    db.commit()
+    
+    return {"success": True, "exclusion_id": exclusion.id}
+
+
+@router.delete("/exclude-buildings/{exclusion_id}")
+def remove_building_exclusion(
+    exclusion_id: int,
+    db: Session = Depends(get_db)
+):
+    """建物除外を取り消す"""
+    exclusion = db.query(BuildingMergeExclusion).filter(
+        BuildingMergeExclusion.id == exclusion_id
+    ).first()
+    
+    if not exclusion:
+        raise HTTPException(status_code=404, detail="除外記録が見つかりません")
+    
+    db.delete(exclusion)
+    db.commit()
+    
+    return {"success": True}
+
+
+@router.get("/building-exclusions")
+def get_building_exclusions(
+    limit: int = 50,
+    db: Session = Depends(get_db)
+):
+    """建物除外リストを取得"""
+    from backend.app.utils.datetime_utils import to_jst_string
+    
+    exclusions = db.query(BuildingMergeExclusion).order_by(
+        BuildingMergeExclusion.created_at.desc()
+    ).limit(limit).all()
+    
+    result = []
+    for exclusion in exclusions:
+        # 建物情報を取得
+        building1 = db.query(Building).filter(
+            Building.id == exclusion.building1_id
+        ).first()
+        building2 = db.query(Building).filter(
+            Building.id == exclusion.building2_id
+        ).first()
+        
+        # 物件数を取得
+        count1 = db.query(func.count(MasterProperty.id)).filter(
+            MasterProperty.building_id == exclusion.building1_id
+        ).scalar() or 0
+        count2 = db.query(func.count(MasterProperty.id)).filter(
+            MasterProperty.building_id == exclusion.building2_id
+        ).scalar() or 0
+        
+        result.append({
+            "id": exclusion.id,
+            "building1": {
+                "id": exclusion.building1_id,
+                "normalized_name": building1.normalized_name if building1 else "削除済み",
+                "address": building1.address if building1 else "-",
+                "property_count": count1
+            },
+            "building2": {
+                "id": exclusion.building2_id,
+                "normalized_name": building2.normalized_name if building2 else "削除済み",
+                "address": building2.address if building2 else "-",
+                "property_count": count2
+            },
+            "reason": exclusion.reason,
+            "excluded_by": exclusion.excluded_by,
+            "created_at": to_jst_string(exclusion.created_at)
         })
     
     return {"exclusions": result, "total": len(result)}

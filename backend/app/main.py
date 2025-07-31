@@ -21,6 +21,7 @@ from backend.app.models import (
     ListingPriceHistory, PropertyImage, BuildingExternalId,
     BuildingMergeExclusion, BuildingMergeHistory
 )
+from backend.app.utils.logger import app_logger, error_logger, api_logger, db_logger, LogContext, log_api_request, log_database_operation
 from backend.app.api.price_analysis import (
     create_unified_price_timeline,
     analyze_source_price_consistency
@@ -37,6 +38,44 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ロギングミドルウェア
+@app.middleware("http")
+async def log_requests(request, call_next):
+    """すべてのHTTPリクエストをログに記録"""
+    import time
+    start_time = time.time()
+    
+    # リクエスト情報をログ
+    api_logger.info(f"Request started: {request.method} {request.url.path}", extra={
+        "method": request.method,
+        "path": str(request.url.path),
+        "query_params": dict(request.query_params),
+        "client": request.client.host if request.client else None
+    })
+    
+    try:
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        
+        api_logger.info(f"Request completed: {request.method} {request.url.path}", extra={
+            "method": request.method,
+            "path": str(request.url.path),
+            "status_code": response.status_code,
+            "process_time": process_time
+        })
+        
+        response.headers["X-Process-Time"] = str(process_time)
+        return response
+    except Exception as e:
+        process_time = time.time() - start_time
+        api_logger.error(f"Request failed: {request.method} {request.url.path}", extra={
+            "method": request.method,
+            "path": str(request.url.path),
+            "error": str(e),
+            "process_time": process_time
+        }, exc_info=True)
+        raise
 
 # Pydanticモデル
 class BuildingSchema(BaseModel):
@@ -302,13 +341,18 @@ async def get_properties_v2(
         # 間取りリストでフィルター
         query = query.filter(MasterProperty.layout.in_(layouts))
     if building_name:
-        # 建物名、読み仮名で部分一致検索
-        query = query.filter(
-            or_(
-                Building.normalized_name.ilike(f"%{building_name}%"),
-                Building.reading.ilike(f"%{building_name}%")
-            )
-        )
+        # 検索文字列を正規化
+        from backend.app.utils.search_normalizer import create_search_patterns
+        search_patterns = create_search_patterns(building_name)
+        
+        # 各パターンでOR検索
+        search_conditions = []
+        for pattern in search_patterns:
+            search_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
+            search_conditions.append(Building.reading.ilike(f"%{pattern}%"))
+        
+        if search_conditions:
+            query = query.filter(or_(*search_conditions))
     if max_building_age is not None:
         # 築年数でフィルター（現在の年から築年数を引いて最低築年を計算）
         from datetime import datetime
@@ -781,91 +825,17 @@ async def get_duplicate_buildings(
     
     # 検索フィルタを適用
     if search:
-        # スペースで分割してAND検索を行う
-        search_terms = search.replace('　', ' ').split()
-        
-        if len(search_terms) > 1:
-            # 複数の検索語がある場合
-            # 1. 各単語を含む建物を検索（AND条件）
-            # 2. スペースを除去した全体文字列でも検索（OR条件）
-            
-            # AND検索条件
-            and_conditions = []
-            for term in search_terms:
-                # 各検索語に対して、複数の正規化パターンでOR検索
-                term_patterns = []
-                
-                # 元の検索語
-                term_patterns.append(term)
-                
-                # 中点（・）を除去
-                term_normalized = term.replace('・', '')
-                if term_normalized != term:
-                    term_patterns.append(term_normalized)
-                
-                # 各パターンでOR条件を作成
-                term_filters = []
-                for pattern in term_patterns:
-                    term_filters.append(Building.normalized_name.ilike(f"%{pattern}%"))
-                
-                # この検索語に対するOR条件を追加
-                and_conditions.append(or_(*term_filters))
-            
-            # スペースを除去した全体文字列での検索も追加
-            search_no_space = search.replace(' ', '').replace('　', '')
-            search_patterns = [search_no_space]
-            
-            # 中点も除去したパターンを追加
-            search_clean = search_no_space.replace('・', '')
-            if search_clean != search_no_space:
-                search_patterns.append(search_clean)
-            
-            # スペースなしパターンのOR条件
-            space_removed_filters = []
-            for pattern in search_patterns:
-                space_removed_filters.append(Building.normalized_name.ilike(f"%{pattern}%"))
-            
-            # AND条件とスペース除去条件のいずれかに一致
-            query = query.filter(
-                or_(
-                    and_(*and_conditions),  # 全ての単語を含む
-                    or_(*space_removed_filters)  # スペースを除去した文字列に一致
-                )
-            )
-        else:
-            # 単一の検索語の場合は、従来通りの処理
-            search_patterns = []
-            
-            # 元の検索文字列
-            search_patterns.append(search)
-            
-            # 中点（・）を除去
-            search_normalized = search.replace('・', '')
-            if search_normalized != search:
-                search_patterns.append(search_normalized)
-            
-            # スペースを除去
-            search_no_space = search.replace(' ', '').replace('　', '')
-            if search_no_space != search:
-                search_patterns.append(search_no_space)
-            
-            # 中点とスペースの両方を除去
-            search_clean = search.replace('・', '').replace(' ', '').replace('　', '')
-            if search_clean not in search_patterns:
-                search_patterns.append(search_clean)
-            
-            # いずれかのパターンに一致するものを検索
-            filters = []
-            for pattern in search_patterns:
-                filters.append(Building.normalized_name.ilike(f"%{pattern}%"))
-            
-            query = query.filter(or_(*filters))
+        from backend.app.utils.building_search import apply_building_search_to_query
+        query = apply_building_search_to_query(query, search, Building)
     
-    # 検索が指定されている場合は少なめに、そうでない場合は多めに取得
-    fetch_limit = 100 if search else 1000  # 三田ガーデンヒルズのような後半の建物も含める
+    # 検索が指定されている場合でも、重複候補を見逃さないよう十分な数を取得
+    fetch_limit = 500 if search else 1000  # 検索時も十分な数を取得して類似度計算
     buildings_with_count = query.order_by(
         Building.normalized_name
     ).limit(fetch_limit).all()
+    
+    if search:
+        app_logger.info(f"Search '{search}' returned {len(buildings_with_count)} buildings")
     
     # 除外ペアを取得
     exclusions = db.query(BuildingMergeExclusion).all()
@@ -874,6 +844,12 @@ async def get_duplicate_buildings(
         # 両方向の組み合わせを除外
         excluded_pairs.add((exclusion.building1_id, exclusion.building2_id))
         excluded_pairs.add((exclusion.building2_id, exclusion.building1_id))
+    
+    app_logger.info(f"Loaded {len(exclusions)} exclusion pairs, total pairs in set: {len(excluded_pairs)}")
+    
+    # デバッグ: 1552-2080のペアが含まれているか確認
+    if (1552, 2080) in excluded_pairs or (2080, 1552) in excluded_pairs:
+        app_logger.info(f"Exclusion pair 1552-2080 is loaded: (1552,2080)={(1552, 2080) in excluded_pairs}, (2080,1552)={(2080, 1552) in excluded_pairs}")
     
     # 事前に全ての建物名を正規化（キャッシュ）
     normalized_names = {}
@@ -896,8 +872,13 @@ async def get_duplicate_buildings(
             if building2.id in processed_ids:
                 continue
             
+            # デバッグ: 特定のペアを確認
+            if (building1.id == 1552 and building2.id == 2080) or (building1.id == 2080 and building2.id == 1552):
+                app_logger.info(f"Checking pair: {building1.id} vs {building2.id}, excluded_pairs contains: {(building1.id, building2.id) in excluded_pairs}")
+            
             # 除外リストに含まれていたらスキップ
             if (building1.id, building2.id) in excluded_pairs:
+                app_logger.debug(f"Skipping excluded pair: {building1.id} ({building1.normalized_name}) - {building2.id} ({building2.normalized_name})")
                 continue
                 
             # 同じ住所の場合は重複候補に含める（表記ゆれの可能性）
@@ -911,7 +892,8 @@ async def get_duplicate_buildings(
             norm_name2 = normalized_names[building2.id]
             
             # 簡易チェック：最初の3文字が全く異なる場合はスキップ
-            if len(norm_name1) >= 3 and len(norm_name2) >= 3:
+            # ただし、検索時は検索文字列を含む建物同士なので、このチェックをスキップ
+            if search is None and len(norm_name1) >= 3 and len(norm_name2) >= 3:
                 if norm_name1[:3] != norm_name2[:3]:
                     continue
             
@@ -1029,8 +1011,11 @@ async def search_buildings_for_merge(
             })
     
     # 名前で検索
-    # スペースで分割してAND検索 または スペースを除去した検索
-    search_terms = query.replace('　', ' ').split()
+    from backend.app.utils.search_normalizer import create_search_patterns, normalize_search_text
+    
+    # 検索文字列を正規化
+    normalized_query = normalize_search_text(query)
+    search_terms = normalized_query.split()
     
     name_query = db.query(
         Building,
@@ -1041,29 +1026,38 @@ async def search_buildings_for_merge(
     
     if len(search_terms) > 1:
         # 複数の検索語がある場合
-        # 1. 各単語を含む建物を検索（AND条件）
-        # 2. スペースを除去した全体文字列でも検索（OR条件）
+        # 各検索語のパターンを生成
+        all_conditions = []
         
-        # AND検索条件
+        # AND条件（全ての単語を含む）
         and_conditions = []
         for term in search_terms:
-            and_conditions.append(Building.normalized_name.ilike(f"%{term}%"))
+            term_patterns = create_search_patterns(term)
+            term_conditions = []
+            for pattern in term_patterns:
+                term_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
+            if term_conditions:
+                and_conditions.append(or_(*term_conditions))
         
-        # スペースを除去した検索
-        search_no_space = query.replace(' ', '').replace('　', '')
+        if and_conditions:
+            all_conditions.append(and_(*and_conditions))
         
-        # 複合条件
-        name_query = name_query.filter(
-            or_(
-                and_(*and_conditions),  # 全ての単語を含む
-                Building.normalized_name.ilike(f"%{search_no_space}%")  # スペースを除去した文字列に一致
-            )
-        )
+        # 全体文字列のパターンでも検索
+        full_patterns = create_search_patterns(query)
+        for pattern in full_patterns:
+            all_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
+        
+        if all_conditions:
+            name_query = name_query.filter(or_(*all_conditions))
     else:
         # 単一の検索語の場合
-        name_query = name_query.filter(
-            Building.normalized_name.ilike(f"%{query}%")
-        )
+        search_patterns = create_search_patterns(query)
+        search_conditions = []
+        for pattern in search_patterns:
+            search_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
+        
+        if search_conditions:
+            name_query = name_query.filter(or_(*search_conditions))
     
     name_results = name_query.group_by(
         Building.id
@@ -1122,57 +1116,107 @@ async def merge_buildings(
         "external_ids_moved": 0
     }
     
+    # 削除前に副建物の情報を保存
+    secondary_infos = []
+    for secondary in secondaries:
+        secondary_infos.append({
+            "id": secondary.id,
+            "normalized_name": secondary.normalized_name,
+            "address": secondary.address,
+            "total_floors": secondary.total_floors,
+            "built_year": secondary.built_year,
+            "structure": secondary.structure
+        })
+    
     try:
-        for secondary in secondaries:
-            building_detail = {
-                "id": secondary.id,
-                "normalized_name": secondary.normalized_name,
-                "address": secondary.address,
-                "total_floors": secondary.total_floors,
-                "built_year": secondary.built_year,
-                "structure": secondary.structure,
-                "properties_moved": 0
-            }
-            
-            # 副建物の名前は記録しない（BuildingAlias削除済み）
-            
-            # 物件を移動
-            count = db.query(MasterProperty).filter(
-                MasterProperty.building_id == secondary.id
-            ).update({"building_id": primary_id})
-            moved_properties += count
-            building_detail["properties_moved"] = count
-            
-            # 外部IDを移動
-            ext_id_count = db.query(BuildingExternalId).filter(
-                BuildingExternalId.building_id == secondary.id
-            ).update({"building_id": primary_id})
-            merge_details["external_ids_moved"] += ext_id_count
-            
-            # 建物情報を統合（より詳細な情報で上書き）
-            if secondary.total_floors and not primary.total_floors:
-                primary.total_floors = secondary.total_floors
-            if secondary.built_year and not primary.built_year:
-                primary.built_year = secondary.built_year
-            if secondary.structure and not primary.structure:
-                primary.structure = secondary.structure
-            if secondary.address and not primary.address:
-                primary.address = secondary.address
-            
-            merge_details["merged_buildings"].append(building_detail)
-            
-            # 副建物を削除
-            db.delete(secondary)
-            merged_count += 1
+        with LogContext(app_logger, "building_merge", 
+                       primary_id=primary_id, 
+                       secondary_ids=secondary_ids,
+                       primary_name=primary.normalized_name):
+            for secondary in secondaries:
+                building_detail = {
+                    "id": secondary.id,
+                    "normalized_name": secondary.normalized_name,
+                    "address": secondary.address,
+                    "total_floors": secondary.total_floors,
+                    "built_year": secondary.built_year,
+                    "structure": secondary.structure,
+                    "properties_moved": 0
+                }
+                
+                # 副建物の名前は記録しない（BuildingAlias削除済み）
+                
+                # 物件を移動
+                count = db.query(MasterProperty).filter(
+                    MasterProperty.building_id == secondary.id
+                ).update({"building_id": primary_id})
+                moved_properties += count
+                building_detail["properties_moved"] = count
+                
+                # 外部IDを移動
+                ext_id_count = db.query(BuildingExternalId).filter(
+                    BuildingExternalId.building_id == secondary.id
+                ).update({"building_id": primary_id})
+                merge_details["external_ids_moved"] += ext_id_count
+                
+                # 建物情報を統合（より詳細な情報で上書き）
+                if secondary.total_floors and not primary.total_floors:
+                    primary.total_floors = secondary.total_floors
+                if secondary.built_year and not primary.built_year:
+                    primary.built_year = secondary.built_year
+                if secondary.structure and not primary.structure:
+                    primary.structure = secondary.structure
+                if secondary.address and not primary.address:
+                    primary.address = secondary.address
+                
+                merge_details["merged_buildings"].append(building_detail)
+                
+                # 副建物が以前の統合で主建物として使われていた場合、履歴を更新
+                old_histories = db.query(BuildingMergeHistory).filter(
+                    BuildingMergeHistory.primary_building_id == secondary.id
+                ).all()
+                for old_history in old_histories:
+                    # 古い履歴の主建物IDを新しい主建物IDに更新
+                    old_history.primary_building_id = primary_id
+                
+                # 副建物に関連する除外履歴を削除
+                db.query(BuildingMergeExclusion).filter(
+                    or_(
+                        BuildingMergeExclusion.building1_id == secondary.id,
+                        BuildingMergeExclusion.building2_id == secondary.id
+                    )
+                ).delete()
+                
+                # 副建物を削除
+                db.delete(secondary)
+                merged_count += 1
         
-        # 統合履歴を記録
-        history = BuildingMergeHistory(
-            primary_building_id=primary_id,
-            merged_building_ids=secondary_ids,
-            moved_properties=moved_properties,
-            merge_details=merge_details
-        )
-        db.add(history)
+        # 統合履歴を記録（各建物ごとに個別に記録）
+        # 注: 新しい仕様では、複数建物の統合でも1対1の履歴として記録
+        for i, secondary_info in enumerate(secondary_infos):
+            # 該当する建物の詳細情報を取得
+            building_detail = None
+            for detail in merge_details["merged_buildings"]:
+                if detail["id"] == secondary_info["id"]:
+                    building_detail = detail
+                    break
+            
+            # 統合履歴を記録（現在のスキーマでは merged_building_ids を使用）
+            history = BuildingMergeHistory(
+                primary_building_id=primary_id,
+                merged_building_ids=[secondary_info["id"]],  # 1対1の統合でもリスト形式
+                moved_properties=building_detail["properties_moved"] if building_detail else 0,
+                merged_by="admin",  # TODO: 実際のユーザー情報を使用
+                merge_details={
+                    "merged_buildings": [building_detail] if building_detail else [],
+                    "aliases_moved": merge_details["aliases_moved"] if i == 0 else 0,
+                    "external_ids_moved": merge_details["external_ids_moved"] if i == 0 else 0,
+                    "batch_merge": len(secondary_infos) > 1,
+                    "batch_index": i if len(secondary_infos) > 1 else None,
+                    "secondary_building_info": secondary_info  # 削除された建物の情報を保存
+                }
+            )
+            db.add(history)
         
         # 多数決による建物情報更新
         from backend.app.utils.majority_vote_updater import MajorityVoteUpdater
@@ -1190,7 +1234,7 @@ async def merge_buildings(
         
         return {
             "success": True,
-            "merged_count": merged_count,
+            "merged_count": merged_count + 1,  # 主建物も含めた総数
             "moved_properties": moved_properties,
             "primary_building": {
                 "id": primary.id,
@@ -1202,76 +1246,15 @@ async def merge_buildings(
         
     except Exception as e:
         db.rollback()
-        import traceback
-        print(f"[ERROR] Building merge failed: {str(e)}")
-        print(traceback.format_exc())
+        error_logger.error(f"Building merge failed", extra={
+            "primary_id": primary_id,
+            "secondary_ids": secondary_ids,
+            "error": str(e)
+        }, exc_info=True)
         raise HTTPException(status_code=500, detail=f"統合中にエラーが発生しました: {str(e)}")
 
 
-class ExcludeBuildingsRequest(BaseModel):
-    building1_id: int
-    building2_id: int
-    reason: Optional[str] = None
-
-@app.post("/api/admin/exclude-buildings", response_model=Dict[str, Any])
-async def exclude_buildings(
-    request: ExcludeBuildingsRequest,
-    db: Session = Depends(get_db)
-):
-    """建物ペアを統合候補から除外"""
-    building1_id = request.building1_id
-    building2_id = request.building2_id
-    reason = request.reason
-    
-    # 既に除外されているかチェック
-    existing = db.query(BuildingMergeExclusion).filter(
-        or_(
-            and_(
-                BuildingMergeExclusion.building1_id == building1_id,
-                BuildingMergeExclusion.building2_id == building2_id
-            ),
-            and_(
-                BuildingMergeExclusion.building1_id == building2_id,
-                BuildingMergeExclusion.building2_id == building1_id
-            )
-        )
-    ).first()
-    
-    if existing:
-        return {"success": False, "message": "既に除外済みです"}
-    
-    # 小さいIDを building1_id として保存（一貫性のため）
-    if building1_id > building2_id:
-        building1_id, building2_id = building2_id, building1_id
-    
-    exclusion = BuildingMergeExclusion(
-        building1_id=building1_id,
-        building2_id=building2_id,
-        reason=reason
-    )
-    db.add(exclusion)
-    db.commit()
-    
-    return {"success": True, "exclusion_id": exclusion.id}
-
-
-@app.delete("/api/admin/exclude-buildings/{exclusion_id}", response_model=Dict[str, Any])
-async def remove_exclusion(
-    exclusion_id: int,
-    db: Session = Depends(get_db)
-):
-    """除外を取り消す"""
-    exclusion = db.query(BuildingMergeExclusion).filter(
-        BuildingMergeExclusion.id == exclusion_id
-    ).first()
-    
-    if not exclusion:
-        raise HTTPException(status_code=404, detail="除外記録が見つかりません")
-    
-    db.delete(exclusion)
-    db.commit()
-    
-    return {"success": True}
+# 建物除外関連のエンドポイントはadmin.pyに移動済み
 
 
 @app.get("/api/admin/merge-history", response_model=Dict[str, Any])
@@ -1281,6 +1264,8 @@ async def get_merge_history(
     db: Session = Depends(get_db)
 ):
     """統合履歴を取得"""
+    from backend.app.utils.datetime_utils import to_jst_string
+    
     query = db.query(BuildingMergeHistory).options(
         joinedload(BuildingMergeHistory.primary_building)
     )
@@ -1295,27 +1280,32 @@ async def get_merge_history(
     result = []
     for history in histories:
         # 統合元の建物情報を取得
-        merged_buildings_info = []
-        if history.merge_details and "merged_buildings" in history.merge_details:
-            # merge_detailsに建物情報が保存されている場合（新しい統合）
-            merged_buildings_info = history.merge_details["merged_buildings"]
-        else:
-            # merge_detailsに建物情報がない場合（古い統合）、IDから建物名を取得
-            for building_id in history.merged_building_ids:
-                building = db.query(Building).filter(Building.id == building_id).first()
-                if building:
-                    merged_buildings_info.append({
-                        "id": building.id,
-                        "normalized_name": building.normalized_name,
-                        "properties_moved": None  # 古い統合では物件数の詳細は不明
-                    })
+        secondary_building_info = None
+        
+        # 新しい形式（secondary_building_id）の場合
+        if hasattr(history, 'secondary_building_id') and history.secondary_building_id:
+            if history.merge_details and "merged_buildings" in history.merge_details and len(history.merge_details["merged_buildings"]) > 0:
+                secondary_building_info = history.merge_details["merged_buildings"][0]
+            else:
+                # merge_detailsに情報がない場合は基本情報のみ
+                secondary_building_info = {
+                    "id": history.secondary_building_id,
+                    "normalized_name": f"削除済み建物 (ID: {history.secondary_building_id})",
+                    "properties_moved": history.moved_properties
+                }
+        # 古い形式（merged_building_ids）の場合
+        elif hasattr(history, 'merged_building_ids') and history.merged_building_ids:
+            # 最初の建物のみを表示（後方互換性のため）
+            building_id = history.merged_building_ids[0] if history.merged_building_ids else None
+            if building_id:
+                if history.merge_details and "merged_buildings" in history.merge_details and len(history.merge_details["merged_buildings"]) > 0:
+                    secondary_building_info = history.merge_details["merged_buildings"][0]
                 else:
-                    # 建物が削除されている場合
-                    merged_buildings_info.append({
+                    secondary_building_info = {
                         "id": building_id,
                         "normalized_name": f"削除済み建物 (ID: {building_id})",
                         "properties_moved": None
-                    })
+                    }
         
         result.append({
             "id": history.id,
@@ -1323,13 +1313,13 @@ async def get_merge_history(
                 "id": history.primary_building.id,
                 "normalized_name": history.primary_building.normalized_name
             },
-            "merged_building_ids": history.merged_building_ids,
-            "merged_buildings": merged_buildings_info,
+            "secondary_building": secondary_building_info,  # 新しい形式
             "moved_properties": history.moved_properties,
             "merge_details": history.merge_details,
-            "created_at": history.created_at,
-            "reverted_at": history.reverted_at,
-            "reverted_by": history.reverted_by
+            "created_at": to_jst_string(history.created_at),
+            "reverted_at": to_jst_string(history.reverted_at),
+            "reverted_by": history.reverted_by,
+            "merged_by": getattr(history, 'merged_by', None)
         })
     
     return {"histories": result, "total": len(result)}

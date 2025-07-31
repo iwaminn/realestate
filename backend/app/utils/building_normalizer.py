@@ -179,6 +179,7 @@ class BuildingNameNormalizer:
         
         # 9. よく使われる英語建物名をカタカナに変換
         # 大文字小文字の違いを吸収するため
+        # 単語境界を使用して完全一致のみ置換（VILLAGEがヴィラGEにならないように）
         english_to_katakana = {
             'SQUARE': 'スクエア',
             'TOWER': 'タワー',
@@ -197,7 +198,8 @@ class BuildingNameNormalizer:
         }
         
         for eng, katakana in english_to_katakana.items():
-            name = name.replace(eng, katakana)
+            # 単語境界を使用して完全一致のみ置換
+            name = re.sub(r'\b' + eng + r'\b', katakana, name)
         
         # 10. カタカナ単語間のスペースを削除（建物名の統一性を保つため）
         # 例: "芝浦アイランド ケープタワー" → "芝浦アイランドケープタワー"

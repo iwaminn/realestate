@@ -806,18 +806,25 @@ class BaseScraper(ABC):
             'other_errors': self._scraping_stats.get('other_errors', 0),
             # 建物名取得の統計
             'building_name_from_table': self._scraping_stats.get('building_name_from_table', 0),
-            'building_name_missing': self._scraping_stats.get('building_name_missing', 0)
+            'building_name_missing': self._scraping_stats.get('building_name_missing', 0),
+            # 重複警告の統計
+            'duplicate_properties': getattr(self, '_duplicate_property_count', 0)
         }
         
         # 詳細な統計ログ
         detail_fetch_failed = self._scraping_stats.get('detail_fetch_failed', 0)
         other_errors = self._scraping_stats.get('other_errors', 0)
+        duplicate_count = getattr(self, '_duplicate_property_count', 0)
         total_calculated = detail_fetched + skipped + detail_fetch_failed
         self.logger.info(
             f"スクレイピング完了: 処理総数={total_properties}件 "
             f"(詳細取得成功={detail_fetched}件, 詳細スキップ={skipped}件, 詳細取得失敗={detail_fetch_failed}件) "
             f"計算合計={total_calculated}件"
         )
+        
+        # 重複警告があれば表示
+        if duplicate_count > 0:
+            self.logger.warning(f"重複物件警告: {duplicate_count}件の物件が複数エリアに掲載されていました（正常な動作です）")
         if total_properties != total_calculated:
             self.logger.warning(f"統計の不一致: 処理総数({total_properties}) != 計算合計({total_calculated})")
         if other_errors > 0:
@@ -1710,8 +1717,44 @@ class BaseScraper(ABC):
                 self.session.add(listing)
                 self.session.flush()
             except Exception as e:
+                # site_property_id重複エラーの場合
+                if "property_listings_site_property_unique" in str(e):
+                    self.session.rollback()
+                    self.logger.warning(f"物件ID重複（想定内）: site_property_id={site_property_id}, source_site={self.source_site}")
+                    
+                    # 既存レコードを検索
+                    listing = self.session.query(PropertyListing).filter(
+                        PropertyListing.source_site == self.source_site,
+                        PropertyListing.site_property_id == site_property_id
+                    ).first()
+                    
+                    if listing:
+                        # 重複統計をカウント
+                        if not hasattr(self, '_duplicate_property_count'):
+                            self._duplicate_property_count = 0
+                        self._duplicate_property_count += 1
+                        
+                        # 既存レコードの情報を更新
+                        update_type = 'duplicate_skipped'
+                        listing.last_confirmed_at = datetime.now()
+                        
+                        # 管理画面用の警告ログを記録（エラーログではなく警告ログとして）
+                        if hasattr(self, '_save_warning_log'):
+                            self._save_warning_log({
+                                'url': url,
+                                'reason': '同一物件が複数エリアに掲載',
+                                'building_name': kwargs.get('building_name', ''),
+                                'price': str(price),
+                                'site_property_id': site_property_id,
+                                'timestamp': datetime.now().isoformat()
+                            })
+                        
+                        self.logger.info(f"既存物件をスキップ (ID: {listing.id}, site_property_id: {site_property_id})")
+                    else:
+                        # それでも見つからない場合はエラーを再発生
+                        raise
                 # URL重複エラーの場合は、再度検索して既存レコードを使用
-                if "property_listings_url_key" in str(e):
+                elif "property_listings_url_key" in str(e):
                     self.session.rollback()
                     self.logger.debug(f"URL重複エラー検出。既存レコードを再検索...")
                     
@@ -2344,6 +2387,39 @@ class BaseScraper(ABC):
                 # マネージャーのadd_error_logメソッドを呼び出す
                 self.logger.info(f"add_error_log呼び出し: {error_entry}")
                 self.scraping_manager.add_error_log(task_id, error_entry)
+            else:
+                self.logger.warning("task_idが設定されていません")
+        else:
+            self.logger.warning(f"scraping_managerが設定されていません: hasattr={hasattr(self, 'scraping_manager')}")
+    
+    def _save_warning_log(self, warning_info: Dict[str, Any]):
+        """警告ログを保存（並列スクレイピングマネージャーと連携）"""
+        self.logger.info(f"_save_warning_log呼び出し: {warning_info}")
+        
+        if hasattr(self, 'scraping_manager') and self.scraping_manager:
+            # タスクIDを取得
+            task_id = getattr(self, 'task_id', None)
+            self.logger.info(f"task_id: {task_id}, scraping_manager: {self.scraping_manager}")
+            
+            if task_id:
+                # 警告ログエントリを作成
+                warning_entry = {
+                    'timestamp': warning_info.get('timestamp', datetime.now().isoformat()),
+                    'scraper': self.source_site.value,
+                    'url': warning_info.get('url', '不明'),
+                    'reason': warning_info.get('reason', '警告'),
+                    'building_name': warning_info.get('building_name', ''),
+                    'price': warning_info.get('price', ''),
+                    'site_property_id': warning_info.get('site_property_id', '')
+                }
+                # マネージャーのadd_warning_logメソッドを呼び出す（存在する場合）
+                if hasattr(self.scraping_manager, 'add_warning_log'):
+                    self.logger.info(f"add_warning_log呼び出し: {warning_entry}")
+                    self.scraping_manager.add_warning_log(task_id, warning_entry)
+                else:
+                    # 警告ログメソッドがない場合は、エラーログとして保存（互換性のため）
+                    self.logger.info(f"add_warning_logがないため、add_error_log呼び出し: {warning_entry}")
+                    self.scraping_manager.add_error_log(task_id, warning_entry)
             else:
                 self.logger.warning("task_idが設定されていません")
         else:

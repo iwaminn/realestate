@@ -99,9 +99,13 @@ export interface SearchParams {
 }
 
 export interface Area {
+  id: number;
   name: string;
-  code?: string;
+  prefecture: string;
+  city: string;
+  code: string;
   property_count: number;
+  is_active: boolean;
 }
 
 export interface ApiResponse<T> {
@@ -110,14 +114,6 @@ export interface ApiResponse<T> {
   page: number;
   per_page: number;
   total_pages: number;
-}
-
-export interface Area {
-  id: number;
-  prefecture: string;
-  city: string;
-  code: string;
-  is_active: boolean;
 }
 
 export interface Statistics {

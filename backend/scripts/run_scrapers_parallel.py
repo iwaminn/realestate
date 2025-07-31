@@ -253,6 +253,35 @@ class ParallelScrapingManagerDB:
             finally:
                 db.close()
     
+    def add_warning_log(self, task_id: str, warning_entry: Dict[str, Any]):
+        """警告ログを追加"""
+        with self.log_lock:  # ロックで排他制御
+            db = SessionLocal()
+            try:
+                # 最新のデータを取得するため、refresh
+                task = db.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
+                if task:
+                    # 現在のデータベースから最新の警告ログを取得
+                    db.refresh(task)
+                    warning_logs = list(task.warning_logs or [])  # 新しいリストを作成
+                    warning_logs.append(warning_entry)
+                    # 最新50件のみ保持
+                    if len(warning_logs) > 50:
+                        warning_logs = warning_logs[-50:]
+                    # SQLAlchemyがJSONの変更を検知できるように、新しいリストを代入
+                    task.warning_logs = warning_logs
+                    # flag_modifiedで明示的に変更を通知
+                    from sqlalchemy.orm.attributes import flag_modified
+                    flag_modified(task, "warning_logs")
+                    db.commit()
+                    logger.info(f"警告ログを追加しました: {task_id} - 合計{len(warning_logs)}件")
+                    
+            except Exception as e:
+                db.rollback()
+                logger.error(f"警告ログ追加失敗: {e}")
+            finally:
+                db.close()
+    
     def check_pause_cancel(self, task_id: str) -> Tuple[bool, bool]:
         """一時停止・キャンセル状態をチェック"""
         db = SessionLocal()

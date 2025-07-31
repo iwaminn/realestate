@@ -134,6 +134,44 @@ psql -U realestate -d realestate
 
 **注意**: ローカル環境で実行するとデータの不整合が発生し、「データベースに保存されているはずのデータが見つからない」などの問題が起きます。
 
+### 🚨 タイムゾーンの設定について
+
+**重要**: PostgreSQLはUTCで動作し、アプリケーション層で日本時間に変換しています。
+
+#### 現在の設計：
+- **データベース保存**: すべてのタイムスタンプをUTCで保存
+- **APIレスポンス**: 日本時間（JST/+09:00）に変換して返却
+- **フロントエンド表示**: APIから受け取った日本時間をそのまま表示
+
+#### 実装の詳細：
+1. **バックエンド（FastAPI）**
+   - `backend/app/utils/datetime_utils.py`に`to_jst_string()`関数を実装
+   - 各APIエンドポイントでタイムスタンプを日本時間に変換
+   - 例：`2025-08-01T00:46:25.899041+09:00`
+
+2. **フロントエンド（React）**
+   - APIから受け取った日本時間を`toLocaleString('ja-JP')`で表示
+   - タイムゾーン変換は不要（サーバー側で処理済み）
+
+3. **注意事項**
+   - データベースに保存される時刻はすべてUTC
+   - 直接SQLでINSERT/UPDATEする際は時差を考慮すること
+   - スクレイピング等で取得した時刻は適切にUTCに変換して保存
+
+4. **データ修正が必要な場合**
+   ```sql
+   -- 誤って日本時間として保存された時刻を修正（9時間戻す）
+   UPDATE テーブル名 SET created_at = created_at - INTERVAL '9 hours' WHERE created_at > NOW();
+   ```
+
+5. **Docker環境でのタイムゾーン設定**
+   ```yaml
+   # docker-compose.yml に設定済み（効果は限定的）
+   environment:
+     TZ: Asia/Tokyo
+     PGTZ: Asia/Tokyo  # PostgreSQL用（ただしDBはUTCで動作）
+   ```
+
 ## 最新の変更
 
 - Docker環境の追加（Docker Composeで簡単起動）
@@ -148,10 +186,64 @@ psql -U realestate -d realestate
   - タスク情報・進捗はすべてデータベースで管理
   - ファイルベースの旧実装は削除済み
   - 直列実行モードを削除、常に並列実行を使用
+- **日時表示の日本時間統一（2025年8月）**
+  - APIレスポンスで日本時間を返すように統一
+  - フロントエンドでのタイムゾーン変換を不要に
+  - 建物・物件の統合履歴、除外履歴すべてに適用
 
 ## デプロイ・保守
 
 **重要**: システム改修後は必ず `docs/DEPLOYMENT_CHECKLIST.md` の手順に従って動作確認を行ってください。
+
+## ロギングシステム（2025年7月追加）
+
+### 概要
+アプリケーション全体のエラーと動作を追跡するための構造化ロギングシステムを実装しています。
+すべてのログはJSON形式で記録され、エラーの原因特定が容易になっています。
+
+### ログファイルの場所
+Dockerコンテナ内: `/app/logs/`
+ホスト側: `/home/ubuntu/realestate/logs/`
+
+主要なログファイル：
+- `app.log` - アプリケーション全般のログ
+- `errors.log` - エラーのみを記録（スタックトレース付き）
+- `api_requests.log` - APIリクエスト/レスポンスログ
+- `database.log` - データベース操作ログ
+
+### エラー発生時の確認方法
+
+```bash
+# 最新のエラーログを確認（ホスト側）
+tail -n 50 /home/ubuntu/realestate/logs/errors.log | jq .
+
+# Docker内でエラーログを確認
+docker exec realestate-backend tail -n 50 /app/logs/errors.log | jq .
+
+# 特定のエラーを検索（例：建物統合エラー）
+docker exec realestate-backend grep "building_merge" /app/logs/errors.log | jq .
+
+# APIリクエストのエラーを確認
+docker exec realestate-backend grep "500" /app/logs/api_requests.log | jq .
+```
+
+### ログの構造
+各ログエントリは以下の情報を含みます：
+- `timestamp` - エラー発生時刻（UTC）
+- `level` - ログレベル（INFO, ERROR等）
+- `message` - エラーメッセージ
+- `module` - エラーが発生したモジュール
+- `function` - エラーが発生した関数名
+- `line` - エラーが発生した行番号
+- `exception` - 例外情報（type, message, traceback）
+- その他のコンテキスト情報（例：building_id, user_id等）
+
+### デバッグ時の活用方法
+1. エラーが発生したら、まず `errors.log` を確認
+2. `timestamp` でエラー発生時刻を特定
+3. 同じ時刻の `api_requests.log` でリクエスト内容を確認
+4. 必要に応じて `app.log` で詳細な処理フローを追跡
+5. `database.log` でデータベース操作を確認
 
 ## よく使うコマンド
 

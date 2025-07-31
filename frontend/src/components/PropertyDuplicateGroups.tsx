@@ -43,6 +43,7 @@ import {
   Check as CheckIcon,
   Refresh as RefreshIcon,
   Search as SearchIcon,
+  Clear as ClearIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
 
@@ -564,6 +565,18 @@ const PropertyDuplicateGroups: React.FC = () => {
                 ),
                 endAdornment: (
                   <InputAdornment position="end">
+                    {searchQuery && (
+                      <IconButton
+                        size="small"
+                        onClick={() => {
+                          setSearchQuery('');
+                          fetchGroups('');
+                        }}
+                        sx={{ mr: 1 }}
+                      >
+                        <ClearIcon />
+                      </IconButton>
+                    )}
                     <Button 
                       variant="contained" 
                       onClick={() => fetchGroups(searchQuery)}

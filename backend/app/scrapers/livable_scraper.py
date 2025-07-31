@@ -324,6 +324,10 @@ class LivableScraper(BaseScraper):
                     
                     if label_elem and value_elem:
                         label = label_elem.get_text(strip=True)
+                        # リンク要素を除外してテキストを取得
+                        # 「地図を見る」などのリンクテキストを除去
+                        for link in value_elem.find_all('a'):
+                            link.extract()
                         value = value_elem.get_text(strip=True)
                         self._extract_property_info(label, value, property_data, detail_info)
             
@@ -337,7 +341,12 @@ class LivableScraper(BaseScraper):
                         cells = row.find_all(['th', 'td'])
                         if len(cells) >= 2:
                             label = cells[0].get_text(strip=True)
-                            value = cells[1].get_text(strip=True)
+                            # リンク要素を除外してテキストを取得
+                            value_cell = cells[1]
+                            # 「地図を見る」などのリンクテキストを除去
+                            for link in value_cell.find_all('a'):
+                                link.extract()
+                            value = value_cell.get_text(strip=True)
                             self._extract_property_info(label, value, property_data, detail_info)
                 
                 elif elem.name == 'dl':
@@ -346,7 +355,12 @@ class LivableScraper(BaseScraper):
                     for i, dt in enumerate(dt_elements):
                         if i < len(dd_elements):
                             label = dt.get_text(strip=True)
-                            value = dd_elements[i].get_text(strip=True)
+                            # リンク要素を除外してテキストを取得
+                            value_elem = dd_elements[i]
+                            # 「地図を見る」などのリンクテキストを除去
+                            for link in value_elem.find_all('a'):
+                                link.extract()
+                            value = value_elem.get_text(strip=True)
                             self._extract_property_info(label, value, property_data, detail_info)
             
             # 不動産会社情報を取得

@@ -124,6 +124,18 @@ interface ScrapingTask {
     price?: string;
     message: string;
   }>;
+  warning_logs?: Array<{
+    timestamp: string;
+    scraper: string;
+    area?: string;
+    area_code?: string;
+    url?: string;
+    reason?: string;
+    building_name?: string;
+    price?: string;
+    site_property_id?: string;
+    message?: string;
+  }>;
 }
 
 const AdminScraping: React.FC = () => {
@@ -1006,11 +1018,15 @@ const AdminScraping: React.FC = () => {
                               onChange={(e, v) => setLogTabValues(prev => ({ ...prev, [task.task_id]: v }))} 
                               sx={{ mb: 2 }}
                             >
-                              <Tab label="詳細情報" />
-                              <Tab label="ログ" disabled={!task.logs || task.logs.length === 0} />
+                              <Tab label="進捗状況" />
+                              <Tab label="物件更新履歴" disabled={!task.logs || task.logs.length === 0} />
                               <Tab 
                                 label="エラーログ" 
                                 disabled={!task.error_logs || task.error_logs.length === 0} 
+                              />
+                              <Tab 
+                                label="警告ログ" 
+                                disabled={!task.warning_logs || task.warning_logs.length === 0} 
                               />
                             </Tabs>
                             
@@ -1290,36 +1306,74 @@ const AdminScraping: React.FC = () => {
                                 </List>
                                 {task.logs.length === 0 && (
                                   <Typography variant="body2" color="text.secondary" align="center" py={2}>
-                                    ログがありません
+                                    物件更新履歴がありません
                                   </Typography>
                                 )}
                               </Box>
                             )}
                             
                             {(logTabValues[task.task_id] || 0) === 2 && (
-                              <Box sx={{ maxHeight: 400, overflow: 'auto', bgcolor: 'grey.50', p: 1, borderRadius: 1 }}>
+                              <Box sx={{ 
+                                maxHeight: 400, 
+                                overflow: 'auto', 
+                                bgcolor: 'grey.50', 
+                                p: 1, 
+                                borderRadius: 1,
+                                width: '100%',
+                                overflowX: 'hidden'
+                              }}>
                                 {task.error_logs && task.error_logs.length > 0 ? (
-                                <List dense>
+                                <List dense sx={{ width: '100%' }}>
                                   {task.error_logs.slice().reverse().map((log, index) => (
                                     <ListItem key={index} sx={{ 
                                       py: 0.5,
                                       borderBottom: '1px solid',
                                       borderColor: 'grey.200',
-                                      bgcolor: 'error.50'
+                                      bgcolor: 'error.50',
+                                      display: 'block',
+                                      width: '100%',
+                                      maxWidth: '100%'
                                     }}>
                                       <ListItemText
+                                        sx={{ overflow: 'hidden' }}
                                         primary={
-                                          <Box display="flex" alignItems="center" gap={1}>
-                                            <Typography variant="caption" color="text.secondary">
-                                              {new Date(log.timestamp).toLocaleTimeString('ja-JP')}
-                                            </Typography>
-                                            <Chip
-                                              label={log.reason}
-                                              size="small"
+                                          <Box>
+                                            <Box display="flex" alignItems="center" gap={1} sx={{ mb: 0.5 }}>
+                                              <Typography variant="caption" color="text.secondary">
+                                                {new Date(log.timestamp).toLocaleTimeString('ja-JP')}
+                                              </Typography>
+                                              <Chip
+                                                label={log.reason?.includes('システムエラー') ? 'システムエラー' : log.reason?.split(':')[0] || log.reason}
+                                                size="small"
+                                                color="error"
+                                                sx={{ height: 20, flexShrink: 0 }}
+                                              />
+                                            </Box>
+                                            {log.reason?.includes(':') && (
+                                              <Typography 
+                                                variant="caption" 
+                                                color="error" 
+                                                component="div"
+                                                sx={{ 
+                                                  mb: 0.5,
+                                                  wordBreak: 'break-all',
+                                                  overflowWrap: 'break-word',
+                                                  whiteSpace: 'pre-wrap'
+                                                }}
+                                              >
+                                                {log.reason.substring(log.reason.indexOf(':') + 1).trim()}
+                                              </Typography>
+                                            )}
+                                            <Typography 
+                                              variant="body2" 
                                               color="error"
-                                              sx={{ height: 20 }}
-                                            />
-                                            <Typography variant="body2" color="error">
+                                              sx={{ 
+                                                wordBreak: 'break-all',
+                                                overflowWrap: 'break-word',
+                                                whiteSpace: 'pre-wrap',
+                                                maxWidth: '100%'
+                                              }}
+                                            >
                                               {log.message}
                                             </Typography>
                                           </Box>
@@ -1335,7 +1389,14 @@ const AdminScraping: React.FC = () => {
                                               </Typography>
                                             )}
                                             {log.url && (
-                                              <Typography variant="caption" component="div">
+                                              <Typography 
+                                                variant="caption" 
+                                                component="div"
+                                                sx={{ 
+                                                  wordBreak: 'break-all',
+                                                  overflow: 'hidden'
+                                                }}
+                                              >
                                                 <a href={log.url} target="_blank" rel="noopener noreferrer" 
                                                    style={{ color: '#1976d2', textDecoration: 'none' }}>
                                                   {log.url}
@@ -1356,24 +1417,67 @@ const AdminScraping: React.FC = () => {
                               </Box>
                             )}
 
-                            {task.errors.length > 0 && (
-                              <Box mt={2}>
-                                <Alert severity="error">
-                                  <Typography variant="subtitle2" gutterBottom>
-                                    エラー
+                            {(logTabValues[task.task_id] || 0) === 3 && (
+                              <Box sx={{ maxHeight: 400, overflow: 'auto', bgcolor: 'grey.50', p: 1, borderRadius: 1 }}>
+                                {task.warning_logs && task.warning_logs.length > 0 ? (
+                                <List dense>
+                                  {task.warning_logs.slice().reverse().map((log, index) => (
+                                    <ListItem key={index} sx={{ 
+                                      py: 0.5,
+                                      borderBottom: '1px solid',
+                                      borderColor: 'grey.200',
+                                      bgcolor: 'warning.50'
+                                    }}>
+                                      <ListItemText 
+                                        primary={
+                                          <Box>
+                                            <Typography variant="body2" component="span" fontWeight="medium">
+                                              [{new Date(log.timestamp).toLocaleTimeString()}] {log.scraper}
+                                            </Typography>
+                                            <Typography variant="body2" component="div" color="warning.main">
+                                              {log.reason || '警告'}
+                                            </Typography>
+                                          </Box>
+                                        }
+                                        secondary={
+                                          <Box>
+                                            {(log.building_name || log.price || log.site_property_id) && (
+                                              <Typography variant="caption" component="div" color="text.secondary">
+                                                {log.building_name && `建物名: ${log.building_name}`}
+                                                {log.price && ` | 価格: ${log.price}`}
+                                                {log.site_property_id && ` | 物件ID: ${log.site_property_id}`}
+                                              </Typography>
+                                            )}
+                                            {log.url && (
+                                              <Typography 
+                                                variant="caption" 
+                                                component="div"
+                                                sx={{ 
+                                                  wordBreak: 'break-all',
+                                                  overflow: 'hidden'
+                                                }}
+                                              >
+                                                <a href={log.url} target="_blank" rel="noopener noreferrer" 
+                                                   style={{ color: '#ed6c02', textDecoration: 'none' }}>
+                                                  {log.url}
+                                                </a>
+                                              </Typography>
+                                            )}
+                                          </Box>
+                                        }
+                                      />
+                                    </ListItem>
+                                  ))}
+                                </List>
+                                ) : (
+                                  <Typography variant="body2" color="text.secondary" align="center" py={2}>
+                                    警告ログがありません
                                   </Typography>
-                                  <ul>
-                                    {task.errors.map((error, index) => (
-                                      <li key={index}>
-                                        {typeof error === 'string' 
-                                          ? error 
-                                          : error.error || JSON.stringify(error)}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                </Alert>
+                                )}
                               </Box>
                             )}
+
+
                           </Box>
                         </Collapse>
                       </TableCell>

@@ -32,14 +32,14 @@ interface MergeHistory {
     id: number;
     normalized_name: string;
   };
-  merged_building_ids: number[];
-  merged_buildings?: Array<{
+  secondary_building?: {
     id: number;
     normalized_name: string;
     properties_moved: number | null;
-  }>;
+  };
   moved_properties: number;
   merge_details: any;
+  merged_by?: string;
   created_at: string;
   reverted_at: string | null;
   reverted_by: string | null;
@@ -92,6 +92,7 @@ const BuildingMergeHistory: React.FC = () => {
   };
 
   const formatDate = (dateString: string) => {
+    // サーバーから日本時間で返される
     return new Date(dateString).toLocaleString('ja-JP');
   };
 
@@ -122,10 +123,11 @@ const BuildingMergeHistory: React.FC = () => {
             <TableHead>
               <TableRow>
                 <TableCell>統合日時</TableCell>
-                <TableCell>統合元建物（統合された建物）</TableCell>
+                <TableCell>統合元建物（削除）</TableCell>
                 <TableCell>→</TableCell>
-                <TableCell>統合先建物（残った建物）</TableCell>
+                <TableCell>統合先建物（残存）</TableCell>
                 <TableCell align="center">移動物件数</TableCell>
+                <TableCell align="center">実行者</TableCell>
                 <TableCell align="center">状態</TableCell>
                 <TableCell align="center">操作</TableCell>
               </TableRow>
@@ -135,22 +137,15 @@ const BuildingMergeHistory: React.FC = () => {
                 <TableRow key={history.id}>
                   <TableCell>{formatDate(history.created_at)}</TableCell>
                   <TableCell>
-                    {(history.merged_buildings || []).length > 0 ? (
-                      <Box>
-                        {(history.merged_buildings || []).slice(0, 2).map((building, index) => (
-                          <Typography key={building.id} variant="body2">
-                            {building.normalized_name}
-                          </Typography>
-                        ))}
-                        {(history.merged_buildings || []).length > 2 && (
-                          <Typography variant="body2" color="textSecondary">
-                            他{(history.merged_buildings || []).length - 2}件
-                          </Typography>
-                        )}
-                      </Box>
+                    {history.secondary_building ? (
+                      <Tooltip title={`ID: ${history.secondary_building.id}`}>
+                        <Typography variant="body2">
+                          {history.secondary_building.normalized_name}
+                        </Typography>
+                      </Tooltip>
                     ) : (
                       <Typography variant="body2" color="textSecondary">
-                        {history.merged_building_ids.length}件の建物
+                        -
                       </Typography>
                     )}
                   </TableCell>
@@ -158,11 +153,20 @@ const BuildingMergeHistory: React.FC = () => {
                     <Typography variant="body2" color="textSecondary">→</Typography>
                   </TableCell>
                   <TableCell>
-                    <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
-                      {history.primary_building.normalized_name}
-                    </Typography>
+                    <Tooltip title={`ID: ${history.primary_building.id}`}>
+                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                        {history.primary_building.normalized_name}
+                      </Typography>
+                    </Tooltip>
                   </TableCell>
                   <TableCell align="center">{history.moved_properties}</TableCell>
+                  <TableCell align="center">
+                    {history.merged_by === 'auto_merge_script' ? (
+                      <Chip label="自動統合" size="small" variant="outlined" />
+                    ) : (
+                      history.merged_by || '-'
+                    )}
+                  </TableCell>
                   <TableCell align="center">
                     {history.reverted_at ? (
                       <Chip label="取り消し済み" size="small" />
@@ -205,7 +209,7 @@ const BuildingMergeHistory: React.FC = () => {
         maxWidth="md"
         fullWidth
       >
-        <DialogTitle>統合詳細</DialogTitle>
+        <DialogTitle>建物統合詳細</DialogTitle>
         <DialogContent>
           {selectedHistory && (
             <Box>
@@ -219,15 +223,20 @@ const BuildingMergeHistory: React.FC = () => {
                       統合元（削除された建物）
                     </Typography>
                     <Paper variant="outlined" sx={{ p: 2, mt: 1 }}>
-                      {(selectedHistory.merged_buildings || 
-                        selectedHistory.merge_details?.merged_buildings || 
-                        []).map((building: any) => (
-                        <Typography key={building.id} variant="body2" gutterBottom>
-                          • {building.normalized_name} 
-                          {building.properties_moved !== null && building.properties_moved !== undefined && 
-                            ` (物件数: ${building.properties_moved})`}
+                      {selectedHistory.secondary_building ? (
+                        <>
+                          <Typography variant="body2" gutterBottom>
+                            ID: {selectedHistory.secondary_building.id}
+                          </Typography>
+                          <Typography variant="body2">
+                            {selectedHistory.secondary_building.normalized_name}
+                          </Typography>
+                        </>
+                      ) : (
+                        <Typography variant="body2" color="textSecondary">
+                          情報なし
                         </Typography>
-                      ))}
+                      )}
                     </Paper>
                   </Box>
                   <Box>
@@ -238,6 +247,9 @@ const BuildingMergeHistory: React.FC = () => {
                       統合先（残った建物）
                     </Typography>
                     <Paper variant="outlined" sx={{ p: 2, mt: 1, bgcolor: 'primary.50' }}>
+                      <Typography variant="body2" gutterBottom sx={{ fontWeight: 'bold' }}>
+                        ID: {selectedHistory.primary_building.id}
+                      </Typography>
                       <Typography variant="body1" sx={{ fontWeight: 'bold' }}>
                         {selectedHistory.primary_building.normalized_name}
                       </Typography>
@@ -245,15 +257,22 @@ const BuildingMergeHistory: React.FC = () => {
                   </Box>
                 </Box>
               </Box>
-              <Typography variant="body2" color="textSecondary">
-                エイリアス追加: {selectedHistory.merge_details?.aliases_added?.length || 0}件
-              </Typography>
-              <Typography variant="body2" color="textSecondary">
-                エイリアス移動: {selectedHistory.merge_details?.aliases_moved || 0}件
-              </Typography>
+              
+              <Box mt={2}>
+                <Typography variant="body2" color="textSecondary">
+                  移動した物件数: {selectedHistory.moved_properties}件
+                </Typography>
+                {selectedHistory.merge_details?.batch_merge && (
+                  <Alert severity="info" sx={{ mt: 1 }}>
+                    この統合は複数建物の一括統合の一部です
+                  </Alert>
+                )}
+              </Box>
+              
               {selectedHistory.reverted_at && (
                 <Alert severity="info" sx={{ mt: 2 }}>
                   {formatDate(selectedHistory.reverted_at)} に取り消されました
+                  {selectedHistory.reverted_by && ` (実行者: ${selectedHistory.reverted_by})`}
                 </Alert>
               )}
             </Box>

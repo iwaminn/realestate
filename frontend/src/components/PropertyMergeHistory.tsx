@@ -99,6 +99,7 @@ const PropertyMergeHistory: React.FC = () => {
   };
 
   const formatDate = (dateString: string) => {
+    // サーバーから日本時間で返される
     return new Date(dateString).toLocaleString('ja-JP');
   };
 

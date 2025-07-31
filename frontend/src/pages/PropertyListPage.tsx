@@ -46,7 +46,7 @@ const PropertyListPage: React.FC = () => {
     if (urlParams.get('max_price')) params.max_price = Number(urlParams.get('max_price'));
     if (urlParams.get('min_area')) params.min_area = Number(urlParams.get('min_area'));
     if (urlParams.get('max_area')) params.max_area = Number(urlParams.get('max_area'));
-    if (urlParams.get('layout')) params.layout = urlParams.get('layout') || undefined;
+    if (urlParams.get('layouts')) params.layouts = urlParams.get('layouts')?.split(',') || undefined;
     if (urlParams.get('building_name')) params.building_name = urlParams.get('building_name') || undefined;
     if (urlParams.get('max_building_age')) params.max_building_age = Number(urlParams.get('max_building_age'));
     
@@ -78,7 +78,7 @@ const PropertyListPage: React.FC = () => {
     if (params.max_price) urlParams.set('max_price', params.max_price.toString());
     if (params.min_area) urlParams.set('min_area', params.min_area.toString());
     if (params.max_area) urlParams.set('max_area', params.max_area.toString());
-    if (params.layout) urlParams.set('layout', params.layout);
+    if (params.layouts && params.layouts.length > 0) urlParams.set('layouts', params.layouts.join(','));
     if (params.building_name) urlParams.set('building_name', params.building_name);
     if (params.max_building_age) urlParams.set('max_building_age', params.max_building_age.toString());
     if (page > 1) urlParams.set('page', page.toString());

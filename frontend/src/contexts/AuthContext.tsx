@@ -22,7 +22,7 @@ export const useAuth = () => {
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [username, setUsername] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true); // 認証チェック中のローディング状態
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     // 既存の認証情報をチェック

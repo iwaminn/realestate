@@ -21,6 +21,7 @@ import {
   Grid,
   FormControlLabel,
   Checkbox,
+  Radio,
   IconButton,
   Collapse,
   TextField,
@@ -37,6 +38,7 @@ import {
   Block as BlockIcon,
   History as HistoryIcon,
   Refresh as RefreshIcon,
+  Clear as ClearIcon,
 } from '@mui/icons-material';
 import { propertyApi } from '../api/propertyApi';
 
@@ -69,7 +71,7 @@ const BuildingDuplicateManager: React.FC = () => {
   const [expandedGroups, setExpandedGroups] = useState<number[]>([]);
   const [selectedMasterId, setSelectedMasterId] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [minSimilarity, setMinSimilarity] = useState(0.94); // 単独の「棟」がある場合も検出できるレベル
+  const [minSimilarity, setMinSimilarity] = useState(0.7); // デフォルトを0.7に設定
   const [limit, setLimit] = useState(30); // 表示件数
   const [snackbar, setSnackbar] = useState({ 
     open: false, 
@@ -83,7 +85,11 @@ const BuildingDuplicateManager: React.FC = () => {
   }, []);
 
   const fetchDuplicateBuildings = async (search?: string, similarity?: number, displayLimit?: number) => {
-    // console.log('Fetching duplicate buildings...');
+    console.log('Fetching duplicate buildings with params:', {
+      search,
+      similarity: similarity || minSimilarity,
+      limit: displayLimit || limit
+    });
     setLoading(true);
     try {
       const params: any = { 
@@ -93,8 +99,9 @@ const BuildingDuplicateManager: React.FC = () => {
       if (search) {
         params.search = search;
       }
+      console.log('API params:', params);
       const response = await propertyApi.getDuplicateBuildings(params);
-      // console.log('Response:', response);
+      console.log('Response:', response);
       setDuplicateGroups(response.duplicate_groups);
     } catch (error) {
       console.error('Failed to fetch duplicate buildings:', error);
@@ -128,16 +135,154 @@ const BuildingDuplicateManager: React.FC = () => {
 
   const handleSelectGroup = (group: DuplicateGroup) => {
     setSelectedGroup(group);
-    setSelectedCandidates(group.candidates.map(c => c.id));
-    setSelectedMasterId(group.primary.id); // デフォルトで現在の主建物をマスターに
+    // すべての建物を選択（主建物も含む）
+    setSelectedCandidates([group.primary.id, ...group.candidates.map(c => c.id)]);
+    
+    // 物件数が最も多い建物をデフォルトのマスターに設定
+    const allBuildings = [
+      group.primary,
+      ...group.candidates
+    ];
+    const buildingWithMostProperties = allBuildings.reduce((prev, current) => 
+      current.property_count > prev.property_count ? current : prev
+    );
+    setSelectedMasterId(buildingWithMostProperties.id);
   };
 
   const handleToggleCandidate = (candidateId: number) => {
-    setSelectedCandidates(prev =>
-      prev.includes(candidateId)
+    setSelectedCandidates(prev => {
+      const newSelection = prev.includes(candidateId)
         ? prev.filter(id => id !== candidateId)
-        : [...prev, candidateId]
+        : [...prev, candidateId];
+      
+      // 選択解除された場合、その建物が統合先だったらクリア
+      if (!newSelection.includes(candidateId) && selectedMasterId === candidateId) {
+        setSelectedMasterId(null);
+      }
+      
+      return newSelection;
+    });
+  };
+
+  const handleSeparateFromGroup = async () => {
+    if (!selectedGroup || selectedCandidates.length === 0) return;
+
+    // 主建物が選択されているかチェック
+    const isPrimarySelected = selectedCandidates.includes(selectedGroup.primary.id);
+    
+    // 選択されていない候補を特定（主建物を除く）
+    const unselectedCandidates = selectedGroup.candidates.filter(
+      c => !selectedCandidates.includes(c.id)
     );
+    
+    // 選択されていない建物の総数（主建物が選択されていない場合は主建物も含む）
+    const unselectedBuildingsCount = unselectedCandidates.length + (isPrimarySelected ? 0 : 1);
+
+    // 全選択か一部選択かで処理を分ける
+    const isAllSelected = selectedCandidates.length === selectedGroup.candidates.length + 1; // 主建物も含めて全選択
+    
+    let confirmMessage = '';
+    if (isAllSelected) {
+      confirmMessage = 'すべての建物を別建物として登録しますか？\n\nこれらの建物は今後、お互いに重複候補として表示されなくなります。';
+    } else {
+      confirmMessage = `選択した${selectedCandidates.length}件をグループから分離しますか？\n\n・選択した建物：1つのグループとして分離（お互いは重複候補のまま）\n・選択されなかった${unselectedBuildingsCount}件：別のグループとして残る\n・2つのグループ間は別建物として扱われます`;
+    }
+
+    if (!confirm(confirmMessage)) {
+      return;
+    }
+
+    setMerging(true);
+    try {
+      if (isAllSelected) {
+        // 全選択の場合：すべての建物を相互に除外
+        const allBuildings = selectedCandidates; // すでに主建物も含まれている
+        for (let i = 0; i < allBuildings.length; i++) {
+          for (let j = i + 1; j < allBuildings.length; j++) {
+            await propertyApi.excludeBuildings(
+              allBuildings[i],
+              allBuildings[j],
+              '手動で別建物として指定'
+            );
+          }
+        }
+      } else {
+        // 一部選択の場合：選択vs未選択のみ除外
+        const selectedBuildingIds = selectedCandidates; // 主建物も含めて選択された建物のみ
+        const unselectedBuildingIds = [];
+        
+        // 主建物が選択されていない場合は未選択リストに追加
+        if (!isPrimarySelected) {
+          unselectedBuildingIds.push(selectedGroup.primary.id);
+        }
+        
+        // 選択されていない候補を未選択リストに追加
+        unselectedBuildingIds.push(...unselectedCandidates.map(c => c.id));
+        
+        for (const selected of selectedBuildingIds) {
+          for (const unselected of unselectedBuildingIds) {
+            await propertyApi.excludeBuildings(
+              selected,
+              unselected,
+              '別グループとして分離'
+            );
+          }
+        }
+      }
+
+      const message = isAllSelected
+        ? `${selectedCandidates.length}件を相互に別建物として登録しました。`
+        : `選択した${selectedCandidates.length}件をグループから分離しました。選択した建物同士は引き続き重複候補として表示されます。`;
+      
+      setSnackbar({
+        open: true,
+        message,
+        severity: 'success'
+      });
+
+      // グループをローカルで更新
+      if (isAllSelected) {
+        // 全選択の場合はグループ自体を削除
+        setDuplicateGroups(prevGroups => 
+          prevGroups.filter(group => group.primary.id !== selectedGroup.primary.id)
+        );
+      } else {
+        // 一部選択の場合は選択されなかった候補のみを残す
+        setDuplicateGroups(prevGroups => {
+          return prevGroups.map(group => {
+            if (group.primary.id === selectedGroup.primary.id) {
+              const remainingCandidates = group.candidates.filter(
+                candidate => !selectedCandidates.includes(candidate.id)
+              );
+              
+              // candidatesが空になった場合はグループ自体を削除
+              if (remainingCandidates.length === 0) {
+                return null;
+              }
+              
+              return {
+                ...group,
+                candidates: remainingCandidates
+              };
+            }
+            return group;
+          }).filter(Boolean) as DuplicateGroup[];
+        });
+      }
+
+      setSelectedGroup(null);
+      setSelectedCandidates([]);
+      setSelectedMasterId(null);
+    } catch (error: any) {
+      console.error('Failed to separate buildings:', error);
+      setSnackbar({
+        open: true,
+        message: '建物の分離に失敗しました',
+        severity: 'error'
+      });
+    } finally {
+      setMerging(false);
+    }
   };
 
   const handleMerge = async () => {
@@ -146,7 +291,7 @@ const BuildingDuplicateManager: React.FC = () => {
     setMerging(true);
     try {
       // マスター以外の建物IDを収集
-      const allBuildingIds = [selectedGroup.primary.id, ...selectedCandidates];
+      const allBuildingIds = selectedCandidates; // 選択された建物のみ
       const buildingsToMerge = allBuildingIds.filter(id => id !== selectedMasterId);
       
       const response = await propertyApi.mergeBuildings(
@@ -163,7 +308,7 @@ const BuildingDuplicateManager: React.FC = () => {
       // 統合された建物を含むグループをリストから削除（スムースな更新）
       setDuplicateGroups(prevGroups => {
         // 統合に関わったすべての建物IDのセット
-        const mergedBuildingIds = new Set([selectedGroup.primary.id, ...selectedCandidates]);
+        const mergedBuildingIds = new Set(selectedCandidates);
         
         // 統合された建物を含まないグループのみを残す
         return prevGroups.filter(group => {
@@ -189,11 +334,12 @@ const BuildingDuplicateManager: React.FC = () => {
       setSelectedGroup(null);
       setSelectedCandidates([]);
       setSelectedMasterId(null);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to merge buildings:', error);
+      const errorMessage = error.response?.data?.detail || error.message || '建物の統合に失敗しました';
       setSnackbar({ 
         open: true, 
-        message: '建物の統合に失敗しました', 
+        message: `エラー: ${errorMessage}`, 
         severity: 'error' 
       });
     } finally {
@@ -205,6 +351,57 @@ const BuildingDuplicateManager: React.FC = () => {
     if (similarity >= 0.95) return 'error';
     if (similarity >= 0.9) return 'warning';
     return 'info';
+  };
+
+  const handleChangePrimary = (newPrimaryId: number) => {
+    const currentGroups = [...duplicateGroups];
+    const groupIndex = currentGroups.findIndex(g => g.primary.id === selectedGroup?.primary.id);
+    
+    if (groupIndex === -1) return;
+    
+    const group = currentGroups[groupIndex];
+    const newPrimaryCandidate = group.candidates.find(c => c.id === newPrimaryId);
+    
+    if (!newPrimaryCandidate) return;
+    
+    // 現在の主建物を候補に追加
+    const oldPrimary = {
+      ...group.primary,
+      similarity: 1.0, // 元主建物なので類似度100%
+      address_similarity: 1.0,
+      floors_match: true
+    };
+    
+    // 新しい主建物を候補から削除
+    const newCandidates = [
+      oldPrimary,
+      ...group.candidates.filter(c => c.id !== newPrimaryId)
+    ];
+    
+    // グループを更新
+    currentGroups[groupIndex] = {
+      primary: {
+        id: newPrimaryCandidate.id,
+        normalized_name: newPrimaryCandidate.normalized_name,
+        address: newPrimaryCandidate.address,
+        total_floors: newPrimaryCandidate.total_floors,
+        property_count: newPrimaryCandidate.property_count
+      },
+      candidates: newCandidates
+    };
+    
+    setDuplicateGroups(currentGroups);
+    
+    // 選択されたグループも更新
+    if (selectedGroup && selectedGroup.primary.id === group.primary.id) {
+      setSelectedGroup(currentGroups[groupIndex]);
+    }
+    
+    setSnackbar({
+      open: true,
+      message: `主建物を「${newPrimaryCandidate.normalized_name}」に変更しました`,
+      severity: 'success'
+    });
   };
 
   return (
@@ -229,6 +426,18 @@ const BuildingDuplicateManager: React.FC = () => {
               ),
               endAdornment: (
                 <InputAdornment position="end">
+                  {searchQuery && (
+                    <IconButton
+                      size="small"
+                      onClick={() => {
+                        setSearchQuery('');
+                        fetchDuplicateBuildings('', minSimilarity, limit);
+                      }}
+                      sx={{ mr: 1 }}
+                    >
+                      <ClearIcon />
+                    </IconButton>
+                  )}
                   <Button 
                     variant="contained" 
                     onClick={handleSearch}
@@ -246,19 +455,21 @@ const BuildingDuplicateManager: React.FC = () => {
           <Box sx={{ px: 2 }}>
             <Typography variant="body2" color="textSecondary" gutterBottom>
               類似度: {(minSimilarity * 100).toFixed(0)}%
+              {minSimilarity <= 0.3 && ' (棟違いも表示)'}
             </Typography>
             <Slider
               value={minSimilarity}
               onChange={(_, value) => setMinSimilarity(value as number)}
               onChangeCommitted={() => fetchDuplicateBuildings(searchQuery, minSimilarity, limit)}
-              min={0.85}
+              min={0.3}
               max={1.0}
               step={0.01}
               marks={[
+                { value: 0.3, label: '30%' },
+                { value: 0.5, label: '50%' },
+                { value: 0.7, label: '70%' },
                 { value: 0.85, label: '85%' },
-                { value: 0.90, label: '90%' },
-                { value: 0.95, label: '95%' },
-                { value: 1.0, label: '100%' },
+                { value: 0.95, label: '95%' }
               ]}
               valueLabelDisplay="auto"
               valueLabelFormat={(value) => `${(value * 100).toFixed(0)}%`}
@@ -313,11 +524,11 @@ const BuildingDuplicateManager: React.FC = () => {
             <TableHead>
               <TableRow>
                 <TableCell width={50}></TableCell>
-                <TableCell>主建物名</TableCell>
+                <TableCell>建物名</TableCell>
                 <TableCell>住所</TableCell>
                 <TableCell align="center">階数</TableCell>
                 <TableCell align="center">物件数</TableCell>
-                <TableCell align="center">候補数</TableCell>
+                <TableCell align="center">重複数</TableCell>
                 <TableCell align="center">操作</TableCell>
               </TableRow>
             </TableHead>
@@ -342,7 +553,7 @@ const BuildingDuplicateManager: React.FC = () => {
                   <TableCell align="center">{group.primary.total_floors || '-'}F</TableCell>
                   <TableCell align="center">{group.primary.property_count}</TableCell>
                   <TableCell align="center">
-                    <Chip label={group.candidates.length} size="small" color="primary" />
+                    <Chip label={group.candidates.length + 1} size="small" color="primary" />
                   </TableCell>
                   <TableCell align="center">
                     <Button
@@ -356,7 +567,7 @@ const BuildingDuplicateManager: React.FC = () => {
                   </TableCell>
                 </TableRow>
                 <TableRow>
-                  <TableCell colSpan={6} sx={{ p: 0 }}>
+                  <TableCell colSpan={7} sx={{ p: 0 }}>
                     <Collapse in={expandedGroups.includes(index)}>
                       <Box sx={{ p: 2, bgcolor: 'grey.50' }}>
                         <Typography variant="subtitle2" gutterBottom>
@@ -370,7 +581,6 @@ const BuildingDuplicateManager: React.FC = () => {
                               <TableCell align="center">階数</TableCell>
                               <TableCell align="center">物件数</TableCell>
                               <TableCell align="center">類似度</TableCell>
-                              <TableCell align="center">操作</TableCell>
                             </TableRow>
                           </TableHead>
                           <TableBody>
@@ -381,55 +591,22 @@ const BuildingDuplicateManager: React.FC = () => {
                                 <TableCell align="center">{candidate.total_floors || '-'}F</TableCell>
                                 <TableCell align="center">{candidate.property_count}</TableCell>
                                 <TableCell align="center">
-                                  <Box>
+                                  <Box display="flex" flexDirection="column" alignItems="center" gap={0.5}>
                                     <Chip
                                       label={`名前: ${(candidate.similarity * 100).toFixed(0)}%`}
                                       size="small"
                                       color={getSimilarityColor(candidate.similarity)}
-                                      sx={{ mb: 0.5 }}
+                                      sx={{ minWidth: '80px' }}
                                     />
                                     {candidate.address_similarity !== undefined && (
                                       <Chip
                                         label={`住所: ${(candidate.address_similarity * 100).toFixed(0)}%`}
                                         size="small"
                                         variant="outlined"
-                                        sx={{ ml: 0.5 }}
+                                        sx={{ minWidth: '80px' }}
                                       />
                                     )}
                                   </Box>
-                                </TableCell>
-                                <TableCell align="center">
-                                  <Tooltip title="統合候補から除外">
-                                    <IconButton
-                                      size="small"
-                                      color="warning"
-                                      onClick={async (e) => {
-                                        e.stopPropagation();
-                                        try {
-                                          await propertyApi.excludeBuildings(
-                                            group.primary.id,
-                                            candidate.id,
-                                            '同一建物ではないため'
-                                          );
-                                          setSnackbar({
-                                            open: true,
-                                            message: '統合候補から除外しました',
-                                            severity: 'success'
-                                          });
-                                          // リストを再読み込み
-                                          fetchDuplicateBuildings(searchQuery);
-                                        } catch (error) {
-                                          setSnackbar({
-                                            open: true,
-                                            message: '除外に失敗しました',
-                                            severity: 'error'
-                                          });
-                                        }
-                                      }}
-                                    >
-                                      <BlockIcon fontSize="small" />
-                                    </IconButton>
-                                  </Tooltip>
                                 </TableCell>
                               </TableRow>
                             ))}
@@ -458,110 +635,107 @@ const BuildingDuplicateManager: React.FC = () => {
                 統合後は元に戻せませんので、慎重に確認してください。
               </Alert>
               
-              <Typography variant="subtitle1" gutterBottom>
-                マスター建物を選択（すべての情報がこの建物に統合されます）:
-              </Typography>
+              <Alert severity="info" sx={{ mb: 2 }}>
+                <Typography variant="body2" gutterBottom>
+                  以下の建物から操作対象を選択してください：
+                </Typography>
+                <Box sx={{ pl: 2, mt: 1 }}>
+                  <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                    <Checkbox size="small" disabled checked /> 統合・分離する建物を選択
+                  </Typography>
+                  <Typography variant="body2" sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+                    <Radio size="small" disabled checked /> 統合先の建物を指定（選択した建物のみ指定可能）
+                  </Typography>
+                </Box>
+              </Alert>
 
               <Box sx={{ mb: 3 }}>
-                <Paper 
-                  sx={{ 
-                    p: 2, 
-                    mb: 1, 
-                    border: selectedMasterId === selectedGroup.primary.id ? 2 : 1,
-                    borderColor: selectedMasterId === selectedGroup.primary.id ? 'primary.main' : 'divider',
-                    cursor: 'pointer',
-                    '&:hover': { bgcolor: 'action.hover' }
-                  }}
-                  onClick={() => setSelectedMasterId(selectedGroup.primary.id)}
-                >
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={selectedMasterId === selectedGroup.primary.id}
-                        color="primary"
-                      />
-                    }
-                    label={
-                      <Grid container spacing={2}>
-                        <Grid item xs={5}>
-                          <Typography variant="body2" color="textSecondary">建物名</Typography>
-                          <Typography>{selectedGroup.primary.normalized_name}</Typography>
-                        </Grid>
-                        <Grid item xs={4}>
-                          <Typography variant="body2" color="textSecondary">住所</Typography>
-                          <Typography variant="body2">{selectedGroup.primary.address || '-'}</Typography>
-                        </Grid>
-                        <Grid item xs={1}>
-                          <Typography variant="body2" color="textSecondary">階数</Typography>
-                          <Typography>{selectedGroup.primary.total_floors || '-'}F</Typography>
-                        </Grid>
-                        <Grid item xs={2}>
-                          <Typography variant="body2" color="textSecondary">物件数</Typography>
-                          <Typography>{selectedGroup.primary.property_count}</Typography>
-                        </Grid>
-                      </Grid>
-                    }
-                  />
-                </Paper>
-                
-                {selectedGroup.candidates.filter(c => selectedCandidates.includes(c.id)).map((candidate) => (
-                  <Paper 
-                    key={candidate.id}
-                    sx={{ 
-                      p: 2, 
-                      mb: 1, 
-                      border: selectedMasterId === candidate.id ? 2 : 1,
-                      borderColor: selectedMasterId === candidate.id ? 'primary.main' : 'divider',
-                      cursor: 'pointer',
-                      '&:hover': { bgcolor: 'action.hover' }
-                    }}
-                    onClick={() => setSelectedMasterId(candidate.id)}
-                  >
-                    <FormControlLabel
-                      control={
-                        <Checkbox
-                          checked={selectedMasterId === candidate.id}
-                          color="primary"
-                        />
-                      }
-                      label={
-                        <Grid container spacing={2}>
-                          <Grid item xs={5}>
-                            <Typography variant="body2" color="textSecondary">建物名</Typography>
-                            <Typography>{candidate.normalized_name}</Typography>
-                          </Grid>
-                          <Grid item xs={4}>
-                            <Typography variant="body2" color="textSecondary">住所</Typography>
-                            <Typography variant="body2">{candidate.address || '-'}</Typography>
-                          </Grid>
-                          <Grid item xs={1}>
-                            <Typography variant="body2" color="textSecondary">階数</Typography>
-                            <Typography>{candidate.total_floors || '-'}F</Typography>
-                          </Grid>
-                          <Grid item xs={2}>
-                            <Typography variant="body2" color="textSecondary">物件数</Typography>
-                            <Typography>{candidate.property_count}</Typography>
-                          </Grid>
-                        </Grid>
-                      }
-                    />
-                  </Paper>
-                ))}
+                <Table size="small">
+                  <TableHead>
+                    <TableRow>
+                      <TableCell width={50} align="center">選択</TableCell>
+                      <TableCell width={50} align="center">統合先</TableCell>
+                      <TableCell>建物名</TableCell>
+                      <TableCell>住所</TableCell>
+                      <TableCell align="center" width={80}>階数</TableCell>
+                      <TableCell align="center" width={80}>物件数</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {(() => {
+                      // すべての建物を配列に集めて物件数で降順ソート
+                      const allBuildings = [
+                        selectedGroup.primary,
+                        ...selectedGroup.candidates
+                      ].sort((a, b) => b.property_count - a.property_count);
+                      
+                      return allBuildings.map((building) => {
+                        const isCandidate = selectedGroup.candidates.some(c => c.id === building.id);
+                        const isSelected = selectedCandidates.includes(building.id);
+                        
+                        return (
+                          <TableRow 
+                            key={building.id}
+                            hover
+                          >
+                            <TableCell padding="checkbox" align="center">
+                              <Checkbox
+                                checked={isSelected}
+                                onChange={(e) => {
+                                  handleToggleCandidate(building.id);
+                                }}
+                              />
+                            </TableCell>
+                            <TableCell padding="checkbox" align="center">
+                              <Radio
+                                checked={selectedMasterId === building.id}
+                                onChange={() => setSelectedMasterId(building.id)}
+                                color="primary"
+                                disabled={!isSelected}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <Typography fontWeight={selectedMasterId === building.id ? 'bold' : 'normal'}>
+                                {building.normalized_name}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2">
+                                {building.address || '-'}
+                              </Typography>
+                            </TableCell>
+                            <TableCell align="center">
+                              {building.total_floors || '-'}F
+                            </TableCell>
+                            <TableCell align="center">
+                              <Chip 
+                                label={building.property_count} 
+                                size="small" 
+                                color={selectedMasterId === building.id ? 'primary' : 'default'}
+                              />
+                            </TableCell>
+                          </TableRow>
+                        );
+                      });
+                    })()}
+                  </TableBody>
+                </Table>
               </Box>
 
-              <Alert severity="info" sx={{ mt: 2 }}>
-                {selectedMasterId ? (
-                  <>
-                    選択されたマスター建物「
-                    {selectedMasterId === selectedGroup.primary.id 
-                      ? selectedGroup.primary.normalized_name 
-                      : selectedGroup.candidates.find(c => c.id === selectedMasterId)?.normalized_name}
-                    」に、他の建物の全ての物件が統合されます。
-                  </>
-                ) : (
-                  '統合先の建物を選択してください。'
-                )}
-              </Alert>
+              {selectedMasterId && selectedCandidates.includes(selectedMasterId) && (
+                <Alert severity="info" sx={{ mt: 2 }}>
+                  <Typography variant="body2">
+                    <strong>統合先:</strong> {
+                      selectedMasterId === selectedGroup.primary.id 
+                        ? selectedGroup.primary.normalized_name 
+                        : selectedGroup.candidates.find(c => c.id === selectedMasterId)?.normalized_name
+                    }
+                  </Typography>
+                  <Typography variant="body2">
+                    <strong>統合される建物:</strong> {selectedCandidates.filter(id => id !== selectedMasterId).length}件（選択した{selectedCandidates.length}件のうち統合先以外）
+                  </Typography>
+                </Alert>
+              )}
             </Box>
           )}
         </DialogContent>
@@ -569,13 +743,23 @@ const BuildingDuplicateManager: React.FC = () => {
           <Button onClick={() => setSelectedGroup(null)}>
             キャンセル
           </Button>
+          <Button
+            onClick={handleSeparateFromGroup}
+            variant="outlined"
+            color="warning"
+            disabled={selectedCandidates.length === 0 || merging}
+          >
+            {selectedCandidates.length === (selectedGroup?.candidates.length || 0) + 1
+              ? `${selectedCandidates.length}件を別建物として登録`
+              : `選択した${selectedCandidates.length}件を分離`}
+          </Button>
           <Button 
             onClick={handleMerge}
             variant="contained"
             startIcon={<MergeIcon />}
-            disabled={selectedCandidates.length === 0 || merging}
+            disabled={!selectedMasterId || selectedCandidates.length === 0 || !selectedCandidates.includes(selectedMasterId) || merging}
           >
-            {merging ? '統合中...' : `${selectedCandidates.length}件を統合`}
+            {merging ? '統合中...' : `選択した建物を統合 (${selectedCandidates.length}件→1件)`}
           </Button>
         </DialogActions>
       </Dialog>
