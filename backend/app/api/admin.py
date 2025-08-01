@@ -2575,6 +2575,7 @@ class ParallelScrapingRequest(BaseModel):
     area_codes: List[str]
     max_properties: int = 100
     force_detail_fetch: bool = False
+    detail_refetch_hours: Optional[int] = None
 
 
 @router.post("/scraping/start-parallel")
@@ -2624,7 +2625,8 @@ def start_parallel_scraping(
                 areas=areas,
                 scrapers=request.scrapers,
                 max_properties=request.max_properties,
-                force_detail_fetch=request.force_detail_fetch
+                force_detail_fetch=request.force_detail_fetch,
+                detail_refetch_hours=request.detail_refetch_hours
             )
             
         except Exception as e:
@@ -2813,20 +2815,41 @@ def delete_scraping_task(
 def delete_all_scraping_tasks(
     db: Session = Depends(get_db)
 ):
-    """すべてのスクレイピング履歴を削除"""
+    """すべてのスクレイピング履歴を削除（実行中のタスクを除く）"""
     try:
-        # 最初に進捗情報を削除
-        deleted_progress = db.query(ScrapingTaskProgress).delete()
+        # 実行中のタスクのIDを取得
+        running_task_ids = db.query(ScrapingTask.task_id).filter(
+            ScrapingTask.status.in_(['running', 'paused'])
+        ).all()
+        running_ids = [task_id[0] for task_id in running_task_ids]
         
-        # タスク本体を削除
-        deleted_tasks = db.query(ScrapingTask).delete()
+        # 実行中のタスクを除いて進捗情報を削除
+        if running_ids:
+            deleted_progress = db.query(ScrapingTaskProgress).filter(
+                ~ScrapingTaskProgress.task_id.in_(running_ids)
+            ).delete(synchronize_session=False)
+        else:
+            deleted_progress = db.query(ScrapingTaskProgress).delete()
+        
+        # 実行中のタスクを除いてタスク本体を削除
+        if running_ids:
+            deleted_tasks = db.query(ScrapingTask).filter(
+                ~ScrapingTask.task_id.in_(running_ids)
+            ).delete(synchronize_session=False)
+        else:
+            deleted_tasks = db.query(ScrapingTask).delete()
         
         db.commit()
         
+        message = "スクレイピング履歴を削除しました"
+        if running_ids:
+            message += f"（実行中の{len(running_ids)}件を除く）"
+        
         return {
-            "message": f"すべてのスクレイピング履歴を削除しました",
+            "message": message,
             "deleted_tasks": deleted_tasks,
-            "deleted_progress": deleted_progress
+            "deleted_progress": deleted_progress,
+            "skipped_running_tasks": len(running_ids)
         }
     except Exception as e:
         db.rollback()
@@ -3540,3 +3563,96 @@ def check_stalled_tasks(
         "threshold_minutes": threshold_minutes,
         "message": f"{updated_count}個のタスクをエラーステータスに変更しました"
     }
+
+
+@router.get("/scraper-alerts")
+def get_scraper_alerts(
+    db: Session = Depends(get_db),
+    include_resolved: bool = False
+):
+    """スクレイパーのアラートを取得"""
+    try:
+        # アラートテーブルの存在確認
+        check_sql = text("""
+            SELECT EXISTS (
+                SELECT FROM information_schema.tables 
+                WHERE table_name = 'scraper_alerts'
+            )
+        """)
+        table_exists = db.execute(check_sql).scalar()
+        
+        if not table_exists:
+            return {"alerts": [], "message": "アラートテーブルが存在しません"}
+        
+        # アラートを取得
+        if include_resolved:
+            sql = text("""
+                SELECT 
+                    id, source_site, alert_type, field_name, 
+                    error_count, error_rate, message, 
+                    is_resolved, resolved_at, created_at
+                FROM scraper_alerts
+                ORDER BY created_at DESC
+                LIMIT 100
+            """)
+        else:
+            sql = text("""
+                SELECT 
+                    id, source_site, alert_type, field_name, 
+                    error_count, error_rate, message, 
+                    is_resolved, resolved_at, created_at
+                FROM scraper_alerts
+                WHERE is_resolved = FALSE
+                ORDER BY created_at DESC
+                LIMIT 50
+            """)
+        
+        result = db.execute(sql)
+        alerts = []
+        
+        for row in result:
+            alerts.append({
+                "id": row[0],
+                "source_site": row[1],
+                "alert_type": row[2],
+                "field_name": row[3],
+                "error_count": row[4],
+                "error_rate": row[5],
+                "message": row[6],
+                "is_resolved": row[7],
+                "resolved_at": row[8].isoformat() if row[8] else None,
+                "created_at": row[9].isoformat() if row[9] else None
+            })
+        
+        return {"alerts": alerts}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"アラート取得エラー: {str(e)}")
+
+
+@router.put("/scraper-alerts/{alert_id}/resolve")
+def resolve_scraper_alert(
+    alert_id: int,
+    db: Session = Depends(get_db)
+):
+    """スクレイパーアラートを解決済みにする"""
+    try:
+        sql = text("""
+            UPDATE scraper_alerts
+            SET is_resolved = TRUE, resolved_at = NOW()
+            WHERE id = :alert_id
+            RETURNING id
+        """)
+        
+        result = db.execute(sql, {"alert_id": alert_id})
+        updated_id = result.scalar()
+        
+        if not updated_id:
+            raise HTTPException(status_code=404, detail="アラートが見つかりません")
+        
+        db.commit()
+        return {"message": "アラートを解決済みにしました", "alert_id": alert_id}
+        
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"アラート更新エラー: {str(e)}")

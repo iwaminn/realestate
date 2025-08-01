@@ -22,7 +22,7 @@ from ..models import (
 from ..utils.building_normalizer import BuildingNameNormalizer
 from ..utils.property_hasher import PropertyHasher
 from ..utils.majority_vote_updater import MajorityVoteUpdater
-from ..utils.exceptions import TaskPausedException, TaskCancelledException
+from ..utils.exceptions import TaskPausedException, TaskCancelledException, MaintenanceException
 import time as time_module
 from ..utils.debug_logger import debug_log
 
@@ -88,6 +88,7 @@ class BaseScraper(ABC):
             # HTML構造変更の総合統計
             'html_structure_errors': {},  # {field_name: count} 形式で各フィールドのエラー数を記録
             'html_structure_errors_new': {},  # 新規エラーのみ
+            'missing_elements': {},  # {element_description: count} 重要なHTML要素の欠落をカウント
         }
         
         # 一時停止・再開用の状態変数
@@ -97,6 +98,18 @@ class BaseScraper(ABC):
         
         # 汎用的な項目別エラーキャッシュ（全スクレイパー共通）
         self._field_error_cache = {}  # {field_name: {url: timestamp}}
+        
+        # エラー閾値設定（安全装置）
+        self._error_thresholds = {
+            'critical_error_rate': float(os.getenv('SCRAPER_CRITICAL_ERROR_RATE', '0.5')),  # 50%
+            'critical_error_count': int(os.getenv('SCRAPER_CRITICAL_ERROR_COUNT', '10')),  # 10件
+            'consecutive_errors': int(os.getenv('SCRAPER_CONSECUTIVE_ERRORS', '5'))  # 連続5件
+        }
+        self._consecutive_error_count = 0  # 連続エラーカウンター
+        
+        # セレクタ検証統計
+        self._selector_stats = {}  # {selector: {'success': 0, 'fail': 0}}
+        self._page_structure_errors = 0  # ページ構造エラーカウント
     
     def _setup_logger(self) -> logging.Logger:
         """ロガーのセットアップ"""
@@ -158,15 +171,27 @@ class BaseScraper(ABC):
                     self.logger.info(f"リダイレクト検出: {url} -> {final_url}")
             
             response.raise_for_status()
-            return BeautifulSoup(response.content, 'html.parser')
-        except (TaskPausedException, TaskCancelledException):
-            # タスクの一時停止・キャンセル例外は再スロー
+            
+            # レスポンスを解析
+            soup = BeautifulSoup(response.content, 'html.parser')
+            
+            # メンテナンスページの検出
+            if self._is_maintenance_page(soup):
+                raise MaintenanceException(f"{self.source_site}は現在メンテナンス中です")
+            
+            return soup
+        except (TaskPausedException, TaskCancelledException, MaintenanceException):
+            # タスクの一時停止・キャンセル・メンテナンス例外は再スロー
             raise
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
                 # 404エラーの場合は特別処理
                 self.logger.warning(f"404 Not Found: {url}")
                 self._handle_404_error(url)
+            elif e.response.status_code == 503:
+                # 503 Service Unavailableの場合はメンテナンスと判定
+                self.logger.error(f"503 Service Unavailable: {url}")
+                raise MaintenanceException(f"{self.source_site}は現在サービス中断中です (503)")
             else:
                 self.logger.error(f"HTTP error {e.response.status_code} for {url}: {e}")
             return None
@@ -197,6 +222,7 @@ class BaseScraper(ABC):
     def common_scrape_area_logic(self, area_code: str, max_pages: int = None) -> Dict[str, Any]:
         """エリアの物件をスクレイピングする共通ロジック（価格変更ベースのスマートスクレイピング対応）"""
         self.logger.info(f"スクレイピング開始: エリア={area_code}, 最大物件数={self.max_properties}")
+        self.current_area_code = area_code  # 現在スクレイピング中のエリアを記録
         
         # デバッグ：フラグの状態を確認
         if hasattr(self, 'pause_flag'):
@@ -439,6 +465,18 @@ class BaseScraper(ABC):
                 except (TaskPausedException, TaskCancelledException):
                     # タスクの一時停止・キャンセル例外は再スロー
                     raise
+                except MaintenanceException as e:
+                    # メンテナンス例外の場合は即座に終了
+                    self.logger.error(f"メンテナンスを検出: {e}")
+                    # エラーログを記録
+                    if hasattr(self, '_save_error_log'):
+                        self._save_error_log({
+                            'url': url,
+                            'reason': str(e),
+                            'timestamp': datetime.now().isoformat()
+                        })
+                    # サーキットブレーカーとして即座にスクレイピングを中断
+                    raise
                 except Exception as e:
                     self.logger.error(f"ページ {page} の処理中にエラー: {e}")
                     consecutive_empty_pages += 1
@@ -662,6 +700,12 @@ class BaseScraper(ABC):
                     # 各物件処理後に進捗を更新（リアルタイム更新）
                     self._update_progress()
                     
+                    # 重要フィールドのエラー率をチェック（安全装置）
+                    if self.check_critical_error_threshold():
+                        error_msg = "重要フィールドのエラー率が閾値を超えました。スクレイピングを中止します。"
+                        self.logger.critical(error_msg)
+                        raise Exception(error_msg)
+                    
                     # 保存結果と更新タイプに基づく統計更新（詳細取得の有無に関わらず）
                     if property_data.get('property_saved', False) and 'update_type' in property_data:
                         update_type = property_data['update_type']
@@ -748,6 +792,16 @@ class BaseScraper(ABC):
                 self._scraping_stats['other_errors'] += 1
                 total_properties += 1  # 処理件数としてカウント
                 self._scraping_stats['detail_fetch_failed'] += 1  # 詳細取得失敗としてカウント
+                
+                # エラーログを記録
+                if hasattr(self, '_save_error_log'):
+                    self._save_error_log({
+                        'url': property_data.get('url', '不明'),
+                        'reason': f'物件処理エラー ({error_type_name}): {str(e)[:200]}',
+                        'building_name': property_data.get('building_name', ''),
+                        'price': str(property_data.get('price', '')),
+                        'timestamp': datetime.now().isoformat()
+                    })
                 
                 # トランザクションエラーの場合はロールバック
                 if "current transaction is aborted" in str(e) or "InFailedSqlTransaction" in str(e):
@@ -1621,6 +1675,68 @@ class BaseScraper(ABC):
                     listing = existing_with_same_url
                     self.logger.debug(f"同じ物件の既存レコード発見 (ID: {listing.id})")
         
+        # 重要フィールドの保護：NULL値や異常値での更新を防止
+        # kwargs から物件属性を取得
+        listing_floor_number = kwargs.get('listing_floor_number')
+        listing_area = kwargs.get('listing_area')
+        listing_layout = kwargs.get('listing_layout')
+        listing_direction = kwargs.get('listing_direction')
+        listing_total_floors = kwargs.get('listing_total_floors')
+        
+        # 既存物件の更新時、重要フィールドがNULLまたは異常値の場合は警告
+        prevent_null_updates = os.getenv('SCRAPER_PREVENT_NULL_UPDATES', 'false').lower() == 'true'
+        
+        if listing and listing.is_active:
+            suspicious_update = False
+            warning_messages = []
+            
+            # 階数チェック（既存値があるのにNULLになる場合）
+            if listing_floor_number is None and listing.listing_floor_number is not None:
+                warning_messages.append(f"階数が削除されようとしています（{listing.listing_floor_number}階→NULL）")
+                suspicious_update = True
+                # NULL更新を防止する設定の場合、既存値を保持
+                if prevent_null_updates:
+                    listing_floor_number = listing.listing_floor_number
+            
+            # 面積チェック（既存値があるのにNULLになる、または70%以上の変動）
+            if listing_area is None and listing.listing_area is not None:
+                warning_messages.append(f"面積が削除されようとしています（{listing.listing_area}㎡→NULL）")
+                suspicious_update = True
+                # NULL更新を防止する設定の場合、既存値を保持
+                if prevent_null_updates:
+                    listing_area = listing.listing_area
+            elif listing_area is not None and listing.listing_area is not None:
+                area_change_rate = abs(listing_area - listing.listing_area) / listing.listing_area
+                if area_change_rate > 0.7:  # 70%以上の変動（正当な変更の可能性を考慮）
+                    warning_messages.append(f"面積が大幅に変更されようとしています（{listing.listing_area}㎡→{listing_area}㎡、{area_change_rate:.0%}の変動）")
+                    suspicious_update = True
+            
+            # 価格チェック（70%以上の変動、ただし価格変更は比較的一般的なので閾値を高めに）
+            if price and listing.current_price:
+                price_change_rate = abs(price - listing.current_price) / listing.current_price
+                if price_change_rate > 0.7:  # 70%以上の変動
+                    warning_messages.append(f"価格が大幅に変更されようとしています（{listing.current_price}万円→{price}万円、{price_change_rate:.0%}の変動）")
+                    suspicious_update = True
+            
+            # 疑わしい更新の場合
+            if suspicious_update:
+                for msg in warning_messages:
+                    self.logger.warning(f"[疑わしい更新検出] {msg} - URL: {url}")
+                
+                # エラー統計を更新
+                if 'suspicious_updates' not in self._scraping_stats:
+                    self._scraping_stats['suspicious_updates'] = 0
+                self._scraping_stats['suspicious_updates'] += 1
+                
+                # 連続して疑わしい更新が発生した場合は例外を発生
+                suspicious_threshold = int(os.getenv('SCRAPER_SUSPICIOUS_UPDATE_THRESHOLD', '5'))
+                if self._scraping_stats.get('suspicious_updates', 0) >= suspicious_threshold:
+                    raise Exception(
+                        f"連続して{suspicious_threshold}件の疑わしい更新を検出しました。"
+                        f"HTML構造が変更された可能性があります。"
+                        f"最新の警告: {warning_messages[0]}"
+                    )
+        
         update_type = 'new'  # デフォルトは新規
         
         if listing:
@@ -1734,6 +1850,7 @@ class BaseScraper(ABC):
                     price_updated_at=datetime.now(),
                     last_confirmed_at=datetime.now(),
                     detail_fetched_at=datetime.now(),  # 詳細取得時刻を設定
+                    scraped_from_area=getattr(self, 'current_area_code', None),  # 現在のエリアコードを設定
                     **kwargs
                 )
                 self.session.add(listing)
@@ -1742,7 +1859,7 @@ class BaseScraper(ABC):
                 # site_property_id重複エラーの場合
                 if "property_listings_site_property_unique" in str(e):
                     self.session.rollback()
-                    self.logger.warning(f"物件ID重複（想定内）: site_property_id={site_property_id}, source_site={self.source_site}")
+                    self.logger.warning(f"掲載情報ID重複（想定内）: site_property_id={site_property_id}, source_site={self.source_site}")
                     
                     # 既存レコードを検索
                     listing = self.session.query(PropertyListing).filter(
@@ -1756,22 +1873,57 @@ class BaseScraper(ABC):
                             self._duplicate_property_count = 0
                         self._duplicate_property_count += 1
                         
+                        # 建物の住所を取得して、より適切なエリアか判定
+                        from ..utils.area_matcher import get_area_code_from_address, get_ward_name_from_code
+                        
+                        building = self.session.query(Building).filter(
+                            Building.id == listing.master_property.building_id
+                        ).first()
+                        
+                        should_update_area = False
+                        current_area_code = getattr(self, 'current_area_code', None)
+                        
+                        if building and building.address and current_area_code:
+                            actual_area_code = get_area_code_from_address(building.address)
+                            
+                            # 現在のエリアが実際の住所と一致し、既存の登録エリアと異なる場合
+                            if actual_area_code == current_area_code and listing.scraped_from_area != current_area_code:
+                                should_update_area = True
+                                old_area_name = get_ward_name_from_code(listing.scraped_from_area) or listing.scraped_from_area
+                                new_area_name = get_ward_name_from_code(current_area_code) or current_area_code
+                                
+                                self.logger.info(
+                                    f"より適切なエリアへ更新: {building.normalized_name} "
+                                    f"({old_area_name} → {new_area_name})"
+                                )
+                        
                         # 既存レコードの情報を更新
-                        update_type = 'duplicate_skipped'
+                        update_type = 'duplicate_updated' if should_update_area else 'duplicate_skipped'
                         listing.last_confirmed_at = datetime.now()
                         
-                        # 管理画面用の警告ログを記録（エラーログではなく警告ログとして）
+                        # より適切なエリアの場合、エリア情報を更新
+                        if should_update_area:
+                            listing.scraped_from_area = current_area_code
+                            listing.updated_at = datetime.now()
+                            # 他の情報も最新に更新
+                            for key, value in kwargs.items():
+                                if hasattr(listing, key) and value is not None:
+                                    setattr(listing, key, value)
+                        
+                        # 管理画面用の警告ログを記録
                         if hasattr(self, '_save_warning_log'):
+                            reason = 'より適切なエリアへ更新' if should_update_area else '同一物件が複数エリアに掲載'
                             self._save_warning_log({
                                 'url': url,
-                                'reason': '同一物件が複数エリアに掲載',
+                                'reason': reason,
                                 'building_name': kwargs.get('building_name', ''),
                                 'price': str(price),
                                 'site_property_id': site_property_id,
                                 'timestamp': datetime.now().isoformat()
                             })
                         
-                        self.logger.info(f"既存物件をスキップ (ID: {listing.id}, site_property_id: {site_property_id})")
+                        action = "更新" if should_update_area else "スキップ"
+                        self.logger.info(f"既存物件を{action} (ID: {listing.id}, site_property_id: {site_property_id})")
                     else:
                         # それでも見つからない場合はエラーを再発生
                         raise
@@ -2355,6 +2507,350 @@ class BaseScraper(ABC):
                 return True
         return False
     
+    def check_critical_error_threshold(self) -> bool:
+        """重要フィールドのエラー率をチェックし、閾値を超えた場合は例外を発生
+        
+        Returns:
+            bool: 閾値を超えた場合True
+        """
+        # 重要フィールドのリスト（階数、面積、築年月を含む）
+        critical_fields = ['floor_number', 'area', 'built_year', 'price', 'building_name']
+        
+        # 処理済み物件数が少ない場合はチェックしない
+        if self._scraping_stats['properties_attempted'] < 5:
+            return False
+        
+        # フィールド別のエラー率をチェック
+        for field in critical_fields:
+            error_count = self._scraping_stats.get('html_structure_errors', {}).get(field, 0)
+            new_error_count = self._scraping_stats.get('html_structure_errors_new', {}).get(field, 0)
+            
+            # エラー率を計算
+            error_rate = error_count / self._scraping_stats['properties_attempted']
+            
+            # 新規エラーが多い場合は特に警戒
+            if new_error_count >= self._error_thresholds['consecutive_errors']:
+                self.logger.critical(
+                    f"重要フィールド '{field}' で連続{new_error_count}件の新規エラーを検出。"
+                    f"HTML構造が変更された可能性があります。"
+                )
+                # 管理者への通知用にエラー情報を記録
+                self._record_critical_error_alert(field, new_error_count, error_rate)
+                return True
+            
+            # エラー率が閾値を超えた場合
+            if error_rate >= self._error_thresholds['critical_error_rate'] and error_count >= self._error_thresholds['critical_error_count']:
+                self.logger.critical(
+                    f"重要フィールド '{field}' のエラー率が{error_rate:.1%}に達しました。"
+                    f"（閾値: {self._error_thresholds['critical_error_rate']:.1%}）"
+                )
+                # 管理者への通知用にエラー情報を記録
+                self._record_critical_error_alert(field, error_count, error_rate)
+                return True
+        
+        return False
+    
+    def _record_critical_error_alert(self, field_name: str, error_count: int, error_rate: float):
+        """重大エラーアラートをデータベースに記録
+        
+        Args:
+            field_name: エラーが発生したフィールド名
+            error_count: エラー件数
+            error_rate: エラー率
+        """
+        try:
+            from sqlalchemy import text
+            
+            sql = text("""
+                INSERT INTO scraper_alerts 
+                (source_site, alert_type, field_name, error_count, error_rate, message, created_at)
+                VALUES 
+                (:source_site, 'critical_field_error', :field_name, :error_count, :error_rate, :message, NOW())
+            """)
+            
+            message = (
+                f"{self.source_site}のスクレイパーで重要フィールド'{field_name}'の"
+                f"エラー率が{error_rate:.1%}（{error_count}件）に達しました。"
+                f"HTML構造の変更を確認してください。"
+            )
+            
+            self.session.execute(sql, {
+                'source_site': self.source_site,
+                'field_name': field_name,
+                'error_count': error_count,
+                'error_rate': error_rate,
+                'message': message
+            })
+            self.session.commit()
+            
+        except Exception as e:
+            self.logger.error(f"アラート記録エラー: {e}")
+            # テーブルが存在しない場合は作成を試みる
+            if "relation \"scraper_alerts\" does not exist" in str(e):
+                self._create_scraper_alerts_table()
+                # リトライ
+                try:
+                    self.session.execute(sql, {
+                        'source_site': self.source_site,
+                        'field_name': field_name,
+                        'error_count': error_count,
+                        'error_rate': error_rate,
+                        'message': message
+                    })
+                    self.session.commit()
+                except Exception as retry_e:
+                    self.logger.error(f"アラート記録リトライエラー: {retry_e}")
+    
+    def _create_scraper_alerts_table(self):
+        """scraper_alertsテーブルを作成"""
+        try:
+            from sqlalchemy import text
+            
+            sql = text("""
+                CREATE TABLE IF NOT EXISTS scraper_alerts (
+                    id SERIAL PRIMARY KEY,
+                    source_site VARCHAR(50) NOT NULL,
+                    alert_type VARCHAR(50) NOT NULL,
+                    field_name VARCHAR(50),
+                    error_count INTEGER,
+                    error_rate FLOAT,
+                    message TEXT,
+                    is_resolved BOOLEAN DEFAULT FALSE,
+                    resolved_at TIMESTAMP,
+                    created_at TIMESTAMP NOT NULL DEFAULT NOW()
+                );
+                
+                CREATE INDEX IF NOT EXISTS idx_scraper_alerts_unresolved 
+                ON scraper_alerts(is_resolved, created_at DESC);
+            """)
+            
+            self.session.execute(sql)
+            self.session.commit()
+            self.logger.info("scraper_alertsテーブルを作成しました")
+            
+        except Exception as e:
+            self.logger.error(f"scraper_alertsテーブル作成エラー: {e}")
+    
+    def track_selector_usage(self, soup: BeautifulSoup, selector: str, field_name: str, required: bool = True) -> Optional[any]:
+        """セレクタの使用を追跡し、要素を返す
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+            selector: CSSセレクタ
+            field_name: フィールド名（ログ用）
+            required: 必須要素かどうか
+            
+        Returns:
+            見つかった要素（なければNone）
+        """
+        # セレクタ統計を初期化
+        if selector not in self._selector_stats:
+            self._selector_stats[selector] = {'success': 0, 'fail': 0, 'field': field_name}
+        
+        # 要素を検索
+        element = soup.select_one(selector)
+        
+        if element:
+            self._selector_stats[selector]['success'] += 1
+            return element
+        else:
+            self._selector_stats[selector]['fail'] += 1
+            
+            # 必須要素が見つからない場合
+            if required:
+                fail_rate = self._selector_stats[selector]['fail'] / (
+                    self._selector_stats[selector]['success'] + self._selector_stats[selector]['fail']
+                )
+                
+                # エラー率が高い場合は警告
+                if fail_rate > 0.5 and self._selector_stats[selector]['fail'] >= 5:
+                    self.logger.warning(
+                        f"セレクタ '{selector}' ({field_name}) の失敗率が{fail_rate:.0%}に達しました。"
+                        f"HTML構造が変更された可能性があります。"
+                    )
+                    
+                    # ページ構造エラーをカウント
+                    self._page_structure_errors += 1
+                    
+                    # 連続でページ構造エラーが発生した場合
+                    if self._page_structure_errors >= 3:
+                        self._record_structure_change_alert(selector, field_name, fail_rate)
+                        raise Exception(
+                            f"HTML構造の変更を検出しました。"
+                            f"セレクタ '{selector}' ({field_name}) が連続して見つかりません。"
+                        )
+            
+            return None
+    
+    def track_selector_all(self, soup: BeautifulSoup, selector: str, field_name: str, min_expected: int = 1) -> List[any]:
+        """複数要素のセレクタ使用を追跡
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+            selector: CSSセレクタ
+            field_name: フィールド名（ログ用）
+            min_expected: 期待される最小要素数
+            
+        Returns:
+            見つかった要素のリスト
+        """
+        # セレクタ統計を初期化
+        if selector not in self._selector_stats:
+            self._selector_stats[selector] = {'success': 0, 'fail': 0, 'field': field_name}
+        
+        # 要素を検索
+        elements = soup.select(selector)
+        
+        if len(elements) >= min_expected:
+            self._selector_stats[selector]['success'] += 1
+            return elements
+        else:
+            self._selector_stats[selector]['fail'] += 1
+            
+            fail_rate = self._selector_stats[selector]['fail'] / (
+                self._selector_stats[selector]['success'] + self._selector_stats[selector]['fail']
+            )
+            
+            # エラー率が高い場合は警告
+            if fail_rate > 0.5 and self._selector_stats[selector]['fail'] >= 5:
+                self.logger.warning(
+                    f"セレクタ '{selector}' ({field_name}) で期待される要素数が不足。"
+                    f"期待: {min_expected}個以上、実際: {len(elements)}個"
+                )
+                
+                # ページ構造エラーをカウント
+                self._page_structure_errors += 1
+                
+                # 連続でページ構造エラーが発生した場合
+                if self._page_structure_errors >= 3:
+                    self._record_structure_change_alert(selector, field_name, fail_rate)
+                    raise Exception(
+                        f"HTML構造の変更を検出しました。"
+                        f"セレクタ '{selector}' ({field_name}) で十分な要素が見つかりません。"
+                    )
+            
+            return elements
+    
+    def _record_structure_change_alert(self, selector: str, field_name: str, fail_rate: float):
+        """HTML構造変更アラートを記録"""
+        try:
+            message = (
+                f"{self.source_site}のスクレイパーでHTML構造の変更を検出しました。"
+                f"セレクタ '{selector}' ({field_name}) の失敗率: {fail_rate:.0%}"
+            )
+            
+            self._record_critical_error_alert(
+                field_name=f"structure_{field_name}",
+                error_count=self._selector_stats[selector]['fail'],
+                error_rate=fail_rate
+            )
+        except Exception as e:
+            self.logger.error(f"構造変更アラート記録エラー: {e}")
+    
+    def validate_page_structure(self, soup: BeautifulSoup, page_type: str = 'detail') -> bool:
+        """ページの基本構造を検証
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+            page_type: 'list' または 'detail'
+            
+        Returns:
+            構造が正常な場合True
+        """
+        # ページが空でないかチェック
+        if not soup or not soup.body:
+            self.logger.error(f"{page_type}ページが空です")
+            return False
+        
+        # 基本的なHTMLタグの存在確認
+        basic_tags = ['html', 'head', 'body']
+        for tag in basic_tags:
+            if not soup.find(tag):
+                self.logger.error(f"{page_type}ページに{tag}タグがありません")
+                return False
+        
+        # エラーページでないかチェック（一般的なエラーパターン）
+        error_patterns = [
+            'ページが見つかりません',
+            '404',
+            'Not Found',
+            'エラーが発生しました',
+            'メンテナンス中',
+            '一時的にアクセスできません'
+        ]
+        
+        page_text = soup.get_text()
+        for pattern in error_patterns:
+            if pattern in page_text:
+                self.logger.warning(f"{page_type}ページがエラーページの可能性があります: {pattern}")
+                return False
+        
+        return True
+    
+    def _is_maintenance_page(self, soup: BeautifulSoup) -> bool:
+        """メンテナンスページかどうかを判定"""
+        # メンテナンスを示すパターン
+        maintenance_patterns = [
+            'メンテナンス中',
+            'システムメンテナンス',
+            'サービス停止中',
+            '一時的にサービスを停止',
+            'maintenance',
+            'service unavailable',
+            'サイトメンテナンス',
+            'アクセスが集中して',
+            '混雑している',
+            'しばらくお待ちください'
+        ]
+        
+        page_text = soup.get_text().lower()
+        for pattern in maintenance_patterns:
+            if pattern.lower() in page_text:
+                return True
+        
+        # titleタグもチェック
+        title = soup.find('title')
+        if title and title.text:
+            title_text = title.text.lower()
+            for pattern in maintenance_patterns:
+                if pattern.lower() in title_text:
+                    return True
+        
+        return False
+    
+    def track_missing_element(self, element_name: str, is_critical: bool = False):
+        """重要なHTML要素の欠落を記録
+        
+        Args:
+            element_name: 要素の説明（例: "価格テーブル", "物件情報セクション"）
+            is_critical: 致命的な欠落かどうか
+        """
+        # 統計を更新
+        if element_name not in self._scraping_stats['missing_elements']:
+            self._scraping_stats['missing_elements'][element_name] = 0
+        self._scraping_stats['missing_elements'][element_name] += 1
+        
+        count = self._scraping_stats['missing_elements'][element_name]
+        
+        # 連続して欠落している場合は警告
+        if count >= 3:
+            self.logger.warning(
+                f"重要な要素 '{element_name}' が{count}回連続で見つかりません。"
+                f"HTML構造が変更された可能性があります。"
+            )
+            
+            # 致命的な要素が5回連続で欠落した場合
+            if is_critical and count >= 5:
+                self._record_critical_error_alert(
+                    field_name=f"missing_{element_name}",
+                    error_count=count,
+                    error_rate=1.0  # 100%欠落
+                )
+                raise Exception(
+                    f"致命的なHTML構造の変更を検出しました。"
+                    f"'{element_name}' が{count}回連続で見つかりません。"
+                )
+    
     def record_field_extraction_error(self, field_name: str, url: str, log_error: bool = True):
         """フィールド抽出エラーを記録し、統計を更新
         
@@ -2402,14 +2898,14 @@ class BaseScraper(ABC):
             self.logger.info(f"task_id: {task_id}, scraping_manager: {self.scraping_manager}")
             
             if task_id:
-                # エラーログエントリを作成
+                # エラーログエントリを作成（空文字やNoneを適切に処理）
                 error_entry = {
                     'timestamp': error_info.get('timestamp', datetime.now().isoformat()),
                     'scraper': self.source_site.value,
-                    'url': error_info.get('url', '不明'),
-                    'reason': error_info.get('reason', '不明なエラー'),
-                    'building_name': error_info.get('building_name', ''),
-                    'price': error_info.get('price', '')
+                    'url': error_info.get('url') or '不明',
+                    'reason': error_info.get('reason') or '不明なエラー',
+                    'building_name': error_info.get('building_name') or '',
+                    'price': str(error_info.get('price', '')) if error_info.get('price') is not None else ''
                 }
                 # マネージャーのadd_error_logメソッドを呼び出す
                 self.logger.info(f"add_error_log呼び出し: {error_entry}")

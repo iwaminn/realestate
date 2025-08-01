@@ -660,6 +660,12 @@ class LivableScraper(BaseScraper):
             if balcony_area:
                 property_data['balcony_area'] = balcony_area
         
+        # 所在階
+        elif label == '所在階' or '所在階' in label:
+            floor_number = extract_floor_number(value)
+            if floor_number is not None:
+                property_data['floor_number'] = floor_number
+        
         # 建物階数
         elif '建物階数' in label:
             # データ正規化フレームワークを使用

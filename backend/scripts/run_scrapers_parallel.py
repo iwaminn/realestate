@@ -72,7 +72,8 @@ class ParallelScrapingManagerDB:
         self.log_lock = Lock()  # ログ追加用のロック
         
     def create_task(self, task_id: str, areas: List[str], scrapers: List[str], 
-                   max_properties: int = 100, force_detail_fetch: bool = False) -> ScrapingTask:
+                   max_properties: int = 100, force_detail_fetch: bool = False,
+                   detail_refetch_hours: Optional[int] = None) -> ScrapingTask:
         """新しいタスクを作成"""
         db = SessionLocal()
         try:
@@ -301,7 +302,8 @@ class ParallelScrapingManagerDB:
             db.close()
     
     def scrape_areas_serial(self, task_id: str, scraper_key: str, areas: List[str], 
-                           max_properties: int, force_detail_fetch: bool) -> Tuple[int, int]:
+                           max_properties: int, force_detail_fetch: bool,
+                           detail_refetch_hours: Optional[int] = None) -> Tuple[int, int]:
         """単一スクレイパーで複数エリアを直列実行"""
         scraper_name, scraper_class = self.scrapers[scraper_key]
         total_processed = 0
@@ -364,6 +366,13 @@ class ParallelScrapingManagerDB:
                 
                 try:
                     # スクレイパーのインスタンスを作成
+                    # detail_refetch_hoursが指定されている場合は環境変数を設定
+                    if detail_refetch_hours is not None:
+                        import os
+                        # 時間を日数に変換してスクレイパー固有の環境変数を設定
+                        detail_refetch_days = max(1, detail_refetch_hours // 24)  # 最小1日
+                        os.environ[f'SCRAPER_{scraper_key.upper()}_DETAIL_REFETCH_DAYS'] = str(detail_refetch_days)
+                    
                     scraper = scraper_class(
                         force_detail_fetch=force_detail_fetch,
                         max_properties=max_properties
@@ -630,10 +639,11 @@ class ParallelScrapingManagerDB:
         return total_processed, total_errors
     
     def run_parallel(self, task_id: str, areas: List[str], scrapers: List[str], 
-                    max_properties: int = 100, force_detail_fetch: bool = False):
+                    max_properties: int = 100, force_detail_fetch: bool = False,
+                    detail_refetch_hours: Optional[int] = None):
         """並列スクレイピングを実行"""
         # タスクを作成
-        task = self.create_task(task_id, areas, scrapers, max_properties, force_detail_fetch)
+        task = self.create_task(task_id, areas, scrapers, max_properties, force_detail_fetch, detail_refetch_hours)
         
         logger.info(f"並列スクレイピング開始 - タスクID: {task_id}")
         logger.info(f"対象サイト: {len(scrapers)}サイト, 対象エリア: {len(areas)}エリア")
@@ -651,7 +661,8 @@ class ParallelScrapingManagerDB:
                 for scraper_key in scrapers:
                     future = executor.submit(
                         self.scrape_areas_serial,
-                        task_id, scraper_key, areas, max_properties, force_detail_fetch
+                        task_id, scraper_key, areas, max_properties, force_detail_fetch,
+                        detail_refetch_hours
                     )
                     futures[future] = scraper_key
                 

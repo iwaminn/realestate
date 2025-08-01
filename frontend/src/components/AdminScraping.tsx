@@ -50,6 +50,19 @@ interface Area {
   name: string;
 }
 
+interface ScraperAlert {
+  id: number;
+  source_site: string;
+  alert_type: string;
+  field_name: string;
+  error_count: number;
+  error_rate: number;
+  message: string;
+  is_resolved: boolean;
+  resolved_at: string | null;
+  created_at: string;
+}
+
 interface ScrapingTask {
   task_id: string;
   type?: 'serial' | 'parallel';
@@ -144,7 +157,8 @@ const AdminScraping: React.FC = () => {
   const [selectedAreas, setSelectedAreas] = useState<string[]>(['13103']); // 港区
   const [selectedScrapers, setSelectedScrapers] = useState<string[]>(['suumo']);
   const [maxProperties, setMaxProperties] = useState(100);
-  const [forceDetailFetch, setForceDetailFetch] = useState(false);
+  const [detailRefetchHours, setDetailRefetchHours] = useState<number>(2160); // デフォルト90日（2160時間）
+  const [useCustomRefetch, setUseCustomRefetch] = useState(false);
   const [tasks, setTasks] = useState<ScrapingTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
@@ -154,6 +168,8 @@ const AdminScraping: React.FC = () => {
   const [autoRefreshEnabled, setAutoRefreshEnabled] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleteDialogMessage, setDeleteDialogMessage] = useState('');
+  const [alerts, setAlerts] = useState<ScraperAlert[]>([]);
 
   const scraperOptions = [
     { value: 'suumo', label: 'SUUMO' },
@@ -168,6 +184,7 @@ const AdminScraping: React.FC = () => {
       try {
         await fetchAreas();
         await fetchTasks();
+        await fetchAlerts();
       } catch (error) {
         console.error('初期化エラー:', error);
       }
@@ -214,6 +231,26 @@ const AdminScraping: React.FC = () => {
       } else {
         setError(`エリア取得エラー: ${error.message}`);
       }
+    }
+  };
+
+  const fetchAlerts = async () => {
+    try {
+      const response = await axios.get('/api/admin/scraper-alerts');
+      if (response.data.alerts) {
+        setAlerts(response.data.alerts);
+      }
+    } catch (error) {
+      console.error('アラート取得エラー:', error);
+    }
+  };
+
+  const resolveAlert = async (alertId: number) => {
+    try {
+      await axios.put(`/api/admin/scraper-alerts/${alertId}/resolve`);
+      await fetchAlerts();
+    } catch (error) {
+      console.error('アラート解決エラー:', error);
     }
   };
 
@@ -328,12 +365,18 @@ const AdminScraping: React.FC = () => {
     setLoading(true);
     try {
       // 常に並列実行を使用
-      const response = await axios.post('/api/admin/scraping/start-parallel', {
+      const requestData: any = {
         scrapers: selectedScrapers,
         area_codes: selectedAreas,
         max_properties: maxProperties,
-        force_detail_fetch: forceDetailFetch,
-      });
+      };
+      
+      // カスタム再取得期間が有効な場合
+      if (useCustomRefetch && detailRefetchHours >= 0) {
+        requestData.detail_refetch_hours = detailRefetchHours;
+      }
+      
+      const response = await axios.post('/api/admin/scraping/start-parallel', requestData);
       
       // 新しいタスクを追加
       setTasks(prev => [response.data, ...prev]);
@@ -479,6 +522,16 @@ const AdminScraping: React.FC = () => {
   };
 
   const deleteAllTasks = () => {
+    // 実行中のタスクがあるか確認
+    const runningTasks = tasks.filter(task => task.status === 'running' || task.status === 'paused');
+    if (runningTasks.length > 0) {
+      setDeleteDialogMessage(
+        `${runningTasks.length}件のタスクが実行中または一時停止中です。\n` +
+        `これらのタスクを除いて、完了したタスクの履歴のみを削除しますか？`
+      );
+    } else {
+      setDeleteDialogMessage('すべてのスクレイピング履歴を削除しますか？\nこの操作は取り消せません。');
+    }
     setDeleteDialogOpen(true);
   };
 
@@ -642,6 +695,37 @@ const AdminScraping: React.FC = () => {
           {error}
         </Alert>
       )}
+      
+      {/* スクレイパーアラート表示 */}
+      {alerts.length > 0 && (
+        <Paper sx={{ p: 2, mb: 3, backgroundColor: '#fff3e0' }}>
+          <Typography variant="h6" color="warning.main" gutterBottom>
+            ⚠️ スクレイパーアラート
+          </Typography>
+          {alerts.map(alert => (
+            <Alert 
+              key={alert.id} 
+              severity="warning" 
+              sx={{ mb: 1 }}
+              action={
+                <Button 
+                  size="small" 
+                  onClick={() => resolveAlert(alert.id)}
+                >
+                  解決済みにする
+                </Button>
+              }
+            >
+              <Typography variant="body2">
+                <strong>{alert.source_site}</strong>: {alert.message}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                {new Date(alert.created_at).toLocaleString('ja-JP')}
+              </Typography>
+            </Alert>
+          ))}
+        </Paper>
+      )}
 
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>
@@ -776,32 +860,79 @@ const AdminScraping: React.FC = () => {
           </Grid>
 
           <Grid item xs={12}>
-            <FormGroup>
-              <FormControlLabel
-                control={
-                  <Checkbox
-                    checked={forceDetailFetch}
-                    onChange={(e) => setForceDetailFetch(e.target.checked)}
-                    color="warning"
+            <Box sx={{ mb: 2 }}>
+              <FormGroup>
+                <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={useCustomRefetch}
+                      onChange={(e) => setUseCustomRefetch(e.target.checked)}
+                      color="warning"
+                    />
+                  }
+                  label="詳細ページの再取得範囲を広げる"
+                />
+              </FormGroup>
+              {!useCustomRefetch && (
+                <Typography variant="caption" color="text.secondary" sx={{ ml: 4, display: 'block' }}>
+                  通常は価格変更があった物件と、90日以上詳細を取得していない物件のみ更新します
+                </Typography>
+              )}
+              {useCustomRefetch && (
+                <Box sx={{ mt: 2 }}>
+                  <TextField
+                    fullWidth
+                    type="number"
+                    label="最終取得からの経過時間（時間）"
+                    value={detailRefetchHours}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value);
+                      if (!isNaN(value) && value >= 0) {
+                        setDetailRefetchHours(value);
+                      }
+                    }}
+                    InputProps={{
+                      inputProps: { min: 0, max: 10000 }
+                    }}
+                    helperText={
+                      detailRefetchHours === 0 
+                        ? "すべての物件の詳細ページを取得します（処理時間が大幅に増加します）"
+                        : detailRefetchHours < 24
+                        ? `最後に詳細を取得してから${detailRefetchHours}時間以上経過した物件も詳細ページを取得します`
+                        : `最後に詳細を取得してから${detailRefetchHours}時間（約${Math.round(detailRefetchHours / 24)}日）以上経過した物件も詳細ページを取得します`
+                    }
                   />
-                }
-                label="詳細ページを強制再取得（スマートスクレイピングを無効化）"
-              />
-            </FormGroup>
-            {forceDetailFetch && (
-              <Alert severity="warning" sx={{ mt: 1, mb: 2 }}>
-                すべての物件の詳細ページを再取得します。処理時間が大幅に増加します。
-              </Alert>
-            )}
+                  <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
+                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(0)}>すべて取得</Button>
+                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(24)}>1日</Button>
+                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(72)}>3日</Button>
+                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(168)}>1週間</Button>
+                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(720)}>30日</Button>
+                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(2160)}>90日（デフォルト）</Button>
+                  </Box>
+                  {detailRefetchHours < 168 && (
+                    <Alert severity="warning" sx={{ mt: 1 }}>
+                      短い期間を設定すると、処理時間が大幅に増加します。
+                    </Alert>
+                  )}
+                </Box>
+              )}
+            </Box>
             <Button
               variant="contained"
               startIcon={<PlayIcon />}
               onClick={startScraping}
               disabled={loading || selectedScrapers.length === 0}
               fullWidth
-              color={forceDetailFetch ? "warning" : "primary"}
+              color={useCustomRefetch && detailRefetchHours < 168 ? "warning" : "primary"}
             >
-              {forceDetailFetch ? "スクレイピング開始（強制再取得）" : "スクレイピング開始"}
+              {useCustomRefetch && detailRefetchHours === 0 
+                ? "スクレイピング開始（強制再取得）" 
+                : useCustomRefetch && detailRefetchHours < 24
+                ? `スクレイピング開始（${detailRefetchHours}時間以上経過で再取得）`
+                : useCustomRefetch && detailRefetchHours < 168
+                ? `スクレイピング開始（${Math.round(detailRefetchHours / 24)}日以上経過で再取得）`
+                : "スクレイピング開始"}
             </Button>
           </Grid>
         </Grid>
@@ -1471,7 +1602,7 @@ const AdminScraping: React.FC = () => {
                                               <Typography variant="caption" component="div" color="text.secondary">
                                                 {log.building_name && `建物名: ${log.building_name}`}
                                                 {log.price && ` | 価格: ${log.price}`}
-                                                {log.site_property_id && ` | 物件ID: ${log.site_property_id}`}
+                                                {log.site_property_id && ` | 掲載情報ID: ${log.site_property_id}`}
                                               </Typography>
                                             )}
                                             {log.url && (
@@ -1521,6 +1652,7 @@ const AdminScraping: React.FC = () => {
         open={deleteDialogOpen}
         onClose={handleDeleteCancel}
         onConfirm={handleDeleteConfirm}
+        message={deleteDialogMessage}
       />
     </Box>
   );

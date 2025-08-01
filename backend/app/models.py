@@ -138,6 +138,9 @@ class PropertyListing(Base):
     listing_address = Column(Text)                        # この掲載での住所
     listing_building_name = Column(String(255))            # この掲載での建物名
     
+    # スクレイピング情報
+    scraped_from_area = Column(String(20))                # どのエリアのスクレイピングで取得されたか
+    
     # 掲載状態
     is_active = Column(Boolean, default=True)             # 掲載中かどうか
     first_seen_at = Column(DateTime, server_default=func.now())

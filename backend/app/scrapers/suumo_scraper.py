@@ -206,6 +206,10 @@ class SuumoScraper(BaseScraper):
             # 詳細情報を抽出
             # 1. 物件概要テーブル - すべてのテーブルから該当情報を探す
             all_tables = soup.find_all('table')
+            if not all_tables:
+                # テーブルが全く見つからない場合
+                self.track_missing_element('物件詳細テーブル', is_critical=True)
+            
             for table in all_tables:
                 rows = table.find_all('tr')
                 for row in rows:

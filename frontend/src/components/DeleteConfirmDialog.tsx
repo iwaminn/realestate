@@ -13,12 +13,14 @@ interface DeleteConfirmDialogProps {
   open: boolean;
   onClose: () => void;
   onConfirm: () => void;
+  message?: string;
 }
 
 const DeleteConfirmDialog: React.FC<DeleteConfirmDialogProps> = ({
   open,
   onClose,
   onConfirm,
+  message,
 }) => {
   // ローカル状態で管理（親コンポーネントの再レンダリングを回避）
   const [confirmText, setConfirmText] = React.useState('');
@@ -51,11 +53,10 @@ const DeleteConfirmDialog: React.FC<DeleteConfirmDialogProps> = ({
       maxWidth="sm"
       fullWidth
     >
-      <DialogTitle>すべてのスクレイピング履歴を削除</DialogTitle>
+      <DialogTitle>スクレイピング履歴の削除</DialogTitle>
       <DialogContent>
-        <DialogContentText>
-          この操作は取り消すことができません。
-          すべてのスクレイピング履歴が完全に削除されます。
+        <DialogContentText style={{ whiteSpace: 'pre-wrap' }}>
+          {message || 'この操作は取り消すことができません。\nすべてのスクレイピング履歴が完全に削除されます。'}
         </DialogContentText>
         <DialogContentText sx={{ mt: 2, fontWeight: 'bold' }}>
           続行するには、下のテキストフィールドに「削除」と入力してください。
