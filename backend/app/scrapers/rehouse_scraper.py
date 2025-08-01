@@ -127,10 +127,13 @@ class RehouseScraper(BaseScraper):
         property_data['url'] = detail_url
         property_data['source_site'] = self.SOURCE_SITE
         
-        # 物件コードを抽出
+        # 物件コードを抽出（site_property_idとして使用）
         code_match = re.search(r'/bkdetail/([^/]+)/', detail_url)
         if code_match:
-            property_data['property_code'] = code_match.group(1)
+            property_data['site_property_id'] = code_match.group(1)
+            self.logger.info(f"[REHOUSE] Extracted site_property_id: {property_data['site_property_id']} from {detail_url}")
+        else:
+            self.logger.error(f"[REHOUSE] サイト物件IDを抽出できません: URL={detail_url}")
         
         
         # property-index-card-inner内の情報を取得
@@ -605,7 +608,7 @@ class RehouseScraper(BaseScraper):
                 title=property_data.get('building_name', ''),
                 price=property_data['price'],
                 agency_name=property_data.get('agency_name'),
-                site_property_id=property_data.get('property_code', ''),
+                site_property_id=property_data.get('site_property_id', ''),
                 description=property_data.get('description'),
                 station_info=property_data.get('station_info'),
                 management_fee=property_data.get('management_fee'),

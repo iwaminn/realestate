@@ -128,10 +128,7 @@ const Admin: React.FC = () => {
           )}
 
           {propertySubTab === 2 && (
-            <Box>
-              <Typography variant="h6">除外履歴タブが選択されました</Typography>
-              <PropertyExclusionHistory />
-            </Box>
+            <PropertyExclusionHistory />
           )}
         </Box>
       )}

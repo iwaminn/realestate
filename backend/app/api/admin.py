@@ -3157,21 +3157,55 @@ def get_property_exclusions(
             MasterProperty.id == exclusion.property2_id
         ).first()
         
+        # 物件1の価格を取得
+        prop1_price = None
+        if prop1:
+            active_listing1 = db.query(PropertyListing).filter(
+                PropertyListing.master_property_id == prop1.id,
+                PropertyListing.is_active == True
+            ).first()
+            if active_listing1:
+                prop1_price = active_listing1.current_price
+        
+        # 物件2の価格を取得
+        prop2_price = None
+        if prop2:
+            active_listing2 = db.query(PropertyListing).filter(
+                PropertyListing.master_property_id == prop2.id,
+                PropertyListing.is_active == True
+            ).first()
+            if active_listing2:
+                prop2_price = active_listing2.current_price
+        
         if prop1 and prop1.building:
-            prop1_info = f"{prop1.building.normalized_name}"
+            info_parts = [prop1.building.normalized_name]
             if prop1.room_number:
-                prop1_info += f" {prop1.room_number}"
+                info_parts.append(prop1.room_number)
             if prop1.floor_number:
-                prop1_info += f" {prop1.floor_number}階"
+                info_parts.append(f"{prop1.floor_number}階")
+            if prop1.area:
+                info_parts.append(f"{prop1.area}㎡")
+            if prop1.direction:
+                info_parts.append(prop1.direction)
+            if prop1_price:
+                info_parts.append(f"{prop1_price:,}万円")
+            prop1_info = " / ".join(info_parts)
         else:
             prop1_info = f"物件ID: {exclusion.property1_id}"
             
         if prop2 and prop2.building:
-            prop2_info = f"{prop2.building.normalized_name}"
+            info_parts = [prop2.building.normalized_name]
             if prop2.room_number:
-                prop2_info += f" {prop2.room_number}"
+                info_parts.append(prop2.room_number)
             if prop2.floor_number:
-                prop2_info += f" {prop2.floor_number}階"
+                info_parts.append(f"{prop2.floor_number}階")
+            if prop2.area:
+                info_parts.append(f"{prop2.area}㎡")
+            if prop2.direction:
+                info_parts.append(prop2.direction)
+            if prop2_price:
+                info_parts.append(f"{prop2_price:,}万円")
+            prop2_info = " / ".join(info_parts)
         else:
             prop2_info = f"物件ID: {exclusion.property2_id}"
         
@@ -3179,11 +3213,23 @@ def get_property_exclusions(
             "id": exclusion.id,
             "property1": {
                 "id": exclusion.property1_id,
-                "info": prop1_info
+                "info": prop1_info,
+                "building_name": prop1.building.normalized_name if prop1 and prop1.building else None,
+                "room_number": prop1.room_number if prop1 else None,
+                "floor_number": prop1.floor_number if prop1 else None,
+                "area": prop1.area if prop1 else None,
+                "direction": prop1.direction if prop1 else None,
+                "price": prop1_price
             },
             "property2": {
                 "id": exclusion.property2_id,
-                "info": prop2_info
+                "info": prop2_info,
+                "building_name": prop2.building.normalized_name if prop2 and prop2.building else None,
+                "room_number": prop2.room_number if prop2 else None,
+                "floor_number": prop2.floor_number if prop2 else None,
+                "area": prop2.area if prop2 else None,
+                "direction": prop2.direction if prop2 else None,
+                "price": prop2_price
             },
             "reason": exclusion.reason,
             "excluded_by": exclusion.excluded_by,

@@ -441,6 +441,57 @@ class DataNormalizer:
         
         return None
 
+    # ========== 住所関連 ==========
+    
+    def clean_address(self, text: str, soup_element=None) -> str:
+        """
+        住所文字列から不要なリンクテキストを除去
+        
+        Args:
+            text: 住所文字列
+            soup_element: BeautifulSoupの要素（リンクを削除する場合）
+            
+        Returns:
+            クリーンな住所文字列
+            
+        Examples:
+            >>> normalizer.clean_address("東京都港区南麻布5丁目周辺地図を見る")
+            "東京都港区南麻布5丁目"
+            >>> normalizer.clean_address("東京都港区芝浦4丁目地図を見る")
+            "東京都港区芝浦4丁目"
+        """
+        if soup_element is not None:
+            # BeautifulSoupの要素からaタグを削除
+            for link in soup_element.find_all('a'):
+                link.extract()
+            text = soup_element.get_text(strip=True)
+        
+        if not text:
+            return ""
+        
+        # よくあるリンクテキストのパターンを削除
+        patterns_to_remove = [
+            r'周辺地図を見る',
+            r'地図を見る',
+            r'地図で見る',
+            r'マップを見る',
+            r'マップで見る',
+            r'MAP',
+            r'地図',
+            r'\[地図\]',
+            r'（地図）',
+            r'※地図',
+        ]
+        
+        cleaned_text = text
+        for pattern in patterns_to_remove:
+            cleaned_text = re.sub(pattern, '', cleaned_text)
+        
+        # 余分な空白を削除
+        cleaned_text = cleaned_text.strip()
+        
+        return cleaned_text
+
     # ========== 駅情報関連 ==========
     
     def format_station_info(self, text: str) -> str:
@@ -749,6 +800,11 @@ def normalize_structure(text: str) -> Optional[str]:
 def format_station_info(text: str) -> str:
     """駅情報を見やすくフォーマット"""
     return _normalizer.format_station_info(text)
+
+
+def clean_address(text: str, soup_element=None) -> str:
+    """住所文字列から不要なリンクテキストを除去"""
+    return _normalizer.clean_address(text, soup_element)
 
 
 def normalize_property_data(raw_data: Dict[str, Any]) -> Dict[str, Any]:

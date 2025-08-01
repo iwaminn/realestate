@@ -84,7 +84,7 @@ interface ScrapingTask {
       new_listings: number;
       updated_listings?: number;  // 旧フィールド（互換性のため）
       price_updated?: number;  // 価格更新
-      refetched_unchanged?: number;  // 再取得（変更なし）
+      refetched_unchanged?: number;  // 変更なし
       other_updates?: number;  // その他更新
       skipped_listings: number;
       // 並列タスクのフィールド
@@ -1280,7 +1280,7 @@ const AdminScraping: React.FC = () => {
                                                       • その他更新: {progress.other_updates || 0}件
                                                     </Box>
                                                     <Box color="text.secondary">
-                                                      • 再取得（変更なし）: {progress.refetched_unchanged || 0}件
+                                                      • 変更なし: {progress.refetched_unchanged || 0}件
                                                     </Box>
                                                   </Box>
                                                 </Box>
@@ -1304,7 +1304,7 @@ const AdminScraping: React.FC = () => {
                                                       • その他更新: {progress.other_updates || 0}件
                                                     </Typography>
                                                     <Typography variant="body2" color="text.secondary">
-                                                      • 再取得（変更なし）: {progress.refetched_unchanged || 0}件
+                                                      • 変更なし: {progress.refetched_unchanged || 0}件
                                                     </Typography>
                                                   </Box>
                                                 </Box>

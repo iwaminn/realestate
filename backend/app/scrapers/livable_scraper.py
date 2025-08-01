@@ -273,6 +273,32 @@ class LivableScraper(BaseScraper):
                 if title_elem:
                     property_data['title'] = title_elem.get_text(strip=True)
             
+            # JavaScriptから住所を取得
+            # dataLayerから住所を抽出
+            script_texts = soup.find_all('script', string=lambda text: text and 'dataLayer.push' in text if text else False)
+            self.logger.debug(f"dataLayerを含むscriptタグ数: {len(script_texts)}")
+            for script in script_texts:
+                script_content = script.string
+                # "address":"東京都港区白金２丁目1-8" のパターンを探す
+                address_match = re.search(r'"address"\s*:\s*"([^"]+)"', script_content)
+                if address_match:
+                    property_data['address'] = address_match.group(1)
+                    self.logger.debug(f"dataLayerから住所を取得: {property_data['address']}")
+                    break
+            
+            # gmapParmsからも試す
+            if not property_data.get('address'):
+                script_texts = soup.find_all('script', string=lambda text: text and 'gmapParms' in text if text else False)
+                self.logger.debug(f"gmapParmsを含むscriptタグ数: {len(script_texts)}")
+                for script in script_texts:
+                    script_content = script.string
+                    # address: '東京都港区白金２丁目1-8' のパターンを探す（シングルクォートとダブルクォート両方対応）
+                    address_match = re.search(r"address\s*:\s*['\"]([^'\"]+)['\"]", script_content)
+                    if address_match:
+                        property_data['address'] = address_match.group(1)
+                        self.logger.debug(f"gmapParmsから住所を取得: {property_data['address']}")
+                        break
+            
             # 価格を取得（複数のセレクタを試す）
             price_found = False
             
@@ -432,9 +458,10 @@ class LivableScraper(BaseScraper):
         if '物件名' in label or '建物名' in label:
             property_data['building_name'] = value
         
-        # 所在地/住所
+        # 所在地/住所（値が空でない場合のみ上書き）
         elif '所在地' in label or '住所' in label:
-            property_data['address'] = value
+            if value and value.strip() and value != '-':  # 空でない場合のみ上書き
+                property_data['address'] = value
         
         # 階数（所在階）
         elif ('階数' in label or '所在階' in label) and '総階数' not in label:
@@ -573,6 +600,40 @@ class LivableScraper(BaseScraper):
                     property_data['title'] = title_match.group(1).strip()
                     property_data['building_name'] = property_data['title']
             
+            # JavaScriptから住所を取得（grantactパターンでも同様）
+            if not property_data.get('address'):
+                # dataLayerから住所を抽出
+                script_texts = soup.find_all('script', string=lambda text: text and 'dataLayer.push' in text if text else False)
+                for script in script_texts:
+                    script_content = script.string
+                    address_match = re.search(r'"address"\s*:\s*"([^"]+)"', script_content)
+                    if address_match:
+                        property_data['address'] = address_match.group(1)
+                        break
+                
+                # JavaScriptから住所を取得
+                if not property_data.get('address'):
+                    # dataLayerから住所を抽出
+                    script_texts = soup.find_all('script', string=lambda text: text and 'dataLayer.push' in text if text else False)
+                    for script in script_texts:
+                        script_content = script.string
+                        # "address":"東京都港区白金２丁目1-8" のパターンを探す
+                        address_match = re.search(r'"address"\s*:\s*"([^"]+)"', script_content)
+                        if address_match:
+                            property_data['address'] = address_match.group(1)
+                            break
+                
+                # gmapParmsからも試す
+                if not property_data.get('address'):
+                    script_texts = soup.find_all('script', string=lambda text: text and 'gmapParms' in text if text else False)
+                    for script in script_texts:
+                        script_content = script.string
+                        # address: '東京都港区白金２丁目1-8' のパターンを探す（シングルクォートとダブルクォート両方対応）
+                        address_match = re.search(r"address\s*:\s*['\"]([^'\"]+)['\"]", script_content)
+                        if address_match:
+                            property_data['address'] = address_match.group(1)
+                            break
+            
             # 必須フィールドの確認
             if not property_data.get('building_name'):
                 # h1タグからも試す
@@ -625,9 +686,10 @@ class LivableScraper(BaseScraper):
         if 'マンション名' in label:
             property_data['building_name'] = value
         
-        # 所在地
+        # 所在地（値が空でない場合のみ上書き）
         elif '所在地' in label:
-            property_data['address'] = value
+            if value and value.strip() and value != '-':  # 空でない場合のみ上書き
+                property_data['address'] = value
         
         # 交通
         elif '交通' in label or '駅徒歩' in label:

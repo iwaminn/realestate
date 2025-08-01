@@ -818,6 +818,19 @@ class HomesScraper(BaseScraper):
                         if price:
                             property_data['price'] = price
                         
+                        # URLから物件IDを抽出
+                        # パターン1: /mansion/1234567890/
+                        # パターン2: /mansion/b-35006090000018/
+                        # パターン3: /detail-1234567890/
+                        id_match = re.search(r'/mansion/([0-9]+)/', href) or \
+                                   re.search(r'/mansion/b-([^/]+)/', href) or \
+                                   re.search(r'/detail-([0-9]+)/', href)
+                        if id_match:
+                            property_data['site_property_id'] = id_match.group(1)
+                            self.logger.info(f"[HOMES] Extracted site_property_id: {property_data['site_property_id']} from {href}")
+                        else:
+                            self.logger.error(f"[HOMES] サイト物件IDを抽出できません: URL={href}")
+                        
                         properties.append(property_data)
                     else:
                         # 建物ページURLの場合でも、実際には個別物件にリダイレクトされるため
@@ -841,6 +854,19 @@ class HomesScraper(BaseScraper):
                         
                         if price:
                             property_data['price'] = price
+                        
+                        # URLから物件IDを抽出
+                        # パターン1: /mansion/1234567890/
+                        # パターン2: /mansion/b-35006090000018/
+                        # パターン3: /detail-1234567890/
+                        id_match = re.search(r'/mansion/([0-9]+)/', href) or \
+                                   re.search(r'/mansion/b-([^/]+)/', href) or \
+                                   re.search(r'/detail-([0-9]+)/', href)
+                        if id_match:
+                            property_data['site_property_id'] = id_match.group(1)
+                            self.logger.info(f"[HOMES] Extracted site_property_id: {property_data['site_property_id']} from {href}")
+                        else:
+                            self.logger.error(f"[HOMES] サイト物件IDを抽出できません: URL={href}")
                         
                         properties.append(property_data)
                     
@@ -1038,10 +1064,18 @@ class HomesScraper(BaseScraper):
                 if href and '/mansion/' in href and '/b-' not in href:
                     property_data['url'] = urljoin(self.BASE_URL, href)
                     
-                    # URLから物件IDを抽出（例: /mansion/b-1234567890/）
-                    id_match = re.search(r'/mansion/b-([^/]+)/', href)
+                    # URLから物件IDを抽出
+                    # パターン1: /mansion/1234567890/
+                    # パターン2: /mansion/b-1234567890/
+                    # パターン3: /chuko/mansion/detail-1234567890/
+                    id_match = re.search(r'/mansion/([0-9]+)/', href) or \
+                               re.search(r'/mansion/b-([^/]+)/', href) or \
+                               re.search(r'/detail-([0-9]+)/', href)
                     if id_match:
                         property_data['site_property_id'] = id_match.group(1)
+                    else:
+                        # IDが取得できない場合はエラーログ
+                        self.logger.error(f"サイト物件IDを抽出できません: URL={href}")
                     
                     # 部屋番号を取得（URLまたは行データから）
                     # URLから部屋番号を抽出

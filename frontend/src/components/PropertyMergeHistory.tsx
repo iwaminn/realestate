@@ -122,19 +122,21 @@ const PropertyMergeHistory: React.FC = () => {
 
   return (
     <Box>
-      <Box mb={2} display="flex" justifyContent="flex-end" alignItems="center">
-        <Button
-          variant={includeReverted ? 'contained' : 'outlined'}
-          onClick={() => setIncludeReverted(!includeReverted)}
-        >
-          取り消し済みを{includeReverted ? '非表示' : '表示'}
-        </Button>
-      </Box>
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+          <Typography variant="h6">物件統合履歴</Typography>
+          <Button
+            variant={includeReverted ? 'contained' : 'outlined'}
+            onClick={() => setIncludeReverted(!includeReverted)}
+          >
+            取り消し済みを{includeReverted ? '非表示' : '表示'}
+          </Button>
+        </Box>
 
-      {histories.length === 0 ? (
-        <Alert severity="info">物件統合履歴がありません</Alert>
-      ) : (
-        <TableContainer component={Paper}>
+        {histories.length === 0 ? (
+          <Alert severity="info">物件統合履歴がありません</Alert>
+        ) : (
+          <TableContainer>
           <Table>
             <TableHead>
               <TableRow>
@@ -211,7 +213,8 @@ const PropertyMergeHistory: React.FC = () => {
             </TableBody>
           </Table>
         </TableContainer>
-      )}
+        )}
+      </Paper>
 
       <Dialog
         open={!!selectedHistory}

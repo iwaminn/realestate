@@ -261,6 +261,7 @@ const ManualBuildingMerger: React.FC = () => {
                                 {building.address || '住所なし'}
                               </Typography>
                               <Typography variant="body2" color="textSecondary">
+                                {building.total_floors ? `${building.total_floors}階建` : '階数不明'} • 
                                 {building.property_count}件の物件
                               </Typography>
                               {building.id !== primaryBuildingId && (

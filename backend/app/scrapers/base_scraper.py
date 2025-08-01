@@ -1260,6 +1260,18 @@ class BaseScraper(ABC):
             self.logger.warning(f"価格情報がありません: URL={property_data.get('url', '不明')}, building_name={property_data.get('building_name', '不明')}")
             return False
         
+        # site_property_idを必須項目として追加
+        if not property_data.get('site_property_id'):
+            self.logger.warning(f"サイト物件IDがありません: URL={property_data.get('url', '不明')}, building_name={property_data.get('building_name', '不明')}")
+            return False
+        
+        # 住所は詳細ページから取得する場合があるため、一覧ページでは必須ではない
+        # 詳細ページ取得後に再度チェックされる
+        if not property_data.get('address') and property_data.get('detail_fetched', False):
+            # 詳細ページを取得したのに住所がない場合のみエラー
+            self.logger.warning(f"詳細取得後も住所情報がありません: URL={property_data.get('url', '不明')}, building_name={property_data.get('building_name', '不明')}")
+            return False
+        
         # 価格の妥当性チェック（data_normalizerのvalidate_priceを使用）
         price = property_data.get('price', 0)
         if not validate_price(price):
@@ -1772,8 +1784,14 @@ class BaseScraper(ABC):
             listing.agency_name = agency_name or listing.agency_name
             
             if site_property_id and listing.site_property_id != site_property_id:
-                other_changed = True
-                changed_fields.append('物件ID')
+                # NULLから値が設定される場合と、既存値が変更される場合を区別
+                if listing.site_property_id is None:
+                    # NULLから新規設定される場合は、重要な変更ではないのでログのみ
+                    self.logger.debug(f"サイト物件IDを新規設定: {site_property_id}")
+                else:
+                    # 既存値が変更される場合は重要な変更
+                    other_changed = True
+                    changed_fields.append(f'サイト物件ID({listing.site_property_id}→{site_property_id})')
             listing.site_property_id = site_property_id or listing.site_property_id
             
             if description and listing.description != description:
@@ -1815,7 +1833,7 @@ class BaseScraper(ABC):
             elif other_changed:
                 update_type = 'other_updates'
                 update_details = ', '.join(changed_fields)  # 変更内容を記録
-                self.logger.info(f"その他更新 ({update_details}): {url}")
+                self.logger.info(f"その他更新: {url}")
             else:
                 update_type = 'refetched_unchanged'
                 self.logger.debug(f"変更なし: {url}")
@@ -2279,6 +2297,30 @@ class BaseScraper(ABC):
                     failure_reason = "建物名なし"
                     # フィールドエラーを記録
                     self.record_field_extraction_error('building_name', url, log_error=False)
+                elif not property_data.get('site_property_id'):
+                    self._scraping_stats['other_errors'] += 1
+                    failure_reason = "サイト物件IDなし"
+                    # フィールドエラーを記録
+                    self.record_field_extraction_error('site_property_id', url, log_error=False)
+                    # 詳細なデバッグ情報
+                    self.logger.error(
+                        f"サイト物件ID取得失敗 - URL: {url}, "
+                        f"source_site: {self.source_site}, "
+                        f"building_name: {property_data.get('building_name', '不明')}"
+                    )
+                elif not property_data.get('address') and property_data.get('detail_fetched', False):
+                    # 詳細取得後も住所がない場合
+                    self._scraping_stats['other_errors'] += 1
+                    failure_reason = "詳細取得後も住所情報なし"
+                    # フィールドエラーを記録
+                    self.record_field_extraction_error('address', url, log_error=False)
+                    # 詳細なデバッグ情報
+                    self.logger.error(
+                        f"住所取得失敗の詳細 - URL: {url}, "
+                        f"source_site: {self.source_site}, "
+                        f"building_name: {property_data.get('building_name', '不明')}, "
+                        f"detail_fetched: {property_data.get('detail_fetched', False)}"
+                    )
                 else:
                     self._scraping_stats['other_errors'] += 1
                     missing_fields = []

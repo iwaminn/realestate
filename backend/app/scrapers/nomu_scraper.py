@@ -16,7 +16,7 @@ from ..models import PropertyListing
 from . import (
     normalize_integer, extract_price, extract_area, extract_floor_number,
     normalize_layout, normalize_direction, extract_monthly_fee,
-    format_station_info, extract_built_year, parse_date
+    format_station_info, extract_built_year, parse_date, clean_address
 )
 
 
@@ -78,8 +78,8 @@ class NomuScraper(BaseScraper):
                 property_data['building_name'] = building_name  # save_property用に追加
                 property_data['url'] = urljoin(self.BASE_URL, link['href'])
                 
-                # URLから物件IDを抽出（例: /chukomap/xxxxxxxx.html）
-                id_match = re.search(r'/chukomap/([^/]+)\.html', link['href'])
+                # URLから物件IDを抽出（例: /mansion/id/xxxxxxxx/）
+                id_match = re.search(r'/mansion/id/([^/]+)/', link['href'])
                 if id_match:
                     property_data['site_property_id'] = id_match.group(1)
         
@@ -183,13 +183,19 @@ class NomuScraper(BaseScraper):
             cells = table.find_all("td")
             for cell in cells:
                 cell_text = cell.get_text(strip=True)
-                if "区" in cell_text and "東京" not in cell_text and len(cell_text) < 50:
+                # 住所情報の判定を改善
+                if "区" in cell_text and len(cell_text) < 50:
                     # 駅情報を除外
-                    if "駅" not in cell_text:
-                        property_data['address'] = "東京都" + cell_text
+                    if "駅" not in cell_text and "徒歩" not in cell_text:
+                        # 東京都が含まれていない場合のみ追加
+                        if "東京都" not in cell_text:
+                            property_data['address'] = "東京都" + cell_text
+                        else:
+                            property_data['address'] = cell_text
                     # 駅情報
                     elif "駅" in cell_text:
-                        property_data['station_info'] = cell_text
+                        # データ正規化フレームワークを使用して駅情報をフォーマット
+                        property_data['station_info'] = format_station_info(cell_text)
         
         # 仲介業者名（ノムコムは野村不動産アーバンネット）
         property_data['agency_name'] = "野村不動産アーバンネット"
@@ -219,11 +225,7 @@ class NomuScraper(BaseScraper):
     
     def _parse_property_detail_from_url(self, url: str) -> Optional[Dict[str, Any]]:
         """URLから詳細ページを取得して解析"""
-        soup = self.fetch_page(url)
-        if not soup:
-            return None
-        
-        detail_data = self.parse_property_detail(soup)
+        detail_data = self.parse_property_detail(url)
         if detail_data:
             detail_data['url'] = url
         return detail_data
@@ -233,35 +235,178 @@ class NomuScraper(BaseScraper):
         # 共通の保存処理を使用
         return self.save_property_common(property_data, existing_listing)
     
-    def parse_property_detail(self, soup: BeautifulSoup) -> Optional[Dict[str, Any]]:
+    def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
         """物件詳細ページを解析"""
+        # ページを取得
+        soup = self.fetch_page(url)
+        if not soup:
+            return None
+            
         detail_data = {}
         
         # 建物名を取得
-        h1_elem = soup.find("h1", class_="item_title")
+        # まずclass="item_title"を探す
+        h1_elem = soup.find("h1", {"class": "item_title"})
         if h1_elem:
             building_name = h1_elem.get_text(strip=True)
             if building_name:
                 detail_data['building_name'] = building_name
+        else:
+            # classがないh1タグも試す
+            h1_elem = soup.find("h1")
+            if h1_elem:
+                building_name = h1_elem.get_text(strip=True)
+                if building_name:
+                    detail_data['building_name'] = building_name
         
-        # 住所を取得
-        address_th = soup.find("th", text="所在地")
-        if address_th:
-            address_td = address_th.find_next("td")
-            if address_td:
-                # リンクテキストと通常テキストを結合
-                address_parts = []
-                for elem in address_td.descendants:
-                    if elem.name is None and elem.strip():
-                        address_parts.append(elem.strip())
-                address_text = ' '.join(address_parts)
-                # 不要な文字を削除
-                address_text = re.sub(r'\s+', ' ', address_text)
-                address_text = re.sub(r'周辺地図を見る', '', address_text).strip()
-                
-                # 個人情報保護の説明文は除外
-                if address_text and not address_text.startswith('物件の所在地'):
-                    detail_data['address'] = address_text
+        # 価格を取得
+        # 詳細ページでは <div class="price"> または <p class="priceTxt"> に価格がある
+        price_elem = soup.find("div", {"class": "price"}) or soup.find("p", {"class": "priceTxt"})
+        if price_elem:
+            price_text = price_elem.get_text(strip=True)
+            price = extract_price(price_text)
+            if price:
+                detail_data['price'] = price
+        
+        # 住所と駅情報を取得
+        # 優先1: <th>所在地</th>の後の<td>内の<p>タグから取得（より構造化されているため）
+        address_found = False
+        # すべてのテーブルを探す
+        for table in soup.find_all("table"):
+            for row in table.find_all("tr"):
+                cells = row.find_all(["th", "td"])
+                for i in range(len(cells) - 1):
+                    if cells[i].get_text(strip=True) == "所在地":
+                        next_cell = cells[i + 1]
+                        # p要素を探す
+                        p_elem = next_cell.find("p")
+                        if p_elem:
+                            address_text = p_elem.get_text(strip=True)
+                            # 共通関数で住所をクリーニング（BeautifulSoup要素も渡せる）
+                            address_text = clean_address(address_text, p_elem)
+                            # 説明文でないことを確認
+                            if address_text and "東京都" in address_text and "区" in address_text:
+                                detail_data['address'] = address_text
+                                address_found = True
+                                break
+                        # p要素がない場合は直接テキストを確認
+                        else:
+                            cell_text = next_cell.get_text(strip=True)
+                            # 共通関数で住所をクリーニング
+                            cell_text = clean_address(cell_text)
+                            if cell_text and "東京都" in cell_text and "区" in cell_text:
+                                detail_data['address'] = cell_text
+                                address_found = True
+                                break
+                if address_found:
+                    break
+            if address_found:
+                break
+        
+        # 優先2: テーブルで見つからなかった場合は<p class="address">を探す
+        if not address_found:
+            address_elem = soup.find("p", {"class": "address"})
+            if address_elem:
+                full_text = address_elem.get_text(strip=True)
+                # 「｜」で住所と駅情報を分離
+                if "｜" in full_text:
+                    parts = full_text.split("｜")
+                    address_text = parts[0].strip()
+                    # 共通関数で住所をクリーニング
+                    address_text = clean_address(address_text)
+                    if address_text:
+                        detail_data['address'] = address_text
+                        address_found = True
+                    # 駅情報もフォーマットして保存
+                    if len(parts) >= 2:
+                        station_text = parts[1].strip()
+                        if station_text:
+                            # データ正規化フレームワークを使用して駅情報をフォーマット
+                            detail_data['station_info'] = format_station_info(station_text)
+                else:
+                    # 「｜」がない場合は全体を住所として扱う
+                    if full_text:
+                        # 共通関数で住所をクリーニング
+                        full_text = clean_address(full_text)
+                        detail_data['address'] = full_text
+                        address_found = True
+        
+        # 住所が見つからなかった場合
+        if not address_found:
+            if url:
+                self.record_field_extraction_error('address', url)
+                self.logger.error(
+                    f"住所が取得できません - URL: {url}, "
+                    f"建物名: {detail_data.get('building_name', '不明')}, "
+                    f"テーブル内「所在地」検索: 失敗, "
+                    f"p.address要素検索: 失敗"
+                )
+                # 管理画面用のエラーログ
+                if hasattr(self, '_save_error_log'):
+                    self._save_error_log({
+                        'url': url,
+                        'reason': '住所要素が見つかりません（テーブル「所在地」およびp.address両方なし）',
+                        'building_name': detail_data.get('building_name', ''),
+                        'price': detail_data.get('price', ''),
+                        'timestamp': datetime.now().isoformat()
+                    })
+            else:
+                self.logger.error("住所が取得できません（URLなし）")
+        
+        # 物件詳細情報（tableMansionクラス）を取得
+        mansion_table = soup.find("table", {"class": "tableMansion"})
+        if mansion_table:
+            cells = mansion_table.find_all("td")
+            for cell in cells:
+                inner_div = cell.find("div", {"class": "inner"})
+                if inner_div:
+                    heading = inner_div.find("div", {"class": "heading"})
+                    value_elem = inner_div.find("p")
+                    
+                    if heading and value_elem:
+                        label = heading.get_text(strip=True)
+                        value = value_elem.get_text(strip=True)
+                        
+                        # 間取り
+                        if label == "間取り":
+                            layout = normalize_layout(value)
+                            if layout:
+                                detail_data['layout'] = layout
+                        
+                        # 専有面積
+                        elif label == "専有面積":
+                            area = extract_area(value)
+                            if area:
+                                detail_data['area'] = area
+                        
+                        # 所在階
+                        elif label == "所在階":
+                            # "2階 / 5階建" のような形式から階数を抽出
+                            floor_match = re.search(r'(\d+)階', value)
+                            if floor_match:
+                                detail_data['floor_number'] = int(floor_match.group(1))
+                            # 総階数も抽出
+                            total_match = re.search(r'(\d+)階建', value)
+                            if total_match:
+                                detail_data['total_floors'] = int(total_match.group(1))
+                        
+                        # 向き
+                        elif label == "向き":
+                            direction = normalize_direction(value)
+                            if direction:
+                                detail_data['direction'] = direction
+                        
+                        # 築年月
+                        elif label == "築年月":
+                            built_year = extract_built_year(value)
+                            if built_year:
+                                detail_data['built_year'] = built_year
+                        
+                        # 総戸数
+                        elif label == "総戸数":
+                            units_match = re.search(r'(\d+)戸', value)
+                            if units_match:
+                                detail_data['total_units'] = int(units_match.group(1))
         
         # 管理費と修繕積立金を含むテーブルを探す
         tables = soup.find_all('table')

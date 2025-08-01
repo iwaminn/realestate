@@ -17,23 +17,61 @@ import {
 } from '@mui/material';
 import {
   Undo as UndoIcon,
+  Refresh as RefreshIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
 
+interface PropertyInfo {
+  id: number;
+  info: string;
+  building_name: string | null;
+  room_number: string | null;
+  floor_number: number | null;
+  area: number | null;
+  direction: string | null;
+  price: number | null;
+}
+
 interface PropertyExclusion {
   id: number;
-  property1: {
-    id: number;
-    info: string;
-  };
-  property2: {
-    id: number;
-    info: string;
-  };
+  property1: PropertyInfo;
+  property2: PropertyInfo;
   reason: string;
   excluded_by: string;
   created_at: string;
 }
+
+const PropertyDisplay: React.FC<{ property: PropertyInfo }> = ({ property }) => {
+  if (!property) return <span>不明</span>;
+  
+  return (
+    <Box>
+      <Typography variant="body2" fontWeight="bold">
+        {property.building_name || '建物名不明'}
+        {property.room_number && ` ${property.room_number}`}
+      </Typography>
+      <Box display="flex" gap={1} flexWrap="wrap" mt={0.5}>
+        {property.floor_number && (
+          <Chip label={`${property.floor_number}階`} size="small" variant="outlined" />
+        )}
+        {property.area && (
+          <Chip label={`${property.area}㎡`} size="small" variant="outlined" />
+        )}
+        {property.direction && (
+          <Chip label={property.direction} size="small" variant="outlined" />
+        )}
+        {property.price && (
+          <Chip 
+            label={`${property.price.toLocaleString()}万円`} 
+            size="small" 
+            variant="outlined"
+            color="primary"
+          />
+        )}
+      </Box>
+    </Box>
+  );
+};
 
 const PropertyExclusionHistory: React.FC = () => {
   const [exclusions, setExclusions] = useState<PropertyExclusion[]>([]);
@@ -131,22 +169,37 @@ const PropertyExclusionHistory: React.FC = () => {
   if (error) {
     return (
       <Box>
-        <Typography variant="h6" gutterBottom>物件除外履歴</Typography>
-        <Alert severity="error">{error}</Alert>
+        <Paper sx={{ p: 3, mb: 3 }}>
+          <Typography variant="h6" gutterBottom>物件除外履歴</Typography>
+          <Alert severity="error">{error}</Alert>
+        </Paper>
       </Box>
     );
   }
 
   return (
     <Box>
-      <Typography variant="h6" gutterBottom>物件除外履歴</Typography>
-      {exclusions.length === 0 ? (
-        <Alert severity="info">物件除外履歴がありません</Alert>
-      ) : (
-        <TableContainer component={Paper}>
-          <Table>
-            <TableHead>
-              <TableRow>
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
+          <Typography variant="h6">物件除外履歴</Typography>
+          <IconButton 
+            onClick={fetchExclusions}
+            disabled={loading}
+            color="primary"
+          >
+            <Tooltip title="リロード">
+              <RefreshIcon />
+            </Tooltip>
+          </IconButton>
+        </Box>
+        
+        {exclusions.length === 0 ? (
+          <Alert severity="info">物件除外履歴がありません</Alert>
+        ) : (
+          <TableContainer>
+            <Table>
+              <TableHead>
+                <TableRow>
                 <TableCell>除外日時</TableCell>
                 <TableCell>物件1</TableCell>
                 <TableCell>物件2</TableCell>
@@ -163,12 +216,16 @@ const PropertyExclusionHistory: React.FC = () => {
                     <TableCell>{formatDate(exclusion.created_at)}</TableCell>
                     <TableCell>
                       <Tooltip title={`ID: ${exclusion.property1?.id || '-'}`}>
-                        <span>{exclusion.property1?.info || '不明'}</span>
+                        <Box>
+                          <PropertyDisplay property={exclusion.property1} />
+                        </Box>
                       </Tooltip>
                     </TableCell>
                     <TableCell>
                       <Tooltip title={`ID: ${exclusion.property2?.id || '-'}`}>
-                        <span>{exclusion.property2?.info || '不明'}</span>
+                        <Box>
+                          <PropertyDisplay property={exclusion.property2} />
+                        </Box>
                       </Tooltip>
                     </TableCell>
                     <TableCell align="center">
@@ -200,6 +257,7 @@ const PropertyExclusionHistory: React.FC = () => {
           </Table>
         </TableContainer>
       )}
+      </Paper>
     </Box>
   );
 };
