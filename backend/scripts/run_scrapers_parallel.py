@@ -24,6 +24,7 @@ from backend.app.config.scraping_config import (
     PROCESS_CHECK_PAUSE_THRESHOLD_MINUTES,
     PROCESS_CHECK_RESUME_THRESHOLD_MINUTES
 )
+from backend.app.utils.exceptions import TaskCancelledException, TaskPausedException
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
@@ -116,6 +117,12 @@ class ParallelScrapingManagerDB:
     
     def update_progress(self, task_id: str, scraper_key: str, area: str, data: Dict[str, Any]):
         """進捗を更新"""
+        # デバッグログ
+        if data.get('status') == 'error':
+            logger.warning(f"[DEBUG] エラーステータスに更新: task_id={task_id}, scraper={scraper_key}, area={area}, data={data}")
+            import traceback
+            traceback.print_stack()
+        
         db = SessionLocal()
         try:
             # 進捗レコードを取得
@@ -302,6 +309,7 @@ class ParallelScrapingManagerDB:
         
         logger.info(f"[{scraper_name}] スクレイピング開始 - {len(areas)}エリア")
         
+        cancelled = False
         for area in areas:
             # エリア名をエリアコードに変換
             from backend.app.scrapers.area_config import get_area_code
@@ -313,6 +321,14 @@ class ParallelScrapingManagerDB:
             
             if is_cancelled:
                 logger.info(f"[{scraper_name}] キャンセルされました")
+                # 残りのエリアのステータスをcancelledに更新
+                remaining_areas = areas[areas.index(area):]
+                for remaining_area in remaining_areas:
+                    self.update_progress(task_id, scraper_key, remaining_area, {
+                        'status': 'cancelled',
+                        'completed_at': datetime.now()
+                    })
+                cancelled = True
                 break
             
             # 一時停止チェック
@@ -321,7 +337,19 @@ class ParallelScrapingManagerDB:
                 time.sleep(1)
                 is_paused, is_cancelled = self.check_pause_cancel(task_id)
                 if is_cancelled:
+                    logger.info(f"[{scraper_name}] 一時停止中にキャンセルされました")
+                    # 残りのエリアのステータスをcancelledに更新
+                    remaining_areas = areas[areas.index(area):]
+                    for remaining_area in remaining_areas:
+                        self.update_progress(task_id, scraper_key, remaining_area, {
+                            'status': 'cancelled',
+                            'completed_at': datetime.now()
+                        })
+                    cancelled = True
                     break
+            
+            if cancelled:
+                break
             
             try:
                 # 進捗を「実行中」に更新
@@ -366,7 +394,11 @@ class ParallelScrapingManagerDB:
                             'detail_fetched': stats.get('detail_fetched', 0),
                             'detail_skipped': stats.get('detail_skipped', 0),
                             'price_missing': stats.get('price_missing', 0),
-                            'building_info_missing': stats.get('building_info_missing', 0)
+                            'building_info_missing': stats.get('building_info_missing', 0),
+                            # 詳細な統計を追加
+                            'price_updated': stats.get('price_updated', 0),
+                            'other_updates': stats.get('other_updates', 0),
+                            'refetched_unchanged': stats.get('refetched_unchanged', 0)
                         }
                         self.update_progress(task_id, scraper_key, area, update_data)
                     
@@ -414,13 +446,37 @@ class ParallelScrapingManagerDB:
                                 # デバッグログ
                                 if '登録' in msg or '更新' in msg:
                                     logger.debug(f"LogCapture: ログメッセージを受信: {msg}")
+                                
+                                # 統計情報のログは除外
+                                if '詳細取得' in msg and '件の内訳' in msg:
+                                    return
+                                if 'Request interrupted' in msg:
+                                    return
+                                    
                                 # 新規登録・更新のログをキャプチャ
-                                if '新規登録:' in msg or '価格更新:' in msg or 'その他更新:' in msg:
+                                if '新規登録:' in msg or '価格更新:' in msg or 'その他更新' in msg:
                                     logger.info(f"LogCapture: マッチしたログ: {msg}")
                                     log_type = 'new' if '新規登録:' in msg else 'update'
                                     # URLと価格を抽出
                                     url_match = re.search(r'https?://[^\s]+', msg)
                                     price_match = re.search(r'(\d+)万円', msg)
+                                    
+                                    # 価格変更の抽出
+                                    price_change = None
+                                    if '価格更新:' in msg:
+                                        change_match = re.search(r'(\d+)万円 → (\d+)万円', msg)
+                                        if change_match:
+                                            price_change = {
+                                                'old': int(change_match.group(1)),
+                                                'new': int(change_match.group(2))
+                                            }
+                                    
+                                    # その他更新の詳細を抽出
+                                    update_details = None
+                                    if 'その他更新' in msg:
+                                        details_match = re.search(r'その他更新\s*\(([^)]+)\)', msg)
+                                        if details_match:
+                                            update_details = details_match.group(1)
                                     
                                     log_entry = {
                                         'timestamp': datetime.now().isoformat(),
@@ -429,7 +485,9 @@ class ParallelScrapingManagerDB:
                                         'type': log_type,
                                         'message': msg,
                                         'url': url_match.group(0) if url_match else None,
-                                        'price': int(price_match.group(1)) if price_match else None
+                                        'price': int(price_match.group(1)) if price_match else None,
+                                        'price_change': price_change,
+                                        'update_details': update_details
                                     }
                                     self.manager.add_log(self.task_id, log_entry)
                         
@@ -450,6 +508,11 @@ class ParallelScrapingManagerDB:
                         except Exception as e:
                             logger.error(f"[{scraper_name}] {area} - コミットエラー: {e}")
                             session.rollback()
+                    except TaskCancelledException as e:
+                        # キャンセル例外は上位に再スロー
+                        logger.info(f"[{scraper_name}] {area} - スクレイピング中にキャンセル: {e}")
+                        session.rollback()
+                        raise  # 上位のexceptブロックで処理
                     except Exception as e:
                         logger.error(f"[{scraper_name}] {area} - スクレイピングエラー: {e}")
                         session.rollback()
@@ -473,9 +536,13 @@ class ParallelScrapingManagerDB:
                         logger.info(f"[{scraper_name}] {area} - 完了: {processed}件処理 "
                                   f"(新規: {new}, 更新: {updated}) - {elapsed_time:.1f}秒")
                         
+                        # キャンセルチェック（キャンセル中なら'cancelled'に）
+                        _, is_cancelled = self.check_pause_cancel(task_id)
+                        final_status = 'cancelled' if is_cancelled else 'completed'
+                        
                         # 詳細な統計情報を含めて更新
                         progress_update = {
-                            'status': 'completed',
+                            'status': final_status,
                             'processed': processed,
                             'new_listings': new,
                             'updated_listings': updated,
@@ -499,8 +566,12 @@ class ParallelScrapingManagerDB:
                         total_processed += processed
                     else:
                         logger.warning(f"[{scraper_name}] {area} - 処理結果なし")
+                        # キャンセルチェック
+                        _, is_cancelled = self.check_pause_cancel(task_id)
+                        final_status = 'cancelled' if is_cancelled else 'completed'
+                        
                         self.update_progress(task_id, scraper_key, area, {
-                            'status': 'completed',
+                            'status': final_status,
                             'processed': 0,
                             'completed_at': datetime.now()
                         })
@@ -521,6 +592,30 @@ class ParallelScrapingManagerDB:
                 # エリア間の待機
                 time.sleep(2)
                 
+            except TaskCancelledException as e:
+                # キャンセル例外の場合
+                logger.info(f"[{scraper_name}] {area} - キャンセルされました: {e}")
+                self.update_progress(task_id, scraper_key, area, {
+                    'status': 'cancelled',
+                    'completed_at': datetime.now()
+                })
+                # 残りのエリアもキャンセル状態に
+                remaining_idx = areas.index(area) + 1
+                if remaining_idx < len(areas):
+                    for remaining_area in areas[remaining_idx:]:
+                        self.update_progress(task_id, scraper_key, remaining_area, {
+                            'status': 'cancelled',
+                            'completed_at': datetime.now()
+                        })
+                cancelled = True
+                break
+            except TaskPausedException as e:
+                # 一時停止例外（通常は発生しないはず）
+                logger.warning(f"[{scraper_name}] {area} - 一時停止例外: {e}")
+                self.update_progress(task_id, scraper_key, area, {
+                    'status': 'paused',
+                    'completed_at': datetime.now()
+                })
             except Exception as e:
                 logger.error(f"[{scraper_name}] {area} - エラー: {e}")
                 self.add_error(task_id, scraper_key, area, str(e))
@@ -571,21 +666,42 @@ class ParallelScrapingManagerDB:
                         processed, errors = future.result(timeout=300)  # 5分のタイムアウト
                         total_processed += processed
                         total_errors += errors
+                    except TaskCancelledException as e:
+                        # キャンセル例外の場合
+                        logger.info(f"スクレイパー {scraper_key} がキャンセルされました: {e}")
+                        # キャンセルの場合、個別エリアのステータスは既に更新済みのはず
+                        # ここでは追加の処理は不要
                     except Exception as e:
-                        logger.error(f"スクレイパー {scraper_key} で予期しないエラー: {e}")
-                        total_errors += 1
-                        failed_scrapers.append(scraper_key)
-                        
-                        # エラーが発生したスクレイパーの進捗を更新
-                        for area in areas:
-                            self.update_progress(task_id, scraper_key, area, {
-                                'status': 'error',
-                                'errors': 100,
-                                'completed_at': datetime.now()
-                            })
-                        
-                        # エラーを記録
-                        self.add_error(task_id, scraper_key, 'all', f"スクレイパープロセスが異常終了: {str(e)}")
+                        # TaskCancelledExceptionが内部例外として含まれているかチェック
+                        if 'TaskCancelledException' in str(type(e.__cause__)) or 'TaskCancelledException' in str(e):
+                            logger.info(f"スクレイパー {scraper_key} がキャンセルされました（内部例外）")
+                            # キャンセルとして扱う
+                        else:
+                            logger.error(f"スクレイパー {scraper_key} で予期しないエラー: {e}")
+                            total_errors += 1
+                            failed_scrapers.append(scraper_key)
+                            
+                            # エラーが発生したスクレイパーの進捗を更新
+                            for area in areas:
+                                # 既にcompleted/cancelledのエリアは更新しない
+                                db = SessionLocal()
+                                try:
+                                    progress = db.query(ScrapingTaskProgress).filter(
+                                        ScrapingTaskProgress.task_id == task_id,
+                                        ScrapingTaskProgress.scraper == scraper_key,
+                                        ScrapingTaskProgress.area == area
+                                    ).first()
+                                    if progress and progress.status not in ['completed', 'cancelled']:
+                                        self.update_progress(task_id, scraper_key, area, {
+                                            'status': 'error',
+                                            'errors': 100,
+                                            'completed_at': datetime.now()
+                                        })
+                                finally:
+                                    db.close()
+                            
+                            # エラーを記録
+                            self.add_error(task_id, scraper_key, 'all', f"スクレイパープロセスが異常終了: {str(e)}")
         
         except Exception as e:
             logger.error(f"並列実行中に予期しないエラー: {e}")
@@ -598,8 +714,23 @@ class ParallelScrapingManagerDB:
             try:
                 task = db.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
                 if task:
+                    # キャンセル済みの場合はcancelledのまま
+                    if task.is_cancelled:
+                        task.status = 'cancelled'
+                        logger.info(f"タスクはキャンセルされました: {task_id}")
+                        
+                        # 実行中のまま残っている個別タスクもcancelledに更新
+                        updated = db.query(ScrapingTaskProgress).filter(
+                            ScrapingTaskProgress.task_id == task_id,
+                            ScrapingTaskProgress.status == 'running'
+                        ).update({
+                            'status': 'cancelled',
+                            'completed_at': datetime.now()
+                        })
+                        if updated > 0:
+                            logger.info(f"実行中だった {updated} 個の個別タスクをcancelledに更新しました")
                     # エラーが多い場合はタスク全体をエラーとする
-                    if total_errors > 0 and failed_scrapers:
+                    elif total_errors > 0 and failed_scrapers:
                         task.status = 'error'
                         logger.error(f"タスクエラー: {task_id} - 失敗したスクレイパー: {failed_scrapers}")
                     else:
@@ -772,12 +903,12 @@ class ParallelScrapingManagerDB:
                         })
                         task.error_logs = error_logs
                         
-                        # 進捗もキャンセル状態に更新（completed以外をerrorに）
+                        # 進捗もキャンセル状態に更新（completed以外をcancelledに）
                         db.query(ScrapingTaskProgress).filter(
                             ScrapingTaskProgress.task_id == task_id,
                             ScrapingTaskProgress.status.in_(['running', 'pending', 'paused'])
                         ).update({
-                            'status': 'error',
+                            'status': 'cancelled',
                             'completed_at': now
                         })
                         
@@ -789,6 +920,16 @@ class ParallelScrapingManagerDB:
                 task.is_cancelled = True
                 task.cancel_requested_at = datetime.now()
                 task.status = 'cancelled'
+                
+                # 実行中・保留中の個別タスクもキャンセル状態に更新
+                db.query(ScrapingTaskProgress).filter(
+                    ScrapingTaskProgress.task_id == task_id,
+                    ScrapingTaskProgress.status.in_(['running', 'pending', 'paused'])
+                ).update({
+                    'status': 'cancelled',
+                    'completed_at': datetime.now()
+                })
+                
                 db.commit()
                 logger.info(f"タスクキャンセル: {task_id}")
                 return True

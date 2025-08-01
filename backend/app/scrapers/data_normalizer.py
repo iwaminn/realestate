@@ -118,7 +118,7 @@ class DataNormalizer:
         文字列から月額費用を抽出（円単位）
         
         Args:
-            text: 費用を含む文字列（例: "12,000円", "管理費：8,500円/月", "9,580（円/月）"）
+            text: 費用を含む文字列（例: "12,000円", "管理費：8,500円/月", "9,580（円/月）", "2万4100円"）
             
         Returns:
             円単位の費用（int）またはNone
@@ -128,6 +128,16 @@ class DataNormalizer:
             
         # 全角括弧を半角に変換
         text = text.replace('（', '(').replace('）', ')')
+        
+        # 全角数字を半角に変換
+        text = text.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+        
+        # 万円パターン（例: "2万4100円", "3万円"）
+        man_yen_match = re.search(r'(\d+)\s*万\s*(\d*)\s*円', text)
+        if man_yen_match:
+            man = int(man_yen_match.group(1))
+            yen = int(man_yen_match.group(2)) if man_yen_match.group(2) else 0
+            return man * 10000 + yen
         
         # 円パターン（括弧内の「円」も含む）
         # パターン1: "12,000円"

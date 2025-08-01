@@ -270,17 +270,37 @@ class NomuScraper(BaseScraper):
             for row in rows:
                 cells = row.find_all(['td', 'th'])
                 
-                # 管理費を探す
+                # 特殊なレイアウト（管理費と修繕積立金が同じ行にある場合）
+                if len(cells) >= 4:
+                    # セル0に管理費、セル2に修繕積立金がある場合
+                    if '管理費' in cells[0].get_text() and '修繕積立金' in cells[2].get_text():
+                        # セル1から管理費を取得
+                        fee_text = cells[1].get_text(strip=True)
+                        management_fee = extract_monthly_fee(fee_text)
+                        if management_fee:
+                            detail_data['management_fee'] = management_fee
+                        
+                        # セル3から修繕積立金を取得
+                        fund_text = cells[3].get_text(strip=True)
+                        repair_fund = extract_monthly_fee(fund_text)
+                        if repair_fund:
+                            detail_data['repair_fund'] = repair_fund
+                        continue
+                
+                # 通常のレイアウト（管理費と修繕積立金が別々の行にある場合）
                 for i in range(len(cells) - 1):
-                    if '管理費' in cells[i].get_text():
+                    cell_text = cells[i].get_text(strip=True)
+                    
+                    # 管理費を探す（説明文を除外）
+                    if '管理費' in cell_text and '共用で使用される' not in cell_text:
                         fee_text = cells[i + 1].get_text(strip=True)
                         # データ正規化フレームワークを使用して月額費用を抽出
                         management_fee = extract_monthly_fee(fee_text)
                         if management_fee:
                             detail_data['management_fee'] = management_fee
                     
-                    # 修繕積立金を探す
-                    if '修繕積立金' in cells[i].get_text():
+                    # 修繕積立金を探す（説明文を除外）
+                    if '修繕積立金' in cell_text and 'マンションなど' not in cell_text:
                         fund_text = cells[i + 1].get_text(strip=True)
                         # データ正規化フレームワークを使用して月額費用を抽出
                         repair_fund = extract_monthly_fee(fund_text)

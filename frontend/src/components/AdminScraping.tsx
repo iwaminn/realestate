@@ -112,6 +112,7 @@ interface ScrapingTask {
       old: number;
       new: number;
     };
+    update_details?: string;
   }>;
   error_logs?: Array<{
     timestamp: string;
@@ -143,6 +144,7 @@ const AdminScraping: React.FC = () => {
   const [selectedAreas, setSelectedAreas] = useState<string[]>(['13103']); // 港区
   const [selectedScrapers, setSelectedScrapers] = useState<string[]>(['suumo']);
   const [maxProperties, setMaxProperties] = useState(100);
+  const [forceDetailFetch, setForceDetailFetch] = useState(false);
   const [tasks, setTasks] = useState<ScrapingTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
@@ -330,6 +332,7 @@ const AdminScraping: React.FC = () => {
         scrapers: selectedScrapers,
         area_codes: selectedAreas,
         max_properties: maxProperties,
+        force_detail_fetch: forceDetailFetch,
       });
       
       // 新しいタスクを追加
@@ -773,14 +776,32 @@ const AdminScraping: React.FC = () => {
           </Grid>
 
           <Grid item xs={12}>
+            <FormGroup>
+              <FormControlLabel
+                control={
+                  <Checkbox
+                    checked={forceDetailFetch}
+                    onChange={(e) => setForceDetailFetch(e.target.checked)}
+                    color="warning"
+                  />
+                }
+                label="詳細ページを強制再取得（スマートスクレイピングを無効化）"
+              />
+            </FormGroup>
+            {forceDetailFetch && (
+              <Alert severity="warning" sx={{ mt: 1, mb: 2 }}>
+                すべての物件の詳細ページを再取得します。処理時間が大幅に増加します。
+              </Alert>
+            )}
             <Button
               variant="contained"
               startIcon={<PlayIcon />}
               onClick={startScraping}
               disabled={loading || selectedScrapers.length === 0}
               fullWidth
+              color={forceDetailFetch ? "warning" : "primary"}
             >
-              スクレイピング開始
+              {forceDetailFetch ? "スクレイピング開始（強制再取得）" : "スクレイピング開始"}
             </Button>
           </Grid>
         </Grid>
@@ -1296,6 +1317,11 @@ const AdminScraping: React.FC = () => {
                                             {log.price_change && (
                                               <Typography variant="caption" component="div" color="warning.main">
                                                 価格変更: {log.price_change.old.toLocaleString()}万円 → {log.price_change.new.toLocaleString()}万円
+                                              </Typography>
+                                            )}
+                                            {log.update_details && (
+                                              <Typography variant="caption" component="div" color="info.main">
+                                                更新内容: {log.update_details}
                                               </Typography>
                                             )}
                                           </Box>

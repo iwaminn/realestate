@@ -228,12 +228,56 @@ class RehouseScraper(BaseScraper):
                 property_data['building_name'] = h1_elem.get_text(strip=True)
             
             # 価格
-            price_elem = soup.find(text=re.compile(r'\d+万円'))
-            if price_elem:
-                # データ正規化フレームワークを使用して価格を抽出
-                price = extract_price(price_elem)
-                if price:
-                    property_data['price'] = price
+            # 最も信頼できるJSON-LD構造化データから価格を取得
+            price_found = False
+            json_ld_scripts = soup.find_all('script', type='application/ld+json')
+            for script in json_ld_scripts:
+                try:
+                    import json
+                    data = json.loads(script.string)
+                    # Product型のスキーマを探す
+                    if isinstance(data, dict) and data.get('@type') == 'Product':
+                        offers = data.get('offers', {})
+                        if isinstance(offers, dict) and 'price' in offers:
+                            # 円単位の価格を万円単位に変換
+                            price_yen = int(offers['price'])
+                            property_data['price'] = price_yen // 10000
+                            price_found = True
+                            break
+                except:
+                    pass
+            
+            # JSON-LDで見つからない場合は、テーブル内から価格を探す
+            if not price_found:
+                # td.table-data.content 内の価格を優先的に探す
+                table_cells = soup.select('td.table-data.content')
+                for cell in table_cells:
+                    cell_text = cell.get_text(strip=True)
+                    if '万円' in cell_text and not any(keyword in cell_text for keyword in ['管理費', '修繕', '賃料', '駐車場']):
+                        price = extract_price(cell_text)
+                        if price and price > 1000:  # 1000万円以上を物件価格とみなす
+                            property_data['price'] = price
+                            price_found = True
+                            break
+            
+            # それでも見つからない場合は、備考（remarks）以外から探す
+            if not price_found:
+                # remarksクラスを除外してテキストを検索
+                for elem in soup.find_all(text=re.compile(r'[\d,]+\s*万円')):
+                    parent = elem.parent
+                    # 親要素がremarksクラスを持つ場合はスキップ
+                    if parent and parent.get('class') and 'remarks' in parent.get('class'):
+                        continue
+                    
+                    # 賃料などのキーワードを含む場合はスキップ
+                    if any(keyword in str(elem) for keyword in ['賃料', '管理費', '修繕', '駐車場']):
+                        continue
+                    
+                    price = extract_price(elem)
+                    if price and price > 1000:  # 1000万円以上を物件価格とみなす
+                        property_data['price'] = price
+                        price_found = True
+                        break
             
             # 物件概要テーブルから情報を抽出
             tables = soup.select('table')
@@ -555,7 +599,7 @@ class RehouseScraper(BaseScraper):
                 master_property.balcony_area = property_data['balcony_area']
             
             # 掲載情報を作成または更新
-            listing, update_type = self.create_or_update_listing(
+            listing, update_type, update_details = self.create_or_update_listing(
                 master_property=master_property,
                 url=property_data['url'],
                 title=property_data.get('building_name', ''),
@@ -604,6 +648,7 @@ class RehouseScraper(BaseScraper):
             
             # 更新タイプをproperty_dataに設定（統計用）
             property_data['update_type'] = update_type
+            property_data['update_details'] = update_details
             property_data['property_saved'] = True
             
             # コミットはscrape_areaメソッドで一括で行うので、ここではflushのみ

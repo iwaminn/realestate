@@ -665,7 +665,7 @@ class BaseScraper(ABC):
                     # 保存結果と更新タイプに基づく統計更新（詳細取得の有無に関わらず）
                     if property_data.get('property_saved', False) and 'update_type' in property_data:
                         update_type = property_data['update_type']
-                        # self.logger.debug(f"統計更新: URL={property_data.get('url', '不明')}, update_type={update_type}")
+                        self.logger.info(f"統計更新: URL={property_data.get('url', '不明')}, update_type={update_type}, force_detail_fetch={self.force_detail_fetch}")
                         
                         # 詳細取得の有無に関わらず統計を更新
                         if update_type == 'new':
@@ -674,6 +674,7 @@ class BaseScraper(ABC):
                             self._scraping_stats['price_updated'] += 1
                         elif update_type == 'refetched_unchanged':
                             self._scraping_stats['refetched_unchanged'] += 1
+                            self.logger.info(f"再取得（変更なし）カウント: refetched_unchanged={self._scraping_stats['refetched_unchanged']}")
                         elif update_type == 'skipped':
                             # 詳細をスキップした場合は何もカウントしない（更新ではないため）
                             pass
@@ -697,6 +698,10 @@ class BaseScraper(ABC):
                         self.logger.info(f"物件処理がキャンセルされました: URL={property_data.get('url', '不明')}")
                     else:
                         # property_savedフラグが設定されていない、またはupdate_typeが設定されていない場合
+                        self.logger.warning(f"統計更新されず: URL={property_data.get('url', '不明')}, "
+                                          f"property_saved={property_data.get('property_saved')}, "
+                                          f"update_type={property_data.get('update_type', 'なし')}, "
+                                          f"detail_fetched={property_data.get('detail_fetched', False)}")
                         if property_data.get('detail_fetched', False):
                             # 詳細を取得したが、統計が更新されていない
                             self.logger.warning(
@@ -916,7 +921,11 @@ class BaseScraper(ABC):
                 'properties_attempted': self._scraping_stats.get('properties_attempted', 0),
                 'processed': self._scraping_stats.get('properties_attempted', 0),
                 'new': self._scraping_stats.get('new_listings', 0),
+                'new_listings': self._scraping_stats.get('new_listings', 0),  # フロントエンド互換性のため
                 'updated': self._scraping_stats.get('price_updated', 0) + self._scraping_stats.get('other_updates', 0),
+                'price_updated': self._scraping_stats.get('price_updated', 0),  # 価格更新を個別に追加
+                'other_updates': self._scraping_stats.get('other_updates', 0),  # その他更新を個別に追加
+                'refetched_unchanged': self._scraping_stats.get('refetched_unchanged', 0),  # 再取得（変更なし）を追加
                 'detail_fetched': self._scraping_stats.get('detail_fetched', 0),
                 'detail_skipped': self._scraping_stats.get('detail_skipped', 0),
                 'errors': self._scraping_stats.get('detail_fetch_failed', 0) + self._scraping_stats.get('save_failed', 0) + self._scraping_stats.get('other_errors', 0),
@@ -1619,6 +1628,7 @@ class BaseScraper(ABC):
             price_changed = False
             other_changed = False
             old_price = listing.current_price  # 更新前の価格を保存（ログ用）
+            changed_fields = []  # 変更されたフィールドを記録
             
             # 価格が変更されている場合は履歴を記録
             if listing.current_price != price:
@@ -1637,34 +1647,44 @@ class BaseScraper(ABC):
             # その他の情報を更新（変更を追跡）
             if listing.title != title:
                 other_changed = True
+                changed_fields.append('タイトル')
             listing.title = title
             
             if agency_name and listing.agency_name != agency_name:
                 other_changed = True
+                changed_fields.append('不動産会社')
             listing.agency_name = agency_name or listing.agency_name
             
             if site_property_id and listing.site_property_id != site_property_id:
                 other_changed = True
+                changed_fields.append('物件ID')
             listing.site_property_id = site_property_id or listing.site_property_id
             
             if description and listing.description != description:
                 other_changed = True
+                changed_fields.append('説明文')
             listing.description = description or listing.description
             
             if station_info and listing.station_info != station_info:
                 other_changed = True
+                changed_fields.append('駅情報')
             listing.station_info = station_info or listing.station_info
             
             if features and listing.features != features:
                 other_changed = True
+                changed_fields.append('特徴')
             listing.features = features or listing.features
             
             if management_fee is not None and listing.management_fee != management_fee:
                 other_changed = True
+                old_fee = listing.management_fee
+                changed_fields.append(f'管理費({old_fee or 0}円→{management_fee}円)')
             listing.management_fee = management_fee if management_fee is not None else listing.management_fee
             
             if repair_fund is not None and listing.repair_fund != repair_fund:
                 other_changed = True
+                old_fund = listing.repair_fund
+                changed_fields.append(f'修繕積立金({old_fund or 0}円→{repair_fund}円)')
             listing.repair_fund = repair_fund if repair_fund is not None else listing.repair_fund
             
             listing.is_active = True
@@ -1672,12 +1692,14 @@ class BaseScraper(ABC):
             listing.detail_fetched_at = datetime.now()  # 詳細取得時刻を更新
             
             # 更新タイプを判定
+            update_details = None
             if price_changed:
                 update_type = 'price_updated'
                 self.logger.info(f"価格更新: {old_price}万円 → {price}万円 - {url}")
             elif other_changed:
                 update_type = 'other_updates'
-                self.logger.info(f"その他更新: {url}")
+                update_details = ', '.join(changed_fields)  # 変更内容を記録
+                self.logger.info(f"その他更新 ({update_details}): {url}")
             else:
                 update_type = 'refetched_unchanged'
                 self.logger.debug(f"変更なし: {url}")
@@ -1853,7 +1875,11 @@ class BaseScraper(ABC):
                     # エラーが発生しても処理は続行（ログに記録）
                     self.logger.warning(f"物件建物名の更新に失敗しました (property_id={master_property.id}): {e}")
         
-        return listing, update_type
+        # update_detailsがローカル変数でない場合のために初期化
+        if 'update_details' not in locals():
+            update_details = None
+        
+        return listing, update_type, update_details
     
     def update_master_property_by_majority(self, master_property: MasterProperty):
         """マスター物件の情報を多数決で更新"""
@@ -2199,7 +2225,7 @@ class BaseScraper(ABC):
                 self.session.flush()
             
             # 掲載情報を作成または更新
-            listing, update_type = self.create_or_update_listing(
+            listing, update_type, update_details = self.create_or_update_listing(
                 master_property=master_property,
                 url=property_data.get('url'),
                 title=property_data.get('title', property_data.get('building_name', '')),
@@ -2222,6 +2248,7 @@ class BaseScraper(ABC):
             
             # 更新タイプをproperty_dataに設定（外部で使用するため）
             property_data['update_type'] = update_type
+            property_data['update_details'] = update_details
             
             # 保存成功フラグを設定
             property_data['property_saved'] = True
