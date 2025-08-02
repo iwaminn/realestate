@@ -170,35 +170,62 @@ class HomesScraper(BaseScraper):
         self.logger.error("[HOMES] No price pattern found")
         return None
     
-    def _extract_building_name_and_room(self, soup: BeautifulSoup) -> Tuple[Optional[str], Optional[str]]:
-        """建物名と部屋番号を抽出"""
+    def _extract_building_name_and_room(self, soup: BeautifulSoup, building_name_from_list: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
+        """建物名と部屋番号を抽出
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+            building_name_from_list: 一覧ページから取得した建物名
+        
+        Returns:
+            建物名と部屋番号のタプル
+        """
         building_name = None
         room_number = None
         
-        # パンくずリストから建物名を取得（最優先）
-        breadcrumb = soup.select_one('.breadList, .breadcrumb, nav[aria-label="breadcrumb"], .topicPath')
-        if breadcrumb:
-            breadcrumb_items = breadcrumb.select('li, .breadList__item, .breadcrumb-item')
-            if len(breadcrumb_items) >= 2:
-                building_item = breadcrumb_items[-2]
-                building_text = building_item.get_text(strip=True)
-                match = re.search(r'(.+?)の中古マンション', building_text)
-                if match:
-                    building_name = match.group(1)
-                else:
-                    building_name = building_text.replace('中古マンション', '').strip()
-                self.logger.info(f"[HOMES] Building name from breadcrumb: {building_name}")
+        # 一覧ページから取得した建物名がある場合、詳細ページでその建物名を確認
+        if building_name_from_list:
+            # ページ全体のテキストを取得
+            page_text = soup.get_text()
+            
+            # 建物名が詳細ページに存在するか確認（大文字小文字を区別しない）
+            if building_name_from_list.lower() in page_text.lower():
+                building_name = building_name_from_list
+                self.logger.info(f"[HOMES] 一覧ページの建物名を使用（詳細ページで確認済み）: {building_name}")
+            else:
+                self.logger.warning(f"[HOMES] 一覧ページの建物名が詳細ページで見つかりません: {building_name_from_list}")
         
-        # h1タグから情報を取得
+        # 一覧ページから建物名が取得できなかった、または詳細ページで確認できなかった場合
         if not building_name:
+            # 物件概要テーブルから建物名を探す
+            detail_tables = soup.select('table.detailTable, table.mod-detailTable, table[class*="detail"]')
+            for table in detail_tables:
+                rows = table.select('tr')
+                for row in rows:
+                    th = row.select_one('th')
+                    td = row.select_one('td')
+                    if th and td:
+                        header = th.get_text(strip=True)
+                        if '物件名' in header or 'マンション名' in header or '建物名' in header:
+                            building_name = td.get_text(strip=True)
+                            self.logger.info(f"[HOMES] 物件概要テーブルから建物名を取得: {building_name}")
+                            break
+                if building_name:
+                    break
+        
+        # それでも取得できない場合は従来のロジックを使用
+        if not building_name:
+            # h1タグから情報を取得
             h1_elem = soup.select_one('h1.font-bold, h1[class*="text-2xl"], h1')
             if h1_elem:
                 h1_text = h1_elem.get_text(strip=True)
                 if '中古マンション' in h1_text:
                     h1_text = h1_text.replace('中古マンション', '').strip()
-                parts = h1_text.split('/')
-                if parts:
-                    building_name = parts[0].strip()
+                # 駅名や徒歩分が含まれている場合は除外
+                if '徒歩' not in h1_text and '駅' not in h1_text:
+                    parts = h1_text.split('/')
+                    if parts:
+                        building_name = parts[0].strip()
         
         # titleタグまたはog:titleから情報を取得
         if not building_name:
@@ -228,7 +255,12 @@ class HomesScraper(BaseScraper):
         
         # 最終的なクリーンアップ
         if building_name:
-            building_name = re.sub(r'^(中古マンション|マンション)', '', building_name).strip()
+            # 駅名や徒歩分が含まれている場合は無効とする
+            if '徒歩' in building_name or '駅' in building_name:
+                self.logger.warning(f"[HOMES] 建物名に駅情報が含まれています: {building_name}")
+                building_name = None
+            else:
+                building_name = re.sub(r'^(中古マンション|マンション)', '', building_name).strip()
         
         return building_name, room_number
     
@@ -467,8 +499,13 @@ class HomesScraper(BaseScraper):
         
         return image_urls
     
-    def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
-        """物件詳細を解析"""
+    def parse_property_detail(self, url: str, property_data_from_list: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """物件詳細を解析
+        
+        Args:
+            url: 物件詳細ページのURL
+            property_data_from_list: 一覧ページから取得した物件データ（building_name_from_list含む）
+        """
         try:
             self.logger.info(f"[HOMES] parse_property_detail called for URL: {url}")
             
@@ -491,8 +528,13 @@ class HomesScraper(BaseScraper):
                 self.logger.error(f"[HOMES] 詳細ページでsite_property_idを取得できませんでした: {url}")
                 return None
             
+            # 一覧ページから建物名が渡されている場合は使用
+            building_name_from_list = None
+            if property_data_from_list and 'building_name_from_list' in property_data_from_list:
+                building_name_from_list = property_data_from_list['building_name_from_list']
+            
             # 建物名と部屋番号
-            building_name, room_number = self._extract_building_name_and_room(soup)
+            building_name, room_number = self._extract_building_name_and_room(soup, building_name_from_list)
             if building_name:
                 property_data['building_name'] = building_name
                 property_data['title'] = building_name
@@ -555,11 +597,19 @@ class HomesScraper(BaseScraper):
             property_data.setdefault('building_type', 'マンション')
             property_data.setdefault('address', '東京都港区')
             
-            # 必須フィールドのチェック
+            # 建物名が取得できない場合の処理
             if not property_data.get('building_name'):
-                self.record_field_extraction_error('building_name', url)
-                self.logger.error(f"[HOMES] Building name not found for {url}")
-                return None
+                # タイトルから建物名を生成（最後の手段）
+                if property_data.get('address'):
+                    # 住所から建物名を生成
+                    property_data['building_name'] = f"{property_data['address']}の物件"
+                    property_data['title'] = property_data['building_name']
+                    self.logger.warning(f"[HOMES] 建物名が取得できないため、住所から生成: {property_data['building_name']}")
+                else:
+                    # それでも無理な場合は物件IDから生成
+                    property_data['building_name'] = f"物件ID: {property_data.get('site_property_id', 'unknown')}"
+                    property_data['title'] = property_data['building_name']
+                    self.logger.warning(f"[HOMES] 建物名が取得できないため、IDから生成: {property_data['building_name']}")
             
             # 詳細ページでの必須フィールドを検証
             if not self.validate_detail_page_fields(property_data, url):
@@ -654,6 +704,25 @@ class HomesScraper(BaseScraper):
             self.logger.error(f"[HOMES] 物件行をスキップします（site_property_id取得失敗）: {href}")
             return None
         
+        # 一覧ページから建物名を取得（bukkenNameクラスから）
+        parent_block = row.find_parent(class_='mod-mergeBuilding--sale')
+        if parent_block:
+            # まずbukkenNameクラスを探す
+            bukken_name_elem = parent_block.select_one('.bukkenName')
+            if bukken_name_elem:
+                building_name_from_list = bukken_name_elem.get_text(strip=True)
+                property_data['building_name_from_list'] = building_name_from_list
+                self.logger.debug(f"[HOMES] 一覧ページから建物名を取得（bukkenName）: {building_name_from_list}")
+            else:
+                # bukkenNameが見つからない場合は従来の方法（h3タグ）を試す
+                building_link = parent_block.select_one('h3 a, .heading a')
+                if building_link:
+                    link_text = building_link.get_text(strip=True)
+                    if 'の中古マンション' in link_text:
+                        building_name_from_list = link_text.replace('の中古マンション', '').strip()
+                        property_data['building_name_from_list'] = building_name_from_list
+                        self.logger.debug(f"[HOMES] 一覧ページから建物名を取得（h3）: {building_name_from_list}")
+        
         return property_data
     
     def _extract_site_property_id(self, href: str, property_data: Dict[str, Any]) -> bool:
@@ -718,7 +787,8 @@ class HomesScraper(BaseScraper):
     def fetch_and_update_detail(self, listing) -> bool:
         """詳細ページを取得して情報を更新"""
         try:
-            detail_data = self.parse_property_detail(listing.url)
+            # parse_property_detailの新しいシグネチャに対応
+            detail_data = self.parse_property_detail(listing.url, None)
             if not detail_data:
                 return False
             

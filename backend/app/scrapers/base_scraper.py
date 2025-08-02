@@ -1265,7 +1265,16 @@ class BaseScraper(ABC):
             self._last_detail_error = None
             
             try:
-                detail_data = parse_detail_func(property_data['url'])
+                # parse_detail_funcにproperty_dataを渡す（建物名などの情報を含む）
+                # 関数のシグネチャを確認して適切に呼び出す
+                import inspect
+                sig = inspect.signature(parse_detail_func)
+                if 'property_data_from_list' in sig.parameters:
+                    # HOMESスクレイパーのように一覧データを受け取る場合
+                    detail_data = parse_detail_func(property_data['url'], property_data)
+                else:
+                    # 従来のスクレイパー（URLのみ）
+                    detail_data = parse_detail_func(property_data['url'])
             except TaskCancelledException:
                 # キャンセル例外は再スロー
                 raise
@@ -2089,6 +2098,15 @@ class BaseScraper(ABC):
                 old_fund = listing.repair_fund
                 changed_fields.append(f'修繕積立金({old_fund or 0}円→{repair_fund}円)')
             listing.repair_fund = repair_fund if repair_fund is not None else listing.repair_fund
+            
+            # 建物名の変更をチェック
+            listing_building_name = kwargs.get('listing_building_name')
+            if listing_building_name and listing.listing_building_name != listing_building_name:
+                old_building_name = listing.listing_building_name
+                if old_building_name:  # 既存の建物名がある場合のみ変更として扱う
+                    other_changed = True
+                    changed_fields.append(f'建物名({old_building_name}→{listing_building_name})')
+                    self.logger.info(f"建物名更新検出: {old_building_name} → {listing_building_name}")
             
             listing.is_active = True
             listing.last_confirmed_at = datetime.now()

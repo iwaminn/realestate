@@ -1623,7 +1623,11 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
                                         log_entry["message"] = f"価格更新: {title} (→ {price}万円)"
                                     should_log = True
                                 elif update_type == 'other_updates':
+                                    # update_detailsを取得（create_or_update_listingから返される第3要素）
+                                    update_details = result[2] if isinstance(result, tuple) and len(result) > 2 else None
                                     log_entry["message"] = f"その他の更新: {title} ({price}万円)"
+                                    if update_details:
+                                        log_entry["update_details"] = update_details  # update_detailsをログエントリに追加
                                     should_log = True
                                 elif update_type == 'refetched_unchanged' or update_type == 'skipped':
                                     # 変更なしの場合、詳細をスキップした場合はログに記録しない
