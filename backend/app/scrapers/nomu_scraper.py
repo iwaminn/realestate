@@ -31,8 +31,8 @@ class NomuScraper(BaseScraper):
     DEFAULT_AGENCY_NAME = "野村不動産アーバンネット"
     MAX_ADDRESS_LENGTH = 50  # 住所として妥当な最大文字数
     
-    def __init__(self, force_detail_fetch=False, max_properties=None):
-        super().__init__(SourceSite.NOMU, force_detail_fetch, max_properties)
+    def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False):
+        super().__init__(SourceSite.NOMU, force_detail_fetch, max_properties, ignore_error_history)
     
     def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
         """ノムコムのsite_property_idの妥当性を検証
@@ -336,6 +336,9 @@ class NomuScraper(BaseScraper):
         # 管理費と修繕積立金を取得
         self._extract_fees(soup, detail_data)
         
+        # 面積と間取りを優先的に取得（現在のページ構造対応）
+        self._extract_area_and_layout_current_format(soup, detail_data)
+        
         # その他の詳細情報を取得
         self._extract_additional_details(soup, detail_data)
         
@@ -362,8 +365,18 @@ class NomuScraper(BaseScraper):
                     detail_data['building_name'] = building_name
     
     def _extract_detail_price(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
-        """詳細ページから価格を抽出（両フォーマット対応）"""
-        # 旧フォーマット: p.priceTxt
+        """詳細ページから価格を抽出（複数フォーマット対応）"""
+        # 優先1: p.item_priceフォーマット（現在の主要フォーマット）
+        item_price_elem = soup.find("p", {"class": "item_price"})
+        if item_price_elem:
+            # span.numから価格を構築
+            price_text = self._build_price_text(item_price_elem)
+            price = extract_price(price_text)
+            if price:
+                detail_data['price'] = price
+                return
+        
+        # 優先2: 旧フォーマット: p.priceTxt
         price_elem = soup.find("p", {"class": "priceTxt"})
         if price_elem:
             price_text = price_elem.get_text(strip=True)
@@ -372,9 +385,8 @@ class NomuScraper(BaseScraper):
                 detail_data['price'] = price
                 return
         
-        # 新フォーマット: 価格はテーブル内にある
-        # すでに_extract_mansion_table_infoで取得されているはず
-        # 価格がまだ取得されていない場合の追加処理は不要
+        # 優先3: テーブル内の価格（_extract_mansion_table_infoで処理される）
+        # この段階では価格がまだ取得されていない場合のみ到達
     
     def _extract_address_and_station(self, soup: BeautifulSoup, detail_data: Dict[str, Any], url: str):
         """住所と駅情報を抽出"""
@@ -495,8 +507,21 @@ class NomuScraper(BaseScraper):
                             value = value_elem.get_text(strip=True)
                             self._process_mansion_field(label, value, detail_data)
             else:
-                # 第3のフォーマット: リスト形式（Rで始まるID）
-                self._extract_list_format_info(soup, detail_data)
+                # 第3のフォーマット: 現在のページ構造（p.item_priceあり）
+                # まず優先的にp.item_priceから価格を抽出
+                item_price_elem = soup.find("p", {"class": "item_price"})
+                if item_price_elem:
+                    price_text = self._build_price_text(item_price_elem)
+                    price = extract_price(price_text)
+                    if price:
+                        detail_data['price'] = price
+                    else:
+                        self.logger.warning(f"[NOMU] p.item_priceから価格を抽出できませんでした: {price_text}")
+                
+                # p.item_priceがない場合のみリスト形式を試行
+                if not detail_data.get('price'):
+                    self._extract_list_format_info(soup, detail_data)
+                
                 if not detail_data.get('price'):
                     self.logger.warning(f"[NOMU] 詳細ページで物件情報テーブルが見つかりません")
     
@@ -772,6 +797,28 @@ class NomuScraper(BaseScraper):
                       soup.find("section", class_="notes")
         if remarks_elem:
             detail_data['remarks'] = remarks_elem.get_text(strip=True)
+    
+    def _extract_area_and_layout_current_format(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
+        """現在のページ構造から面積と間取りを抽出（span.item_status_content）"""
+        # span.item_status_contentクラスの要素をすべて取得
+        status_content_spans = soup.find_all("span", class_="item_status_content")
+        
+        for span in status_content_spans:
+            text = span.get_text(strip=True)
+            
+            # 面積を抽出（m²、㎡、m2の形式）
+            if not detail_data.get('area') and re.search(r'\d+\.?\d*[㎡m²m2]', text):
+                area = extract_area(text)
+                if area:
+                    detail_data['area'] = area
+                    self.logger.debug(f"[NOMU] 面積を抽出: {area}㎡ from '{text}'")
+            
+            # 間取りを抽出（1R、1K、1DK、1LDK等の形式）
+            if not detail_data.get('layout') and re.search(r'\d+[RLDK]+', text):
+                layout = normalize_layout(text)
+                if layout:
+                    detail_data['layout'] = layout
+                    self.logger.debug(f"[NOMU] 間取りを抽出: {layout} from '{text}'")
     
     def _extract_agency_tel(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
         """電話番号を抽出"""

@@ -61,26 +61,27 @@ services:
     networks:
       - realestate-network
 
-  scraper:
-    build:
-      context: .
-      dockerfile: docker/backend/Dockerfile
-    container_name: realestate-scraper
-    volumes:
-      - ./backend:/app/backend
-      - ./data:/app/data
-      - ./logs:/app/logs
-      - /etc/localtime:/etc/localtime:ro
-    environment:
-      - PYTHONUNBUFFERED=1
-      - DATABASE_URL=postgresql://realestate:realestate_pass@postgres:5432/realestate
-      - TZ=Asia/Tokyo
-    command: poetry run python backend/scripts/run_scrapers.py --schedule --interval 6
-    depends_on:
-      - postgres
-      - backend
-    networks:
-      - realestate-network
+  # scraperサービスは無効化（管理画面からのみスクレイピングを実行）
+  # scraper:
+  #   build:
+  #     context: .
+  #     dockerfile: docker/backend/Dockerfile
+  #   container_name: realestate-scraper
+  #   volumes:
+  #     - ./backend:/app/backend
+  #     - ./data:/app/data
+  #     - ./logs:/app/logs
+  #     - /etc/localtime:/etc/localtime:ro
+  #   environment:
+  #     - PYTHONUNBUFFERED=1
+  #     - DATABASE_URL=postgresql://realestate:realestate_pass@postgres:5432/realestate
+  #     - TZ=Asia/Tokyo
+  #   command: poetry run python backend/scripts/run_scrapers.py --schedule --interval 6
+  #   depends_on:
+  #     - postgres
+  #     - backend
+  #   networks:
+  #     - realestate-network
 
 networks:
   realestate-network:

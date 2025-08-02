@@ -35,8 +35,8 @@ class LivableScraper(BaseScraper):
     # デバッグ対象の物件ID
     DEBUG_PROPERTY_IDS = ['C13252J13', 'C13249B30']
     
-    def __init__(self, force_detail_fetch=False, max_properties=None):
-        super().__init__(SourceSite.LIVABLE, force_detail_fetch, max_properties)
+    def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False):
+        super().__init__(SourceSite.LIVABLE, force_detail_fetch, max_properties, ignore_error_history)
     
     def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
         """東急リバブルのsite_property_idの妥当性を検証
@@ -77,9 +77,6 @@ class LivableScraper(BaseScraper):
     
     def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
         """個別の物件を処理"""
-        # 一覧ページの価格を保存（価格不一致チェック用）
-        list_page_price = property_data.get('price')
-        
         # 共通の詳細チェック処理を使用
         result = self.process_property_with_detail_check(
             property_data=property_data,
@@ -88,34 +85,8 @@ class LivableScraper(BaseScraper):
             save_property_func=self._save_property_after_detail
         )
         
-        # 詳細ページ取得後の価格不一致チェック
-        if result and property_data.get('detail_fetched') and list_page_price is not None:
-            self._check_price_mismatch(property_data, list_page_price)
-        
         return result
     
-    def _check_price_mismatch(self, property_data: Dict[str, Any], list_page_price: int):
-        """価格不一致をチェック"""
-        detail_page_price = property_data.get('price')
-        site_id = property_data.get('site_property_id')
-        
-        if detail_page_price is not None and list_page_price != detail_page_price and site_id:
-            # 価格不一致を検出
-            price_diff = abs(list_page_price - detail_page_price) / list_page_price if list_page_price > 0 else 0
-            self.logger.warning(
-                f"東急リバブル価格不一致 - ID: {site_id}, "
-                f"一覧: {list_page_price}万円, 詳細: {detail_page_price}万円 "
-                f"(差: {price_diff*100:.1f}%)"
-            )
-            
-            # 価格不一致を記録
-            self._record_price_mismatch(
-                site_id,
-                property_data['url'],
-                list_page_price,
-                detail_page_price,
-                retry_days=self.PRICE_MISMATCH_RETRY_DAYS
-            )
     
     def get_search_url(self, area: str, page: int = 1) -> str:
         """東急リバブルの検索URLを生成"""
@@ -290,6 +261,18 @@ class LivableScraper(BaseScraper):
             soup = self.fetch_page(url)
             if not soup:
                 self.logger.error(f"詳細ページの取得に失敗 - ページのフェッチができませんでした: {url}")
+                # fetch_pageでのエラー情報を確認
+                fetch_error = getattr(self, '_last_fetch_error', None)
+                if fetch_error and fetch_error.get('type') == '404':
+                    # 404エラーの場合は特別なエラー情報を設定
+                    self._last_detail_error = {
+                        'type': '404_error',
+                        'error_type': '404 Not Found',
+                        'error_message': '物件ページが見つかりません（削除済みまたは無効なURL）',
+                        'building_name': '',
+                        'price': '',
+                        'site_property_id': site_property_id
+                    }
                 return None
             
             # URLパターンによってHTML構造を判定
@@ -326,6 +309,15 @@ class LivableScraper(BaseScraper):
             
         except Exception as e:
             self.log_detailed_error("詳細ページ解析エラー", url, e)
+            # エラー情報を保存して、Noneを返す（基底クラスでエラーハンドリングされる）
+            self._last_detail_error = {
+                'type': 'exception',
+                'error_type': type(e).__name__,
+                'error_message': str(e),
+                'building_name': property_data.get('building_name', ''),
+                'price': property_data.get('price', ''),
+                'site_property_id': property_data.get('site_property_id', '')
+            }
             return None
     
     def _validate_html_structure(self, soup: BeautifulSoup, is_grantact: bool, url: str) -> bool:
@@ -796,6 +788,15 @@ class LivableScraper(BaseScraper):
         except Exception as e:
             self.logger.error(f"grantact詳細ページ解析エラー: {property_data['url']} - {str(e)}")
             self.logger.debug(f"トレースバック: {traceback.format_exc()}")
+            # エラー情報を保存して、Noneを返す（基底クラスでエラーハンドリングされる）
+            self._last_detail_error = {
+                'type': 'exception',
+                'error_type': type(e).__name__,
+                'error_message': str(e),
+                'building_name': property_data.get('building_name', ''),
+                'price': property_data.get('price', ''),
+                'site_property_id': property_data.get('site_property_id', '')
+            }
             return None
     
     def _extract_grantact_building_name(self, soup: BeautifulSoup, property_data: Dict[str, Any]):

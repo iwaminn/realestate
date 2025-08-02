@@ -347,8 +347,20 @@ class DataNormalizer:
         if 'スタジオ' in text or 'STUDIO' in text:
             return 'STUDIO'
         
-        # 特殊な間取りパターン（LDK+S、SLDK+Sなど）
-        special_layout_match = re.search(r'([SLDK]+)\+([SLDK]+)', text)
+        # 特殊な間取りパターン（LDK+S、SLDK+S、LDK+納戸など）
+        # まず「LDK＋納戸」「1LDK＋納戸」のようなパターンを処理
+        nando_match = re.search(r'(\d*)([SLDK]+)[＋+]納戸', text)
+        if nando_match:
+            num = nando_match.group(1)
+            main_rooms = nando_match.group(2)
+            # 納戸はSとして扱う
+            if num:
+                return f"{num}{main_rooms}+S"
+            else:
+                return f"{main_rooms}+S"
+        
+        # 通常の+パターン（LDK+S、SLDK+Sなど）
+        special_layout_match = re.search(r'([SLDK]+)[＋+]([SLDK]+)', text)
         if special_layout_match:
             main_rooms = special_layout_match.group(1)
             additional_rooms = special_layout_match.group(2)

@@ -26,8 +26,8 @@ class HomesScraper(BaseScraper):
     BASE_URL = "https://www.homes.co.jp"
     SOURCE_SITE = SourceSite.HOMES
     
-    def __init__(self, force_detail_fetch=False, max_properties=None):
-        super().__init__(self.SOURCE_SITE, force_detail_fetch, max_properties)
+    def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False):
+        super().__init__(self.SOURCE_SITE, force_detail_fetch, max_properties, ignore_error_history)
         self._setup_headers()
     
     def validate_site_property_id(self, site_property_id: str, url: str) -> bool:

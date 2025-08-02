@@ -2103,6 +2103,12 @@ def get_all_scraping_tasks(active_only: bool = False):
                             key = f"{p.scraper}_{p.area}"
                             progress[key] = p.to_dict()
                         
+                        # progress_detailからも進捗情報を取得（コマンドライン実行用）
+                        if db_task.progress_detail:
+                            for key, detail in db_task.progress_detail.items():
+                                if key not in progress:  # 既存の進捗情報を優先
+                                    progress[key] = detail
+                        
                         # タスク情報を構築
                         task = {
                             'task_id': db_task.task_id,
@@ -2192,6 +2198,12 @@ def get_single_task(task_id: str, db: Session = Depends(get_db)):
         for p in progress_records:
             key = f"{p.scraper}_{p.area}"
             progress[key] = p.to_dict()
+        
+        # progress_detailからも進捗情報を取得（コマンドライン実行用）
+        if db_task.progress_detail:
+            for key, detail in db_task.progress_detail.items():
+                if key not in progress:  # 既存の進捗情報を優先
+                    progress[key] = detail
         
         # タスク情報を構築
         return {

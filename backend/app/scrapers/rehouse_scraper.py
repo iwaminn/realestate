@@ -47,8 +47,8 @@ class RehouseScraper(BaseScraper):
     # 備考から除外するキーワード
     REMARKS_EXCLUDE_KEYWORDS = ['利用規約', 'Copyright', '個人情報', 'お問い合わせ']
     
-    def __init__(self, force_detail_fetch=False, max_properties=None):
-        super().__init__(self.SOURCE_SITE, force_detail_fetch, max_properties)
+    def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False):
+        super().__init__(self.SOURCE_SITE, force_detail_fetch, max_properties, ignore_error_history)
         self.http_session = requests.Session()
         self.http_session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -630,105 +630,27 @@ class RehouseScraper(BaseScraper):
     
     def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
         """物件情報をデータベースに保存"""
-        try:
-            # 必須フィールドの確認（基底クラスの共通メソッドを使用）
-            if not self.validate_detail_page_fields(property_data):
-                return False
-            
-            print(f"    → 価格: {property_data['price']}万円, 面積: {property_data.get('area', '不明')}㎡, 階数: {property_data.get('floor_number', '不明')}階")
-            
-            # 建物を取得または作成
-            building, extracted_room_number = self.get_or_create_building(
-                property_data['building_name'],
-                property_data.get('address', ''),
-                built_year=property_data.get('built_year'),
-                total_floors=property_data.get('total_floors')
-            )
-            
-            if not building:
-                print(f"    → 建物情報作成失敗")
-                return False
-            
-            # 部屋番号の決定
-            room_number = property_data.get('room_number', '')
-            if extracted_room_number and not room_number:
-                room_number = extracted_room_number
-                print(f"    → 建物名から部屋番号を抽出: {room_number}")
-            
-            # マスター物件を取得または作成
-            master_property = self.get_or_create_master_property(
-                building=building,
-                room_number=room_number,
-                floor_number=property_data.get('floor_number'),
-                area=property_data.get('area'),
-                layout=property_data.get('layout'),
-                direction=property_data.get('direction'),
-                url=property_data.get('url')
-            )
-            
-            # バルコニー面積を設定
-            if property_data.get('balcony_area'):
-                master_property.balcony_area = property_data['balcony_area']
-            
-            # 掲載情報を作成または更新
-            listing, update_type, update_details = self.create_or_update_listing(
-                master_property=master_property,
-                url=property_data['url'],
-                title=property_data.get('building_name', ''),
-                price=property_data['price'],
-                agency_name=property_data.get('agency_name'),
-                site_property_id=property_data.get('site_property_id', ''),
-                description=property_data.get('description'),
-                station_info=property_data.get('station_info'),
-                management_fee=property_data.get('management_fee'),
-                repair_fund=property_data.get('repair_fund'),
-                published_at=property_data.get('published_at'),
-                first_published_at=property_data.get('first_published_at'),
-                # 掲載サイトごとの物件属性
-                listing_floor_number=property_data.get('floor_number'),
-                listing_area=property_data.get('area'),
-                listing_layout=property_data.get('layout'),
-                listing_direction=property_data.get('direction'),
-                listing_total_floors=property_data.get('total_floors'),
-                listing_balcony_area=property_data.get('balcony_area'),
-                listing_address=property_data.get('address')
-            )
-            
-            # 追加フィールドの設定
-            self._set_additional_fields(listing, property_data)
-            
-            # 画像を追加
-            if property_data.get('image_urls'):
-                self.add_property_images(listing, property_data['image_urls'])
-            
-            # 詳細情報を保存
+        # 画像URLをimagesに変換（基底クラスの期待する形式）
+        if property_data.get('image_urls'):
+            property_data['images'] = property_data['image_urls']
+        
+        # 共通の保存処理を使用
+        return self.save_property_common(property_data, existing_listing)
+    
+    def _post_listing_creation_hook(self, listing: PropertyListing, property_data: Dict[str, Any]):
+        """掲載情報作成後のフック（三井のリハウス特有の処理）"""
+        # 追加フィールドの設定
+        self._set_additional_fields(listing, property_data)
+        
+        # 詳細情報を保存
+        if property_data.get('detail_fetched', False):
             listing.detail_info = self._build_detail_info(property_data)
             listing.detail_fetched_at = datetime.now()
-            
-            # 多数決による物件情報更新
-            self.update_master_property_by_majority(master_property)
-            
-            # 更新タイプをproperty_dataに設定（統計用）
-            property_data['update_type'] = update_type
-            property_data['update_details'] = update_details
-            property_data['property_saved'] = True
-            
-            # コミットはscrape_areaメソッドで一括で行うので、ここではflushのみ
-            self.session.flush()
-            print(f"    → 保存成功")
-            return True
-            
-        except Exception as e:
-            # TaskCancelledExceptionの場合は再スロー
-            from ..utils.exceptions import TaskCancelledException
-            if isinstance(e, TaskCancelledException):
-                raise
-            print(f"    → 保存エラー - {type(e).__name__}: {str(e)}")
-            self.log_detailed_error("物件保存エラー", property_data.get('url', '不明'), e,
-                                  {'building_name': property_data.get('building_name', ''),
-                                   'price': property_data.get('price', '')})
-            self.session.rollback()
-            return False
+        
+        # 多数決による物件情報更新
+        # listingからmaster_propertyへの参照を取得
+        if listing.master_property:
+            self.update_master_property_by_majority(listing.master_property)
     
     
     def _set_additional_fields(self, listing: PropertyListing, property_data: Dict[str, Any]):

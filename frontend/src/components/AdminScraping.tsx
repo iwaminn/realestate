@@ -816,7 +816,35 @@ const AdminScraping: React.FC = () => {
                     ))}
                   </Box>
                 )}
+                MenuProps={{
+                  PaperProps: {
+                    style: {
+                      maxHeight: 400,
+                    },
+                  },
+                }}
               >
+                <Box sx={{ px: 2, py: 1, borderBottom: '1px solid rgba(0, 0, 0, 0.12)' }}>
+                  <Button
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedScrapers(scraperOptions.map(opt => opt.value));
+                    }}
+                    sx={{ mr: 1 }}
+                  >
+                    全選択
+                  </Button>
+                  <Button
+                    size="small"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSelectedScrapers([]);
+                    }}
+                  >
+                    全解除
+                  </Button>
+                </Box>
                 {scraperOptions.map(option => (
                   <MenuItem key={option.value} value={option.value}>
                     <Checkbox checked={selectedScrapers.includes(option.value)} />

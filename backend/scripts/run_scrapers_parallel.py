@@ -374,12 +374,10 @@ class ParallelScrapingManagerDB:
                         detail_refetch_days = max(1, detail_refetch_hours // 24)  # 最小1日
                         os.environ[f'SCRAPER_{scraper_key.upper()}_DETAIL_REFETCH_DAYS'] = str(detail_refetch_days)
                     
-                    # ignore_error_historyがTrueの場合、force_detail_fetchもTrueにする
-                    effective_force_detail_fetch = force_detail_fetch or ignore_error_history
-                    
                     scraper = scraper_class(
-                        force_detail_fetch=effective_force_detail_fetch,
-                        max_properties=max_properties
+                        force_detail_fetch=force_detail_fetch,
+                        max_properties=max_properties,
+                        ignore_error_history=ignore_error_history
                     )
                     # スクレイパーが作成したセッションを閉じて、新しいセッションを設定
                     if hasattr(scraper, 'session') and scraper.session:

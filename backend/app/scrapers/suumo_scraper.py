@@ -35,8 +35,8 @@ class SuumoScraper(BaseScraper):
     MIN_REMARKS_LENGTH = 50  # 備考の最小文字数
     MIN_LONG_TEXT_LENGTH = 100  # 長文と判定する最小文字数
     
-    def __init__(self, force_detail_fetch=False, max_properties=None):
-        super().__init__(SourceSite.SUUMO, force_detail_fetch, max_properties)
+    def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False):
+        super().__init__(SourceSite.SUUMO, force_detail_fetch, max_properties, ignore_error_history)
         # 建物名取得エラーの履歴（メモリ内管理）
         self._building_name_error_cache = {}  # {url: timestamp}
     
