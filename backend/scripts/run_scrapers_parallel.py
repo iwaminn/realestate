@@ -303,7 +303,8 @@ class ParallelScrapingManagerDB:
     
     def scrape_areas_serial(self, task_id: str, scraper_key: str, areas: List[str], 
                            max_properties: int, force_detail_fetch: bool,
-                           detail_refetch_hours: Optional[int] = None) -> Tuple[int, int]:
+                           detail_refetch_hours: Optional[int] = None, 
+                           ignore_error_history: bool = False) -> Tuple[int, int]:
         """単一スクレイパーで複数エリアを直列実行"""
         scraper_name, scraper_class = self.scrapers[scraper_key]
         total_processed = 0
@@ -373,8 +374,11 @@ class ParallelScrapingManagerDB:
                         detail_refetch_days = max(1, detail_refetch_hours // 24)  # 最小1日
                         os.environ[f'SCRAPER_{scraper_key.upper()}_DETAIL_REFETCH_DAYS'] = str(detail_refetch_days)
                     
+                    # ignore_error_historyがTrueの場合、force_detail_fetchもTrueにする
+                    effective_force_detail_fetch = force_detail_fetch or ignore_error_history
+                    
                     scraper = scraper_class(
-                        force_detail_fetch=force_detail_fetch,
+                        force_detail_fetch=effective_force_detail_fetch,
                         max_properties=max_properties
                     )
                     # スクレイパーが作成したセッションを閉じて、新しいセッションを設定
@@ -640,7 +644,7 @@ class ParallelScrapingManagerDB:
     
     def run_parallel(self, task_id: str, areas: List[str], scrapers: List[str], 
                     max_properties: int = 100, force_detail_fetch: bool = False,
-                    detail_refetch_hours: Optional[int] = None):
+                    detail_refetch_hours: Optional[int] = None, ignore_error_history: bool = False):
         """並列スクレイピングを実行"""
         # タスクを作成
         task = self.create_task(task_id, areas, scrapers, max_properties, force_detail_fetch, detail_refetch_hours)
@@ -650,6 +654,8 @@ class ParallelScrapingManagerDB:
         logger.info(f"最大取得数: {max_properties}件/エリア")
         if force_detail_fetch:
             logger.info("強制詳細取得モード: 有効")
+        if ignore_error_history:
+            logger.info("404/検証エラー履歴無視モード: 有効")
         
         start_time = time.time()
         
@@ -662,7 +668,7 @@ class ParallelScrapingManagerDB:
                     future = executor.submit(
                         self.scrape_areas_serial,
                         task_id, scraper_key, areas, max_properties, force_detail_fetch,
-                        detail_refetch_hours
+                        detail_refetch_hours, ignore_error_history
                     )
                     futures[future] = scraper_key
                 

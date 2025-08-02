@@ -127,6 +127,9 @@ class RehouseScraper(BaseScraper):
         property_data['url'] = detail_url
         property_data['source_site'] = self.SOURCE_SITE
         
+        # 一覧ページでは建物名は取得しない（詳細ページで取得するため）
+        # これは正常な動作パターンです
+        
         # 物件コードを抽出（site_property_idとして使用）
         code_match = re.search(r'/bkdetail/([^/]+)/', detail_url)
         if code_match:

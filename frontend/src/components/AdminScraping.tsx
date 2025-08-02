@@ -159,6 +159,7 @@ const AdminScraping: React.FC = () => {
   const [maxProperties, setMaxProperties] = useState(100);
   const [detailRefetchHours, setDetailRefetchHours] = useState<number>(2160); // デフォルト90日（2160時間）
   const [useCustomRefetch, setUseCustomRefetch] = useState(false);
+  const [ignoreErrorHistory, setIgnoreErrorHistory] = useState(false); // 404/検証エラー履歴を無視するオプション
   const [tasks, setTasks] = useState<ScrapingTask[]>([]);
   const [loading, setLoading] = useState(false);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
@@ -374,6 +375,15 @@ const AdminScraping: React.FC = () => {
       // カスタム再取得期間が有効な場合
       if (useCustomRefetch && detailRefetchHours >= 0) {
         requestData.detail_refetch_hours = detailRefetchHours;
+        // 0時間の場合は強制詳細取得モードを有効にする
+        if (detailRefetchHours === 0) {
+          requestData.force_detail_fetch = true;
+        }
+      }
+      
+      // 404/検証エラー履歴を無視するオプション
+      if (ignoreErrorHistory) {
+        requestData.ignore_error_history = true;
       }
       
       const response = await axios.post('/api/admin/scraping/start-parallel', requestData);
@@ -863,60 +873,98 @@ const AdminScraping: React.FC = () => {
             <Box sx={{ mb: 2 }}>
               <FormGroup>
                 <FormControlLabel
-                  control={
-                    <Checkbox
-                      checked={useCustomRefetch}
-                      onChange={(e) => setUseCustomRefetch(e.target.checked)}
-                      color="warning"
-                    />
-                  }
-                  label="詳細ページの再取得範囲を広げる"
-                />
-              </FormGroup>
-              {!useCustomRefetch && (
-                <Typography variant="caption" color="text.secondary" sx={{ ml: 4, display: 'block' }}>
-                  通常は価格変更があった物件と、90日以上詳細を取得していない物件のみ更新します
-                </Typography>
-              )}
-              {useCustomRefetch && (
-                <Box sx={{ mt: 2 }}>
-                  <TextField
-                    fullWidth
-                    type="number"
-                    label="最終取得からの経過時間（時間）"
-                    value={detailRefetchHours}
-                    onChange={(e) => {
-                      const value = parseInt(e.target.value);
-                      if (!isNaN(value) && value >= 0) {
-                        setDetailRefetchHours(value);
-                      }
-                    }}
-                    InputProps={{
-                      inputProps: { min: 0, max: 10000 }
-                    }}
-                    helperText={
-                      detailRefetchHours === 0 
-                        ? "すべての物件の詳細ページを取得します（処理時間が大幅に増加します）"
-                        : detailRefetchHours < 24
-                        ? `最後に詳細を取得してから${detailRefetchHours}時間以上経過した物件も詳細ページを取得します`
-                        : `最後に詳細を取得してから${detailRefetchHours}時間（約${Math.round(detailRefetchHours / 24)}日）以上経過した物件も詳細ページを取得します`
+                    control={
+                      <Checkbox
+                        checked={useCustomRefetch}
+                        onChange={(e) => {
+                          setUseCustomRefetch(e.target.checked);
+                          // カスタマイズを無効にした場合、エラー履歴無視もリセット
+                          if (!e.target.checked) {
+                            setIgnoreErrorHistory(false);
+                          }
+                        }}
+                        color="warning"
+                      />
                     }
+                    label="詳細ページの再取得範囲をカスタマイズ"
                   />
-                  <Box sx={{ mt: 1, display: 'flex', gap: 1 }}>
-                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(0)}>すべて取得</Button>
-                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(24)}>1日</Button>
-                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(72)}>3日</Button>
-                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(168)}>1週間</Button>
-                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(720)}>30日</Button>
-                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(2160)}>90日（デフォルト）</Button>
+                </FormGroup>
+                {!useCustomRefetch && (
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                    デフォルト: 価格変更があった物件と、90日以上詳細を取得していない物件のみ更新
+                  </Typography>
+                )}
+                {useCustomRefetch && (
+                  <Box sx={{ mt: 2 }}>
+                    <TextField
+                      fullWidth
+                      label="詳細ページ再取得期間"
+                      type="number"
+                      value={detailRefetchHours}
+                      onChange={(e) => {
+                        const value = parseInt(e.target.value);
+                        if (!isNaN(value) && value >= 0) {
+                          setDetailRefetchHours(value);
+                        }
+                      }}
+                      InputProps={{
+                        inputProps: { min: 0, max: 10000 },
+                        endAdornment: detailRefetchHours === 0 
+                          ? <Typography variant="caption" color="warning.main">すべて再取得</Typography>
+                          : detailRefetchHours < 24 
+                          ? <Typography variant="caption" color="text.secondary">{detailRefetchHours}時間</Typography>
+                          : <Typography variant="caption" color="text.secondary">{Math.round(detailRefetchHours / 24)}日</Typography>
+                      }}
+                      helperText={detailRefetchHours === 0 
+                        ? "すべての物件の詳細ページを再取得します" 
+                        : `${detailRefetchHours}時間（${Math.round(detailRefetchHours / 24)}日）以上経過した物件の詳細を再取得します`
+                      }
+                      size="small"
+                    />
+                    <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                      <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(0)}>すべて</Button>
+                      <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(24)}>1日</Button>
+                      <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(72)}>3日</Button>
+                      <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(168)}>1週間</Button>
+                      <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(720)}>30日</Button>
+                      <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(2160)}>90日</Button>
+                    </Box>
+                    {detailRefetchHours < 168 && (
+                      <Alert severity="warning" sx={{ mt: 1 }} icon={false}>
+                        <Typography variant="caption">
+                          短い期間を設定すると、処理時間が大幅に増加します
+                        </Typography>
+                      </Alert>
+                    )}
                   </Box>
-                  {detailRefetchHours < 168 && (
-                    <Alert severity="warning" sx={{ mt: 1 }}>
-                      短い期間を設定すると、処理時間が大幅に増加します。
-                    </Alert>
-                  )}
-                </Box>
-              )}
+                )}
+                
+                {useCustomRefetch && (
+                  <>
+                    <FormGroup sx={{ mt: 2 }}>
+                      <FormControlLabel
+                        control={
+                          <Checkbox
+                            checked={ignoreErrorHistory}
+                            onChange={(e) => setIgnoreErrorHistory(e.target.checked)}
+                            color="error"
+                          />
+                        }
+                        label="エラー履歴を無視して再取得"
+                      />
+                    </FormGroup>
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', ml: 3.5, mt: 0.5 }}>
+                      404エラーや検証エラー（面積超過等）の履歴を無視して再取得を試みます
+                    </Typography>
+                    {ignoreErrorHistory && (
+                      <Alert severity="warning" sx={{ mt: 1, ml: 3.5 }} icon={false}>
+                        <Typography variant="caption">
+                          同じエラーが再発する可能性があります
+                        </Typography>
+                      </Alert>
+                    )}
+                  </>
+                )}
             </Box>
             <Button
               variant="contained"
@@ -924,7 +972,7 @@ const AdminScraping: React.FC = () => {
               onClick={startScraping}
               disabled={loading || selectedScrapers.length === 0}
               fullWidth
-              color={useCustomRefetch && detailRefetchHours < 168 ? "warning" : "primary"}
+              color={ignoreErrorHistory ? "error" : useCustomRefetch && detailRefetchHours < 168 ? "warning" : "primary"}
             >
               {useCustomRefetch && detailRefetchHours === 0 
                 ? "スクレイピング開始（強制再取得）" 

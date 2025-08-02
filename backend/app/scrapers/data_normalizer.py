@@ -566,7 +566,7 @@ class DataNormalizer:
         return self.MIN_PRICE <= price <= self.MAX_PRICE
 
     def validate_area(self, area: Optional[float]) -> bool:
-        """面積の妥当性を検証（10㎡以上、500㎡以下）"""
+        """面積の妥当性を検証（10㎡以上、1000㎡以下）"""
         if area is None:
             return False
         return self.MIN_AREA <= area <= self.MAX_AREA
@@ -843,7 +843,7 @@ def validate_price(price: Optional[int]) -> bool:
 
 
 def validate_area(area: Optional[float]) -> bool:
-    """面積の妥当性を検証（10㎡以上、500㎡以下）"""
+    """面積の妥当性を検証（10㎡以上、1000㎡以下）"""
     return _normalizer.validate_area(area)
 
 

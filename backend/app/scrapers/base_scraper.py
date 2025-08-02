@@ -4,12 +4,13 @@ import logging
 from typing import Dict, List, Optional, Any, Tuple, Union
 from datetime import datetime, timedelta
 import os
+import json
 from abc import ABC, abstractmethod
 from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, func, text
+from sqlalchemy import and_, func, text, Table, MetaData
 import jaconv
 
 from .constants import SourceSite
@@ -1121,8 +1122,8 @@ class BaseScraper(ABC):
                 property_data['property_saved'] = True
                 return True
             
-            # 404エラーでスキップすべきかチェック
-            if self._should_skip_url_due_to_404(property_data['url']):
+            # 404エラーでスキップすべきかチェック（強制詳細取得モードでない場合のみ）
+            if not self.force_detail_fetch and self._should_skip_url_due_to_404(property_data['url']):
                 print("  → 404エラー履歴のためスキップ")
                 property_data['detail_fetched'] = False
                 property_data['detail_fetch_attempted'] = False  # 404エラー履歴によるスキップは試行とみなさない
@@ -1144,6 +1145,28 @@ class BaseScraper(ABC):
                 property_data['update_type'] = 'skipped'
                 property_data['property_saved'] = True  # エラーではなく正常なスキップとして扱う
                 return True  # Falseではなく True を返す
+            
+            # 検証エラーでスキップすべきかチェック（強制詳細取得モードでない場合のみ）
+            if not self.force_detail_fetch and self._should_skip_url_due_to_validation_error(property_data['url']):
+                print("  → 検証エラー履歴のためスキップ")
+                property_data['detail_fetched'] = False
+                property_data['detail_fetch_attempted'] = False  # 検証エラー履歴によるスキップは試行とみなさない
+                # 検証エラー履歴によるスキップも詳細取得失敗にカウントしない
+                # （正常な動作なので、エラーとして扱わない）
+                
+                # スキップとして処理を継続
+                property_data['update_type'] = 'skipped'
+                property_data['property_saved'] = True  # エラーではなく正常なスキップとして扱う
+                return True  # Falseではなく True を返す
+            
+            # 強制詳細取得モードで404/検証エラーがある場合のログ出力
+            if self.force_detail_fetch:
+                if self._should_skip_url_due_to_404(property_data['url']):
+                    print("  → 404エラー履歴があるが、強制詳細取得モードのため処理を継続")
+                    self.logger.info(f"404エラー履歴を無視して強制詳細取得: {property_data['url']}")
+                elif self._should_skip_url_due_to_validation_error(property_data['url']):
+                    print("  → 検証エラー履歴があるが、強制詳細取得モードのため処理を継続")
+                    self.logger.info(f"検証エラー履歴を無視して強制詳細取得: {property_data['url']}")
             
             # 詳細取得前に一時停止チェック
             self._check_pause_flag()
@@ -1190,6 +1213,18 @@ class BaseScraper(ABC):
         else:
             property_data['detail_fetched'] = False
             self._last_detail_fetched = False  # フラグを記録
+            
+            # 詳細を取得しない場合、既存の情報を補完
+            if existing_listing and existing_listing.master_property:
+                # 必須情報を既存データから補完
+                if 'building_name' not in property_data or not property_data['building_name']:
+                    property_data['building_name'] = existing_listing.master_property.building.normalized_name
+                if 'area' not in property_data or not property_data['area']:
+                    property_data['area'] = existing_listing.master_property.area
+                if 'layout' not in property_data or not property_data['layout']:
+                    property_data['layout'] = existing_listing.master_property.layout
+                if 'floor_number' not in property_data or property_data.get('floor_number') is None:
+                    property_data['floor_number'] = existing_listing.master_property.floor_number
         
         # 物件保存前に一時停止チェック
         try:
@@ -1251,47 +1286,67 @@ class BaseScraper(ABC):
         """物件データの妥当性をチェック"""
         from .data_normalizer import validate_price, validate_area, validate_floor_number
         
+        url = property_data.get('url', '不明')
+        building_name = property_data.get('building_name', '不明')
+        
+        # 検証エラーの詳細を収集
+        validation_errors = []
+        
         # 必須フィールドのチェック
         if not property_data.get('building_name'):
-            self.logger.warning(f"建物名がありません: URL={property_data.get('url', '不明')}")
-            return False
+            validation_errors.append("建物名が未取得")
+            self.logger.warning(f"建物名がありません: URL={url}")
         
         if not property_data.get('price'):
-            self.logger.warning(f"価格情報がありません: URL={property_data.get('url', '不明')}, building_name={property_data.get('building_name', '不明')}")
-            return False
+            validation_errors.append("価格が未取得")
+            self.logger.warning(f"価格情報がありません: URL={url}, building_name={building_name}")
         
         # site_property_idを必須項目として追加
         if not property_data.get('site_property_id'):
-            self.logger.warning(f"サイト物件IDがありません: URL={property_data.get('url', '不明')}, building_name={property_data.get('building_name', '不明')}")
-            return False
+            validation_errors.append("サイト物件IDが未取得")
+            self.logger.warning(f"サイト物件IDがありません: URL={url}, building_name={building_name}")
         
         # 住所は詳細ページから取得する場合があるため、一覧ページでは必須ではない
         # 詳細ページ取得後に再度チェックされる
         if not property_data.get('address') and property_data.get('detail_fetched', False):
             # 詳細ページを取得したのに住所がない場合のみエラー
-            self.logger.warning(f"詳細取得後も住所情報がありません: URL={property_data.get('url', '不明')}, building_name={property_data.get('building_name', '不明')}")
-            return False
+            validation_errors.append("住所が未取得（詳細取得後）")
+            self.logger.warning(f"詳細取得後も住所情報がありません: URL={url}, building_name={building_name}")
         
         # 価格の妥当性チェック（data_normalizerのvalidate_priceを使用）
         price = property_data.get('price', 0)
-        if not validate_price(price):
-            self.logger.warning(f"価格が異常です: {price}万円, URL={property_data.get('url', '不明')}")
-            return False
+        if price and not validate_price(price):
+            validation_errors.append(f"価格が範囲外: {price}万円（許容範囲: 100万円〜100億円）")
+            self.logger.warning(f"価格が異常です: {price}万円, URL={url}")
         
         # 面積の妥当性チェック（data_normalizerのvalidate_areaを使用）
         area = property_data.get('area', 0)
         if area and not validate_area(area):
-            self.logger.warning(f"面積が異常です: {area}㎡")
-            return False
+            validation_errors.append(f"面積が範囲外: {area}㎡（許容範囲: 10㎡〜500㎡）")
+            self.logger.warning(f"面積が異常です: {area}㎡, URL={url}")
+            # 面積超過エラーフラグを設定
+            property_data['_validation_error_type'] = 'area_exceeded'
         
         # 階数の妥当性チェック（data_normalizerのvalidate_floor_numberを使用）
         floor_number = property_data.get('floor_number')
         total_floors = property_data.get('total_floors')
         if floor_number is not None and not validate_floor_number(floor_number, total_floors):
+            validation_errors.append(f"階数の整合性エラー: {floor_number}階/{total_floors}階建て")
             self.logger.warning(
                 f"階数の整合性エラー: {floor_number}階/"
-                f"{total_floors}階建て"
+                f"{total_floors}階建て, URL={url}"
             )
+        
+        # エラーがある場合は詳細ログを出力
+        if validation_errors:
+            self.logger.error(
+                f"物件データ検証エラー - "
+                f"URL: {url}, "
+                f"建物名: {building_name}, "
+                f"エラー詳細: {'; '.join(validation_errors)}"
+            )
+            # エラー詳細を保存して、呼び出し元で利用できるようにする
+            property_data['_validation_errors'] = validation_errors
             return False
         
         return True
@@ -2136,6 +2191,68 @@ class BaseScraper(ABC):
         # 1回目: 2時間、2回目: 4時間、3回目: 8時間... 最大1024時間
         return min(2 ** error_count, 1024)
     
+    def _handle_validation_error(self, url: str, error_type: str, error_details: dict = None):
+        """検証エラーのURLを記録"""
+        try:
+            # SQLAlchemyで動的にテーブルを参照
+            metadata = MetaData()
+            validation_retry_table = Table('url_validation_error_retries', metadata, autoload_with=self.session.bind)
+            
+            # 既存のレコードを確認
+            result = self.session.execute(
+                validation_retry_table.select().where(
+                    and_(
+                        validation_retry_table.c.url == url,
+                        validation_retry_table.c.source_site == self.source_site.value
+                    )
+                )
+            ).first()
+            
+            if result:
+                # エラー回数を更新
+                self.session.execute(
+                    validation_retry_table.update().where(
+                        and_(
+                            validation_retry_table.c.url == url,
+                            validation_retry_table.c.source_site == self.source_site.value
+                        )
+                    ).values(
+                        error_count=result.error_count + 1,
+                        last_error_at=datetime.now(),
+                        error_type=error_type,
+                        error_details=json.dumps(error_details or {}, ensure_ascii=False)
+                    )
+                )
+                
+                # 再試行間隔を計算
+                retry_hours = self._calculate_retry_interval(result.error_count + 1)
+                
+                self.logger.info(
+                    f"検証エラー再発生 ({error_type}) - "
+                    f"URL: {url}, 回数: {result.error_count + 1}, "
+                    f"次回再試行までの最小間隔: {retry_hours}時間"
+                )
+            else:
+                # 新規レコードを作成
+                self.session.execute(
+                    validation_retry_table.insert().values(
+                        url=url,
+                        source_site=self.source_site.value,
+                        error_type=error_type,
+                        error_details=json.dumps(error_details or {}, ensure_ascii=False),
+                        error_count=1
+                    )
+                )
+                self.logger.info(f"検証エラーを記録 ({error_type}) - URL: {url} (初回、次回再試行は2時間後以降)")
+            
+            # autoflushが有効な場合のみコミット
+            if self.session.autoflush:
+                self.session.commit()
+            
+        except Exception as e:
+            self.logger.error(f"検証エラー記録中にエラー: {e}")
+            self.session.rollback()
+    
     def _should_skip_due_to_price_mismatch(self, site_property_id: str) -> bool:
         """価格不一致履歴により再試行待機中かチェック"""
         try:
@@ -2236,6 +2353,49 @@ class BaseScraper(ABC):
             self.logger.error(f"404エラーチェック中にエラー: {e}")
             return False
     
+    def _should_skip_url_due_to_validation_error(self, url: str) -> bool:
+        """URLが検証エラーで再試行待機中かチェック"""
+        try:
+            # SQLAlchemyで動的にテーブルを参照
+            metadata = MetaData()
+            validation_retry_table = Table('url_validation_error_retries', metadata, autoload_with=self.session.bind)
+            
+            # 既存のレコードを確認
+            result = self.session.execute(
+                validation_retry_table.select().where(
+                    and_(
+                        validation_retry_table.c.url == url,
+                        validation_retry_table.c.source_site == self.source_site.value
+                    )
+                )
+            ).first()
+            
+            if result:
+                # 最後のエラーからの経過時間を計算
+                hours_since_error = (datetime.now() - result.last_error_at).total_seconds() / 3600
+                required_interval = self._calculate_retry_interval(result.error_count)
+                
+                if hours_since_error < required_interval:
+                    hours_until_retry = required_interval - hours_since_error
+                    self.logger.info(
+                        f"検証エラーのためスキップ ({result.error_type}) - "
+                        f"エラー回数: {result.error_count}, "
+                        f"再試行まで: {hours_until_retry:.1f}時間"
+                    )
+                    return True
+                else:
+                    self.logger.info(
+                        f"検証エラー再試行可能 ({result.error_type}) - "
+                        f"エラー回数: {result.error_count}, "
+                        f"最後のエラーから: {hours_since_error:.1f}時間経過"
+                    )
+            
+            return False
+            
+        except Exception as e:
+            self.logger.error(f"検証エラーチェック中にエラー: {e}")
+            return False
+    
     def _is_paused(self) -> bool:
         """一時停止状態かどうかを確認（ファイルベースとメモリベース両方）"""
         # メモリベースのフラグチェック
@@ -2286,6 +2446,8 @@ class BaseScraper(ABC):
                 # 失敗理由の特定とログ記録
                 url = property_data.get('url', '不明')
                 failure_reason = ""
+                validation_error_type = None
+                validation_error_details = {}
                 
                 if not property_data.get('price'):
                     self._scraping_stats['price_missing'] += 1
@@ -2335,7 +2497,26 @@ class BaseScraper(ABC):
                     if missing_fields:
                         failure_reason = f"必須情報不足: {', '.join(missing_fields)}"
                     else:
-                        failure_reason = "その他の必須情報不足"
+                        # validate_property_dataでFalseが返されたが、個別チェックを通過した場合
+                        # 検証エラーの詳細を取得
+                        validation_errors = property_data.get('_validation_errors', [])
+                        if validation_errors:
+                            failure_reason = f"データ検証失敗: {'; '.join(validation_errors)}"
+                        else:
+                            failure_reason = "データ検証失敗（詳細はログ参照）"
+                        # validate_property_dataで設定されたエラータイプを取得
+                        validation_error_type = property_data.get('_validation_error_type', 'validation_failed')
+                        # 追加の詳細情報を出力
+                        self.logger.error(
+                            f"データ検証失敗の追加情報 - "
+                            f"URL: {url}, "
+                            f"site_property_id: {property_data.get('site_property_id', 'なし')}, "
+                            f"address: {property_data.get('address', 'なし')}, "
+                            f"detail_fetched: {property_data.get('detail_fetched', False)}, "
+                            f"価格: {property_data.get('price', 'なし')}万円, "
+                            f"面積: {property_data.get('area', 'なし')}㎡, "
+                            f"階数: {property_data.get('floor_number', 'なし')}階"
+                        )
                     
                     # デバッグ情報を出力
                     self.logger.warning(
@@ -2343,12 +2524,25 @@ class BaseScraper(ABC):
                         f"price: {property_data.get('price')}, "
                         f"building_name: {property_data.get('building_name')}, "
                         f"area: {property_data.get('area')}, "
-                        f"layout: {property_data.get('layout')}"
+                        f"layout: {property_data.get('layout')}, "
+                        f"site_property_id: {property_data.get('site_property_id', 'なし')}"
                     )
                 
                 # エラーログを記録
                 self.logger.error(f"物件保存失敗 - {failure_reason}: URL={url}")
                 print(f"  → 保存失敗: {failure_reason} (URL: {url})")
+                
+                # 検証エラーの場合、再取得制御用に記録
+                if validation_error_type and url and url != '不明':
+                    # 面積超過の詳細情報を収集
+                    if 'area_exceeded' in validation_error_type:
+                        validation_error_details = {
+                            'area': property_data.get('area'),
+                            'building_name': property_data.get('building_name', ''),
+                            'price': property_data.get('price', ''),
+                            'failure_reason': failure_reason
+                        }
+                    self._handle_validation_error(url, validation_error_type, validation_error_details)
                 
                 # 管理画面用のエラーログを記録
                 if hasattr(self, '_save_error_log'):

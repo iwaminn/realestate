@@ -2576,6 +2576,7 @@ class ParallelScrapingRequest(BaseModel):
     max_properties: int = 100
     force_detail_fetch: bool = False
     detail_refetch_hours: Optional[int] = None
+    ignore_error_history: bool = False
 
 
 @router.post("/scraping/start-parallel")
@@ -2626,7 +2627,8 @@ def start_parallel_scraping(
                 scrapers=request.scrapers,
                 max_properties=request.max_properties,
                 force_detail_fetch=request.force_detail_fetch,
-                detail_refetch_hours=request.detail_refetch_hours
+                detail_refetch_hours=request.detail_refetch_hours,
+                ignore_error_history=request.ignore_error_history
             )
             
         except Exception as e:
