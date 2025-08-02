@@ -341,7 +341,8 @@ class HomesScraper(BaseScraper):
             direction = normalize_direction(value)
             if direction:
                 details['direction'] = direction
-        elif '管理費' in label and '等' not in label:
+        elif '管理費' in label:
+            # "管理費等"も含めて処理する
             management_fee = extract_monthly_fee(value)
             if management_fee:
                 details['management_fee'] = management_fee
@@ -562,14 +563,14 @@ class HomesScraper(BaseScraper):
             
             # 詳細ページでの必須フィールドを検証
             if not self.validate_detail_page_fields(property_data, url):
-                return None
+                return self.log_validation_error_and_return_none(property_data, url)
             
             return property_data
             
         except (TaskPausedException, TaskCancelledException):
             raise
         except Exception as e:
-            self.logger.error(f"Error parsing property detail from {url}: {e}")
+            self.log_detailed_error("詳細ページ解析エラー", url, e)
             return None
     
     def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
@@ -822,5 +823,8 @@ class HomesScraper(BaseScraper):
         except (TaskPausedException, TaskCancelledException):
             raise
         except Exception as e:
-            print(f"    詳細ページ取得エラー: {e}")
+            print(f"    詳細ページ取得エラー - {type(e).__name__}: {str(e)}")
+            self.log_detailed_error("詳細ページ取得エラー", property_data.get('url', '不明'), e,
+                                  {'building_name': property_data.get('building_name', ''),
+                                   'price': property_data.get('price', '')})
             return False

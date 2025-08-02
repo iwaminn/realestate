@@ -133,10 +133,9 @@ interface ScrapingTask {
     area?: string;
     area_code?: string;
     url?: string;
-    reason?: string;
+    reason: string;
     building_name?: string;
     price?: string;
-    message: string;
   }>;
   warning_logs?: Array<{
     timestamp: string;
@@ -1556,31 +1555,19 @@ const AdminScraping: React.FC = () => {
                                             </Box>
                                             {log.reason?.includes(':') && (
                                               <Typography 
-                                                variant="caption" 
+                                                variant="body2" 
                                                 color="error" 
                                                 component="div"
                                                 sx={{ 
-                                                  mb: 0.5,
                                                   wordBreak: 'break-all',
                                                   overflowWrap: 'break-word',
-                                                  whiteSpace: 'pre-wrap'
+                                                  whiteSpace: 'pre-wrap',
+                                                  maxWidth: '100%'
                                                 }}
                                               >
                                                 {log.reason.substring(log.reason.indexOf(':') + 1).trim()}
                                               </Typography>
                                             )}
-                                            <Typography 
-                                              variant="body2" 
-                                              color="error"
-                                              sx={{ 
-                                                wordBreak: 'break-all',
-                                                overflowWrap: 'break-word',
-                                                whiteSpace: 'pre-wrap',
-                                                maxWidth: '100%'
-                                              }}
-                                            >
-                                              {log.message}
-                                            </Typography>
                                           </Box>
                                         }
                                         secondary={

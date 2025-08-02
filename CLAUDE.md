@@ -190,6 +190,10 @@ psql -U realestate -d realestate
   - APIレスポンスで日本時間を返すように統一
   - フロントエンドでのタイムゾーン変換を不要に
   - 建物・物件の統合履歴、除外履歴すべてに適用
+- **スクレイパー実行の完全管理（2025年8月）**
+  - コマンドライン実行も管理画面に自動表示
+  - すべてのタスクが管理画面から制御可能
+  - データベースに未登録のタスクは実行不可
 
 ## デプロイ・保守
 
@@ -253,7 +257,7 @@ docker exec realestate-backend grep "500" /app/logs/api_requests.log | jq .
 make build
 make up
 
-# スクレイピング
+# スクレイピング（管理画面に自動登録される）
 make scrape
 make scrape-suumo
 
@@ -272,13 +276,19 @@ poetry run python backend/app/main.py
 # フロントエンド
 cd frontend && npm run dev
 
-# スクレイピング
-poetry run python backend/scripts/scrape_all.py
+# スクレイピング（管理画面に自動登録される）
 poetry run python backend/scripts/run_scrapers.py --scraper suumo
 
 # PostgreSQLデータベース確認
 docker exec -it realestate-postgres psql -U realestate -d realestate
 ```
+
+### スクレイパー実行の重要な変更（2025年8月）
+**すべてのスクレイパー実行は管理画面に表示されるようになりました：**
+- コマンドラインから実行してもタスクとして自動登録
+- 管理画面（http://localhost:3001/admin）から進捗確認・制御可能
+- データベースにタスクが登録されていない場合は実行されません
+- 詳細は `docs/SCRAPER_EXECUTION_GUIDE.md` を参照
 
 ## 重要な機能
 
@@ -351,14 +361,16 @@ docker exec -it realestate-postgres psql -U realestate -d realestate
 - `buildings`: 建物マスター
   - normalized_name（正規化された建物名）、address（住所）
   - total_floors（総階数）、built_year（築年）
-- `building_aliases`: 建物名の表記ゆれ管理
 - `master_properties`: 物件マスター（重複排除済み）
   - building_id、room_number、floor_number、area、layout、direction
+  - display_building_name（物件レベルの建物名 - 多数決で決定）
 - `property_listings`: 各サイトの掲載情報
   - master_property_id、source_site、current_price、station_info
   - is_active（掲載中フラグ）
+  - listing_building_name（各サイトに掲載されている建物名）
 - `listing_price_history`: 価格変更履歴
 - `property_images`: 物件画像
+- `building_external_ids`: 建物の外部ID管理（現在未使用）
 
 ### データベース初期化
 ```bash

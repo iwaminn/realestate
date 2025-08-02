@@ -1224,8 +1224,10 @@ class BaseScraper(ABC):
             self._check_pause_flag()
             
             print("  → 詳細ページを取得中...")
-            detail_error = None
-            detail_error_type = None
+            detail_error_info = None
+            # 前回のエラー情報をクリア
+            self._last_detail_error = None
+            
             try:
                 detail_data = parse_detail_func(property_data['url'])
             except TaskCancelledException:
@@ -1234,11 +1236,15 @@ class BaseScraper(ABC):
             except Exception as e:
                 # その他のエラーはNoneとして扱う
                 import traceback
-                detail_error = str(e)
-                detail_error_type = type(e).__name__
-                self.logger.error(f"詳細取得中にエラー: {property_data['url']} - {detail_error_type}: {str(e)}")
+                self.logger.error(f"詳細取得中にエラー: {property_data['url']} - {type(e).__name__}: {str(e)}")
                 self.logger.error(f"エラーの詳細:\n{traceback.format_exc()}")
                 detail_data = None
+                # エラー情報を保存（後でログ記録に使用）
+                detail_error_info = {
+                    'type': 'exception',
+                    'error_type': type(e).__name__,
+                    'error_message': str(e)
+                }
             
             if detail_data:
                 # 詳細データをマージ
@@ -1255,24 +1261,33 @@ class BaseScraper(ABC):
                 # 詳細取得失敗も統計カウントのために明示的に設定
                 property_data['detail_fetch_attempted'] = True
                 
-                # エラーログを記録
-                if hasattr(self, '_save_error_log'):
+                # エラー情報がない場合（バリデーションエラーなど）の情報を取得
+                if not detail_error_info:
+                    # 最後のエラーメッセージを取得（バリデーションエラーなど）
+                    detail_error_info = getattr(self, '_last_detail_error', None)
+                
+                # エラーログを一箇所で記録
+                if hasattr(self, '_save_error_log') and detail_error_info:
                     error_reason = '詳細ページの取得に失敗'
-                    if detail_error:
-                        if detail_error_type:
-                            error_reason = f'詳細ページの取得に失敗 ({detail_error_type}): {detail_error}'
+                    
+                    # エラータイプに応じてメッセージを構築
+                    if detail_error_info.get('type') == 'validation':
+                        error_reason = detail_error_info.get('reason', error_reason)
+                    elif detail_error_info.get('type') == 'exception':
+                        error_type = detail_error_info.get('error_type', '')
+                        error_msg = detail_error_info.get('error_message', '')
+                        if error_type:
+                            error_reason = f'{error_reason} ({error_type}): {error_msg}'
                         else:
-                            error_reason = f'詳細ページの取得に失敗: {detail_error}'
+                            error_reason = f'{error_reason}: {error_msg}'
                     
                     self._save_error_log({
                         'url': property_data.get('url', '不明'),
                         'reason': error_reason,
-                        'building_name': property_data.get('building_name', ''),
-                        'price': property_data.get('price', ''),
+                        'building_name': detail_error_info.get('building_name', property_data.get('building_name', '')),
+                        'price': detail_error_info.get('price', property_data.get('price', '')),
                         'timestamp': datetime.now().isoformat(),
-                        'error_type': detail_error_type,
-                        'error_detail': detail_error,
-                        'site_property_id': property_data.get('site_property_id', ''),
+                        'site_property_id': detail_error_info.get('site_property_id', property_data.get('site_property_id', '')),
                         'source_site': self.source_site.value
                     })
                 
@@ -1784,15 +1799,39 @@ class BaseScraper(ABC):
                                published_at: datetime = None, first_published_at: datetime = None,
                                **kwargs) -> tuple[PropertyListing, str]:
         """掲載情報を作成または更新"""
-        # 既存の掲載を検索（master_property_idでも絞り込む）
-        listing = self.session.query(PropertyListing).filter(
-            PropertyListing.master_property_id == master_property.id,
-            PropertyListing.url == url,
-            PropertyListing.source_site == self.source_site
-        ).first()
+        # site_property_idがある場合は、それを使って既存の掲載を検索
+        if site_property_id:
+            listing = self.session.query(PropertyListing).filter(
+                PropertyListing.source_site == self.source_site,
+                PropertyListing.site_property_id == site_property_id
+            ).first()
+        else:
+            # site_property_idがない場合は、URLとmaster_property_idで検索
+            listing = self.session.query(PropertyListing).filter(
+                PropertyListing.master_property_id == master_property.id,
+                PropertyListing.url == url,
+                PropertyListing.source_site == self.source_site
+            ).first()
         
-        # 同じURLで別の物件が存在する場合の処理
-        if not listing:
+        # 既存の掲載が見つかった場合、URLが変わっているかチェック
+        if listing and listing.url != url:
+            # URLの実質的な違いを判定（site_property_idが同じ場合は軽微な変更として扱う）
+            if site_property_id:
+                # site_property_idが同じなら、URLの変更は記録するが警告レベルを下げる
+                self.logger.debug(f"物件のURL形式が異なります（同一物件）: {listing.url} → {url}")
+                # 最新のURLに更新（アクセス可能性を保つため）
+                listing.url = url
+                # URL変更カウントは増やさない（統計を汚染しないため）
+            else:
+                # site_property_idがない場合は、重要な変更として扱う
+                self.logger.info(f"物件のURLが変更されました: {listing.url} → {url}")
+                listing.url = url
+                if not hasattr(self, '_url_changed_count'):
+                    self._url_changed_count = 0
+                self._url_changed_count += 1
+        
+        # 同じURLで別の物件が存在する場合の処理（site_property_idベースで検索した場合のみ）
+        if not listing and site_property_id:
             existing_with_same_url = self.session.query(PropertyListing).filter(
                 PropertyListing.url == url,
                 PropertyListing.source_site == self.source_site
@@ -1998,79 +2037,8 @@ class BaseScraper(ABC):
                 self.session.add(listing)
                 self.session.flush()
             except Exception as e:
-                # site_property_id重複エラーの場合
-                if "property_listings_site_property_unique" in str(e):
-                    self.session.rollback()
-                    self.logger.warning(f"掲載情報ID重複（想定内）: site_property_id={site_property_id}, source_site={self.source_site}")
-                    
-                    # 既存レコードを検索
-                    listing = self.session.query(PropertyListing).filter(
-                        PropertyListing.source_site == self.source_site,
-                        PropertyListing.site_property_id == site_property_id
-                    ).first()
-                    
-                    if listing:
-                        # 重複統計をカウント
-                        if not hasattr(self, '_duplicate_property_count'):
-                            self._duplicate_property_count = 0
-                        self._duplicate_property_count += 1
-                        
-                        # 建物の住所を取得して、より適切なエリアか判定
-                        from ..utils.area_matcher import get_area_code_from_address, get_ward_name_from_code
-                        
-                        building = self.session.query(Building).filter(
-                            Building.id == listing.master_property.building_id
-                        ).first()
-                        
-                        should_update_area = False
-                        current_area_code = getattr(self, 'current_area_code', None)
-                        
-                        if building and building.address and current_area_code:
-                            actual_area_code = get_area_code_from_address(building.address)
-                            
-                            # 現在のエリアが実際の住所と一致し、既存の登録エリアと異なる場合
-                            if actual_area_code == current_area_code and listing.scraped_from_area != current_area_code:
-                                should_update_area = True
-                                old_area_name = get_ward_name_from_code(listing.scraped_from_area) or listing.scraped_from_area
-                                new_area_name = get_ward_name_from_code(current_area_code) or current_area_code
-                                
-                                self.logger.info(
-                                    f"より適切なエリアへ更新: {building.normalized_name} "
-                                    f"({old_area_name} → {new_area_name})"
-                                )
-                        
-                        # 既存レコードの情報を更新
-                        update_type = 'duplicate_updated' if should_update_area else 'duplicate_skipped'
-                        listing.last_confirmed_at = datetime.now()
-                        
-                        # より適切なエリアの場合、エリア情報を更新
-                        if should_update_area:
-                            listing.scraped_from_area = current_area_code
-                            listing.updated_at = datetime.now()
-                            # 他の情報も最新に更新
-                            for key, value in kwargs.items():
-                                if hasattr(listing, key) and value is not None:
-                                    setattr(listing, key, value)
-                        
-                        # 管理画面用の警告ログを記録
-                        if hasattr(self, '_save_warning_log'):
-                            reason = 'より適切なエリアへ更新' if should_update_area else '同一物件が複数エリアに掲載'
-                            self._save_warning_log({
-                                'url': url,
-                                'reason': reason,
-                                'building_name': kwargs.get('building_name', ''),
-                                'price': str(price),
-                                'site_property_id': site_property_id,
-                                'timestamp': datetime.now().isoformat()
-                            })
-                        
-                        action = "更新" if should_update_area else "スキップ"
-                        self.logger.info(f"既存物件を{action} (ID: {listing.id}, site_property_id: {site_property_id})")
-                    else:
-                        # それでも見つからない場合はエラーを再発生
-                        raise
                 # URL重複エラーの場合は、再度検索して既存レコードを使用
-                elif "property_listings_url_key" in str(e):
+                if "property_listings_url_key" in str(e):
                     self.session.rollback()
                     self.logger.debug(f"URL重複エラー検出。既存レコードを再検索...")
                     
@@ -2503,8 +2471,25 @@ class BaseScraper(ABC):
         return False
     
     def _is_cancelled(self) -> bool:
-        """キャンセル状態かどうかを確認"""
-        return hasattr(self, 'cancel_flag') and self.cancel_flag and self.cancel_flag.is_set()
+        """キャンセル状態かどうかを確認（メモリベースとデータベース両方）"""
+        # メモリベースのフラグチェック
+        if hasattr(self, 'cancel_flag') and self.cancel_flag and self.cancel_flag.is_set():
+            return True
+        
+        # データベースベースのチェック（タスクIDがある場合）
+        if hasattr(self, '_task_id') and self._task_id:
+            try:
+                from ..models_scraping_task import ScrapingTask
+                task = self.session.query(ScrapingTask).filter(
+                    ScrapingTask.task_id == self._task_id
+                ).first()
+                
+                if task and task.status == 'cancelled':
+                    return True
+            except Exception as e:
+                self.logger.debug(f"Failed to check task cancellation status: {e}")
+        
+        return False
 
     def save_property_common(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
         """物件情報を保存する共通メソッド"""
@@ -3239,6 +3224,49 @@ class BaseScraper(ABC):
         
         return True
     
+    def log_validation_error_and_return_none(self, property_data: Dict[str, Any], url: str, error_type: str = "詳細ページ検証エラー") -> None:
+        """検証エラーの詳細を記録して None を返すヘルパーメソッド
+        
+        Args:
+            property_data: 検証対象の物件データ
+            url: 物件URL
+            error_type: エラータイプ（デフォルト: "詳細ページ検証エラー"）
+            
+        Returns:
+            None（常にNoneを返すため、return文で直接使用可能）
+        """
+        # フィールド名の日本語マッピング
+        field_names_jp = {
+            'site_property_id': '物件ID',
+            'price': '価格',
+            'building_name': '建物名',
+            'address': '住所',
+            'area': '面積',
+            'layout': '間取り'
+        }
+        
+        missing_fields = []
+        missing_fields_jp = []
+        required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'layout']
+        for field in required_fields:
+            if field not in property_data or property_data.get(field) is None:
+                missing_fields.append(field)
+                missing_fields_jp.append(field_names_jp.get(field, field))
+        
+        # エラー情報を保存（process_property_with_detail_checkで使用）
+        self._last_detail_error = {
+            'type': 'validation',
+            'reason': f"{error_type}: 必須フィールド（{', '.join(missing_fields_jp)}）が取得できませんでした",
+            'building_name': property_data.get('building_name', ''),
+            'price': property_data.get('price', ''),
+            'site_property_id': property_data.get('site_property_id', ''),
+        }
+        
+        # ログにも出力（開発者向けは英語フィールド名も含める）
+        self.logger.error(f"{error_type}: {url} - 必須フィールドが取得できませんでした: {', '.join(missing_fields)} ({', '.join(missing_fields_jp)})")
+        
+        return None
+    
     def validate_detail_page_fields(self, property_data: Dict[str, Any], url: str = None) -> bool:
         """詳細ページで取得した物件データの必須フィールドを検証
         
@@ -3312,6 +3340,42 @@ class BaseScraper(ABC):
             if log_error:
                 self.logger.debug(f"{field_name}取得エラー（既知）: {url}")
     
+    def log_detailed_error(self, error_type: str, url: str, exception: Exception, additional_info: Dict[str, Any] = None):
+        """詳細なエラーログを出力する共通メソッド
+        
+        Args:
+            error_type: エラーの種類（例: "詳細ページ解析エラー"）
+            url: エラーが発生したURL
+            exception: 発生した例外
+            additional_info: 追加情報（任意）
+        """
+        import traceback
+        
+        # エラーメッセージを構築
+        error_msg = f"{error_type}: {url} - {type(exception).__name__}: {str(exception)}"
+        self.logger.error(error_msg)
+        
+        # スタックトレースを出力
+        self.logger.error(f"詳細なスタックトレース:\n{traceback.format_exc()}")
+        
+        # 追加情報があれば出力
+        if additional_info:
+            self.logger.error(f"追加情報: {additional_info}")
+        
+        # エラーログを保存
+        if hasattr(self, '_save_error_log'):
+            error_info = {
+                'url': url,
+                'reason': error_msg,
+                'error_type': type(exception).__name__,
+                'error_detail': str(exception),
+                'source_site': self.source_site.value,
+                'timestamp': datetime.now().isoformat()
+            }
+            if additional_info:
+                error_info.update(additional_info)
+            self._save_error_log(error_info)
+    
     def _save_error_log(self, error_info: Dict[str, Any]):
         """エラーログを保存（並列スクレイピングマネージャーと連携）"""
         self.logger.info(f"_save_error_log呼び出し: {error_info}")
@@ -3323,11 +3387,22 @@ class BaseScraper(ABC):
             
             if task_id:
                 # エラーログエントリを作成（空文字やNoneを適切に処理）
+                # エラーの詳細を含めたreasonを構築
+                reason = error_info.get('reason') or '不明なエラー'
+                # error_detailがreasonに既に含まれている場合は追加しない
+                if error_info.get('error_detail') and error_info['error_detail'] not in reason:
+                    if error_info.get('error_type'):
+                        reason = f"{reason} - {error_info['error_type']}: {error_info['error_detail']}"
+                    else:
+                        reason = f"{reason}: {error_info['error_detail']}"
+                elif error_info.get('error_type') and error_info['error_type'] not in reason:
+                    reason = f"{reason} - {error_info['error_type']}"
+                
                 error_entry = {
                     'timestamp': error_info.get('timestamp', datetime.now().isoformat()),
                     'scraper': self.source_site.value,
                     'url': error_info.get('url') or '不明',
-                    'reason': error_info.get('reason') or '不明なエラー',
+                    'reason': reason,
                     'building_name': error_info.get('building_name') or '',
                     'price': str(error_info.get('price', '')) if error_info.get('price') is not None else ''
                 }

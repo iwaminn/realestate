@@ -325,8 +325,7 @@ class LivableScraper(BaseScraper):
             return self._parse_normal_detail(soup, property_data, detail_info, url)
             
         except Exception as e:
-            self.logger.error(f"詳細ページ解析エラー: {url} - {str(e)}")
-            self.logger.debug(f"トレースバック: {traceback.format_exc()}")
+            self.log_detailed_error("詳細ページ解析エラー", url, e)
             return None
     
     def _validate_html_structure(self, soup: BeautifulSoup, is_grantact: bool, url: str) -> bool:
@@ -398,7 +397,7 @@ class LivableScraper(BaseScraper):
         
         # 詳細ページでの必須フィールドを検証
         if not self.validate_detail_page_fields(property_data, url):
-            return None
+            return self.log_validation_error_and_return_none(property_data, url)
         
         return property_data
     
@@ -484,23 +483,57 @@ class LivableScraper(BaseScraper):
     
     def _extract_property_details(self, soup: BeautifulSoup, property_data: Dict[str, Any], detail_info: Dict[str, Any]):
         """物件詳細情報を抽出"""
-        # m-status-tableクラスのテーブルから情報を取得
+        # JavaScriptのdataLayerから情報を取得（新しいページ構造）
+        script_tags = soup.find_all('script')
+        for script in script_tags:
+            script_text = script.get_text()
+            if 'dataLayer' in script_text and 'tlab.property' in script_text:
+                # 間取り情報を取得
+                layout_match = re.search(r'"tlab\.property\.layout"\s*:\s*"([^"]+)"', script_text)
+                if layout_match:
+                    layout = layout_match.group(1)
+                    # 全角文字を半角に変換
+                    layout = layout.replace('ＬＤＫ', 'LDK').replace('Ｓ', 'S').replace('＋', '+')
+                    property_data['layout'] = layout
+                    self.logger.info(f"dataLayerから間取りを取得: {layout}")
+                
+                # その他の情報も取得
+                area_match = re.search(r'"tlab\.property\.monopoly_area"\s*:\s*"([^"]+)"', script_text)
+                if area_match:
+                    area = extract_area(area_match.group(1))
+                    if area:
+                        property_data['area'] = area
+        
+        # m-status-tableクラスのテーブルから情報を取得（dl/dd構造にも対応）
         status_tables = soup.select('.m-status-table')
         
         for table in status_tables:
-            rows = table.select('tr, .m-status-table__item')
-            for row in rows:
-                # 東急リバブルの構造に対応
-                label_elem = row.select_one('.m-status-table__headline, th')
-                value_elem = row.select_one('.m-status-table__body, td')
+            # dl/dd構造の場合
+            if table.name == 'dl':
+                dt_elements = table.select('dt.m-status-table__headline')
+                dd_elements = table.select('dd.m-status-table__body')
                 
-                if label_elem and value_elem:
-                    label = label_elem.get_text(strip=True)
+                for dt, dd in zip(dt_elements, dd_elements):
+                    label = dt.get_text(strip=True)
                     # リンク要素を除外してテキストを取得
-                    for link in value_elem.find_all('a'):
+                    for link in dd.find_all('a'):
                         link.extract()
-                    value = value_elem.get_text(strip=True)
+                    value = dd.get_text(strip=True)
                     self._extract_property_info(label, value, property_data, detail_info)
+            else:
+                # table構造の場合（従来の処理）
+                rows = table.select('tr, .m-status-table__item')
+                for row in rows:
+                    label_elem = row.select_one('.m-status-table__headline, th')
+                    value_elem = row.select_one('.m-status-table__body, td')
+                    
+                    if label_elem and value_elem:
+                        label = label_elem.get_text(strip=True)
+                        # リンク要素を除外してテキストを取得
+                        for link in value_elem.find_all('a'):
+                            link.extract()
+                        value = value_elem.get_text(strip=True)
+                        self._extract_property_info(label, value, property_data, detail_info)
         
         # 通常のテーブルとdl要素もチェック（フォールバック）
         self._extract_from_regular_tables(soup, property_data, detail_info)
@@ -615,10 +648,13 @@ class LivableScraper(BaseScraper):
                 property_data['balcony_area'] = balcony_area
         
         # 間取り
-        elif '間取り' in label:
-            layout = normalize_layout(value)
+        elif '間取り' in label or '間取' in label:
+            # 全角文字を半角に変換してから正規化
+            value_normalized = value.replace('ＬＤＫ', 'LDK').replace('Ｓ', 'S').replace('＋', '+').replace('Ｋ', 'K').replace('Ｄ', 'D').replace('Ｒ', 'R')
+            layout = normalize_layout(value_normalized)
             if layout:
                 property_data['layout'] = layout
+                self.logger.info(f"間取りを取得: {value} → {layout}")
         
         # 向き/方角
         elif '向き' in label or '方角' in label or '採光' in label:
@@ -752,8 +788,8 @@ class LivableScraper(BaseScraper):
             self._copy_detail_info_to_property_data(detail_info, property_data)
             
             # 詳細ページでの必須フィールドを検証
-            if not self.validate_detail_page_fields(property_data, url):
-                return None
+            if not self.validate_detail_page_fields(property_data, property_data.get('url', '')):
+                return self.log_validation_error_and_return_none(property_data, property_data.get('url', ''), "詳細ページ検証エラー(grantact)")
             
             return property_data
             

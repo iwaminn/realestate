@@ -90,7 +90,7 @@ class NomuScraper(BaseScraper):
                 if property_data:
                     properties.append(property_data)
             except Exception as e:
-                print(f"物件カード解析エラー: {e}")
+                self.logger.error(f"物件カード解析エラー - {type(e).__name__}: {str(e)}")
                 continue
         
         return properties
@@ -341,7 +341,7 @@ class NomuScraper(BaseScraper):
         
         # 詳細ページでの必須フィールドを検証
         if not self.validate_detail_page_fields(detail_data, url):
-            return None
+            return self.log_validation_error_and_return_none(detail_data, url)
         
         return detail_data
     
@@ -495,7 +495,10 @@ class NomuScraper(BaseScraper):
                             value = value_elem.get_text(strip=True)
                             self._process_mansion_field(label, value, detail_data)
             else:
-                self.logger.warning(f"[NOMU] 詳細ページで物件情報テーブルが見つかりません")
+                # 第3のフォーマット: リスト形式（Rで始まるID）
+                self._extract_list_format_info(soup, detail_data)
+                if not detail_data.get('price'):
+                    self.logger.warning(f"[NOMU] 詳細ページで物件情報テーブルが見つかりません")
     
     def _process_mansion_field(self, label: str, value: str, detail_data: Dict[str, Any]):
         """マンション情報フィールドを処理（ノムコム専用）"""
@@ -557,23 +560,114 @@ class NomuScraper(BaseScraper):
                 detail_data['station_info'] = format_station_info(value)
     
     def _extract_fees(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
-        """管理費と修繕積立金を抽出（ノムコム用：管理費は既にメインテーブルで処理済み）"""
-        # ノムコムでは管理費は既にメインテーブルで処理されているため、
-        # 修繕積立金が別の場所にある場合のみここで処理
-        if 'management_fee' not in detail_data:
-            # 管理費がまだ見つからない場合のバックアップ処理
-            tables = soup.find_all('table')
-            for table in tables:
-                rows = table.find_all('tr')
-                for row in rows:
-                    cells = row.find_all(['td', 'th'])
-                    for i in range(len(cells) - 1):
-                        cell_text = cells[i].get_text(strip=True)
-                        if '管理費' in cell_text:
-                            fee_text = cells[i + 1].get_text(strip=True)
+        """管理費と修繕積立金を抽出（ノムコム用）"""
+        # ノムコムでは管理費と修繕積立金が同じ行に表示される場合がある
+        # 例: 管理費: 48,790円 / 月    修繕積立金: 24,040円 / 月
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                cells = row.find_all(['td', 'th'])
+                # 4つのセルがある場合（管理費と修繕積立金が同じ行）
+                if len(cells) >= 4:
+                    if '管理費' in cells[0].get_text() and '修繕' in cells[2].get_text():
+                        # 管理費
+                        if 'management_fee' not in detail_data:
+                            fee_text = cells[1].get_text(strip=True)
                             management_fee = extract_monthly_fee(fee_text)
                             if management_fee:
                                 detail_data['management_fee'] = management_fee
+                        # 修繕積立金
+                        if 'repair_fund' not in detail_data:
+                            fund_text = cells[3].get_text(strip=True)
+                            repair_fund = extract_monthly_fee(fund_text)
+                            if repair_fund:
+                                detail_data['repair_fund'] = repair_fund
+                
+                # 通常のレイアウト（2つのセル）
+                for i in range(len(cells) - 1):
+                    cell_text = cells[i].get_text(strip=True)
+                    if '管理費' in cell_text and 'management_fee' not in detail_data:
+                        fee_text = cells[i + 1].get_text(strip=True)
+                        management_fee = extract_monthly_fee(fee_text)
+                        if management_fee:
+                            detail_data['management_fee'] = management_fee
+                    elif '修繕積立金' in cell_text and 'repair_fund' not in detail_data:
+                        fund_text = cells[i + 1].get_text(strip=True)
+                        repair_fund = extract_monthly_fee(fund_text)
+                        if repair_fund:
+                            detail_data['repair_fund'] = repair_fund
+    
+    def _extract_list_format_info(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
+        """リスト形式の物件情報を抽出（Rで始まるIDのページ）"""
+        # ページ全体のテキストから情報を抽出
+        page_text = soup.get_text()
+        
+        # 価格を抽出（"○億○万円"形式）
+        price_patterns = [
+            r'(\d+)億(\d+),?(\d+)万円',  # 12億5,000万円
+            r'(\d+)億(\d+)万円',          # 1億5000万円
+            r'(\d+),?(\d+)万円',          # 5,000万円
+            r'(\d+)万円'                  # 5000万円
+        ]
+        
+        for pattern in price_patterns:
+            match = re.search(pattern, page_text)
+            if match:
+                if '億' in pattern:
+                    if len(match.groups()) == 3:
+                        # 12億5,000万円
+                        oku = int(match.group(1))
+                        man = int(match.group(2)) * 1000 + int(match.group(3))
+                        detail_data['price'] = oku * 10000 + man
+                    else:
+                        # 1億5000万円
+                        oku = int(match.group(1))
+                        man = int(match.group(2))
+                        detail_data['price'] = oku * 10000 + man
+                else:
+                    # 万円のみ
+                    if len(match.groups()) == 2:
+                        man = int(match.group(1)) * 10000 + int(match.group(2))
+                    else:
+                        man = int(match.group(1))
+                    detail_data['price'] = man
+                break
+        
+        # 専有面積を抽出（複数のパターンに対応）
+        area_patterns = [
+            r'専有面積[：:\s]*(\d+\.?\d*)㎡',
+            r'専有面積[：:\s]*(\d+\.?\d*)m²',
+            r'専有面積[：:\s]*(\d+\.?\d*)m2',
+            r'専有面積\s*(\d+\.?\d*)㎡',
+            r'専有面積\s*(\d+\.?\d*)m'
+        ]
+        
+        for pattern in area_patterns:
+            area_match = re.search(pattern, page_text)
+            if area_match:
+                detail_data['area'] = float(area_match.group(1))
+                break
+        
+        # 間取りを抽出
+        layout_match = re.search(r'(\d+[LDK]+(?:\+[SW]IC)*)', page_text)
+        if layout_match:
+            layout = layout_match.group(1)
+            # 全角文字を半角に変換
+            layout = layout.replace('ＬＤＫ', 'LDK').replace('＋', '+')
+            detail_data['layout'] = normalize_layout(layout)
+        
+        # 管理費を抽出
+        mgmt_match = re.search(r'管理費[：:]\s*(\d+[,，]?\d*)円', page_text)
+        if mgmt_match:
+            mgmt_text = mgmt_match.group(1).replace(',', '').replace('，', '')
+            detail_data['management_fee'] = int(mgmt_text)
+        
+        # 修繕積立金を抽出
+        repair_match = re.search(r'修繕積立金[：:]\s*(\d+[,，]?\d*)円', page_text)
+        if repair_match:
+            repair_text = repair_match.group(1).replace(',', '').replace('，', '')
+            detail_data['repair_fund'] = int(repair_text)
     
     def _extract_additional_details(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
         """その他の詳細情報を抽出"""

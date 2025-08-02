@@ -121,7 +121,7 @@ class RehouseScraper(BaseScraper):
                     if self.validate_list_page_fields(property_data):
                         properties.append(property_data)
             except Exception as e:
-                logger.error(f"Error parsing property item: {e}")
+                logger.error(f"物件アイテム解析エラー - {type(e).__name__}: {str(e)}")
                 continue
         
         return properties
@@ -311,7 +311,7 @@ class RehouseScraper(BaseScraper):
             
             # 詳細ページでの必須フィールドを検証
             if not self.validate_detail_page_fields(property_data, url):
-                return None
+                return self.log_validation_error_and_return_none(property_data, url)
             
             return property_data
             
@@ -320,7 +320,7 @@ class RehouseScraper(BaseScraper):
             from ..utils.exceptions import TaskCancelledException
             if isinstance(e, TaskCancelledException):
                 raise
-            logger.error(f"Error fetching property detail from {url}: {e}")
+            self.log_detailed_error("詳細ページ解析エラー", url, e)
             return None
     
     def _extract_price(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> bool:
@@ -451,7 +451,7 @@ class RehouseScraper(BaseScraper):
         elif '修繕積立金' in label or '修繕積立費' in label:
             repair_fund = extract_monthly_fee(value)
             if repair_fund:
-                property_data['repair_reserve_fund'] = repair_fund
+                property_data['repair_fund'] = repair_fund
         
         # 所在地/住所
         elif '所在地' in label or '住所' in label:
@@ -681,7 +681,7 @@ class RehouseScraper(BaseScraper):
                 description=property_data.get('description'),
                 station_info=property_data.get('station_info'),
                 management_fee=property_data.get('management_fee'),
-                repair_fund=property_data.get('repair_reserve_fund'),
+                repair_fund=property_data.get('repair_fund'),
                 published_at=property_data.get('published_at'),
                 first_published_at=property_data.get('first_published_at'),
                 # 掲載サイトごとの物件属性
@@ -723,7 +723,10 @@ class RehouseScraper(BaseScraper):
             from ..utils.exceptions import TaskCancelledException
             if isinstance(e, TaskCancelledException):
                 raise
-            print(f"    → 保存エラー: {e}")
+            print(f"    → 保存エラー - {type(e).__name__}: {str(e)}")
+            self.log_detailed_error("物件保存エラー", property_data.get('url', '不明'), e,
+                                  {'building_name': property_data.get('building_name', ''),
+                                   'price': property_data.get('price', '')})
             self.session.rollback()
             return False
     

@@ -517,7 +517,7 @@ scraper.scrape_area("minato", max_pages=1)
    - 部屋番号がある場合: 建物ID + 部屋番号
    - 部屋番号がない場合: 建物ID + 所在階 + 向き + 平米（専有面積）
 2. **価格履歴**: `listing_price_history`テーブルで全ての価格変更を記録
-3. **建物名の正規化**: `building_aliases`テーブルで表記ゆれを管理
+3. **建物名の管理**: `property_listings.listing_building_name`で各サイトの表記を保存し、多数決で決定
 4. **備考の要約**: `RemarksSummarizer`ユーティリティで複数サイトの備考を統合
 
 ## 同一物件判定ロジック

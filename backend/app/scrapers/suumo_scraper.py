@@ -278,7 +278,7 @@ class SuumoScraper(BaseScraper):
             
             # 詳細ページでの必須フィールドを検証
             if not self.validate_detail_page_fields(property_data, url):
-                return None
+                return self.log_validation_error_and_return_none(property_data, url)
             
             return property_data
             
@@ -286,7 +286,7 @@ class SuumoScraper(BaseScraper):
             # タスクの一時停止・キャンセル例外は再スロー
             raise
         except Exception as e:
-            self.logger.error(f"Error parsing property detail from {url}: {e}")
+            self.log_detailed_error("詳細ページ解析エラー", url, e)
             return None
     
     def _extract_price(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> bool:
@@ -807,7 +807,10 @@ class SuumoScraper(BaseScraper):
             # タスクの一時停止・キャンセル例外は再スロー
             raise
         except Exception as e:
-            print(f"    詳細ページ取得エラー: {e}")
+            print(f"    詳細ページ取得エラー - {type(e).__name__}: {str(e)}")
+            self.log_detailed_error("詳細ページ取得エラー", property_data.get('url', '不明'), e, 
+                                  {'building_name': property_data.get('building_name', ''),
+                                   'price': property_data.get('price', '')})
             return False
     
     def _has_recent_building_name_error(self, url: str) -> bool:

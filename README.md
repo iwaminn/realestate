@@ -126,6 +126,9 @@ make db-migrate
 
 ### スクレイピングの実行
 
+> **重要**: すべてのスクレイパー実行は管理画面（http://localhost:3001/admin）に表示されます。
+> コマンドラインから実行した場合も自動的にタスクとして登録され、管理画面から制御可能です。
+
 ```bash
 # Docker環境で全サイトからスクレイピング
 make scrape
@@ -134,7 +137,10 @@ make scrape
 make scrape-suumo
 
 # コンテナ内で直接実行
-docker-compose -f docker-compose.dev.yml exec backend poetry run python backend/scripts/run_scrapers.py --scraper athome --pages 3
+docker exec realestate-backend poetry run python /app/backend/scripts/run_scrapers.py --scraper suumo --pages 3
+
+# 詳細な実行方法は以下を参照
+# docs/SCRAPER_EXECUTION_GUIDE.md
 ```
 
 ### スケジュール実行
@@ -142,6 +148,9 @@ docker-compose -f docker-compose.dev.yml exec backend poetry run python backend/
 ```bash
 # スクレイパーコンテナを起動（6時間ごとに実行）
 docker-compose up -d scraper
+
+# カスタム間隔で実行（3時間ごと）
+docker exec -d realestate-backend poetry run python /app/backend/scripts/run_scrapers.py --schedule --interval 3
 ```
 
 ## 🤝 貢献

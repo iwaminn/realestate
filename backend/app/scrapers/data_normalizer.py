@@ -347,6 +347,14 @@ class DataNormalizer:
         if 'スタジオ' in text or 'STUDIO' in text:
             return 'STUDIO'
         
+        # 特殊な間取りパターン（LDK+S、SLDK+Sなど）
+        special_layout_match = re.search(r'([SLDK]+)\+([SLDK]+)', text)
+        if special_layout_match:
+            main_rooms = special_layout_match.group(1)
+            additional_rooms = special_layout_match.group(2)
+            # LDK+S形式をそのまま返す（一般的な表記方法）
+            return f"{main_rooms}+{additional_rooms}"
+        
         # 一般的な間取りパターン
         layout_match = re.search(r'([1-9]\d*)\s*([SLDK]+)', text)
         if layout_match:

@@ -46,12 +46,8 @@ master_properties
 ├── display_building_name -- 物件独自の表示用建物名（多数決で決定）
 └── ...
 
--- 建物名エイリアス（補助的な役割）
-building_aliases
-├── building_id
-├── alias_name           -- 実際に使われている建物名
-├── source               -- どのサイトで使用されているか
-└── occurrence_count     -- 出現回数（使用頻度）
+-- 注：building_aliasesテーブルは現在のスキーマには存在しません
+-- 建物名の表記ゆれは property_listings.listing_building_name で管理されています
 ```
 
 ### 1.3 多数決アルゴリズム
