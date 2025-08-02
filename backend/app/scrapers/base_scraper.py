@@ -31,6 +31,37 @@ from ..utils.debug_logger import debug_log
 class BaseScraper(ABC):
     """スクレイパーの基底クラス"""
     
+    # 定数の定義
+    DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    DEFAULT_SCRAPER_DELAY = 1.0  # 秒
+    DEFAULT_DETAIL_REFETCH_DAYS = 90
+    DEFAULT_SMART_SCRAPING = True
+    
+    # エラー閾値
+    DEFAULT_CRITICAL_ERROR_RATE = 0.5  # 50%
+    DEFAULT_CRITICAL_ERROR_COUNT = 10
+    DEFAULT_CONSECUTIVE_ERRORS = 5
+    
+    # ページング設定
+    MAX_PAGES = 200  # 最大ページ数
+    MAX_CONSECUTIVE_EMPTY_PAGES = 2  # 連続して空のページの最大数
+    
+    # タイムアウト設定
+    PAUSE_CHECK_INTERVAL = 0.1  # 秒
+    PAUSE_LOG_INTERVAL = 50  # 5秒ごとにログ（50 * 0.1秒）
+    
+    # エラーキャッシュ設定
+    ERROR_CACHE_HOURS = 12  # エラーキャッシュの有効期間（時間）
+    
+    # HTML要素の欠落検出設定
+    MISSING_ELEMENT_THRESHOLD = 3  # 要素が連続して欠落した場合の閾値
+    CRITICAL_MISSING_THRESHOLD = 5  # 致命的な要素の欠落閾値
+    
+    # 疑わしい更新の検出設定
+    SUSPICIOUS_UPDATE_THRESHOLD = 5  # 疑わしい更新の連続数閾値
+    AREA_CHANGE_THRESHOLD = 0.7  # 面積変更の閾値（70%）
+    PRICE_CHANGE_THRESHOLD = 0.7  # 価格変更の閾値（70%）
+    
     def __init__(self, source_site: Union[str, SourceSite], force_detail_fetch: bool = False, max_properties: Optional[int] = None):
         # 文字列の場合はSourceSiteに変換（後方互換性）
         if isinstance(source_site, str):
@@ -42,7 +73,7 @@ class BaseScraper(ABC):
         self.session = SessionLocal()
         self.http_session = requests.Session()
         self.http_session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': self.DEFAULT_USER_AGENT
         })
         # SSL証明書検証の設定（gt-www.livable.co.jpのSSL証明書問題対応）
         import urllib3
@@ -63,7 +94,7 @@ class BaseScraper(ABC):
         self._property_count = 0
         
         # スクレイピング遅延（秒）
-        self.delay = float(os.getenv('SCRAPER_DELAY', '1'))
+        self.delay = float(os.getenv('SCRAPER_DELAY', str(self.DEFAULT_SCRAPER_DELAY)))
         
         # スクレイピング統計
         self._scraping_stats = {
@@ -102,9 +133,9 @@ class BaseScraper(ABC):
         
         # エラー閾値設定（安全装置）
         self._error_thresholds = {
-            'critical_error_rate': float(os.getenv('SCRAPER_CRITICAL_ERROR_RATE', '0.5')),  # 50%
-            'critical_error_count': int(os.getenv('SCRAPER_CRITICAL_ERROR_COUNT', '10')),  # 10件
-            'consecutive_errors': int(os.getenv('SCRAPER_CONSECUTIVE_ERRORS', '5'))  # 連続5件
+            'critical_error_rate': float(os.getenv('SCRAPER_CRITICAL_ERROR_RATE', str(self.DEFAULT_CRITICAL_ERROR_RATE))),
+            'critical_error_count': int(os.getenv('SCRAPER_CRITICAL_ERROR_COUNT', str(self.DEFAULT_CRITICAL_ERROR_COUNT))),
+            'consecutive_errors': int(os.getenv('SCRAPER_CONSECUTIVE_ERRORS', str(self.DEFAULT_CONSECUTIVE_ERRORS)))
         }
         self._consecutive_error_count = 0  # 連続エラーカウンター
         
@@ -137,7 +168,7 @@ class BaseScraper(ABC):
             return int(specific_days)
         
         # 共通設定
-        common_days = os.getenv('SCRAPER_DETAIL_REFETCH_DAYS', '90')
+        common_days = os.getenv('SCRAPER_DETAIL_REFETCH_DAYS', str(self.DEFAULT_DETAIL_REFETCH_DAYS))
         return int(common_days)
     
     def _get_smart_scraping_enabled(self) -> bool:
@@ -196,8 +227,19 @@ class BaseScraper(ABC):
             else:
                 self.logger.error(f"HTTP error {e.response.status_code} for {url}: {e}")
             return None
+        except requests.exceptions.ConnectionError as e:
+            self.logger.error(f"接続エラー - サーバーに接続できません: {url} - {type(e).__name__}: {str(e)}")
+            return None
+        except requests.exceptions.Timeout as e:
+            self.logger.error(f"タイムアウトエラー - サーバーが応答しません: {url} - {type(e).__name__}: {str(e)}")
+            return None
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"リクエストエラー: {url} - {type(e).__name__}: {str(e)}")
+            return None
         except Exception as e:
-            self.logger.error(f"Failed to fetch {url}: {e}")
+            import traceback
+            self.logger.error(f"予期しないエラーが発生しました: {url} - {type(e).__name__}: {str(e)}")
+            self.logger.debug(f"詳細なスタックトレース:\n{traceback.format_exc()}")
             return None
     
     @abstractmethod
@@ -226,15 +268,7 @@ class BaseScraper(ABC):
         self.current_area_code = area_code  # 現在スクレイピング中のエリアを記録
         
         # デバッグ：フラグの状態を確認
-        if hasattr(self, 'pause_flag'):
-            self.logger.info(f"[DEBUG] common_scrape_area_logic開始時 - pause_flag exists: {self.pause_flag is not None}")
-            debug_log(f"[{self.source_site}] common_scrape_area_logic開始 - pause_flag exists: {self.pause_flag is not None}")
-            if self.pause_flag:
-                self.logger.info(f"[DEBUG] pause_flag ID: {id(self.pause_flag)}, is_set: {self.pause_flag.is_set()}")
-                debug_log(f"[{self.source_site}] pause_flag ID: {id(self.pause_flag)}, is_set: {self.pause_flag.is_set()}")
-        else:
-            self.logger.info("[DEBUG] pause_flag attribute not found!")
-            debug_log(f"[{self.source_site}] pause_flag attribute not found!")
+        self._debug_pause_flag_state()
         
         total_properties = 0
         detail_fetched = 0
@@ -242,50 +276,7 @@ class BaseScraper(ABC):
         errors = 0
         
         # 再開時の状態チェック
-        self.logger.info(f"[DEBUG] 再開チェック: phase={self._scraping_stats.get('phase')}, collected={len(self._collected_properties)}, page={self._current_page}, processed={self._processed_count}")
-        debug_log(f"[{self.source_site}] 再開チェック: phase={self._scraping_stats.get('phase')}, collected={len(self._collected_properties)}, page={self._current_page}, processed={self._processed_count}")
-        
-        if self._scraping_stats.get('phase') == 'processing' and self._collected_properties:
-            # 処理フェーズから再開
-            self.logger.info(f"処理フェーズから再開: 処理済み={self._processed_count}/{len(self._collected_properties)}件")
-            all_properties = self._collected_properties
-            page = self._current_page
-            # 処理フェーズから再開の場合は収集をスキップ
-            skip_collection = True
-        elif self._scraping_stats.get('phase') == 'collecting' and self._collected_properties:
-            # 収集フェーズから再開
-            self.logger.info(f"収集フェーズから再開: ページ={self._current_page}, 収集済み={len(self._collected_properties)}件")
-            all_properties = self._collected_properties
-            page = self._current_page
-            skip_collection = False
-        else:
-            skip_collection = False
-            # 既存の変数を使用（set_resume_stateで設定された可能性があるため）
-            all_properties = self._collected_properties if self._collected_properties else []
-            page = self._current_page if self._current_page > 0 else 1
-            
-            # 統計が空の場合のみリセット
-            if not self._scraping_stats:
-                # プロパティカウンターをリセット
-                self._property_count = 0
-                
-                # 統計をリセット
-                self._scraping_stats = {
-                    'properties_found': 0,
-                    'properties_processed': 0,
-                    'properties_attempted': 0,
-                    'detail_fetched': 0,
-                    'detail_skipped': 0,
-                    'new_listings': 0,  # 新規物件
-                    'price_updated': 0,  # 価格更新があった物件
-                    'refetched_unchanged': 0,  # 再取得したが変更なし
-                    'other_updates': 0,  # 価格以外の項目が更新された物件
-                    'detail_fetch_failed': 0,
-                    'save_failed': 0,  # 詳細取得は成功したが保存に失敗した件数
-                    'price_missing': 0,
-                    'building_info_missing': 0,
-                    'other_errors': 0
-                }
+        all_properties, page, skip_collection = self._check_resume_state()
         
         # 収集フェーズの場合
         # 処理フェーズから再開する場合は収集をスキップ
@@ -307,56 +298,10 @@ class BaseScraper(ABC):
                 debug_log(f"[{self.source_site}] 収集ループ開始: page={page}")
                 
                 # 一時停止チェック
-                if hasattr(self, 'pause_flag'):
-                    self.logger.info(f"[DEBUG] pause_flag exists: {self.pause_flag is not None}, ID: {id(self.pause_flag) if self.pause_flag else 'None'}")
-                    debug_log(f"[{self.source_site}] pause_flag exists: {self.pause_flag is not None}")
-                    if self.pause_flag:
-                        self.logger.info(f"[DEBUG] pause_flag is_set: {self.pause_flag.is_set()}")
-                        debug_log(f"[{self.source_site}] pause_flag is_set: {self.pause_flag.is_set()}")
-                if hasattr(self, 'pause_flag') and self.pause_flag and self.pause_flag.is_set():
-                    self.logger.info("タスクが一時停止されました（収集フェーズ）")
-                    # 現在の収集状態を保存
-                    self._collected_properties = all_properties
-                    self._current_page = page
-                    
-                    # 一時停止フラグがクリアされるまで待機
-                    self.logger.info(f"一時停止フラグがクリアされるまで待機中... フラグID: {id(self.pause_flag)}")
-                    debug_log(f"[{self.source_site}] 一時停止フラグがクリアされるまで待機中... フラグID: {id(self.pause_flag)}")
-                    wait_count = 0
-                    # 初回のフラグ状態を記録
-                    initial_flag_state = self.pause_flag.is_set()
-                    self.logger.info(f"[DEBUG] Initial pause flag state: {initial_flag_state}")
-                    debug_log(f"[{self.source_site}] Initial pause flag state: {initial_flag_state}")
-                    
-                    # タイムアウト設定（設定ファイルから読み込み）
-                    pause_timeout = PAUSE_TIMEOUT_SECONDS
-                    while self.pause_flag.is_set():
-                        # キャンセルチェック
-                        if hasattr(self, 'cancel_flag') and self.cancel_flag and self.cancel_flag.is_set():
-                            raise TaskCancelledException("Task cancelled during pause")
-                        time_module.sleep(0.1)
-                        wait_count += 1
-                        if wait_count % 50 == 0:  # 5秒ごとにログ出力
-                            self.logger.info(f"待機中... {wait_count/10}秒経過。フラグ状態: {self.pause_flag.is_set()}")
-                            debug_log(f"[{self.source_site}] 待機中... {wait_count/10}秒経過。フラグ状態: {self.pause_flag.is_set()}")
-                        # タイムアウトチェック
-                        if wait_count >= pause_timeout * 10:  # wait_countは0.1秒単位
-                            self.logger.warning(f"一時停止タイムアウト: {pause_timeout}秒（{pause_timeout/60:.0f}分）を超えたため処理を中断")
-                            raise TaskCancelledException(f"Pause timeout after {pause_timeout} seconds ({pause_timeout/60:.0f} minutes)")
-                    
-                    self.logger.info(f"一時停止が解除されました。処理を再開します... (待機時間: {wait_count/10}秒)")
-                    debug_log(f"[{self.source_site}] 一時停止が解除されました。処理を再開します... (待機時間: {wait_count/10}秒)")
-                    # 処理を継続（ループは中断しない）
+                self._handle_pause_if_needed(all_properties, page, "収集フェーズ")
                 
-                # 最大物件数に達した場合は終了
-                if self.max_properties and len(all_properties) >= self.max_properties:
-                    self.logger.info(f"最大物件数 {self.max_properties} に達したため終了")
-                    break
-                
-                # 安全のため、あまりにも多くのページを取得しないようにする
-                max_pages = 200  # 最大ページ数の設定
-                if page > max_pages:
-                    self.logger.warning(f"{max_pages}ページを超えたため終了")
+                # 終了条件チェック
+                if self._should_stop_collection(all_properties, page):
                     break
                 
                 try:
@@ -399,58 +344,23 @@ class BaseScraper(ABC):
                     consecutive_empty_pages = 0
                     self.logger.info(f"ページ {page}: {len(properties)} 件の物件を検出")
                     
-                    # 現在のページの物件URLを収集
-                    current_page_urls = set()
-                    new_properties = []
-                    duplicate_count = 0
-                    
-                    for prop in properties:
-                        prop_url = prop.get('url', '')
-                        if prop_url:
-                            current_page_urls.add(prop_url)
-                            if prop_url not in seen_urls:
-                                new_properties.append(prop)
-                                seen_urls.add(prop_url)
-                            else:
-                                duplicate_count += 1
+                    # 物件の収集と重複チェック
+                    current_page_urls, new_properties, duplicate_count = self._process_page_properties(
+                        properties, seen_urls
+                    )
                     
                     # ページの重複チェック
-                    if current_page_urls and current_page_urls == previous_page_urls:
-                        duplicate_page_count += 1
-                        self.logger.warning(f"ページ {page}: 前ページと完全に同じ内容です（ページング失敗の可能性）")
-                        if duplicate_page_count >= 2:
-                            self.logger.error("2ページ連続で同じ内容のため、ページング処理を終了します")
-                            break
-                    else:
-                        duplicate_page_count = 0
-                    
+                    if self._check_duplicate_pages(current_page_urls, previous_page_urls, page, duplicate_page_count):
+                        break
+                    duplicate_page_count = 0 if current_page_urls != previous_page_urls else duplicate_page_count + 1
                     previous_page_urls = current_page_urls
                     
-                    if duplicate_count > 0:
-                        self.logger.info(f"ページ {page}: {duplicate_count} 件の重複物件を除外")
-                    
-                    if not new_properties:
-                        self.logger.info(f"ページ {page}: すべて既出の物件でした")
-                        consecutive_empty_pages += 1
-                        if consecutive_empty_pages >= max_consecutive_empty:
-                            self.logger.info("新規物件が見つからないため終了")
-                            break
-                    else:
-                        # 最大物件数を考慮して物件を追加
-                        if self.max_properties:
-                            remaining = self.max_properties - len(all_properties)
-                            if remaining <= 0:
-                                break
-                            if remaining < len(new_properties):
-                                all_properties.extend(new_properties[:remaining])
-                                self.logger.info(f"最大物件数に達したため、{remaining} 件のみ追加")
-                                # リアルタイムで統計を更新
-                                self._scraping_stats['properties_found'] = len(all_properties)
-                                break
-                            else:
-                                all_properties.extend(new_properties)
-                        else:
-                            all_properties.extend(new_properties)
+                    # 新規物件の処理
+                    should_break = self._handle_new_properties(
+                        new_properties, all_properties, duplicate_count, page, consecutive_empty_pages
+                    )
+                    if should_break:
+                        break
                     
                     # リアルタイムで統計を更新
                     self._scraping_stats['properties_found'] = len(all_properties)
@@ -500,37 +410,7 @@ class BaseScraper(ABC):
             debug_log(f"[{self.source_site}] 収集フェーズをスキップ（既に {len(all_properties)} 件収集済み）")
         
         # 一時停止チェック（収集フェーズと処理フェーズの間）
-        self.logger.info(f"[DEBUG] 処理フェーズ開始前の一時停止チェック")
-        debug_log(f"[{self.source_site}] 処理フェーズ開始前の一時停止チェック")
-        if hasattr(self, 'pause_flag') and self.pause_flag and self.pause_flag.is_set():
-            self.logger.info(f"[{self.source_site}] タスクが一時停止されました（フェーズ間）")
-            debug_log(f"[{self.source_site}] タスクが一時停止されました（フェーズ間）")
-            # 現在の状態を保存
-            self._collected_properties = all_properties
-            self._current_page = page
-            
-            # 一時停止フラグがクリアされるまで待機
-            self.logger.info(f"一時停止フラグがクリアされるまで待機中（フェーズ間）... フラグID: {id(self.pause_flag)}")
-            debug_log(f"[{self.source_site}] 一時停止フラグがクリアされるまで待機中（フェーズ間）... フラグID: {id(self.pause_flag)}")
-            wait_count = 0
-            # タイムアウト設定（300秒 = 5分）
-            pause_timeout = 300
-            while self.pause_flag.is_set():
-                # キャンセルチェック
-                if hasattr(self, 'cancel_flag') and self.cancel_flag and self.cancel_flag.is_set():
-                    raise TaskCancelledException("Task cancelled during pause")
-                time_module.sleep(0.1)
-                wait_count += 1
-                if wait_count % 50 == 0:  # 5秒ごとにログ出力
-                    self.logger.info(f"フェーズ間待機中... {wait_count/10}秒経過。フラグ状態: {self.pause_flag.is_set()}")
-                    debug_log(f"[{self.source_site}] フェーズ間待機中... {wait_count/10}秒経過。フラグ状態: {self.pause_flag.is_set()}")
-                # タイムアウトチェック
-                if wait_count >= pause_timeout * 10:
-                    self.logger.warning(f"一時停止タイムアウト: {pause_timeout}秒を超えたため処理を中断")
-                    raise TaskCancelledException(f"Pause timeout after {pause_timeout} seconds")
-            
-            self.logger.info(f"一時停止が解除されました（フェーズ間）。処理を再開します... (待機時間: {wait_count/10}秒)")
-            debug_log(f"[{self.source_site}] 一時停止が解除されました（フェーズ間）。処理を再開します... (待機時間: {wait_count/10}秒)")
+        self._handle_pause_if_needed(all_properties, page, "フェーズ間")
         
         # 処理対象数を設定（収集した物件数と処理上限数の小さい方）
         # 注意: ここでは「処理予定数」を設定している。実際の処理数は後で更新される
@@ -563,35 +443,7 @@ class BaseScraper(ABC):
                 debug_log(f"[{self.source_site}] 処理中: {i}/{len(all_properties)}件目")
             
             # 一時停止チェック
-            if hasattr(self, 'pause_flag') and self.pause_flag and self.pause_flag.is_set():
-                self.logger.info(f"[{self.source_site}] タスクが一時停止されました（処理フェーズ）")
-                # 現在の処理状態を保存
-                self._processed_count = i
-                self._collected_properties = all_properties  # 収集済み物件も保存
-                
-                # 一時停止フラグがクリアされるまで待機
-                self.logger.info(f"一時停止フラグがクリアされるまで待機中（処理フェーズ）... フラグID: {id(self.pause_flag)}")
-                debug_log(f"[{self.source_site}] 処理フェーズで一時停止検出。待機開始... フラグID: {id(self.pause_flag)}, is_set: {self.pause_flag.is_set()}")
-                wait_count = 0
-                # タイムアウト設定（300秒 = 5分）
-                pause_timeout = 300
-                while self.pause_flag.is_set():
-                    # キャンセルチェック
-                    if hasattr(self, 'cancel_flag') and self.cancel_flag and self.cancel_flag.is_set():
-                        raise TaskCancelledException("Task cancelled during pause")
-                    time_module.sleep(0.1)
-                    wait_count += 1
-                    if wait_count % 50 == 0:  # 5秒ごとにログ出力
-                        self.logger.info(f"処理フェーズ待機中... {wait_count/10}秒経過。フラグ状態: {self.pause_flag.is_set()}")
-                        debug_log(f"[{self.source_site}] 処理フェーズ待機中... {wait_count/10}秒経過。フラグ状態: {self.pause_flag.is_set()}")
-                    # タイムアウトチェック
-                    if wait_count >= pause_timeout * 10:
-                        self.logger.warning(f"一時停止タイムアウト: {pause_timeout}秒を超えたため処理を中断")
-                        raise TaskCancelledException(f"Pause timeout after {pause_timeout} seconds")
-                
-                self.logger.info(f"一時停止が解除されました（処理フェーズ）。処理を再開します... (待機時間: {wait_count/10}秒)")
-                debug_log(f"[{self.source_site}] 処理フェーズで一時停止解除。処理を再開... (待機時間: {wait_count/10}秒)")
-                # 処理を継続（ループは中断しない）
+            self._handle_processing_pause_if_needed(all_properties, i)
             
             # 最大物件数に達した場合は終了
             if self.max_properties and self._property_count >= self.max_properties:
@@ -963,6 +815,206 @@ class BaseScraper(ABC):
         
         return result
     
+    def _debug_pause_flag_state(self):
+        """一時停止フラグの状態をデバッグ出力"""
+        if hasattr(self, 'pause_flag'):
+            self.logger.info(f"[DEBUG] common_scrape_area_logic開始時 - pause_flag exists: {self.pause_flag is not None}")
+            debug_log(f"[{self.source_site}] common_scrape_area_logic開始 - pause_flag exists: {self.pause_flag is not None}")
+            if self.pause_flag:
+                self.logger.info(f"[DEBUG] pause_flag ID: {id(self.pause_flag)}, is_set: {self.pause_flag.is_set()}")
+                debug_log(f"[{self.source_site}] pause_flag ID: {id(self.pause_flag)}, is_set: {self.pause_flag.is_set()}")
+        else:
+            self.logger.info("[DEBUG] pause_flag attribute not found!")
+            debug_log(f"[{self.source_site}] pause_flag attribute not found!")
+    
+    def _check_resume_state(self) -> Tuple[List[Dict[str, Any]], int, bool]:
+        """再開時の状態をチェックし、適切な状態を返す"""
+        self.logger.info(f"[DEBUG] 再開チェック: phase={self._scraping_stats.get('phase')}, collected={len(self._collected_properties)}, page={self._current_page}, processed={self._processed_count}")
+        debug_log(f"[{self.source_site}] 再開チェック: phase={self._scraping_stats.get('phase')}, collected={len(self._collected_properties)}, page={self._current_page}, processed={self._processed_count}")
+        
+        if self._scraping_stats.get('phase') == 'processing' and self._collected_properties:
+            # 処理フェーズから再開
+            self.logger.info(f"処理フェーズから再開: 処理済み={self._processed_count}/{len(self._collected_properties)}件")
+            return self._collected_properties, self._current_page, True
+        elif self._scraping_stats.get('phase') == 'collecting' and self._collected_properties:
+            # 収集フェーズから再開
+            self.logger.info(f"収集フェーズから再開: ページ={self._current_page}, 収集済み={len(self._collected_properties)}件")
+            return self._collected_properties, self._current_page, False
+        else:
+            # 新規開始またはリセット
+            all_properties = self._collected_properties if self._collected_properties else []
+            page = self._current_page if self._current_page > 0 else 1
+            
+            # 統計が空の場合のみリセット
+            if not self._scraping_stats:
+                self._reset_scraping_stats()
+            
+            return all_properties, page, False
+    
+    def _reset_scraping_stats(self):
+        """スクレイピング統計をリセット"""
+        self._property_count = 0
+        self._scraping_stats = {
+            'properties_found': 0,
+            'properties_processed': 0,
+            'properties_attempted': 0,
+            'detail_fetched': 0,
+            'detail_skipped': 0,
+            'new_listings': 0,  # 新規物件
+            'price_updated': 0,  # 価格更新があった物件
+            'refetched_unchanged': 0,  # 再取得したが変更なし
+            'other_updates': 0,  # 価格以外の項目が更新された物件
+            'detail_fetch_failed': 0,
+            'save_failed': 0,  # 詳細取得は成功したが保存に失敗した件数
+            'price_missing': 0,
+            'building_info_missing': 0,
+            'other_errors': 0
+        }
+    
+    def _handle_pause_if_needed(self, all_properties: List[Dict[str, Any]], page: int, phase_name: str):
+        """一時停止フラグをチェックし、必要に応じて待機"""
+        if hasattr(self, 'pause_flag'):
+            self.logger.info(f"[DEBUG] pause_flag exists: {self.pause_flag is not None}, ID: {id(self.pause_flag) if self.pause_flag else 'None'}")
+            debug_log(f"[{self.source_site}] pause_flag exists: {self.pause_flag is not None}")
+            if self.pause_flag:
+                self.logger.info(f"[DEBUG] pause_flag is_set: {self.pause_flag.is_set()}")
+                debug_log(f"[{self.source_site}] pause_flag is_set: {self.pause_flag.is_set()}")
+        
+        if hasattr(self, 'pause_flag') and self.pause_flag and self.pause_flag.is_set():
+            self.logger.info(f"タスクが一時停止されました（{phase_name}）")
+            # 現在の状態を保存
+            self._collected_properties = all_properties
+            self._current_page = page
+            
+            # 一時停止フラグがクリアされるまで待機
+            self.logger.info(f"一時停止フラグがクリアされるまで待機中（{phase_name}）... フラグID: {id(self.pause_flag)}")
+            debug_log(f"[{self.source_site}] 一時停止フラグがクリアされるまで待機中（{phase_name}）... フラグID: {id(self.pause_flag)}")
+            
+            wait_count = 0
+            initial_flag_state = self.pause_flag.is_set()
+            self.logger.info(f"[DEBUG] Initial pause flag state: {initial_flag_state}")
+            debug_log(f"[{self.source_site}] Initial pause flag state: {initial_flag_state}")
+            
+            # タイムアウト設定
+            pause_timeout = PAUSE_TIMEOUT_SECONDS
+            while self.pause_flag.is_set():
+                # キャンセルチェック
+                if hasattr(self, 'cancel_flag') and self.cancel_flag and self.cancel_flag.is_set():
+                    raise TaskCancelledException("Task cancelled during pause")
+                time_module.sleep(self.PAUSE_CHECK_INTERVAL)
+                wait_count += 1
+                if wait_count % self.PAUSE_LOG_INTERVAL == 0:  # 5秒ごとにログ出力
+                    self.logger.info(f"{phase_name}待機中... {wait_count/10}秒経過。フラグ状態: {self.pause_flag.is_set()}")
+                    debug_log(f"[{self.source_site}] {phase_name}待機中... {wait_count/10}秒経過。フラグ状態: {self.pause_flag.is_set()}")
+                # タイムアウトチェック
+                if wait_count >= pause_timeout * 10:  # wait_countは0.1秒単位
+                    self.logger.warning(f"一時停止タイムアウト: {pause_timeout}秒（{pause_timeout/60:.0f}分）を超えたため処理を中断")
+                    raise TaskCancelledException(f"Pause timeout after {pause_timeout} seconds ({pause_timeout/60:.0f} minutes)")
+            
+            self.logger.info(f"一時停止が解除されました（{phase_name}）。処理を再開します... (待機時間: {wait_count/10}秒)")
+            debug_log(f"[{self.source_site}] 一時停止が解除されました（{phase_name}）。処理を再開します... (待機時間: {wait_count/10}秒)")
+    
+    def _should_stop_collection(self, all_properties: List[Dict[str, Any]], page: int) -> bool:
+        """収集を停止すべきか判定"""
+        # 最大物件数に達した場合
+        if self.max_properties and len(all_properties) >= self.max_properties:
+            self.logger.info(f"最大物件数 {self.max_properties} に達したため終了")
+            return True
+        
+        # 最大ページ数を超えた場合
+        if page > self.MAX_PAGES:
+            self.logger.warning(f"{self.MAX_PAGES}ページを超えたため終了")
+            return True
+        
+        return False
+    
+    def _process_page_properties(self, properties: List[Dict[str, Any]], seen_urls: set) -> Tuple[set, List[Dict[str, Any]], int]:
+        """ページの物件を処理し、重複をチェック"""
+        current_page_urls = set()
+        new_properties = []
+        duplicate_count = 0
+        
+        for prop in properties:
+            prop_url = prop.get('url', '')
+            if prop_url:
+                current_page_urls.add(prop_url)
+                if prop_url not in seen_urls:
+                    new_properties.append(prop)
+                    seen_urls.add(prop_url)
+                else:
+                    duplicate_count += 1
+        
+        return current_page_urls, new_properties, duplicate_count
+    
+    def _check_duplicate_pages(self, current_page_urls: set, previous_page_urls: set, page: int, duplicate_page_count: int) -> bool:
+        """ページの重複をチェックし、終了すべきか判定"""
+        if current_page_urls and current_page_urls == previous_page_urls:
+            self.logger.warning(f"ページ {page}: 前ページと完全に同じ内容です（ページング失敗の可能性）")
+            if duplicate_page_count >= 1:  # 2回目の重複
+                self.logger.error("2ページ連続で同じ内容のため、ページング処理を終了します")
+                return True
+        return False
+    
+    def _handle_new_properties(self, new_properties: List[Dict[str, Any]], all_properties: List[Dict[str, Any]], 
+                             duplicate_count: int, page: int, consecutive_empty_pages: int) -> bool:
+        """新規物件の処理と統計更新"""
+        if duplicate_count > 0:
+            self.logger.info(f"ページ {page}: {duplicate_count} 件の重複物件を除外")
+        
+        if not new_properties:
+            self.logger.info(f"ページ {page}: すべて既出の物件でした")
+            if consecutive_empty_pages + 1 >= self.MAX_CONSECUTIVE_EMPTY_PAGES:
+                self.logger.info("新規物件が見つからないため終了")
+                return True
+        else:
+            # 最大物件数を考慮して物件を追加
+            if self.max_properties:
+                remaining = self.max_properties - len(all_properties)
+                if remaining <= 0:
+                    return True
+                if remaining < len(new_properties):
+                    all_properties.extend(new_properties[:remaining])
+                    self.logger.info(f"最大物件数に達したため、{remaining} 件のみ追加")
+                    self._scraping_stats['properties_found'] = len(all_properties)
+                    return True
+                else:
+                    all_properties.extend(new_properties)
+            else:
+                all_properties.extend(new_properties)
+        
+        return False
+    
+    def _handle_processing_pause_if_needed(self, all_properties: List[Dict[str, Any]], index: int):
+        """処理フェーズ中の一時停止チェック"""
+        if hasattr(self, 'pause_flag') and self.pause_flag and self.pause_flag.is_set():
+            self.logger.info(f"[{self.source_site}] タスクが一時停止されました（処理フェーズ）")
+            # 現在の処理状態を保存
+            self._processed_count = index
+            self._collected_properties = all_properties  # 収集済み物件も保存
+            
+            # 一時停止フラグがクリアされるまで待機
+            self.logger.info(f"一時停止フラグがクリアされるまで待機中（処理フェーズ）... フラグID: {id(self.pause_flag)}")
+            debug_log(f"[{self.source_site}] 処理フェーズで一時停止検出。待機開始... フラグID: {id(self.pause_flag)}, is_set: {self.pause_flag.is_set()}")
+            
+            wait_count = 0
+            pause_timeout = 300  # 5分
+            while self.pause_flag.is_set():
+                # キャンセルチェック
+                if hasattr(self, 'cancel_flag') and self.cancel_flag and self.cancel_flag.is_set():
+                    raise TaskCancelledException("Task cancelled during pause")
+                time_module.sleep(self.PAUSE_CHECK_INTERVAL)
+                wait_count += 1
+                if wait_count % self.PAUSE_LOG_INTERVAL == 0:  # 5秒ごとにログ出力
+                    self.logger.info(f"処理フェーズ待機中... {wait_count/10}秒経過。フラグ状態: {self.pause_flag.is_set()}")
+                    debug_log(f"[{self.source_site}] 処理フェーズ待機中... {wait_count/10}秒経過。フラグ状態: {self.pause_flag.is_set()}")
+                # タイムアウトチェック
+                if wait_count >= pause_timeout * 10:
+                    self.logger.warning(f"一時停止タイムアウト: {pause_timeout}秒を超えたため処理を中断")
+                    raise TaskCancelledException(f"Pause timeout after {pause_timeout} seconds")
+            
+            self.logger.info(f"一時停止が解除されました（処理フェーズ）。処理を再開します... (待機時間: {wait_count/10}秒)")
+            debug_log(f"[{self.source_site}] 処理フェーズで一時停止解除。処理を再開... (待機時間: {wait_count/10}秒)")
+    
     def set_progress_callback(self, callback):
         """進捗更新コールバックを設定"""
         self._progress_callback = callback
@@ -1172,6 +1224,8 @@ class BaseScraper(ABC):
             self._check_pause_flag()
             
             print("  → 詳細ページを取得中...")
+            detail_error = None
+            detail_error_type = None
             try:
                 detail_data = parse_detail_func(property_data['url'])
             except TaskCancelledException:
@@ -1179,7 +1233,11 @@ class BaseScraper(ABC):
                 raise
             except Exception as e:
                 # その他のエラーはNoneとして扱う
-                self.logger.error(f"詳細取得中にエラー: {e}")
+                import traceback
+                detail_error = str(e)
+                detail_error_type = type(e).__name__
+                self.logger.error(f"詳細取得中にエラー: {property_data['url']} - {detail_error_type}: {str(e)}")
+                self.logger.error(f"エラーの詳細:\n{traceback.format_exc()}")
                 detail_data = None
             
             if detail_data:
@@ -1199,12 +1257,23 @@ class BaseScraper(ABC):
                 
                 # エラーログを記録
                 if hasattr(self, '_save_error_log'):
+                    error_reason = '詳細ページの取得に失敗'
+                    if detail_error:
+                        if detail_error_type:
+                            error_reason = f'詳細ページの取得に失敗 ({detail_error_type}): {detail_error}'
+                        else:
+                            error_reason = f'詳細ページの取得に失敗: {detail_error}'
+                    
                     self._save_error_log({
                         'url': property_data.get('url', '不明'),
-                        'reason': '詳細ページの取得に失敗',
+                        'reason': error_reason,
                         'building_name': property_data.get('building_name', ''),
                         'price': property_data.get('price', ''),
-                        'timestamp': datetime.now().isoformat()
+                        'timestamp': datetime.now().isoformat(),
+                        'error_type': detail_error_type,
+                        'error_detail': detail_error,
+                        'site_property_id': property_data.get('site_property_id', ''),
+                        'source_site': self.source_site.value
                     })
                 
                 # 詳細取得に失敗した場合は保存処理をスキップ
@@ -2147,6 +2216,131 @@ class BaseScraper(ABC):
                 return False
         return True
     
+    def _should_skip_url_due_to_404(self, url: str) -> bool:
+        """404エラー履歴によりスキップすべきURLか判定"""
+        try:
+            retry_record = self.session.query(Url404Retry).filter(
+                Url404Retry.url == url,
+                Url404Retry.source_site == self.source_site.value
+            ).first()
+            
+            if retry_record:
+                # 再試行間隔を計算
+                retry_hours = self._calculate_retry_interval(retry_record.error_count)
+                hours_since_error = (datetime.now() - retry_record.last_error_at).total_seconds() / 3600
+                
+                if hours_since_error < retry_hours:
+                    self.logger.debug(
+                        f"404エラー履歴によりスキップ: {url} "
+                        f"(エラー回数: {retry_record.error_count}, "
+                        f"最終エラーから: {hours_since_error:.1f}時間, "
+                        f"再試行間隔: {retry_hours}時間)"
+                    )
+                    return True
+                else:
+                    self.logger.debug(
+                        f"404エラー履歴ありだが再試行可能: {url} "
+                        f"(最終エラーから{hours_since_error:.1f}時間経過)"
+                    )
+                    return False
+            return False
+        except Exception as e:
+            self.logger.error(f"404エラー履歴チェック中にエラー: {e}")
+            return False
+    
+    def _should_skip_url_due_to_validation_error(self, url: str) -> bool:
+        """検証エラー履歴によりスキップすべきURLか判定"""
+        # 検証エラーテーブルが存在するか確認
+        try:
+            # validation_errorsテーブルが存在するか確認
+            metadata = MetaData()
+            metadata.reflect(bind=self.session.bind)
+            if 'validation_errors' not in metadata.tables:
+                return False
+            
+            # テーブルが存在する場合のみクエリ実行
+            result = self.session.execute(
+                text("""
+                    SELECT error_count, last_error_at 
+                    FROM validation_errors 
+                    WHERE url = :url AND source_site = :site
+                """),
+                {'url': url, 'site': self.source_site.value}
+            ).first()
+            
+            if result:
+                error_count, last_error_at = result
+                # 再試行間隔を計算（404エラーと同じロジック）
+                retry_hours = self._calculate_retry_interval(error_count)
+                hours_since_error = (datetime.now() - last_error_at).total_seconds() / 3600
+                
+                if hours_since_error < retry_hours:
+                    self.logger.debug(
+                        f"検証エラー履歴によりスキップ: {url} "
+                        f"(エラー回数: {error_count}, "
+                        f"最終エラーから: {hours_since_error:.1f}時間, "
+                        f"再試行間隔: {retry_hours}時間)"
+                    )
+                    return True
+                else:
+                    self.logger.debug(
+                        f"検証エラー履歴ありだが再試行可能: {url} "
+                        f"(最終エラーから{hours_since_error:.1f}時間経過)"
+                    )
+                    return False
+            return False
+        except Exception as e:
+            # テーブルが存在しない場合はスキップしない
+            self.logger.debug(f"検証エラー履歴チェックスキップ: {e}")
+            return False
+    
+    def _should_skip_due_to_price_mismatch(self, site_property_id: str) -> bool:
+        """価格不一致履歴によりスキップすべきか判定"""
+        # price_mismatch_retriesテーブルが存在するか確認
+        try:
+            metadata = MetaData()
+            metadata.reflect(bind=self.session.bind)
+            if 'price_mismatch_retries' not in metadata.tables:
+                return False
+            
+            # テーブルが存在する場合のみクエリ実行
+            result = self.session.execute(
+                text("""
+                    SELECT retry_days, recorded_at 
+                    FROM price_mismatch_retries 
+                    WHERE site_property_id = :site_id AND source_site = :site
+                    ORDER BY recorded_at DESC
+                    LIMIT 1
+                """),
+                {'site_id': site_property_id, 'site': self.source_site.value}
+            ).first()
+            
+            if result:
+                retry_days, recorded_at = result
+                days_since_record = (datetime.now() - recorded_at).days
+                
+                if days_since_record < retry_days:
+                    self.logger.debug(
+                        f"価格不一致履歴によりスキップ: ID={site_property_id} "
+                        f"(記録から{days_since_record}日経過, 再試行間隔: {retry_days}日)"
+                    )
+                    return True
+            return False
+        except Exception as e:
+            self.logger.debug(f"価格不一致履歴チェックスキップ: {e}")
+            return False
+    
+    def _calculate_retry_interval(self, error_count: int) -> int:
+        """エラー回数に基づいて再試行間隔を計算（時間単位）"""
+        if error_count <= 1:
+            return 2  # 2時間
+        elif error_count <= 3:
+            return 24  # 1日
+        elif error_count <= 5:
+            return 72  # 3日
+        else:
+            return 168  # 7日
+    
     def _handle_404_error(self, url: str):
         """404エラーのURLを記録"""
         try:
@@ -2186,10 +2380,6 @@ class BaseScraper(ABC):
             self.logger.error(f"404エラー記録中にエラー: {e}")
             self.session.rollback()
     
-    def _calculate_retry_interval(self, error_count: int) -> int:
-        """エラー回数に基づいて再試行間隔（時間）を計算"""
-        # 1回目: 2時間、2回目: 4時間、3回目: 8時間... 最大1024時間
-        return min(2 ** error_count, 1024)
     
     def _handle_validation_error(self, url: str, error_type: str, error_details: dict = None):
         """検証エラーのURLを記録"""
@@ -2253,37 +2443,6 @@ class BaseScraper(ABC):
             self.logger.error(f"検証エラー記録中にエラー: {e}")
             self.session.rollback()
     
-    def _should_skip_due_to_price_mismatch(self, site_property_id: str) -> bool:
-        """価格不一致履歴により再試行待機中かチェック"""
-        try:
-            # SQLクエリを直接実行（price_mismatch_historyテーブルはORMモデルがないため）
-            sql = text("""
-                SELECT retry_after 
-                FROM price_mismatch_history 
-                WHERE source_site = :source_site 
-                AND site_property_id = :site_property_id 
-                AND is_resolved = false
-                AND retry_after > NOW()
-            """)
-            
-            result = self.session.execute(sql, {
-                'source_site': self.source_site.value,
-                'site_property_id': site_property_id
-            }).fetchone()
-            
-            if result:
-                retry_after = result[0]
-                hours_until_retry = (retry_after - datetime.now()).total_seconds() / 3600
-                self.logger.info(
-                    f"価格不一致のためスキップ - ID: {site_property_id} "
-                    f"(再試行まで: {hours_until_retry:.1f}時間)"
-                )
-                return True
-                
-        except Exception as e:
-            self.logger.error(f"価格不一致チェック中のエラー: {e}")
-            
-        return False
     
     def _record_price_mismatch(self, site_property_id: str, url: str, list_price: int, detail_price: int, retry_days: int = 7):
         """価格不一致を記録"""
@@ -2321,80 +2480,7 @@ class BaseScraper(ABC):
             self.logger.error(f"価格不一致記録中のエラー: {e}")
             self.session.rollback()
     
-    def _should_skip_url_due_to_404(self, url: str) -> bool:
-        """URLが404エラーで再試行待機中かチェック"""
-        try:
-            retry_record = self.session.query(Url404Retry).filter(
-                Url404Retry.url == url,
-                Url404Retry.source_site == self.source_site.value
-            ).first()
-            
-            if retry_record:
-                # 最後のエラーからの経過時間を計算
-                hours_since_error = (datetime.now() - retry_record.last_error_at).total_seconds() / 3600
-                required_interval = self._calculate_retry_interval(retry_record.error_count)
-                
-                if hours_since_error < required_interval:
-                    hours_until_retry = required_interval - hours_since_error
-                    self.logger.info(
-                        f"404エラーのためスキップ (エラー回数: {retry_record.error_count}, "
-                        f"再試行まで: {hours_until_retry:.1f}時間)"
-                    )
-                    return True
-                else:
-                    self.logger.info(
-                        f"404エラー再試行可能 (エラー回数: {retry_record.error_count}, "
-                        f"最後のエラーから: {hours_since_error:.1f}時間経過)"
-                    )
-            
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"404エラーチェック中にエラー: {e}")
-            return False
     
-    def _should_skip_url_due_to_validation_error(self, url: str) -> bool:
-        """URLが検証エラーで再試行待機中かチェック"""
-        try:
-            # SQLAlchemyで動的にテーブルを参照
-            metadata = MetaData()
-            validation_retry_table = Table('url_validation_error_retries', metadata, autoload_with=self.session.bind)
-            
-            # 既存のレコードを確認
-            result = self.session.execute(
-                validation_retry_table.select().where(
-                    and_(
-                        validation_retry_table.c.url == url,
-                        validation_retry_table.c.source_site == self.source_site.value
-                    )
-                )
-            ).first()
-            
-            if result:
-                # 最後のエラーからの経過時間を計算
-                hours_since_error = (datetime.now() - result.last_error_at).total_seconds() / 3600
-                required_interval = self._calculate_retry_interval(result.error_count)
-                
-                if hours_since_error < required_interval:
-                    hours_until_retry = required_interval - hours_since_error
-                    self.logger.info(
-                        f"検証エラーのためスキップ ({result.error_type}) - "
-                        f"エラー回数: {result.error_count}, "
-                        f"再試行まで: {hours_until_retry:.1f}時間"
-                    )
-                    return True
-                else:
-                    self.logger.info(
-                        f"検証エラー再試行可能 ({result.error_type}) - "
-                        f"エラー回数: {result.error_count}, "
-                        f"最後のエラーから: {hours_since_error:.1f}時間経過"
-                    )
-            
-            return False
-            
-        except Exception as e:
-            self.logger.error(f"検証エラーチェック中にエラー: {e}")
-            return False
     
     def _is_paused(self) -> bool:
         """一時停止状態かどうかを確認（ファイルベースとメモリベース両方）"""
@@ -2743,6 +2829,7 @@ class BaseScraper(ABC):
                 return True
         return False
     
+    
     def check_critical_error_threshold(self) -> bool:
         """重要フィールドのエラー率をチェックし、閾値を超えた場合は例外を発生
         
@@ -3086,6 +3173,107 @@ class BaseScraper(ABC):
                     f"致命的なHTML構造の変更を検出しました。"
                     f"'{element_name}' が{count}回連続で見つかりません。"
                 )
+    
+    def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
+        """site_property_idの妥当性を検証（共通部分）
+        
+        各スクレイパーでオーバーライドして、サイト固有の検証を追加してください。
+        
+        Args:
+            site_property_id: 検証するID
+            url: 物件URL（エラーログ用）
+            
+        Returns:
+            bool: 妥当な場合True
+        """
+        if not site_property_id:
+            self.logger.error(f"site_property_idが空です: URL={url}")
+            return False
+            
+        # 明らかに不正な値の検証（共通）
+        invalid_values = [
+            'index', 'detail', 'property', 'mansion',
+            'index.html', 'detail.html', 'property.html'
+        ]
+        
+        if site_property_id.lower() in invalid_values:
+            self.logger.error(
+                f"site_property_idが不正な値です: '{site_property_id}' URL={url}"
+            )
+            return False
+                
+        # 最小長チェック（通常、物件IDは最低でも3文字以上）
+        if len(site_property_id) < 3:
+            self.logger.error(
+                f"site_property_idが短すぎます: '{site_property_id}' "
+                f"(長さ: {len(site_property_id)}) URL={url}"
+            )
+            return False
+            
+        return True
+    
+    def validate_list_page_fields(self, property_data: Dict[str, Any]) -> bool:
+        """一覧ページで取得した物件データの必須フィールドを検証
+        
+        一覧ページでは以下のフィールドが必須：
+        - url: 詳細ページのURL
+        - site_property_id: サイト内物件ID
+        - price: 価格
+        
+        Args:
+            property_data: 物件データ
+            
+        Returns:
+            bool: 必須フィールドがすべて存在する場合True
+        """
+        required_fields = ['url', 'site_property_id', 'price']
+        missing_fields = []
+        
+        for field in required_fields:
+            if field not in property_data or property_data.get(field) is None:
+                missing_fields.append(field)
+        
+        if missing_fields:
+            self.logger.warning(f"一覧ページで必須フィールドが取得できませんでした: {', '.join(missing_fields)}")
+            return False
+        
+        return True
+    
+    def validate_detail_page_fields(self, property_data: Dict[str, Any], url: str = None) -> bool:
+        """詳細ページで取得した物件データの必須フィールドを検証
+        
+        詳細ページでは以下のフィールドが必須：
+        - site_property_id: サイト内物件ID（URLから抽出）
+        - price: 価格
+        - building_name: 建物名
+        - address: 住所
+        - area: 専有面積
+        - layout: 間取り
+        
+        Args:
+            property_data: 物件データ
+            url: 物件URL（エラーログ用）
+            
+        Returns:
+            bool: 必須フィールドがすべて存在する場合True
+        """
+        required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'layout']
+        missing_fields = []
+        
+        for field in required_fields:
+            if field not in property_data or property_data.get(field) is None:
+                missing_fields.append(field)
+        
+        if missing_fields:
+            url = url or property_data.get('url', '不明')
+            for field in missing_fields:
+                self.record_field_extraction_error(field, url)
+            
+            self.logger.error(f"詳細ページで必須フィールドが取得できませんでした: {', '.join(missing_fields)} - URL: {url}")
+            return False
+        
+        return True
+    
     
     def record_field_extraction_error(self, field_name: str, url: str, log_error: bool = True):
         """フィールド抽出エラーを記録し、統計を更新

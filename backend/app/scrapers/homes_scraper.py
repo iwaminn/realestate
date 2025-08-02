@@ -30,6 +30,45 @@ class HomesScraper(BaseScraper):
         super().__init__(self.SOURCE_SITE, force_detail_fetch, max_properties)
         self._setup_headers()
     
+    def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
+        """LIFULL HOME'Sのsite_property_idの妥当性を検証
+        
+        LIFULL HOME'Sの物件IDは以下の形式：
+        - 数字のみ（例：1234567890）
+        - b-で始まる英数字（例：b-35005010002458）
+        """
+        # 基底クラスの共通検証
+        if not super().validate_site_property_id(site_property_id, url):
+            return False
+            
+        # LIFULL HOME'S固有の検証
+        # パターン1: 数字のみ
+        if site_property_id.isdigit():
+            # 通常は7〜12桁程度
+            if len(site_property_id) < 7 or len(site_property_id) > 15:
+                self.logger.warning(
+                    f"[HOMES] site_property_idの桁数が異常です（通常7-15桁）: '{site_property_id}' "
+                    f"(桁数: {len(site_property_id)}) URL={url}"
+                )
+            return True
+            
+        # パターン2: b-で始まる英数字
+        if site_property_id.startswith('b-'):
+            remaining = site_property_id[2:]
+            if remaining and remaining.replace('-', '').isalnum():
+                return True
+            else:
+                self.logger.error(
+                    f"[HOMES] b-形式のsite_property_idが不正です: '{site_property_id}' URL={url}"
+                )
+                return False
+                
+        # どちらのパターンにも合致しない
+        self.logger.error(
+            f"[HOMES] site_property_idの形式が不正です（数字のみ、またはb-で始まる英数字である必要があります）: '{site_property_id}' URL={url}"
+        )
+        return False
+    
     def _setup_headers(self):
         """HTTPヘッダーの設定"""
         self.http_session.headers.update({
@@ -447,7 +486,9 @@ class HomesScraper(BaseScraper):
             page_text = soup.get_text()
             
             # URLから物件IDを抽出
-            self._extract_site_property_id(url, property_data)
+            if not self._extract_site_property_id(url, property_data):
+                self.logger.error(f"[HOMES] 詳細ページでsite_property_idを取得できませんでした: {url}")
+                return None
             
             # 建物名と部屋番号
             building_name, room_number = self._extract_building_name_and_room(soup)
@@ -473,10 +514,15 @@ class HomesScraper(BaseScraper):
             table_details = self._extract_property_details_from_table(soup)
             property_data.update(table_details)
             
-            # 建物ページの場合、面積情報を削除（建築面積や敷地面積を誤って取得している可能性があるため）
+            # 建物ページの場合、面積情報の妥当性を確認
             if is_building_page and 'area' in property_data:
-                self.logger.info(f"[HOMES] 建物ページのため面積情報を削除: {property_data.get('area')}㎡")
-                del property_data['area']
+                area_value = property_data.get('area')
+                # 専有面積として妥当な範囲（10-300㎡）であれば保持
+                if area_value and 10 <= area_value <= 300:
+                    self.logger.info(f"[HOMES] 建物ページですが専有面積として妥当な値のため保持: {area_value}㎡")
+                else:
+                    self.logger.info(f"[HOMES] 建物ページで異常な面積値のため削除: {area_value}㎡")
+                    del property_data['area']
             
             # 情報公開日
             if 'published_at' not in property_data:
@@ -514,6 +560,10 @@ class HomesScraper(BaseScraper):
                 self.logger.error(f"[HOMES] Building name not found for {url}")
                 return None
             
+            # 詳細ページでの必須フィールドを検証
+            if not self.validate_detail_page_fields(property_data, url):
+                return None
+            
             return property_data
             
         except (TaskPausedException, TaskCancelledException):
@@ -549,8 +599,12 @@ class HomesScraper(BaseScraper):
                         'url': full_url,
                         'has_update_mark': False
                     }
-                    self._extract_site_property_id(href, property_data)
-                    properties.append(property_data)
+                    if self._extract_site_property_id(href, property_data):
+                        # 一覧ページでの必須フィールドを検証（基底クラスの共通メソッドを使用）
+                        if self.validate_list_page_fields(property_data):
+                            properties.append(property_data)
+                    else:
+                        self.logger.error(f"[HOMES] 物件をスキップします（site_property_id取得失敗）: {full_url}")
             else:
                 # 各物件行を処理
                 for row in price_rows:
@@ -595,20 +649,35 @@ class HomesScraper(BaseScraper):
                 self.logger.info(f"[HOMES] Found price: {price}万円 for {href}")
         
         # 物件IDを抽出
-        self._extract_site_property_id(href, property_data)
+        if not self._extract_site_property_id(href, property_data):
+            self.logger.error(f"[HOMES] 物件行をスキップします（site_property_id取得失敗）: {href}")
+            return None
         
         return property_data
     
-    def _extract_site_property_id(self, href: str, property_data: Dict[str, Any]):
-        """URLから物件IDを抽出"""
+    def _extract_site_property_id(self, href: str, property_data: Dict[str, Any]) -> bool:
+        """URLから物件IDを抽出
+        
+        Returns:
+            bool: 抽出に成功した場合True
+        """
         id_match = (re.search(r'/mansion/([0-9]+)/', href) or 
                    re.search(r'/mansion/b-([^/]+)/', href) or 
                    re.search(r'/detail-([0-9]+)/', href))
         if id_match:
-            property_data['site_property_id'] = id_match.group(1)
-            self.logger.info(f"[HOMES] Extracted site_property_id: {property_data['site_property_id']}")
+            site_property_id = id_match.group(1)
+            
+            # site_property_idの妥当性を検証
+            if not self.validate_site_property_id(site_property_id, href):
+                self.logger.error(f"[HOMES] 不正なsite_property_idを検出しました: '{site_property_id}'")
+                return False
+                
+            property_data['site_property_id'] = site_property_id
+            self.logger.info(f"[HOMES] Extracted site_property_id: {site_property_id}")
+            return True
         else:
             self.logger.error(f"[HOMES] サイト物件IDを抽出できません: URL={href}")
+            return False
     
     def scrape_area(self, area: str, max_pages: int = 5):
         """エリアの物件をスクレイピング"""

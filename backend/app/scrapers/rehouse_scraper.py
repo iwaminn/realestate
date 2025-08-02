@@ -7,13 +7,14 @@ URLパターン:
 """
 
 import re
+import json
 import time
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from urllib.parse import urljoin
 import logging
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 import requests
 
 from .constants import SourceSite
@@ -34,6 +35,17 @@ class RehouseScraper(BaseScraper):
     SOURCE_SITE = SourceSite.REHOUSE
     BASE_URL = "https://www.rehouse.co.jp"
     
+    # 定数の定義
+    MIN_PROPERTY_PRICE = 1000  # 物件価格の最小値（万円）
+    MAX_IMAGE_COUNT = 10  # 画像の最大取得数
+    MIN_REMARKS_LENGTH = 10  # 備考の最小文字数
+    MAX_SUMMARY_LENGTH = 200  # 要約の最大文字数
+    
+    # 価格を含まないキーワード（これらが含まれる価格情報は無視）
+    PRICE_EXCLUDE_KEYWORDS = ['管理費', '修繕', '賃料', '駐車場']
+    
+    # 備考から除外するキーワード
+    REMARKS_EXCLUDE_KEYWORDS = ['利用規約', 'Copyright', '個人情報', 'お問い合わせ']
     
     def __init__(self, force_detail_fetch=False, max_properties=None):
         super().__init__(self.SOURCE_SITE, force_detail_fetch, max_properties)
@@ -46,14 +58,38 @@ class RehouseScraper(BaseScraper):
     
     def get_list_url(self, prefecture: str = "13", city: str = "13103", page: int = 1) -> str:
         """一覧ページのURLを生成"""
-        # 三井のリハウスのURLパターン
         base_url = f"{self.BASE_URL}/buy/mansion/prefecture/{prefecture}/city/{city}/"
         
         # ページングパラメータ
-        # 三井のリハウスは ?page= パラメータを使用
         if page > 1:
             return f"{base_url}?page={page}"
         return base_url
+    
+    def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
+        """三井のリハウスのsite_property_idの妥当性を検証
+        
+        三井のリハウスの物件IDは英数字で構成される（例：F02AGA18）
+        """
+        # 基底クラスの共通検証
+        if not super().validate_site_property_id(site_property_id, url):
+            return False
+            
+        # 三井のリハウス固有の検証：英数字のみで構成されているか
+        if not site_property_id.replace('-', '').replace('_', '').isalnum():
+            self.logger.error(
+                f"[REHOUSE] site_property_idは英数字（ハイフン・アンダースコア可）で構成される必要があります: '{site_property_id}' URL={url}"
+            )
+            return False
+            
+        # 通常は6〜12文字程度
+        if len(site_property_id) < 6 or len(site_property_id) > 20:
+            self.logger.warning(
+                f"[REHOUSE] site_property_idの長さが異常です（通常6-20文字）: '{site_property_id}' "
+                f"(長さ: {len(site_property_id)}) URL={url}"
+            )
+            # 警告のみで続行
+            
+        return True
     
     def get_search_url(self, area: str, page: int = 1) -> str:
         """検索URLを生成（共通インターフェース用）"""
@@ -70,8 +106,29 @@ class RehouseScraper(BaseScraper):
             soup = soup_or_html
         properties = []
         
+        # 物件カードを検索
+        property_items = self._find_property_items(soup)
+        
+        if not property_items:
+            logger.warning("No property items found on the page")
+            return properties
+        
+        for item in property_items:
+            try:
+                property_data = self._parse_property_item(item)
+                if property_data:
+                    # 一覧ページでの必須フィールドを検証（基底クラスの共通メソッドを使用）
+                    if self.validate_list_page_fields(property_data):
+                        properties.append(property_data)
+            except Exception as e:
+                logger.error(f"Error parsing property item: {e}")
+                continue
+        
+        return properties
+    
+    def _find_property_items(self, soup: BeautifulSoup) -> List[Tag]:
+        """物件カードを検索"""
         # 三井のリハウスの物件カード構造
-        # div.property-index-card が物件カードのコンテナ
         property_items = soup.select('div.property-index-card')
         
         if not property_items:
@@ -92,29 +149,15 @@ class RehouseScraper(BaseScraper):
         else:
             logger.info(f"Found {len(property_items)} properties using selector: div.property-index-card")
         
-        if not property_items:
-            logger.warning("No property items found on the page")
-            return properties
-        
-        for item in property_items:
-            try:
-                property_data = self._parse_property_item(item)
-                if property_data:
-                    properties.append(property_data)
-            except Exception as e:
-                logger.error(f"Error parsing property item: {e}")
-                continue
-        
-        return properties
+        return property_items
     
-    def _parse_property_item(self, item) -> Optional[Dict]:
+    def _parse_property_item(self, item: Tag) -> Optional[Dict]:
         """個別の物件要素から情報を抽出"""
         property_data = {}
         
-        # 詳細ページへのリンク（「詳細を見る」リンク）
+        # 詳細ページへのリンク
         link_elem = item.select_one('a[href*="/bkdetail/"]')
         if not link_elem:
-            # 他のパターンも試す
             link_elem = item.select_one('a[href*="/detail/"]')
         
         if not link_elem:
@@ -127,17 +170,21 @@ class RehouseScraper(BaseScraper):
         property_data['url'] = detail_url
         property_data['source_site'] = self.SOURCE_SITE
         
-        # 一覧ページでは建物名は取得しない（詳細ページで取得するため）
-        # これは正常な動作パターンです
-        
-        # 物件コードを抽出（site_property_idとして使用）
+        # 物件コードを抽出
         code_match = re.search(r'/bkdetail/([^/]+)/', detail_url)
-        if code_match:
-            property_data['site_property_id'] = code_match.group(1)
-            self.logger.info(f"[REHOUSE] Extracted site_property_id: {property_data['site_property_id']} from {detail_url}")
-        else:
-            self.logger.error(f"[REHOUSE] サイト物件IDを抽出できません: URL={detail_url}")
+        if not code_match:
+            self.logger.error(f"[REHOUSE] URLから物件IDを抽出できませんでした: {detail_url}")
+            return None
+            
+        site_property_id = code_match.group(1)
         
+        # site_property_idの妥当性を検証
+        if not self.validate_site_property_id(site_property_id, detail_url):
+            self.logger.error(f"[REHOUSE] 不正なsite_property_idを検出しました: '{site_property_id}'")
+            return None
+            
+        property_data['site_property_id'] = site_property_id
+        self.logger.info(f"[REHOUSE] Extracted site_property_id: {site_property_id} from {detail_url}")
         
         # property-index-card-inner内の情報を取得
         inner = item.select_one('.property-index-card-inner')
@@ -148,7 +195,6 @@ class RehouseScraper(BaseScraper):
         full_text = inner.get_text(' ', strip=True)
         
         # 価格
-        # データ正規化フレームワークを使用して価格を抽出
         price = extract_price(full_text)
         if price:
             property_data['price'] = price
@@ -156,59 +202,53 @@ class RehouseScraper(BaseScraper):
         # description-section内の詳細情報
         desc_section = inner.select_one('.description-section')
         if desc_section:
-            desc_text = desc_section.get_text(' ', strip=True)
-            
-            # 住所を抽出
-            if '港区' in desc_text:
-                addr_match = re.search(r'(港区[^\s/]+)', desc_text)
-                if addr_match:
-                    property_data['address'] = '東京都' + addr_match.group(1)
-            
-            # 駅情報
-            station_match = re.search(r'([^\s]+線\s*[^\s]+駅\s*徒歩\d+分)', desc_text)
-            if station_match:
-                property_data['station_info'] = station_match.group(1)
-            
-            # 間取り、面積、築年、階数の情報を抽出
-            # 例: "2LDK / 54.09㎡ / 1979年04月築 / 3階"
-            info_pattern = r'([1-9][LDKS]+|ワンルーム)\s*/\s*(\d+(?:\.\d+)?)㎡\s*/\s*(\d{4})年(\d{2})月築\s*/\s*(\d+)階'
-            info_match = re.search(info_pattern, desc_text)
-            if info_match:
-                property_data['layout'] = info_match.group(1)
-                property_data['area'] = float(info_match.group(2))
-                property_data['built_year'] = int(info_match.group(3))
-                property_data['floor_number'] = int(info_match.group(5))
-            else:
-                # 個別に抽出
-                # 間取り
-                # データ正規化フレームワークを使用して間取りを正規化
-                layout = normalize_layout(desc_text)
-                if layout:
-                    property_data['layout'] = layout
-                
-                # 面積
-                # データ正規化フレームワークを使用して面積を抽出
-                area = extract_area(desc_text)
-                if area:
-                    property_data['area'] = area
-                
-                # 築年
-                # データ正規化フレームワークを使用して築年を抽出
-                built_year = extract_built_year(desc_text)
-                if built_year:
-                    property_data['built_year'] = built_year
-                
-                # 所在階
-                # データ正規化フレームワークを使用して階数を抽出
-                floor_number = extract_floor_number(desc_text)
-                if floor_number is not None:
-                    property_data['floor_number'] = floor_number
+            self._extract_description_info(desc_section, property_data)
         
         return property_data
     
+    def _extract_description_info(self, desc_section: Tag, property_data: Dict[str, Any]):
+        """description-sectionから情報を抽出"""
+        desc_text = desc_section.get_text(' ', strip=True)
+        
+        # 住所を抽出
+        if '港区' in desc_text:
+            addr_match = re.search(r'(港区[^\s/]+)', desc_text)
+            if addr_match:
+                property_data['address'] = '東京都' + addr_match.group(1)
+        
+        # 駅情報
+        station_match = re.search(r'([^\s]+線\s*[^\s]+駅\s*徒歩\d+分)', desc_text)
+        if station_match:
+            property_data['station_info'] = station_match.group(1)
+        
+        # 間取り、面積、築年、階数の情報を抽出
+        info_pattern = r'([1-9][LDKS]+|ワンルーム)\s*/\s*(\d+(?:\.\d+)?)㎡\s*/\s*(\d{4})年(\d{2})月築\s*/\s*(\d+)階'
+        info_match = re.search(info_pattern, desc_text)
+        if info_match:
+            property_data['layout'] = info_match.group(1)
+            property_data['area'] = float(info_match.group(2))
+            property_data['built_year'] = int(info_match.group(3))
+            property_data['floor_number'] = int(info_match.group(5))
+        else:
+            # 個別に抽出
+            layout = normalize_layout(desc_text)
+            if layout:
+                property_data['layout'] = layout
+            
+            area = extract_area(desc_text)
+            if area:
+                property_data['area'] = area
+            
+            built_year = extract_built_year(desc_text)
+            if built_year:
+                property_data['built_year'] = built_year
+            
+            floor_number = extract_floor_number(desc_text)
+            if floor_number is not None:
+                property_data['floor_number'] = floor_number
+    
     def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
         """個別の物件を処理（共通インターフェース用）"""
-        # 共通の詳細チェック処理を使用
         return self.process_property_with_detail_check(
             property_data=property_data,
             existing_listing=existing_listing,
@@ -226,308 +266,52 @@ class RehouseScraper(BaseScraper):
             soup = self.fetch_page(url)
             if not soup:
                 return None
-            property_data = {'url': url, 'source_site': self.SOURCE_SITE}
+            
+            # site_property_idをURLから抽出
+            code_match = re.search(r'/bkdetail/([^/]+)/', url)
+            if not code_match:
+                self.logger.error(f"[REHOUSE] 詳細ページでURLから物件IDを抽出できませんでした: {url}")
+                return None
+                
+            site_property_id = code_match.group(1)
+            
+            # site_property_idの妥当性を検証
+            if not self.validate_site_property_id(site_property_id, url):
+                self.logger.error(f"[REHOUSE] 詳細ページで不正なsite_property_idを検出しました: '{site_property_id}'")
+                return None
+                
+            property_data = {'url': url, 'source_site': self.SOURCE_SITE, 'site_property_id': site_property_id}
             
             # 物件名
             h1_elem = soup.find('h1')
             if h1_elem:
                 property_data['building_name'] = h1_elem.get_text(strip=True)
             
-            # 価格
-            # 最も信頼できるJSON-LD構造化データから価格を取得
-            price_found = False
-            json_ld_scripts = soup.find_all('script', type='application/ld+json')
-            for script in json_ld_scripts:
-                try:
-                    import json
-                    data = json.loads(script.string)
-                    # Product型のスキーマを探す
-                    if isinstance(data, dict) and data.get('@type') == 'Product':
-                        offers = data.get('offers', {})
-                        if isinstance(offers, dict) and 'price' in offers:
-                            # 円単位の価格を万円単位に変換
-                            price_yen = int(offers['price'])
-                            property_data['price'] = price_yen // 10000
-                            price_found = True
-                            break
-                except:
-                    pass
+            # 価格を抽出（複数の方法を試行）
+            if not self._extract_price(soup, property_data):
+                logger.warning(f"Price not found for {url}")
             
-            # JSON-LDで見つからない場合は、テーブル内から価格を探す
-            if not price_found:
-                # td.table-data.content 内の価格を優先的に探す
-                table_cells = soup.select('td.table-data.content')
-                for cell in table_cells:
-                    cell_text = cell.get_text(strip=True)
-                    if '万円' in cell_text and not any(keyword in cell_text for keyword in ['管理費', '修繕', '賃料', '駐車場']):
-                        price = extract_price(cell_text)
-                        if price and price > 1000:  # 1000万円以上を物件価格とみなす
-                            property_data['price'] = price
-                            price_found = True
-                            break
+            # テーブルから情報を抽出
+            self._extract_table_info(soup, property_data)
             
-            # それでも見つからない場合は、備考（remarks）以外から探す
-            if not price_found:
-                # remarksクラスを除外してテキストを検索
-                for elem in soup.find_all(text=re.compile(r'[\d,]+\s*万円')):
-                    parent = elem.parent
-                    # 親要素がremarksクラスを持つ場合はスキップ
-                    if parent and parent.get('class') and 'remarks' in parent.get('class'):
-                        continue
-                    
-                    # 賃料などのキーワードを含む場合はスキップ
-                    if any(keyword in str(elem) for keyword in ['賃料', '管理費', '修繕', '駐車場']):
-                        continue
-                    
-                    price = extract_price(elem)
-                    if price and price > 1000:  # 1000万円以上を物件価格とみなす
-                        property_data['price'] = price
-                        price_found = True
-                        break
-            
-            # 物件概要テーブルから情報を抽出
-            tables = soup.select('table')
-            for table in tables:
-                rows = table.select('tr')
-                for row in rows:
-                    cells = row.select('th, td')
-                    if len(cells) >= 2:
-                        label = cells[0].get_text(strip=True)
-                        value = cells[1].get_text(strip=True)
-                        
-                        # 所在階/総階数
-                        if '階数' in label and '階建' in label:  # 「階数 / 階建」フィールド
-                            # 例: "36階 / 地上37階 地下1階建"
-                            # 所在階
-                            floor_match = re.search(r'^(\d+)階', value)
-                            if floor_match:
-                                property_data['floor_number'] = int(floor_match.group(1))
-                            # 総階数
-                            total_floors_match = re.search(r'地上(\d+)階', value)
-                            if total_floors_match:
-                                property_data['total_floors'] = int(total_floors_match.group(1))
-                        elif '所在階' in label:
-                            floor_match = re.search(r'(\d+)階', value)
-                            if floor_match:
-                                property_data['floor_number'] = int(floor_match.group(1))
-                        
-                        # 建物構造（「階数 / 階建」で処理した場合はスキップ）
-                        elif '構造' in label or '建物' in label:
-                            # データ正規化フレームワークを使用して総階数と地下階数を抽出
-                            total_floors, basement_floors = extract_total_floors(value)
-                            if total_floors is not None and 'total_floors' not in property_data:
-                                property_data['total_floors'] = total_floors
-                            if basement_floors is not None and basement_floors > 0:
-                                property_data['basement_floors'] = basement_floors
-                        
-                        # 専有面積
-                        elif '専有面積' in label or '面積' in label:
-                            # データ正規化フレームワークを使用して面積を抽出
-                            area = extract_area(value)
-                            if area:
-                                property_data['area'] = area
-                        
-                        # 間取り
-                        elif '間取り' in label:
-                            # データ正規化フレームワークを使用して間取りを正規化
-                            layout = normalize_layout(value)
-                            if layout:
-                                property_data['layout'] = layout
-                        
-                        # バルコニー面積
-                        elif 'バルコニー' in label and '面積' in label:
-                            # データ正規化フレームワークを使用して面積を抽出
-                            balcony_area = extract_area(value)
-                            if balcony_area:
-                                property_data['balcony_area'] = balcony_area
-                        
-                        # 向き/主要採光面
-                        elif '向き' in label or '採光' in label or 'バルコニー' in label:
-                            # データ正規化フレームワークを使用して方角を正規化
-                            direction = normalize_direction(value)
-                            if direction:
-                                property_data['direction'] = direction
-                        
-                        # 築年月
-                        elif '築年月' in label:
-                            # データ正規化フレームワークを使用して築年を抽出
-                            built_year = extract_built_year(value)
-                            if built_year:
-                                property_data['built_year'] = built_year
-                                # 月情報も取得
-                                month_match = re.search(r'(\d{1,2})月', value)
-                                if month_match:
-                                    property_data['built_month'] = int(month_match.group(1))
-                        
-                        # 管理費
-                        elif '管理費' in label:
-                            # データ正規化フレームワークを使用して月額費用を抽出
-                            management_fee = extract_monthly_fee(value)
-                            if management_fee:
-                                property_data['management_fee'] = management_fee
-                        
-                        # 修繕積立金
-                        elif '修繕積立金' in label or '修繕積立費' in label:
-                            # データ正規化フレームワークを使用して月額費用を抽出
-                            repair_fund = extract_monthly_fee(value)
-                            if repair_fund:
-                                property_data['repair_reserve_fund'] = repair_fund
-                        
-                        # 所在地/住所
-                        elif '所在地' in label or '住所' in label:
-                            # GoogleMapsなどの不要な文字を削除
-                            address = re.sub(r'GoogleMaps.*$', '', value).strip()
-                            property_data['address'] = address
-                        
-                        # 交通/最寄り駅
-                        elif '交通' in label or '駅' in label:
-                            # 駅ごとに改行を入れて視認性を向上
-                            # 「駅徒歩」の後で分割
-                            station_info = value
-                            # 「分」の後で分割して、各路線情報を改行で区切る
-                            stations = re.split(r'分(?=[^分])', station_info)
-                            formatted_stations = []
-                            for i, station in enumerate(stations):
-                                station = station.strip()
-                                if station:
-                                    # 最後の要素以外は「分」を追加
-                                    if i < len(stations) - 1:
-                                        station += '分'
-                                    formatted_stations.append(station)
-                            property_data['station_info'] = '\n'.join(formatted_stations)
-                        
-                        # 取引態様
-                        elif '取引態様' in label:
-                            property_data['transaction_type'] = value
-                        
-                        # 現況
-                        elif '現況' in label:
-                            property_data['current_status'] = value
-                        
-                        # 引渡時期
-                        elif '引渡' in label:
-                            property_data['delivery_date'] = value
-            
-            # dlリスト構造からも情報を取得
-            dl_elements = soup.select('dl')
-            for dl in dl_elements:
-                dt_elements = dl.select('dt')
-                dd_elements = dl.select('dd')
-                
-                for i, dt in enumerate(dt_elements):
-                    if i < len(dd_elements):
-                        label = dt.get_text(strip=True)
-                        value = dd_elements[i].get_text(strip=True)
-                        
-                        # 上記と同様のパターンマッチング
-                        if '所在階' in label and 'floor_number' not in property_data:
-                            floor_match = re.search(r'(\d+)階', value)
-                            if floor_match:
-                                property_data['floor_number'] = int(floor_match.group(1))
+            # dlリスト構造から情報を取得
+            self._extract_dl_info(soup, property_data)
             
             # 不動産会社情報
-            agency_selectors = [
-                '.agency-name', '.company-name', '.shop-name',
-                '[class*="agency"]', '[class*="company"]', '[class*="shop"]'
-            ]
+            self._extract_agency_info(soup, property_data)
             
-            for selector in agency_selectors:
-                agency_elem = soup.select_one(selector)
-                if agency_elem:
-                    property_data['agency_name'] = agency_elem.get_text(strip=True)
-                    break
+            # 日付情報を抽出
+            self._extract_date_info(soup, property_data)
             
-            # 電話番号
-            tel_patterns = [
-                r'0\d{1,4}-\d{1,4}-\d{4}',
-                r'0\d{9,10}'
-            ]
+            # 備考・特徴を抽出
+            self._extract_remarks(soup, property_data)
             
-            page_text = soup.get_text()
-            for pattern in tel_patterns:
-                tel_match = re.search(pattern, page_text)
-                if tel_match:
-                    property_data['agency_tel'] = tel_match.group()
-                    break
+            # 画像URLを抽出
+            self._extract_images(soup, property_data)
             
-            # 情報公開日（初めて公開された日）
-            first_publish_patterns = [
-                r'情報公開日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?',
-                r'初回登録日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?',
-                r'初回掲載日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?'
-            ]
-            
-            for pattern in first_publish_patterns:
-                date_match = re.search(pattern, page_text)
-                if date_match:
-                    year = int(date_match.group(1))
-                    month = int(date_match.group(2))
-                    day = int(date_match.group(3))
-                    property_data['first_published_at'] = datetime(year, month, day)
-                    print(f"売出確認日: {property_data['first_published_at'].strftime('%Y-%m-%d')}")
-                    break
-            
-            # 情報提供日（最新の更新日）
-            update_patterns = [
-                r'情報提供日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?',
-                r'更新日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?',
-                r'最終更新日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?',
-                r'登録日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?',
-                r'掲載日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?',
-                r'(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?\s*(?:公開|登録|掲載)'
-            ]
-            
-            for pattern in update_patterns:
-                date_match = re.search(pattern, page_text)
-                if date_match:
-                    year = int(date_match.group(1))
-                    month = int(date_match.group(2))
-                    day = int(date_match.group(3))
-                    property_data['published_at'] = datetime(year, month, day)
-                    # first_published_atがない場合は、published_atを使用
-                    if 'first_published_at' not in property_data:
-                        property_data['first_published_at'] = property_data['published_at']
-                    print(f"情報提供日: {property_data['published_at'].strftime('%Y-%m-%d')}")
-                    break
-            
-            # 物件の特徴/備考
-            remarks_selectors = [
-                '.remarks', '.feature', '.comment', '.description',
-                '[class*="remark"]', '[class*="feature"]', '[class*="comment"]'
-            ]
-            
-            remarks_texts = []
-            for selector in remarks_selectors:
-                remarks_elem = soup.select_one(selector)
-                if remarks_elem:
-                    text = remarks_elem.get_text(strip=True)
-                    if text and len(text) > 10:  # 短すぎるテキストは除外
-                        remarks_texts.append(text)
-            
-            if remarks_texts:
-                property_data['remarks'] = '\n'.join(remarks_texts)
-                # 要約も生成（簡易的に最初の200文字を使用）
-                property_data['summary_remarks'] = property_data['remarks'][:200]
-            
-            # 画像URL
-            image_urls = []
-            img_selectors = [
-                'img[src*="property"]', 'img[src*="bukken"]',
-                '.property-image img', '.photo img'
-            ]
-            
-            for selector in img_selectors:
-                img_elements = soup.select(selector)
-                for img in img_elements:
-                    src = img.get('src')
-                    if src:
-                        if not src.startswith('http'):
-                            src = urljoin(self.BASE_URL, src)
-                        if src not in image_urls:
-                            image_urls.append(src)
-            
-            if image_urls:
-                property_data['image_urls'] = image_urls[:10]  # 最大10枚
+            # 詳細ページでの必須フィールドを検証
+            if not self.validate_detail_page_fields(property_data, url):
+                return None
             
             return property_data
             
@@ -539,6 +323,301 @@ class RehouseScraper(BaseScraper):
             logger.error(f"Error fetching property detail from {url}: {e}")
             return None
     
+    def _extract_price(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> bool:
+        """価格を抽出（複数の方法を試行）"""
+        # 最も信頼できるJSON-LD構造化データから価格を取得
+        json_ld_scripts = soup.find_all('script', type='application/ld+json')
+        for script in json_ld_scripts:
+            try:
+                data = json.loads(script.string)
+                # Product型のスキーマを探す
+                if isinstance(data, dict) and data.get('@type') == 'Product':
+                    offers = data.get('offers', {})
+                    if isinstance(offers, dict) and 'price' in offers:
+                        # 円単位の価格を万円単位に変換
+                        price_yen = int(offers['price'])
+                        property_data['price'] = price_yen // 10000
+                        return True
+            except:
+                pass
+        
+        # JSON-LDで見つからない場合は、テーブル内から価格を探す
+        table_cells = soup.select('td.table-data.content')
+        for cell in table_cells:
+            cell_text = cell.get_text(strip=True)
+            if '万円' in cell_text and not any(keyword in cell_text for keyword in self.PRICE_EXCLUDE_KEYWORDS):
+                price = extract_price(cell_text)
+                if price and price > self.MIN_PROPERTY_PRICE:
+                    property_data['price'] = price
+                    return True
+        
+        # それでも見つからない場合は、備考（remarks）以外から探す
+        for elem in soup.find_all(text=re.compile(r'[\d,]+\s*万円')):
+            parent = elem.parent
+            # 親要素がremarksクラスを持つ場合はスキップ
+            if parent and parent.get('class') and 'remarks' in parent.get('class'):
+                continue
+            
+            # 除外キーワードを含む場合はスキップ
+            if any(keyword in str(elem) for keyword in self.PRICE_EXCLUDE_KEYWORDS):
+                continue
+            
+            price = extract_price(elem)
+            if price and price > self.MIN_PROPERTY_PRICE:
+                property_data['price'] = price
+                return True
+        
+        return False
+    
+    def _extract_table_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
+        """テーブルから情報を抽出"""
+        tables = soup.select('table')
+        for table in tables:
+            rows = table.select('tr')
+            for row in rows:
+                cells = row.select('th, td')
+                if len(cells) >= 2:
+                    label = cells[0].get_text(strip=True)
+                    value = cells[1].get_text(strip=True)
+                    self._process_table_field(label, value, property_data)
+    
+    def _process_table_field(self, label: str, value: str, property_data: Dict[str, Any]):
+        """テーブルの1フィールドを処理"""
+        # 所在階/総階数
+        if '階数' in label and '階建' in label:
+            # 例: "36階 / 地上37階 地下1階建"
+            floor_match = re.search(r'^(\d+)階', value)
+            if floor_match:
+                property_data['floor_number'] = int(floor_match.group(1))
+            
+            total_floors_match = re.search(r'地上(\d+)階', value)
+            if total_floors_match:
+                property_data['total_floors'] = int(total_floors_match.group(1))
+        
+        elif '所在階' in label:
+            floor_match = re.search(r'(\d+)階', value)
+            if floor_match:
+                property_data['floor_number'] = int(floor_match.group(1))
+        
+        # 建物構造
+        elif '構造' in label or '建物' in label:
+            total_floors, basement_floors = extract_total_floors(value)
+            if total_floors is not None and 'total_floors' not in property_data:
+                property_data['total_floors'] = total_floors
+            if basement_floors is not None and basement_floors > 0:
+                property_data['basement_floors'] = basement_floors
+        
+        # 専有面積
+        elif '専有面積' in label or '面積' in label:
+            area = extract_area(value)
+            if area:
+                property_data['area'] = area
+        
+        # 間取り
+        elif '間取り' in label:
+            layout = normalize_layout(value)
+            if layout:
+                property_data['layout'] = layout
+        
+        # バルコニー面積
+        elif 'バルコニー' in label and '面積' in label:
+            balcony_area = extract_area(value)
+            if balcony_area:
+                property_data['balcony_area'] = balcony_area
+        
+        # 向き/主要採光面
+        elif '向き' in label or '採光' in label or 'バルコニー' in label:
+            direction = normalize_direction(value)
+            if direction:
+                property_data['direction'] = direction
+        
+        # 築年月
+        elif '築年月' in label:
+            built_year = extract_built_year(value)
+            if built_year:
+                property_data['built_year'] = built_year
+                # 月情報も取得
+                month_match = re.search(r'(\d{1,2})月', value)
+                if month_match:
+                    property_data['built_month'] = int(month_match.group(1))
+        
+        # 管理費
+        elif '管理費' in label:
+            management_fee = extract_monthly_fee(value)
+            if management_fee:
+                property_data['management_fee'] = management_fee
+        
+        # 修繕積立金
+        elif '修繕積立金' in label or '修繕積立費' in label:
+            repair_fund = extract_monthly_fee(value)
+            if repair_fund:
+                property_data['repair_reserve_fund'] = repair_fund
+        
+        # 所在地/住所
+        elif '所在地' in label or '住所' in label:
+            # GoogleMapsなどの不要な文字を削除
+            address = re.sub(r'GoogleMaps.*$', '', value).strip()
+            property_data['address'] = address
+        
+        # 交通/最寄り駅
+        elif '交通' in label or '駅' in label:
+            property_data['station_info'] = self._format_station_info(value)
+        
+        # 取引態様
+        elif '取引態様' in label:
+            property_data['transaction_type'] = value
+        
+        # 現況
+        elif '現況' in label:
+            property_data['current_status'] = value
+        
+        # 引渡時期
+        elif '引渡' in label:
+            property_data['delivery_date'] = value
+    
+    def _format_station_info(self, station_info: str) -> str:
+        """駅情報をフォーマット"""
+        # 「分」の後で分割して、各路線情報を改行で区切る
+        stations = re.split(r'分(?=[^分])', station_info)
+        formatted_stations = []
+        for i, station in enumerate(stations):
+            station = station.strip()
+            if station:
+                # 最後の要素以外は「分」を追加
+                if i < len(stations) - 1:
+                    station += '分'
+                formatted_stations.append(station)
+        return '\n'.join(formatted_stations)
+    
+    def _extract_dl_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
+        """dlリスト構造から情報を取得"""
+        dl_elements = soup.select('dl')
+        for dl in dl_elements:
+            dt_elements = dl.select('dt')
+            dd_elements = dl.select('dd')
+            
+            for i, dt in enumerate(dt_elements):
+                if i < len(dd_elements):
+                    label = dt.get_text(strip=True)
+                    value = dd_elements[i].get_text(strip=True)
+                    
+                    # 所在階の補完
+                    if '所在階' in label and 'floor_number' not in property_data:
+                        floor_match = re.search(r'(\d+)階', value)
+                        if floor_match:
+                            property_data['floor_number'] = int(floor_match.group(1))
+    
+    def _extract_agency_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
+        """不動産会社情報を抽出"""
+        agency_selectors = [
+            '.agency-name', '.company-name', '.shop-name',
+            '[class*="agency"]', '[class*="company"]', '[class*="shop"]'
+        ]
+        
+        for selector in agency_selectors:
+            agency_elem = soup.select_one(selector)
+            if agency_elem:
+                property_data['agency_name'] = agency_elem.get_text(strip=True)
+                break
+        
+        # 電話番号
+        tel_patterns = [
+            r'0\d{1,4}-\d{1,4}-\d{4}',
+            r'0\d{9,10}'
+        ]
+        
+        page_text = soup.get_text()
+        for pattern in tel_patterns:
+            tel_match = re.search(pattern, page_text)
+            if tel_match:
+                property_data['agency_tel'] = tel_match.group()
+                break
+    
+    def _extract_date_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
+        """日付情報を抽出"""
+        page_text = soup.get_text()
+        
+        # 情報公開日（初めて公開された日）
+        first_publish_patterns = [
+            r'情報公開日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?',
+            r'初回登録日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?',
+            r'初回掲載日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?'
+        ]
+        
+        for pattern in first_publish_patterns:
+            date_match = re.search(pattern, page_text)
+            if date_match:
+                year = int(date_match.group(1))
+                month = int(date_match.group(2))
+                day = int(date_match.group(3))
+                property_data['first_published_at'] = datetime(year, month, day)
+                print(f"売出確認日: {property_data['first_published_at'].strftime('%Y-%m-%d')}")
+                break
+        
+        # 情報提供日（最新の更新日）
+        update_patterns = [
+            r'情報提供日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?',
+            r'更新日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?',
+            r'最終更新日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?',
+            r'登録日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?',
+            r'掲載日[：:]\s*(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?',
+            r'(\d{4})[年/-](\d{1,2})[月/-](\d{1,2})日?\s*(?:公開|登録|掲載)'
+        ]
+        
+        for pattern in update_patterns:
+            date_match = re.search(pattern, page_text)
+            if date_match:
+                year = int(date_match.group(1))
+                month = int(date_match.group(2))
+                day = int(date_match.group(3))
+                property_data['published_at'] = datetime(year, month, day)
+                # first_published_atがない場合は、published_atを使用
+                if 'first_published_at' not in property_data:
+                    property_data['first_published_at'] = property_data['published_at']
+                print(f"情報提供日: {property_data['published_at'].strftime('%Y-%m-%d')}")
+                break
+    
+    def _extract_remarks(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
+        """備考・特記事項を抽出"""
+        remarks_selectors = [
+            '.remarks', '.feature', '.comment', '.description',
+            '[class*="remark"]', '[class*="feature"]', '[class*="comment"]'
+        ]
+        
+        remarks_texts = []
+        for selector in remarks_selectors:
+            remarks_elem = soup.select_one(selector)
+            if remarks_elem:
+                text = remarks_elem.get_text(strip=True)
+                if text and len(text) > self.MIN_REMARKS_LENGTH:
+                    remarks_texts.append(text)
+        
+        if remarks_texts:
+            property_data['remarks'] = '\n'.join(remarks_texts)
+            # 要約も生成
+            property_data['summary_remarks'] = property_data['remarks'][:self.MAX_SUMMARY_LENGTH]
+    
+    def _extract_images(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
+        """画像URLを抽出"""
+        image_urls = []
+        img_selectors = [
+            'img[src*="property"]', 'img[src*="bukken"]',
+            '.property-image img', '.photo img'
+        ]
+        
+        for selector in img_selectors:
+            img_elements = soup.select(selector)
+            for img in img_elements:
+                src = img.get('src')
+                if src:
+                    if not src.startswith('http'):
+                        src = urljoin(self.BASE_URL, src)
+                    if src not in image_urls:
+                        image_urls.append(src)
+        
+        if image_urls:
+            property_data['image_urls'] = image_urls[:self.MAX_IMAGE_COUNT]
+    
     def scrape_area(self, area: str = "minato", max_pages: int = 5):
         """エリアの物件をスクレイピング（東京都港区に対応）"""
         from .area_config import get_area_code
@@ -546,27 +625,14 @@ class RehouseScraper(BaseScraper):
         # エリアコードを取得
         area_code = get_area_code(area)
         
-        # 三井のリハウスは東京都のみ対応
-        prefecture = "13"  # 東京都
-        city = area_code  # 区コード
-        
         # 共通ロジックを使用（価格変更ベースのスマートスクレイピングを含む）
         return self.common_scrape_area_logic(area, max_pages)
     
     def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
         """物件情報をデータベースに保存"""
         try:
-            # 必須フィールドの確認
-            if not property_data.get('building_name'):
-                # 基底クラスのメソッドを使用してエラーを記録
-                self.record_field_extraction_error('building_name', property_data.get('url', ''))
-                print(f"    → 必須情報不足（建物名なし）")
-                return False
-                
-            if not property_data.get('price'):
-                # 基底クラスのメソッドを使用してエラーを記録
-                self.record_field_extraction_error('price', property_data.get('url', ''))
-                print(f"    → 必須情報不足（価格なし）")
+            # 必須フィールドの確認（基底クラスの共通メソッドを使用）
+            if not self.validate_detail_page_fields(property_data):
                 return False
             
             print(f"    → 価格: {property_data['price']}万円, 面積: {property_data.get('area', '不明')}㎡, 階数: {property_data.get('floor_number', '不明')}階")
@@ -583,7 +649,7 @@ class RehouseScraper(BaseScraper):
                 print(f"    → 建物情報作成失敗")
                 return False
             
-            # 部屋番号の決定（抽出された部屋番号を優先）
+            # 部屋番号の決定
             room_number = property_data.get('room_number', '')
             if extracted_room_number and not room_number:
                 room_number = extracted_room_number
@@ -629,24 +695,14 @@ class RehouseScraper(BaseScraper):
             )
             
             # 追加フィールドの設定
-            if property_data.get('agency_tel'):
-                listing.agency_tel = property_data['agency_tel']
-            if property_data.get('remarks'):
-                listing.remarks = property_data['remarks']
-            if property_data.get('summary_remarks'):
-                listing.summary_remarks = property_data['summary_remarks']
+            self._set_additional_fields(listing, property_data)
             
             # 画像を追加
             if property_data.get('image_urls'):
                 self.add_property_images(listing, property_data['image_urls'])
             
             # 詳細情報を保存
-            listing.detail_info = {
-                'transaction_type': property_data.get('transaction_type'),
-                'current_status': property_data.get('current_status'),
-                'delivery_date': property_data.get('delivery_date'),
-                'built_month': property_data.get('built_month')
-            }
+            listing.detail_info = self._build_detail_info(property_data)
             listing.detail_fetched_at = datetime.now()
             
             # 多数決による物件情報更新
@@ -670,3 +726,22 @@ class RehouseScraper(BaseScraper):
             print(f"    → 保存エラー: {e}")
             self.session.rollback()
             return False
+    
+    
+    def _set_additional_fields(self, listing: PropertyListing, property_data: Dict[str, Any]):
+        """追加フィールドを設定"""
+        if property_data.get('agency_tel'):
+            listing.agency_tel = property_data['agency_tel']
+        if property_data.get('remarks'):
+            listing.remarks = property_data['remarks']
+        if property_data.get('summary_remarks'):
+            listing.summary_remarks = property_data['summary_remarks']
+    
+    def _build_detail_info(self, property_data: Dict[str, Any]) -> Dict[str, Any]:
+        """詳細情報を構築"""
+        return {
+            'transaction_type': property_data.get('transaction_type'),
+            'current_status': property_data.get('current_status'),
+            'delivery_date': property_data.get('delivery_date'),
+            'built_month': property_data.get('built_month')
+        }
