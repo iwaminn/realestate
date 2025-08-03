@@ -3184,7 +3184,7 @@ class BaseScraper(ABC):
         return False
     
     def _record_critical_error_alert(self, field_name: str, error_count: int, error_rate: float):
-        """重大エラーアラートをデータベースに記録
+        """重大エラーアラートをデータベースに記録（重複を避けるため既存のアラートを更新）
         
         Args:
             field_name: エラーが発生したフィールド名
@@ -3194,12 +3194,20 @@ class BaseScraper(ABC):
         try:
             from sqlalchemy import text
             
-            sql = text("""
-                INSERT INTO scraper_alerts 
-                (source_site, alert_type, field_name, error_count, error_rate, message, created_at)
-                VALUES 
-                (:source_site, 'critical_field_error', :field_name, :error_count, :error_rate, :message, NOW())
+            # まず既存の未解決アラートがあるか確認
+            check_sql = text("""
+                SELECT id FROM scraper_alerts 
+                WHERE source_site = :source_site 
+                AND alert_type = 'critical_field_error' 
+                AND field_name = :field_name 
+                AND is_resolved = false
+                LIMIT 1
             """)
+            
+            existing = self.session.execute(check_sql, {
+                'source_site': self.source_site,
+                'field_name': field_name
+            }).fetchone()
             
             message = (
                 f"{self.source_site}のスクレイパーで重要フィールド'{field_name}'の"
@@ -3207,13 +3215,40 @@ class BaseScraper(ABC):
                 f"HTML構造の変更を確認してください。"
             )
             
-            self.session.execute(sql, {
-                'source_site': self.source_site,
-                'field_name': field_name,
-                'error_count': error_count,
-                'error_rate': error_rate,
-                'message': message
-            })
+            if existing:
+                # 既存のアラートを更新
+                update_sql = text("""
+                    UPDATE scraper_alerts 
+                    SET error_count = :error_count,
+                        error_rate = :error_rate,
+                        message = :message,
+                        created_at = NOW()
+                    WHERE id = :id
+                """)
+                
+                self.session.execute(update_sql, {
+                    'id': existing[0],
+                    'error_count': error_count,
+                    'error_rate': error_rate,
+                    'message': message
+                })
+            else:
+                # 新規アラートを作成
+                insert_sql = text("""
+                    INSERT INTO scraper_alerts 
+                    (source_site, alert_type, field_name, error_count, error_rate, message, created_at)
+                    VALUES 
+                    (:source_site, 'critical_field_error', :field_name, :error_count, :error_rate, :message, NOW())
+                """)
+                
+                self.session.execute(insert_sql, {
+                    'source_site': self.source_site,
+                    'field_name': field_name,
+                    'error_count': error_count,
+                    'error_rate': error_rate,
+                    'message': message
+                })
+            
             self.session.commit()
             
         except Exception as e:
