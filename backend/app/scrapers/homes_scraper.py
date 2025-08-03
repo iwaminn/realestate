@@ -221,26 +221,43 @@ class HomesScraper(BaseScraper):
                 # H1内のspan要素を探す
                 spans = h1_elem.select('span')
                 if len(spans) >= 2:
-                    # 2番目のspanタグが建物名
-                    building_name_text = spans[1].get_text(strip=True)
-                    # 階数情報を除去（例：「パルロイヤルアレフ赤坂 2階/207」→「パルロイヤルアレフ赤坂」）
-                    if ' ' in building_name_text:
-                        parts = building_name_text.split(' ')
-                        # 最後の部分が階数情報の場合は除去
-                        if parts[-1] and ('階' in parts[-1] or '/' in parts[-1]):
-                            building_name = ' '.join(parts[:-1])
+                    # span要素から建物名を探す（通常は2番目、ただし駅名の場合は別のspanを探す）
+                    building_name_found = False
+                    
+                    for i, span in enumerate(spans):
+                        span_text = span.get_text(strip=True)
+                        # 「中古マンション」や価格情報、駅名情報を除外
+                        if (span_text == '中古マンション' or 
+                            '万円' in span_text or 
+                            any(pattern in span_text for pattern in ['徒歩', '駅', '線'])):
+                            continue
+                        
+                        # 建物名として妥当なspan要素を見つけた
+                        building_name_text = span_text
+                        # 階数情報を除去（例：「パルロイヤルアレフ赤坂 2階/207」→「パルロイヤルアレフ赤坂」）
+                        if ' ' in building_name_text:
+                            parts = building_name_text.split(' ')
+                            # 最後の部分が階数情報の場合は除去
+                            if parts[-1] and ('階' in parts[-1] or '/' in parts[-1]):
+                                building_name = ' '.join(parts[:-1])
+                            else:
+                                building_name = building_name_text
                         else:
                             building_name = building_name_text
-                    else:
-                        building_name = building_name_text
+                        
+                        # 部屋番号も抽出（階数情報の後ろにある可能性）
+                        if ' ' in building_name_text and '/' in building_name_text:
+                            match = re.search(r'/(\d{3,4}[A-Z]?)(?:\s|$)', building_name_text)
+                            if match:
+                                room_number = match.group(1)
+                        
+                        self.logger.info(f"[HOMES] h1のspan要素から建物名を取得: {building_name}")
+                        building_name_found = True
+                        break
                     
-                    # 部屋番号も抽出（階数情報の後ろにある可能性）
-                    if ' ' in building_name_text and '/' in building_name_text:
-                        match = re.search(r'/(\d{3,4}[A-Z]?)(?:\s|$)', building_name_text)
-                        if match:
-                            room_number = match.group(1)
-                    
-                    self.logger.info(f"[HOMES] h1のspan要素から建物名を取得: {building_name}")
+                    # 建物名が見つからなかった場合
+                    if not building_name_found:
+                        self.logger.info(f"[HOMES] H1のspan要素に建物名が含まれていません（駅名情報のみの物件）")
                 else:
                     # 従来の方法（span要素がない場合）
                     h1_text = h1_elem.get_text(strip=True)
@@ -592,7 +609,25 @@ class HomesScraper(BaseScraper):
             if agency_tel:
                 property_data['agency_tel'] = agency_tel
             
-            
+            # 建物名が取得できなかった場合、住所を建物名として使用
+            if not property_data.get('building_name') and property_data.get('address'):
+                # 住所から番地部分を取り出して建物名とする
+                address = property_data['address']
+                # 「東京都港区三田1-2-3」→「三田1-2-3」のように区名以降を使用
+                if '区' in address:
+                    building_name = address.split('区', 1)[1].strip()
+                elif '市' in address:
+                    building_name = address.split('市', 1)[1].strip()
+                else:
+                    building_name = address
+                
+                # 長すぎる場合は短縮
+                if len(building_name) > 30:
+                    building_name = building_name[:30] + '...'
+                
+                property_data['building_name'] = building_name
+                property_data['title'] = building_name
+                self.logger.info(f"[HOMES] 建物名が取得できないため住所を使用: {building_name}")
             
             # 詳細ページでの必須フィールドを検証
             if not self.validate_detail_page_fields(property_data, url):
