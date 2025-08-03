@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 from sqlalchemy.orm import Session
 from sqlalchemy import and_, func, text, Table, MetaData
 import jaconv
+from difflib import SequenceMatcher
 
 from .constants import SourceSite
 from ..config.scraping_config import PAUSE_TIMEOUT_SECONDS
@@ -1387,10 +1388,13 @@ class BaseScraper(ABC):
                         property_data['property_saved'] = False
                         return False
                     else:
-                        # 建物名が確認できた場合は、確認された名前を使用
+                        # 建物名が確認できた場合は、詳細ページの建物名を使用
                         if verified_name:
                             detail_data['building_name'] = verified_name
-                            self.logger.info(f"建物名を一覧ページの名前で確認: {verified_name}")
+                            if list_building_name != detail_building_name:
+                                self.logger.info(f"建物名を詳細ページの名前で更新: {list_building_name} → {verified_name}")
+                            else:
+                                self.logger.info(f"建物名が一致: {verified_name}")
                 
                 # 価格と建物名が一致している場合は通常通り処理
                 # 詳細データをマージ
@@ -1639,6 +1643,38 @@ class BaseScraper(ABC):
         best_name = max(candidates, key=score_name)
         return best_name
     
+    def normalize_building_name(self, building_name: str) -> str:
+        """建物名を正規化する共通メソッド
+        
+        Args:
+            building_name: 正規化する建物名
+            
+        Returns:
+            正規化された建物名
+        """
+        if not building_name:
+            return ""
+            
+        # 1. 全角英数字を半角に変換（ローマ数字も含む）
+        normalized = jaconv.z2h(building_name, kana=False, ascii=True, digit=True)
+        
+        # 2. ローマ数字の正規化（全角ローマ数字を半角に変換）
+        roman_map = {
+            'Ⅰ': 'I', 'Ⅱ': 'II', 'Ⅲ': 'III', 'Ⅳ': 'IV', 'Ⅴ': 'V',
+            'Ⅵ': 'VI', 'Ⅶ': 'VII', 'Ⅷ': 'VIII', 'Ⅸ': 'IX', 'Ⅹ': 'X',
+            'Ⅺ': 'XI', 'Ⅻ': 'XII'
+        }
+        for full_width, half_width in roman_map.items():
+            normalized = normalized.replace(full_width, half_width)
+        
+        # 3. 単位の正規化（㎡とm2を統一）
+        normalized = normalized.replace('㎡', 'm2').replace('m²', 'm2')
+        
+        # 4. スペース、記号を除去
+        normalized = re.sub(r'[\s　・－―～〜]+', '', normalized)
+        
+        return normalized
+
     def verify_building_names_match(self, detail_building_name: str, building_name_from_list: str, 
                                    allow_partial_match: bool = False, threshold: float = 0.8) -> Tuple[bool, Optional[str]]:
         """一覧ページで取得した建物名と詳細ページで取得した建物名が一致するか確認
@@ -1655,28 +1691,14 @@ class BaseScraper(ABC):
         if not building_name_from_list or not detail_building_name:
             return False, None
             
-        # 正規化処理
-        # 1. 全角英数字を半角に変換（ローマ数字も含む）
-        normalized_list_name = jaconv.z2h(building_name_from_list, kana=False, ascii=True, digit=True)
-        normalized_detail_name = jaconv.z2h(detail_building_name, kana=False, ascii=True, digit=True)
+        # 正規化処理（共通メソッドを使用）
+        normalized_list_name = self.normalize_building_name(building_name_from_list)
+        normalized_detail_name = self.normalize_building_name(detail_building_name)
         
-        # 2. ローマ数字の正規化（全角ローマ数字を半角に変換）
-        # Ⅰ→I, Ⅱ→II, Ⅲ→III, Ⅳ→IV, Ⅴ→V, Ⅵ→VI, Ⅶ→VII, Ⅷ→VIII, Ⅸ→IX, Ⅹ→X
-        roman_map = {
-            'Ⅰ': 'I', 'Ⅱ': 'II', 'Ⅲ': 'III', 'Ⅳ': 'IV', 'Ⅴ': 'V',
-            'Ⅵ': 'VI', 'Ⅶ': 'VII', 'Ⅷ': 'VIII', 'Ⅸ': 'IX', 'Ⅹ': 'X',
-            'Ⅺ': 'XI', 'Ⅻ': 'XII'
-        }
-        for full_width, half_width in roman_map.items():
-            normalized_list_name = normalized_list_name.replace(full_width, half_width)
-            normalized_detail_name = normalized_detail_name.replace(full_width, half_width)
-        
-        # 3. スペース、記号を除去
-        normalized_list_name = re.sub(r'[\s　・－―～〜]+', '', normalized_list_name)
-        normalized_detail_name = re.sub(r'[\s　・－―～〜]+', '', normalized_detail_name)
-        
-        # デバッグ: 正規化後の名前を表示（ローマ数字を含む場合のみ）
-        if any(char in building_name_from_list + detail_building_name for char in 'ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅪⅫIVXivx'):
+        # デバッグ: 正規化後の名前を表示（ローマ数字、単位、全角英字を含む場合、またはHOMES/部分一致の場合）
+        debug_chars = 'ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅪⅫIVXivx㎡m²ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯＰＱＲＳＴＵＶＷＸＹＺ'
+        if (any(char in building_name_from_list + detail_building_name for char in debug_chars) or 
+            allow_partial_match or self.source_site == SourceSite.HOMES):
             self.logger.debug(
                 f"建物名正規化: 一覧「{building_name_from_list}」→「{normalized_list_name}」、"
                 f"詳細「{detail_building_name}」→「{normalized_detail_name}」"
@@ -1689,22 +1711,22 @@ class BaseScraper(ABC):
         
         # 部分一致が許可されている場合のみ、部分一致をチェック
         if allow_partial_match:
-            # 部分一致（建物名の主要部分が含まれているか）
-            # 例：「グランドヒルズ東京タワー」→「グランドヒルズ」が含まれていればOK
-            main_parts = re.split(r'[・\s　]', building_name_from_list)
-            significant_parts = [part for part in main_parts if len(part) >= 3]  # 3文字以上の部分
+            # SequenceMatcherを使用した類似度計算
+            # 正規化された文字列同士の類似度を計算
+            similarity = SequenceMatcher(None, normalized_list_name.lower(), normalized_detail_name.lower()).ratio()
             
-            if significant_parts:
-                matched_count = sum(1 for part in significant_parts 
-                                  if part.lower() in detail_building_name.lower())
-                match_ratio = matched_count / len(significant_parts)
-                
-                if match_ratio >= threshold:
-                    self.logger.info(
-                        f"建物名が一致（部分一致 {match_ratio:.0%}）: "
-                        f"一覧「{building_name_from_list}」→ 詳細「{detail_building_name}」"
-                    )
-                    return True, detail_building_name
+            self.logger.debug(
+                f"文字列類似度: {similarity:.1%} - "
+                f"一覧「{normalized_list_name}」と詳細「{normalized_detail_name}」"
+            )
+            
+            # 類似度が閾値以上なら一致と判定
+            if similarity >= threshold:
+                self.logger.info(
+                    f"建物名が一致（類似度 {similarity:.0%}）: "
+                    f"一覧「{building_name_from_list}」→ 詳細「{detail_building_name}」"
+                )
+                return True, detail_building_name
                     
         self.logger.warning(
             f"建物名が一致しません: 一覧「{building_name_from_list}」、詳細「{detail_building_name}」"

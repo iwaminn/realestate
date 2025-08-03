@@ -632,7 +632,7 @@ const BuildingDuplicateManager: React.FC = () => {
             <Box>
               <Alert severity="warning" sx={{ mb: 2 }}>
                 選択した建物を統合します。
-                統合後は元に戻せませんので、慎重に確認してください。
+                統合後も「統合履歴」タブから取消可能ですが、慎重に確認してください。
               </Alert>
               
               <Alert severity="info" sx={{ mb: 2 }}>

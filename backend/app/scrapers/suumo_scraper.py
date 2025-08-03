@@ -770,31 +770,38 @@ class SuumoScraper(BaseScraper):
         # 「…」で終わっている場合は省略されている
         is_abbreviated = building_name_from_list.endswith('…') or building_name_from_list.endswith('...')
         
+        # 省略されていない場合は基底クラスの正規化処理を使用
+        if not is_abbreviated:
+            # 基底クラスのメソッドを使用（㎡とm2の正規化も含まれる）
+            return super().verify_building_names_match(detail_building_name, building_name_from_list, 
+                                                      allow_partial_match=False, threshold=threshold)
+        
         if is_abbreviated:
             self.logger.info(f"[SUUMO] 省略された建物名を検出: '{building_name_from_list}'")
             
             # 省略記号を除去
             abbreviated_name = building_name_from_list.rstrip('….')
             
+            # 基底クラスの正規化メソッドを使用
+            normalized_abbreviated = self.normalize_building_name(abbreviated_name)
+            normalized_detail = self.normalize_building_name(detail_building_name)
+            
             # ログで確認
             self.logger.info(f"[SUUMO] 建物名比較（省略） - 一覧: '{abbreviated_name}' が 詳細: '{detail_building_name}' に前方一致するか確認")
             
-            # 詳細ページの建物名が、省略された建物名で始まるか確認
-            if detail_building_name.startswith(abbreviated_name):
+            # 詳細ページの建物名が、省略された建物名で始まるか確認（正規化版で比較）
+            if normalized_detail.startswith(normalized_abbreviated):
                 self.logger.info(
                     f"[SUUMO] 省略された建物名が前方一致（成功）: "
                     f"一覧「{building_name_from_list}」→ 詳細「{detail_building_name}」"
                 )
                 return True, detail_building_name
             
-            # 正規化して比較（スペースや記号を除去）
-            normalized_abbreviated = re.sub(r'[\s　・－―～〜]+', '', abbreviated_name)
-            normalized_detail = re.sub(r'[\s　・－―～〜]+', '', detail_building_name)
-            
             self.logger.debug(
                 f"[SUUMO] 正規化後 - 一覧: '{normalized_abbreviated}' が 詳細: '{normalized_detail}' に前方一致するか確認"
             )
             
+            # 大文字小文字を無視して比較
             if normalized_detail.lower().startswith(normalized_abbreviated.lower()):
                 self.logger.info(
                     f"[SUUMO] 省略された建物名が正規化後に前方一致（成功）: "

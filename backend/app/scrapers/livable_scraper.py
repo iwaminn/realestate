@@ -36,6 +36,8 @@ class LivableScraper(BaseScraper):
     
     def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False):
         super().__init__(SourceSite.LIVABLE, force_detail_fetch, max_properties, ignore_error_history)
+        # 東急リバブルも一覧ページと詳細ページで建物名の表記が異なることがあるため、部分一致を許可
+        self.allow_partial_building_name_match = True
     
     def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
         """東急リバブルのsite_property_idの妥当性を検証
