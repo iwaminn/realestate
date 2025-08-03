@@ -631,10 +631,13 @@ const AdminScraping: React.FC = () => {
   };
   
   const getTaskStats = (task: ScrapingTask) => {
+    // デバッグ用ログ
+    console.log('getTaskStats called for task:', task.task_id, 'type:', task.type, 'statistics:', (task as any).statistics);
+    
     // 並列タスクの場合、統計情報から取得
     if (task.type === 'parallel' && (task as any).statistics) {
       const stats = (task as any).statistics;
-      return {
+      const result = {
         total: stats.total_processed || 0,
         new: stats.total_new || 0,
         price_updated: stats.total_updated || 0,
@@ -643,6 +646,8 @@ const AdminScraping: React.FC = () => {
         skipped: 0,
         save_failed: stats.total_errors || 0
       };
+      console.log('Parallel task stats:', result);
+      return result;
     }
     
     // 従来の直列タスクの計算
@@ -1277,7 +1282,7 @@ const AdminScraping: React.FC = () => {
                                 return sortedProgress.map(([key, progress]) => (
                                 <Grid item xs={12} md={4} key={key}>
                                   <Paper variant="outlined" sx={{ p: 2 }}>
-                                    <Box component="div" fontWeight="medium" fontSize="0.875rem" gutterBottom>
+                                    <Box component="div" fontWeight="medium" fontSize="0.875rem" sx={{ mb: 1 }}>
                                       {progress.scraper || 'N/A'} - {progress.area || progress.area_name || 'N/A'}
                                     </Box>
                                     <List dense>

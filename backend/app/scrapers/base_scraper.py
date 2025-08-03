@@ -683,7 +683,9 @@ class BaseScraper(ABC):
                     })
                 
                 # トランザクションエラーの場合はロールバック
-                if "current transaction is aborted" in str(e) or "InFailedSqlTransaction" in str(e):
+                if ("current transaction is aborted" in str(e) or 
+                    "InFailedSqlTransaction" in str(e) or
+                    "rolled back due to a previous exception" in str(e)):
                     try:
                         self.session.rollback()
                         # 新しいトランザクションを開始
@@ -3139,10 +3141,22 @@ class BaseScraper(ABC):
                     pass
             
             # トランザクションエラーの場合は詳細ログを出さない
-            if "current transaction is aborted" not in str(e) and "InFailedSqlTransaction" not in str(e):
+            error_msg = str(e)
+            is_transaction_error = ("current transaction is aborted" in error_msg or 
+                                  "InFailedSqlTransaction" in error_msg or
+                                  "rolled back due to a previous exception" in error_msg)
+            
+            if not is_transaction_error:
                 self.logger.error(f"物件保存エラー: {e}")
                 import traceback
                 traceback.print_exc()
+            else:
+                # トランザクションエラーの場合はロールバック
+                try:
+                    self.session.rollback()
+                    self.logger.info("save_property_common: トランザクションエラーのためロールバック")
+                except:
+                    pass
             
             # エラーログを記録
             url = property_data.get('url', '不明')

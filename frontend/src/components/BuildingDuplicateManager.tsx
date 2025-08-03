@@ -527,8 +527,8 @@ const BuildingDuplicateManager: React.FC = () => {
                 <TableCell>建物名</TableCell>
                 <TableCell>住所</TableCell>
                 <TableCell align="center">階数</TableCell>
-                <TableCell align="center">物件数</TableCell>
-                <TableCell align="center">重複数</TableCell>
+                <TableCell align="center">グループ内物件数</TableCell>
+                <TableCell align="center">建物数</TableCell>
                 <TableCell align="center">操作</TableCell>
               </TableRow>
             </TableHead>
@@ -551,7 +551,10 @@ const BuildingDuplicateManager: React.FC = () => {
                   </TableCell>
                   <TableCell>{group.primary.address || '-'}</TableCell>
                   <TableCell align="center">{group.primary.total_floors || '-'}F</TableCell>
-                  <TableCell align="center">{group.primary.property_count}</TableCell>
+                  <TableCell align="center">
+                    {group.primary.property_count + 
+                     group.candidates.reduce((sum, candidate) => sum + (candidate.property_count || 0), 0)}
+                  </TableCell>
                   <TableCell align="center">
                     <Chip label={group.candidates.length + 1} size="small" color="primary" />
                   </TableCell>

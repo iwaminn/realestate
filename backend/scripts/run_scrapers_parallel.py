@@ -394,7 +394,9 @@ class ParallelScrapingManagerDB:
                     
                     # 進捗更新コールバックを設定（DB版）
                     def progress_callback(stats):
-                        # logger.debug(f"[{scraper_name}] {area} - リアルタイム進捗: {stats}")  # 頻繁すぎるのでコメントアウト
+                        # 新規物件がある場合のみデバッグログを出力
+                        if stats.get('new', 0) > 0 or stats.get('new_listings', 0) > 0:
+                            logger.debug(f"[{scraper_name}] {area} - 新規物件検出: new={stats.get('new', 0)}, new_listings={stats.get('new_listings', 0)}")
                         update_data = {
                             'processed': stats.get('processed', 0),
                             'new_listings': stats.get('new', 0),
@@ -543,6 +545,9 @@ class ParallelScrapingManagerDB:
                         processed = result.get('total', 0)
                         new = result.get('new', 0)
                         updated = result.get('updated', 0)
+                        
+                        # デバッグ用に結果の詳細をログ出力
+                        logger.debug(f"[{scraper_name}] {area} - 結果詳細: {result}")
                         
                         logger.info(f"[{scraper_name}] {area} - 完了: {processed}件処理 "
                                   f"(新規: {new}, 更新: {updated}) - {elapsed_time:.1f}秒")

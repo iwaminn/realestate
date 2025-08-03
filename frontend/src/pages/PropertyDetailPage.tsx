@@ -38,6 +38,7 @@ import {
   Train,
   Home,
   Cached,
+  AccountBalanceWallet,
 } from '@mui/icons-material';
 import {
   LineChart,
@@ -368,6 +369,18 @@ const PropertyDetailPage: React.FC = () => {
                   <ListItemText primary="方角" secondary={`${property.direction}向き`} />
                 </ListItem>
               )}
+              {property.management_fee && (
+                <ListItem>
+                  <AccountBalanceWallet sx={{ mr: 2 }} />
+                  <ListItemText primary="管理費" secondary={`${property.management_fee.toLocaleString()}円/月`} />
+                </ListItem>
+              )}
+              {property.repair_fund && (
+                <ListItem>
+                  <AccountBalanceWallet sx={{ mr: 2 }} />
+                  <ListItemText primary="修繕積立金" secondary={`${property.repair_fund.toLocaleString()}円/月`} />
+                </ListItem>
+              )}
               {building.land_rights && (
                 <ListItem>
                   <Home sx={{ mr: 2 }} />
@@ -398,9 +411,6 @@ const PropertyDetailPage: React.FC = () => {
                 <TableCell>掲載サイト</TableCell>
                 <TableCell>タイトル</TableCell>
                 <TableCell align="right">価格</TableCell>
-                <TableCell align="right">管理費</TableCell>
-                <TableCell align="right">修繕積立金</TableCell>
-                <TableCell>不動産会社</TableCell>
                 <TableCell>売出確認日</TableCell>
                 <TableCell align="center">詳細</TableCell>
               </TableRow>
@@ -413,13 +423,6 @@ const PropertyDetailPage: React.FC = () => {
                   </TableCell>
                   <TableCell>{listing.title}</TableCell>
                   <TableCell align="right">{formatPrice(listing.current_price)}</TableCell>
-                  <TableCell align="right">
-                    {listing.management_fee ? `${listing.management_fee.toLocaleString()}円` : '-'}
-                  </TableCell>
-                  <TableCell align="right">
-                    {listing.repair_fund ? `${listing.repair_fund.toLocaleString()}円` : '-'}
-                  </TableCell>
-                  <TableCell>{listing.agency_name || '-'}</TableCell>
                   <TableCell>
                     {listing.first_published_at 
                       ? format(new Date(listing.first_published_at), 'yyyy/MM/dd', { locale: ja })
@@ -462,7 +465,6 @@ const PropertyDetailPage: React.FC = () => {
                   <TableCell>掲載サイト</TableCell>
                   <TableCell>タイトル</TableCell>
                   <TableCell align="right">最終価格</TableCell>
-                  <TableCell>不動産会社</TableCell>
                   <TableCell>最終確認日</TableCell>
                 </TableRow>
               </TableHead>
@@ -474,7 +476,6 @@ const PropertyDetailPage: React.FC = () => {
                     </TableCell>
                     <TableCell>{listing.title}</TableCell>
                     <TableCell align="right">{formatPrice(listing.current_price)}</TableCell>
-                    <TableCell>{listing.agency_name || '-'}</TableCell>
                     <TableCell>
                       {/* listing.last_confirmed_at 
                         ? format(new Date(listing.last_confirmed_at), 'yyyy/MM/dd', { locale: ja })

@@ -140,6 +140,8 @@ class MasterPropertySchema(BaseModel):
     listing_count: int
     source_sites: List[str]
     station_info: Optional[str]
+    management_fee: Optional[int]  # 管理費（月額・円）
+    repair_fund: Optional[int]     # 修繕積立金（月額・円）
     earliest_published_at: Optional[datetime]  # 最も古い情報提供日
     sold_at: Optional[datetime]
     last_sale_price: Optional[int]
@@ -814,13 +816,13 @@ async def get_duplicate_buildings(
     # クエリを構築
     query = db.query(
         Building,
-        func.count(MasterProperty.id).label('property_count')
+        func.count(distinct(MasterProperty.id)).label('property_count')
     ).outerjoin(
         MasterProperty, Building.id == MasterProperty.building_id
     ).group_by(
         Building.id
     ).having(
-        func.count(MasterProperty.id) > 0  # 物件がある建物のみ
+        func.count(distinct(MasterProperty.id)) > 0  # 物件がある建物のみ
     )
     
     # 検索フィルタを適用
@@ -992,7 +994,7 @@ async def search_buildings_for_merge(
         building_id = int(query)
         building = db.query(
             Building,
-            func.count(MasterProperty.id).label('property_count')
+            func.count(distinct(MasterProperty.id)).label('property_count')
         ).outerjoin(
             MasterProperty, Building.id == MasterProperty.building_id
         ).filter(
@@ -1019,7 +1021,7 @@ async def search_buildings_for_merge(
     
     name_query = db.query(
         Building,
-        func.count(MasterProperty.id).label('property_count')
+        func.count(distinct(MasterProperty.id)).label('property_count')
     ).outerjoin(
         MasterProperty, Building.id == MasterProperty.building_id
     )
