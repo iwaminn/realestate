@@ -219,10 +219,12 @@ class HomesScraper(BaseScraper):
             h1_elem = soup.select_one('h1.font-bold, h1[class*="text-2xl"], h1')
             if h1_elem:
                 h1_text = h1_elem.get_text(strip=True)
-                if '中古マンション' in h1_text:
-                    h1_text = h1_text.replace('中古マンション', '').strip()
-                # 駅名や徒歩分が含まれている場合は除外
-                if '徒歩' not in h1_text and '駅' not in h1_text:
+                # 駅名情報のパターンを含む場合はスキップ
+                if any(pattern in h1_text for pattern in ['徒歩', '駅', '（', '区）', '市）', '線']):
+                    self.logger.warning(f"[HOMES] h1タグは駅名情報のため建物名として使用しません: {h1_text}")
+                else:
+                    if '中古マンション' in h1_text:
+                        h1_text = h1_text.replace('中古マンション', '').strip()
                     parts = h1_text.split('/')
                     if parts:
                         building_name = parts[0].strip()
@@ -255,12 +257,13 @@ class HomesScraper(BaseScraper):
         
         # 最終的なクリーンアップ
         if building_name:
-            # 駅名や徒歩分が含まれている場合は無効とする
-            if '徒歩' in building_name or '駅' in building_name:
-                self.logger.warning(f"[HOMES] 建物名に駅情報が含まれています: {building_name}")
+            # 駅名情報のパターンを含む場合は無効とする
+            if any(pattern in building_name for pattern in ['徒歩', '駅', '（', '区）', '市）', '線']):
+                self.logger.warning(f"[HOMES] 建物名に駅名情報が含まれているため無効とします: {building_name}")
                 building_name = None
             else:
                 building_name = re.sub(r'^(中古マンション|マンション)', '', building_name).strip()
+                building_name = self.normalize_building_name(building_name)
         
         return building_name, room_number
     
@@ -674,10 +677,14 @@ class HomesScraper(BaseScraper):
                 building_link = parent_block.select_one('h3 a, .heading a')
                 if building_link:
                     link_text = building_link.get_text(strip=True)
-                    if 'の中古マンション' in link_text:
-                        building_name_from_list = link_text.replace('の中古マンション', '').strip()
+                    # "中古マンション"で始まる場合はそれを削除
+                    if link_text.startswith('中古マンション'):
+                        building_name_from_list = link_text[7:].strip()  # "中古マンション"は7文字
                         property_data['building_name_from_list'] = building_name_from_list
                         self.logger.debug(f"[HOMES] 一覧ページから建物名を取得（h3）: {building_name_from_list}")
+                    else:
+                        # それ以外の場合は建物名として使用しない（駅名などの可能性があるため）
+                        self.logger.warning(f"[HOMES] h3タグから建物名を抽出できません: {link_text}")
         
         return property_data
     
