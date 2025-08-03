@@ -1629,29 +1629,29 @@ class BaseScraper(ABC):
         best_name = max(candidates, key=score_name)
         return best_name
     
-    def verify_building_name_in_page(self, page_content: str, building_name_from_list: str, 
+    def verify_building_name_in_page(self, detail_building_name: str, building_name_from_list: str, 
                                    threshold: float = 0.8) -> Tuple[bool, Optional[str]]:
-        """一覧ページで取得した建物名が詳細ページに存在するか確認
+        """一覧ページで取得した建物名と詳細ページで取得した建物名が一致するか確認
         
         Args:
-            page_content: 詳細ページのテキスト内容
+            detail_building_name: 詳細ページから取得した建物名
             building_name_from_list: 一覧ページから取得した建物名
             threshold: 類似度の閾値（0.0-1.0）
             
         Returns:
             (建物名が確認できたか, 確認された建物名またはNone)
         """
-        if not building_name_from_list or not page_content:
+        if not building_name_from_list or not detail_building_name:
             return False, None
             
         # 正規化（スペース、記号を除去）
         normalized_list_name = re.sub(r'[\s　・－―～〜]+', '', building_name_from_list)
-        normalized_page_content = re.sub(r'[\s　・－―～〜]+', '', page_content)
+        normalized_detail_name = re.sub(r'[\s　・－―～〜]+', '', detail_building_name)
         
         # 完全一致（正規化後）
-        if normalized_list_name.lower() in normalized_page_content.lower():
-            self.logger.info(f"建物名を詳細ページで確認（完全一致）: {building_name_from_list}")
-            return True, building_name_from_list
+        if normalized_list_name.lower() == normalized_detail_name.lower():
+            self.logger.info(f"建物名が一致（完全一致）: {building_name_from_list}")
+            return True, detail_building_name
             
         # 部分一致（建物名の主要部分が含まれているか）
         # 例：「グランドヒルズ東京タワー」→「グランドヒルズ」が含まれていればOK
@@ -1660,18 +1660,18 @@ class BaseScraper(ABC):
         
         if significant_parts:
             matched_count = sum(1 for part in significant_parts 
-                              if part.lower() in page_content.lower())
+                              if part.lower() in detail_building_name.lower())
             match_ratio = matched_count / len(significant_parts)
             
             if match_ratio >= threshold:
                 self.logger.info(
-                    f"建物名を詳細ページで確認（部分一致 {match_ratio:.0%}）: "
-                    f"{building_name_from_list}"
+                    f"建物名が一致（部分一致 {match_ratio:.0%}）: "
+                    f"一覧「{building_name_from_list}」→ 詳細「{detail_building_name}」"
                 )
-                return True, building_name_from_list
+                return True, detail_building_name
                 
         self.logger.warning(
-            f"一覧ページの建物名が詳細ページで確認できません: {building_name_from_list}"
+            f"建物名が一致しません: 一覧「{building_name_from_list}」、詳細「{detail_building_name}」"
         )
         return False, None
     

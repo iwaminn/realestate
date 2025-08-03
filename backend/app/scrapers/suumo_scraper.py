@@ -745,12 +745,9 @@ class SuumoScraper(BaseScraper):
         if image_urls:
             property_data['image_urls'] = image_urls[:self.MAX_IMAGE_COUNT]
     
-    def verify_building_name_in_page(self, page_content: str, building_name_from_list: str, 
+    def verify_building_name_in_page(self, detail_building_name: str, building_name_from_list: str, 
                                     threshold: float = 0.8) -> Tuple[bool, Optional[str]]:
         """建物名の一致確認（SUUMOの省略表示に対応）
-        
-        注意：メソッド名は基底クラスとの互換性のため変更できないが、
-        実際の動作は「詳細ページの建物名に一覧ページの建物名が含まれるか」を確認している。
         
         SUUMOの仕様：
         - 一覧ページでは長い建物名が「…」付きで省略表示される
@@ -758,18 +755,15 @@ class SuumoScraper(BaseScraper):
         - 省略されていない場合：詳細ページの建物名と一覧の建物名が同じか確認（完全一致）
         
         Args:
-            page_content: 詳細ページの建物名（基底クラスから渡される）
+            detail_building_name: 詳細ページから取得した建物名
             building_name_from_list: 一覧ページから取得した建物名（省略されている可能性あり）
             threshold: 類似度の閾値（0.0-1.0）
             
         Returns:
             (建物名が確認できたか, 詳細ページの完全な建物名またはNone)
         """
-        if not building_name_from_list or not page_content:
+        if not building_name_from_list or not detail_building_name:
             return False, None
-        
-        # ページ全体のテキストが渡されているか判断
-        is_full_page = len(page_content) > 200
         
         # 「…」で終わっている場合は省略されている
         is_abbreviated = building_name_from_list.endswith('…') or building_name_from_list.endswith('...')
@@ -780,97 +774,60 @@ class SuumoScraper(BaseScraper):
             # 省略記号を除去
             abbreviated_name = building_name_from_list.rstrip('….')
             
-            if is_full_page:
-                # ページ全体のテキストが渡された場合
-                # ページ内に省略された建物名が含まれているか確認
-                self.logger.info(f"[SUUMO] ページ全体のテキストから建物名を確認")
-                
-                # 単純な文字列検索
-                if abbreviated_name in page_content:
-                    self.logger.info(
-                        f"[SUUMO] 省略された建物名がページ内に存在（成功）: '{building_name_from_list}'"
-                    )
-                    return True, None  # 完全な建物名は特定できない
-                
-                # 正規化して検索
-                normalized_abbreviated = re.sub(r'[\s　・－―～〜]+', '', abbreviated_name)
-                normalized_page = re.sub(r'[\s　・－―～〜]+', '', page_content)
-                
-                if normalized_abbreviated.lower() in normalized_page.lower():
-                    self.logger.info(
-                        f"[SUUMO] 省略された建物名が正規化後にページ内に存在（成功）: '{building_name_from_list}'"
-                    )
-                    return True, None
-                
-                # 見つからない場合
-                self.logger.warning(
-                    f"[SUUMO] 省略された建物名がページ内に見つかりません: '{building_name_from_list}'"
+            # ログで確認
+            self.logger.info(f"[SUUMO] 建物名比較（省略） - 一覧: '{abbreviated_name}' が 詳細: '{detail_building_name}' に前方一致するか確認")
+            
+            # 詳細ページの建物名が、省略された建物名で始まるか確認
+            if detail_building_name.startswith(abbreviated_name):
+                self.logger.info(
+                    f"[SUUMO] 省略された建物名が前方一致（成功）: "
+                    f"一覧「{building_name_from_list}」→ 詳細「{detail_building_name}」"
                 )
-                return False, None
-            else:
-                # 建物名が直接渡された場合
-                detail_building_name = page_content.strip()
-                
-                # ログで確認
-                self.logger.info(f"[SUUMO] 建物名比較（省略） - 一覧: '{abbreviated_name}' が 詳細: '{detail_building_name}' に前方一致するか確認")
-                
-                # 詳細ページの建物名が、省略された建物名で始まるか確認
-                if detail_building_name.startswith(abbreviated_name):
-                    self.logger.info(
-                        f"[SUUMO] 省略された建物名が前方一致（成功）: "
-                        f"一覧「{building_name_from_list}」→ 詳細「{detail_building_name}」"
-                    )
-                    return True, detail_building_name
-                
-                # 正規化して比較（スペースや記号を除去）
-                normalized_abbreviated = re.sub(r'[\s　・－―～〜]+', '', abbreviated_name)
-                normalized_detail = re.sub(r'[\s　・－―～〜]+', '', detail_building_name)
-                
-                self.logger.debug(
-                    f"[SUUMO] 正規化後 - 一覧: '{normalized_abbreviated}' が 詳細: '{normalized_detail}' に前方一致するか確認"
+                return True, detail_building_name
+            
+            # 正規化して比較（スペースや記号を除去）
+            normalized_abbreviated = re.sub(r'[\s　・－―～〜]+', '', abbreviated_name)
+            normalized_detail = re.sub(r'[\s　・－―～〜]+', '', detail_building_name)
+            
+            self.logger.debug(
+                f"[SUUMO] 正規化後 - 一覧: '{normalized_abbreviated}' が 詳細: '{normalized_detail}' に前方一致するか確認"
+            )
+            
+            if normalized_detail.lower().startswith(normalized_abbreviated.lower()):
+                self.logger.info(
+                    f"[SUUMO] 省略された建物名が正規化後に前方一致（成功）: "
+                    f"一覧「{building_name_from_list}」→ 詳細「{detail_building_name}」"
                 )
-                
-                if normalized_detail.lower().startswith(normalized_abbreviated.lower()):
-                    self.logger.info(
-                        f"[SUUMO] 省略された建物名が正規化後に前方一致（成功）: "
-                        f"一覧「{building_name_from_list}」→ 詳細「{detail_building_name}」"
-                    )
-                    return True, detail_building_name
-                
-                # 見つからない場合
-                self.logger.warning(
-                    f"[SUUMO] 省略された建物名が一致しません: "
-                    f"一覧「{building_name_from_list}」が詳細「{detail_building_name}」に前方一致しません"
-                )
-                return False, None
+                return True, detail_building_name
+            
+            # 見つからない場合
+            self.logger.warning(
+                f"[SUUMO] 省略された建物名が一致しません: "
+                f"一覧「{building_name_from_list}」が詳細「{detail_building_name}」に前方一致しません"
+            )
+            return False, None
         else:
             # 省略されていない場合
-            if is_full_page:
-                # ページ全体のテキストが渡された場合は基底クラスのメソッドを使用
-                return super().verify_building_name_in_page(page_content, building_name_from_list, threshold)
-            else:
-                # 建物名が直接渡された場合は完全一致を確認
-                detail_building_name = page_content.strip()
-                self.logger.info(f"[SUUMO] 建物名比較（完全） - 一覧: '{building_name_from_list}' と 詳細: '{detail_building_name}' が完全一致するか確認")
-                
-                if building_name_from_list == detail_building_name:
-                    self.logger.info(
-                        f"[SUUMO] 建物名が完全一致（成功）: '{building_name_from_list}'"
-                    )
-                    return True, detail_building_name
-                
-                # 正規化して比較
-                normalized_list = re.sub(r'[\s　・－―～〜]+', '', building_name_from_list)
-                normalized_detail = re.sub(r'[\s　・－―～〜]+', '', detail_building_name)
-                
-                if normalized_list.lower() == normalized_detail.lower():
-                    self.logger.info(
-                        f"[SUUMO] 建物名が正規化後に完全一致（成功）: '{building_name_from_list}'"
-                    )
-                    return True, detail_building_name
-                
-                # 一致しない場合は基底クラスのメソッドを使用（部分一致などの高度な比較）
-                return super().verify_building_name_in_page(page_content, building_name_from_list, threshold)
+            self.logger.info(f"[SUUMO] 建物名比較（完全） - 一覧: '{building_name_from_list}' と 詳細: '{detail_building_name}' が完全一致するか確認")
+            
+            if building_name_from_list == detail_building_name:
+                self.logger.info(
+                    f"[SUUMO] 建物名が完全一致（成功）: '{building_name_from_list}'"
+                )
+                return True, detail_building_name
+            
+            # 正規化して比較
+            normalized_list = re.sub(r'[\s　・－―～〜]+', '', building_name_from_list)
+            normalized_detail = re.sub(r'[\s　・－―～〜]+', '', detail_building_name)
+            
+            if normalized_list.lower() == normalized_detail.lower():
+                self.logger.info(
+                    f"[SUUMO] 建物名が正規化後に完全一致（成功）: '{building_name_from_list}'"
+                )
+                return True, detail_building_name
+            
+            # 一致しない場合は基底クラスのメソッドを使用（部分一致などの高度な比較）
+            return super().verify_building_name_in_page(detail_building_name, building_name_from_list, threshold)
     
     def _copy_detail_info_to_property_data(self, detail_info: Dict[str, Any], property_data: Dict[str, Any]):
         """detail_infoの重要な情報をproperty_dataにコピー（後方互換性のため）"""
