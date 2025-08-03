@@ -1347,7 +1347,7 @@ class BaseScraper(ABC):
                 
                 if list_building_name and detail_building_name:
                     # 建物名の一致を確認（詳細ページの建物名と一覧ページの建物名を比較）
-                    is_verified, verified_name = self.verify_building_name_in_page(detail_building_name, list_building_name)
+                    is_verified, verified_name = self.verify_building_names_match(detail_building_name, list_building_name)
                     
                     if not is_verified:
                         # 建物名が一致しない場合の警告
@@ -1629,7 +1629,7 @@ class BaseScraper(ABC):
         best_name = max(candidates, key=score_name)
         return best_name
     
-    def verify_building_name_in_page(self, detail_building_name: str, building_name_from_list: str, 
+    def verify_building_names_match(self, detail_building_name: str, building_name_from_list: str, 
                                    threshold: float = 0.8) -> Tuple[bool, Optional[str]]:
         """一覧ページで取得した建物名と詳細ページで取得した建物名が一致するか確認
         
