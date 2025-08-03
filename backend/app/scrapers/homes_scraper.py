@@ -221,15 +221,17 @@ class HomesScraper(BaseScraper):
                 # H1内のspan要素を探す
                 spans = h1_elem.select('span')
                 if len(spans) >= 2:
-                    # パターンを確認して適切なspan要素を選択
-                    if len(spans) >= 5:
-                        # 5個以上ある場合は4番目（index=3）
-                        target_index = 3
-                    else:
-                        # それ以外は2番目（index=1）
-                        target_index = 1
+                    # 2番目のspan要素を使用（通常はここに建物名または駅名情報がある）
+                    building_name_text = spans[1].get_text(strip=True)
                     
-                    building_name_text = spans[target_index].get_text(strip=True)
+                    # ただし、2番目も「中古マンション」の場合は、それ以降のspan要素を確認
+                    if building_name_text == '中古マンション' and len(spans) > 2:
+                        # 「中古マンション」でない最初のspan要素を探す
+                        for i in range(2, min(len(spans), 5)):  # 最大5番目まで確認
+                            span_text = spans[i].get_text(strip=True)
+                            if span_text != '中古マンション' and '万円' not in span_text:
+                                building_name_text = span_text
+                                break
                     
                     # 階数情報を除去（例：「パルロイヤルアレフ赤坂 2階/207」→「パルロイヤルアレフ赤坂」）
                     if ' ' in building_name_text:
@@ -248,7 +250,7 @@ class HomesScraper(BaseScraper):
                         if match:
                             room_number = match.group(1)
                     
-                    self.logger.info(f"[HOMES] h1のspan要素から建物名を取得（index={target_index}）: {building_name}")
+                    self.logger.info(f"[HOMES] h1のspan要素から建物名を取得: {building_name}")
                 else:
                     # 従来の方法（span要素がない場合）
                     h1_text = h1_elem.get_text(strip=True)
