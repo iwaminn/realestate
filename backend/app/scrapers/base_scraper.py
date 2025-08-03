@@ -681,7 +681,9 @@ class BaseScraper(ABC):
                 if "current transaction is aborted" in str(e) or "InFailedSqlTransaction" in str(e):
                     try:
                         self.session.rollback()
-                        self.logger.info("トランザクションをロールバックしました")
+                        # 新しいトランザクションを開始
+                        self.session.begin()
+                        self.logger.info("トランザクションをロールバックし、新しいトランザクションを開始しました")
                     except:
                         pass
                 continue
@@ -1644,9 +1646,32 @@ class BaseScraper(ABC):
         if not building_name_from_list or not detail_building_name:
             return False, None
             
-        # 正規化（スペース、記号を除去）
-        normalized_list_name = re.sub(r'[\s　・－―～〜]+', '', building_name_from_list)
-        normalized_detail_name = re.sub(r'[\s　・－―～〜]+', '', detail_building_name)
+        # 正規化処理
+        # 1. 全角英数字を半角に変換（ローマ数字も含む）
+        normalized_list_name = jaconv.z2h(building_name_from_list, kana=False, ascii=True, digit=True)
+        normalized_detail_name = jaconv.z2h(detail_building_name, kana=False, ascii=True, digit=True)
+        
+        # 2. ローマ数字の正規化（全角ローマ数字を半角に変換）
+        # Ⅰ→I, Ⅱ→II, Ⅲ→III, Ⅳ→IV, Ⅴ→V, Ⅵ→VI, Ⅶ→VII, Ⅷ→VIII, Ⅸ→IX, Ⅹ→X
+        roman_map = {
+            'Ⅰ': 'I', 'Ⅱ': 'II', 'Ⅲ': 'III', 'Ⅳ': 'IV', 'Ⅴ': 'V',
+            'Ⅵ': 'VI', 'Ⅶ': 'VII', 'Ⅷ': 'VIII', 'Ⅸ': 'IX', 'Ⅹ': 'X',
+            'Ⅺ': 'XI', 'Ⅻ': 'XII'
+        }
+        for full_width, half_width in roman_map.items():
+            normalized_list_name = normalized_list_name.replace(full_width, half_width)
+            normalized_detail_name = normalized_detail_name.replace(full_width, half_width)
+        
+        # 3. スペース、記号を除去
+        normalized_list_name = re.sub(r'[\s　・－―～〜]+', '', normalized_list_name)
+        normalized_detail_name = re.sub(r'[\s　・－―～〜]+', '', normalized_detail_name)
+        
+        # デバッグ: 正規化後の名前を表示（ローマ数字を含む場合のみ）
+        if any(char in building_name_from_list + detail_building_name for char in 'ⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩⅪⅫIVXivx'):
+            self.logger.debug(
+                f"建物名正規化: 一覧「{building_name_from_list}」→「{normalized_list_name}」、"
+                f"詳細「{detail_building_name}」→「{normalized_detail_name}」"
+            )
         
         # 完全一致（正規化後）
         if normalized_list_name.lower() == normalized_detail_name.lower():
@@ -1843,6 +1868,8 @@ class BaseScraper(ABC):
                         except Exception as e:
                             # 外部ID追加時のエラーをキャッチ
                             self.session.rollback()
+                            # 新しいトランザクションを開始
+                            self.session.begin()
                             print(f"[WARNING] 外部ID追加エラー: {e}")
                             # 既に別の建物に紐付いている可能性をチェック
                             existing = self.session.query(BuildingExternalId).filter(
@@ -1895,6 +1922,8 @@ class BaseScraper(ABC):
                 except Exception as e:
                     # 外部ID追加時のエラーをキャッチ
                     self.session.rollback()
+                    # 新しいトランザクションを開始
+                    self.session.begin()
                     print(f"[WARNING] 新規建物への外部ID追加エラー: {e}")
                     # 既に別の建物に紐付いている可能性をチェック
                     existing = self.session.query(BuildingExternalId).filter(
@@ -1976,6 +2005,8 @@ class BaseScraper(ABC):
             if "duplicate key value violates unique constraint" in str(e):
                 self.logger.warning(f"Duplicate property_hash detected, rolling back and retrying: {property_hash}")
                 self.session.rollback()
+                # 新しいトランザクションを開始
+                self.session.begin()
                 
                 # 再度検索
                 master_property = self.session.query(MasterProperty).filter(
@@ -2314,6 +2345,9 @@ class BaseScraper(ABC):
                     self.session.rollback()
                     self.logger.debug(f"URL重複エラー検出。既存レコードを再検索...")
                     
+                    # 新しいトランザクションを開始
+                    self.session.begin()
+                    
                     # 再度検索（他のプロセスが同時に作成した可能性）
                     listing = self.session.query(PropertyListing).filter(
                         PropertyListing.url == url,
@@ -2633,6 +2667,8 @@ class BaseScraper(ABC):
         except Exception as e:
             self.logger.error(f"404エラー記録中にエラー: {e}")
             self.session.rollback()
+            # 新しいトランザクションを開始
+            self.session.begin()
     
     
     def _handle_validation_error(self, url: str, error_type: str, error_details: dict = None):
@@ -2701,6 +2737,8 @@ class BaseScraper(ABC):
         except Exception as e:
             self.logger.error(f"検証エラー記録中にエラー: {e}")
             self.session.rollback()
+            # 新しいトランザクションを開始
+            self.session.begin()
     
     
     def _record_price_mismatch(self, site_property_id: str, url: str, list_price: int, detail_price: int, retry_days: int = 7):
@@ -2743,6 +2781,8 @@ class BaseScraper(ABC):
         except Exception as e:
             self.logger.error(f"価格不一致記録中のエラー: {e}")
             self.session.rollback()
+            # 新しいトランザクションを開始
+            self.session.begin()
     
     
     
@@ -3060,6 +3100,8 @@ class BaseScraper(ABC):
             if self.session:
                 try:
                     self.session.rollback()
+                    # 新しいトランザクションを開始
+                    self.session.begin()
                 except:
                     pass
             
@@ -3564,6 +3606,7 @@ class BaseScraper(ABC):
         - url: 詳細ページのURL
         - site_property_id: サイト内物件ID
         - price: 価格
+        - building_name: 建物名
         
         Args:
             property_data: 物件データ
@@ -3571,7 +3614,7 @@ class BaseScraper(ABC):
         Returns:
             bool: 必須フィールドがすべて存在する場合True
         """
-        required_fields = ['url', 'site_property_id', 'price']
+        required_fields = ['url', 'site_property_id', 'price', 'building_name']
         missing_fields = []
         
         for field in required_fields:

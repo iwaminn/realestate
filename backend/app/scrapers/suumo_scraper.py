@@ -143,7 +143,9 @@ class SuumoScraper(BaseScraper):
                         if '物件名' in dt.get_text():
                             building_name = dd.get_text(strip=True)
                             
+                            # 一覧ページでの建物名を両方のフィールドに設定
                             property_data['building_name_from_list'] = building_name
+                            property_data['building_name'] = building_name  # 必須フィールドとして設定
                             # 建物名が省略されているかチェック（「…」で終わっている場合）
                             if building_name.endswith('…'):
                                 self.logger.debug(f"[SUUMO] 省略された建物名を検出: {building_name}")

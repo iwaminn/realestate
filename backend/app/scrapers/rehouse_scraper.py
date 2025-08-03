@@ -201,6 +201,7 @@ class RehouseScraper(BaseScraper):
         if title_elem:
             building_name = title_elem.get_text(strip=True)
             property_data['building_name_from_list'] = building_name
+            property_data['building_name'] = building_name  # 必須フィールドとして設定
         
         # description-section内の詳細情報
         desc_section = inner.select_one('.description-section')

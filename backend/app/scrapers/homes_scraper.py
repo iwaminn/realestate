@@ -699,6 +699,7 @@ class HomesScraper(BaseScraper):
             if bukken_name_elem:
                 building_name_from_list = bukken_name_elem.get_text(strip=True)
                 property_data['building_name_from_list'] = building_name_from_list
+                property_data['building_name'] = building_name_from_list  # 必須フィールドとして設定
                 self.logger.debug(f"[HOMES] 一覧ページから建物名を取得（bukkenName）: {building_name_from_list}")
             else:
                 # bukkenNameが見つからない場合は従来の方法（h3タグ）を試す
@@ -709,6 +710,7 @@ class HomesScraper(BaseScraper):
                     if link_text.startswith('中古マンション'):
                         building_name_from_list = link_text[7:].strip()  # "中古マンション"は7文字
                         property_data['building_name_from_list'] = building_name_from_list
+                        property_data['building_name'] = building_name_from_list  # 必須フィールドとして設定
                         self.logger.debug(f"[HOMES] 一覧ページから建物名を取得（h3）: {building_name_from_list}")
                     else:
                         # それ以外の場合は建物名として使用しない（駅名などの可能性があるため）
