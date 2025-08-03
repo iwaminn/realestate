@@ -356,17 +356,25 @@ class NomuScraper(BaseScraper):
         """建物名を抽出"""
         # まずclass="item_title"を探す
         h1_elem = soup.find("h1", {"class": "item_title"})
-        if h1_elem:
-            building_name = h1_elem.get_text(strip=True)
-            if building_name:
-                detail_data['building_name'] = building_name
-        else:
+        if not h1_elem:
             # classがないh1タグも試す
             h1_elem = soup.find("h1")
-            if h1_elem:
-                building_name = h1_elem.get_text(strip=True)
-                if building_name:
-                    detail_data['building_name'] = building_name
+        
+        if h1_elem:
+            # h1要素のコピーを作成（元のDOMを変更しないため）
+            h1_copy = h1_elem.__copy__()
+            
+            # item_newクラスの要素を探して除外
+            item_new_elem = h1_copy.find(class_='item_new')
+            if item_new_elem:
+                item_new_elem.extract()  # 価格情報を削除
+                self.logger.info(f"[ノムコム] item_newクラスを除外して建物名を取得")
+            
+            # 残ったテキストが建物名
+            building_name = h1_copy.get_text(strip=True)
+            if building_name:
+                detail_data['building_name'] = building_name
+                self.logger.info(f"[ノムコム] 建物名を取得: {building_name}")
     
     def _extract_detail_price(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
         """詳細ページから価格を抽出（複数フォーマット対応）"""
