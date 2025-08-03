@@ -215,8 +215,8 @@ class HomesScraper(BaseScraper):
         
         # それでも取得できない場合は従来のロジックを使用
         if not building_name:
-            # h1タグから情報を取得（新しい構造に対応）
-            h1_elem = soup.select_one('h1.font-bold, h1[class*="text-2xl"], h1')
+            # h1タグから情報を取得（Header__logoクラスを除外）
+            h1_elem = soup.find('h1', class_=lambda x: x and 'Header__logo' not in x)
             if h1_elem:
                 # H1内のspan要素を探す
                 spans = h1_elem.select('span')
@@ -290,14 +290,9 @@ class HomesScraper(BaseScraper):
                     else:
                         building_name = property_name_part
         
-        # 最終的なクリーンアップ
+        # 最終的なクリーンアップ（「中古マンション」や「マンション」のプレフィックスのみ削除）
         if building_name:
-            # 駅名情報のパターンを含む場合は無効とする
-            if any(pattern in building_name for pattern in ['徒歩', '駅', '（', '区）', '市）', '線']):
-                self.logger.warning(f"[HOMES] 建物名に駅名情報が含まれているため無効とします: {building_name}")
-                building_name = None
-            else:
-                building_name = re.sub(r'^(中古マンション|マンション)', '', building_name).strip()
+            building_name = re.sub(r'^(中古マンション|マンション)', '', building_name).strip()
         
         return building_name, room_number
     
