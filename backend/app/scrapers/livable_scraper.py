@@ -94,8 +94,8 @@ class LivableScraper(BaseScraper):
         # エリアコードを取得
         area_code = get_area_code(area)
         
-        # 東急リバブルのURL形式
-        base_url = f"{self.BASE_URL}/kounyu/chuko-mansion/tokyo/a{area_code}/"
+        # 東急リバブルのURL形式（修正版）
+        base_url = f"{self.BASE_URL}/kounyu/mansion/tokyo/a{area_code}/"
         
         if page > 1:
             return f"{base_url}?page={page}"
@@ -164,10 +164,31 @@ class LivableScraper(BaseScraper):
         self._extract_list_price(item, property_data)
         
         # 建物名を取得（一覧ページから）
-        building_name_elem = item.select_one('.o-product-list__title, .o-map-search__property-title')
-        if building_name_elem:
-            building_name = building_name_elem.get_text(strip=True)
+        building_name = None
+        
+        # 方法1: リンクのテキストから抽出
+        link = item.select_one('a.o-product-list__link')
+        if link:
+            link_text = link.get_text(' ', strip=True)
+            # パターン: 数字/数字の後、物件タイプの前
+            match = re.search(r'\d+/\d+<?>\s*(.*?)\s*(?:中古マンション|新築マンション)', link_text)
+            if match:
+                building_name = match.group(1).strip()
+        
+        # 方法2: 画像のalt属性から取得
+        if not building_name:
+            img = item.select_one('img[alt]')
+            if img:
+                alt = img.get('alt', '').strip()
+                # alt属性から建物名を抽出（「(外観)」などを除去）
+                if alt and '外観' not in alt:
+                    building_name = alt
+                elif alt:
+                    building_name = re.sub(r'\(.*?\)', '', alt).strip()
+        
+        if building_name:
             property_data['building_name_from_list'] = building_name
+            property_data['building_name'] = building_name  # 必須フィールドとして設定
         
         # 一覧ページでの必須フィールドを検証（基底クラスの共通メソッドを使用）
         if self.validate_list_page_fields(property_data):
@@ -269,6 +290,8 @@ class LivableScraper(BaseScraper):
                 # fetch_pageでのエラー情報を確認
                 fetch_error = getattr(self, '_last_fetch_error', None)
                 if fetch_error and fetch_error.get('type') == '404':
+                    # URLからsite_property_idを抽出して404エラー情報に含める
+                    extracted_id = self.extract_property_id(url)
                     # 404エラーの場合は特別なエラー情報を設定
                     self._last_detail_error = {
                         'type': '404_error',
@@ -276,7 +299,7 @@ class LivableScraper(BaseScraper):
                         'error_message': '物件ページが見つかりません（削除済みまたは無効なURL）',
                         'building_name': '',
                         'price': '',
-                        'site_property_id': site_property_id
+                        'site_property_id': extracted_id or ''
                     }
                 return None
             

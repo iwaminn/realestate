@@ -71,6 +71,10 @@ class BaseScraper(ABC):
         self.force_detail_fetch = force_detail_fetch
         self.max_properties = max_properties
         self.ignore_error_history = ignore_error_history
+        
+        # 建物名の部分一致を許可するかどうか（デフォルト: False = 完全一致のみ）
+        self.allow_partial_building_name_match = False
+        
         self.session = SessionLocal()
         self.http_session = requests.Session()
         self.http_session.headers.update({
@@ -1349,7 +1353,11 @@ class BaseScraper(ABC):
                 
                 if list_building_name and detail_building_name:
                     # 建物名の一致を確認（詳細ページの建物名と一覧ページの建物名を比較）
-                    is_verified, verified_name = self.verify_building_names_match(detail_building_name, list_building_name)
+                    is_verified, verified_name = self.verify_building_names_match(
+                        detail_building_name, 
+                        list_building_name,
+                        allow_partial_match=self.allow_partial_building_name_match
+                    )
                     
                     if not is_verified:
                         # 建物名が一致しない場合の警告
@@ -1632,13 +1640,14 @@ class BaseScraper(ABC):
         return best_name
     
     def verify_building_names_match(self, detail_building_name: str, building_name_from_list: str, 
-                                   threshold: float = 0.8) -> Tuple[bool, Optional[str]]:
+                                   allow_partial_match: bool = False, threshold: float = 0.8) -> Tuple[bool, Optional[str]]:
         """一覧ページで取得した建物名と詳細ページで取得した建物名が一致するか確認
         
         Args:
             detail_building_name: 詳細ページから取得した建物名
             building_name_from_list: 一覧ページから取得した建物名
-            threshold: 類似度の閾値（0.0-1.0）
+            allow_partial_match: 部分一致を許可するかどうか（デフォルト: False）
+            threshold: 類似度の閾値（0.0-1.0）、部分一致の場合のみ使用
             
         Returns:
             (建物名が確認できたか, 確認された建物名またはNone)
@@ -1677,24 +1686,26 @@ class BaseScraper(ABC):
         if normalized_list_name.lower() == normalized_detail_name.lower():
             self.logger.info(f"建物名が一致（完全一致）: {building_name_from_list}")
             return True, detail_building_name
-            
-        # 部分一致（建物名の主要部分が含まれているか）
-        # 例：「グランドヒルズ東京タワー」→「グランドヒルズ」が含まれていればOK
-        main_parts = re.split(r'[・\s　]', building_name_from_list)
-        significant_parts = [part for part in main_parts if len(part) >= 3]  # 3文字以上の部分
         
-        if significant_parts:
-            matched_count = sum(1 for part in significant_parts 
-                              if part.lower() in detail_building_name.lower())
-            match_ratio = matched_count / len(significant_parts)
+        # 部分一致が許可されている場合のみ、部分一致をチェック
+        if allow_partial_match:
+            # 部分一致（建物名の主要部分が含まれているか）
+            # 例：「グランドヒルズ東京タワー」→「グランドヒルズ」が含まれていればOK
+            main_parts = re.split(r'[・\s　]', building_name_from_list)
+            significant_parts = [part for part in main_parts if len(part) >= 3]  # 3文字以上の部分
             
-            if match_ratio >= threshold:
-                self.logger.info(
-                    f"建物名が一致（部分一致 {match_ratio:.0%}）: "
-                    f"一覧「{building_name_from_list}」→ 詳細「{detail_building_name}」"
-                )
-                return True, detail_building_name
+            if significant_parts:
+                matched_count = sum(1 for part in significant_parts 
+                                  if part.lower() in detail_building_name.lower())
+                match_ratio = matched_count / len(significant_parts)
                 
+                if match_ratio >= threshold:
+                    self.logger.info(
+                        f"建物名が一致（部分一致 {match_ratio:.0%}）: "
+                        f"一覧「{building_name_from_list}」→ 詳細「{detail_building_name}」"
+                    )
+                    return True, detail_building_name
+                    
         self.logger.warning(
             f"建物名が一致しません: 一覧「{building_name_from_list}」、詳細「{detail_building_name}」"
         )

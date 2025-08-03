@@ -747,8 +747,8 @@ class SuumoScraper(BaseScraper):
         if image_urls:
             property_data['image_urls'] = image_urls[:self.MAX_IMAGE_COUNT]
     
-    def verify_building_names_match(self, detail_building_name: str, building_name_from_list: str, 
-                                    threshold: float = 0.8) -> Tuple[bool, Optional[str]]:
+    def verify_building_names_match(self, detail_building_name: str, building_name_from_list: str,
+                                    allow_partial_match: bool = False, threshold: float = 0.8) -> Tuple[bool, Optional[str]]:
         """建物名の一致確認（SUUMOの省略表示に対応）
         
         SUUMOの仕様：
@@ -829,7 +829,12 @@ class SuumoScraper(BaseScraper):
                 return True, detail_building_name
             
             # 一致しない場合は基底クラスのメソッドを使用（部分一致などの高度な比較）
-            return super().verify_building_names_match(detail_building_name, building_name_from_list, threshold)
+            return super().verify_building_names_match(
+                detail_building_name, 
+                building_name_from_list, 
+                allow_partial_match=self.allow_partial_building_name_match,
+                threshold=threshold
+            )
     
     def _copy_detail_info_to_property_data(self, detail_info: Dict[str, Any], property_data: Dict[str, Any]):
         """detail_infoの重要な情報をproperty_dataにコピー（後方互換性のため）"""

@@ -197,7 +197,8 @@ class RehouseScraper(BaseScraper):
             property_data['price'] = price
         
         # 建物名を取得（一覧ページから）
-        title_elem = item.select_one('.property-index-card-inner h3, .property-index-card-inner .title')
+        # h2タグに建物名があることが判明
+        title_elem = item.select_one('.property-index-card-inner h2, .description-section h2')
         if title_elem:
             building_name = title_elem.get_text(strip=True)
             property_data['building_name_from_list'] = building_name
