@@ -381,7 +381,7 @@ const ManualPropertyMerger: React.FC = () => {
         <DialogTitle>物件統合の確認</DialogTitle>
         <DialogContent>
           <Alert severity="warning" sx={{ mb: 2 }}>
-            この操作は取り消せません。慎重に確認してください。
+            統合操作は慎重に行ってください。
           </Alert>
           
           {primaryPropertyId && selectedProperties.length > 0 && (

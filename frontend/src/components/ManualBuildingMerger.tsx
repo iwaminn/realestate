@@ -322,7 +322,7 @@ const ManualBuildingMerger: React.FC = () => {
         <DialogTitle>建物統合の確認</DialogTitle>
         <DialogContent>
           <Alert severity="warning" sx={{ mb: 2 }}>
-            この操作は取り消せません。慎重に確認してください。
+            統合後も「統合履歴」タブから取消可能ですが、慎重に確認してください。
           </Alert>
           
           {primaryBuildingId && selectedBuildings.length > 0 && (
@@ -353,7 +353,7 @@ const ManualBuildingMerger: React.FC = () => {
               </Box>
 
               <Alert severity="info" sx={{ mt: 2 }}>
-                統合される建物の全ての物件とエイリアスがマスター建物に移動されます。
+                統合される建物の全ての物件がマスター建物に移動されます。
               </Alert>
             </Box>
           )}
