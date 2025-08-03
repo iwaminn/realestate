@@ -1341,7 +1341,48 @@ class BaseScraper(ABC):
                     property_data['property_saved'] = False
                     return False
                 
-                # 価格が一致している場合は通常通り処理
+                # 建物名不一致チェック（一覧ページから建物名が取得されている場合のみ）
+                list_building_name = property_data.get('building_name_from_list')
+                detail_building_name = detail_data.get('building_name')
+                
+                if list_building_name and detail_building_name:
+                    # 建物名の一致を確認（詳細ページの建物名と一覧ページの建物名を比較）
+                    is_verified, verified_name = self.verify_building_name_in_page(detail_building_name, list_building_name)
+                    
+                    if not is_verified:
+                        # 建物名が一致しない場合の警告
+                        self.logger.warning(
+                            f"建物名不一致を検出: {property_data.get('url')} - "
+                            f"一覧: {list_building_name}, 詳細: {detail_building_name}"
+                        )
+                        
+                        # エラーログを記録
+                        if hasattr(self, '_save_error_log'):
+                            self._save_error_log({
+                                'url': property_data.get('url', '不明'),
+                                'reason': f'建物名不一致: 一覧「{list_building_name}」, 詳細「{detail_building_name}」',
+                                'building_name': list_building_name,
+                                'price': property_data.get('price', ''),
+                                'timestamp': datetime.now().isoformat(),
+                                'site_property_id': property_data.get('site_property_id', ''),
+                                'source_site': self.source_site.value
+                            })
+                        
+                        # 更新をスキップ
+                        print(f"  → 建物名不一致のため更新をスキップ (一覧: {list_building_name}, 詳細: {detail_building_name})")
+                        property_data['detail_fetched'] = False
+                        self._last_detail_fetched = False
+                        self._scraping_stats['detail_fetch_failed'] += 1
+                        property_data['detail_fetch_attempted'] = True
+                        property_data['property_saved'] = False
+                        return False
+                    else:
+                        # 建物名が確認できた場合は、確認された名前を使用
+                        if verified_name:
+                            detail_data['building_name'] = verified_name
+                            self.logger.info(f"建物名を一覧ページの名前で確認: {verified_name}")
+                
+                # 価格と建物名が一致している場合は通常通り処理
                 # 詳細データをマージ
                 property_data.update(detail_data)
                 property_data['detail_fetched'] = True
@@ -1587,6 +1628,52 @@ class BaseScraper(ABC):
         # スコアが最も高い名前を選択
         best_name = max(candidates, key=score_name)
         return best_name
+    
+    def verify_building_name_in_page(self, page_content: str, building_name_from_list: str, 
+                                   threshold: float = 0.8) -> Tuple[bool, Optional[str]]:
+        """一覧ページで取得した建物名が詳細ページに存在するか確認
+        
+        Args:
+            page_content: 詳細ページのテキスト内容
+            building_name_from_list: 一覧ページから取得した建物名
+            threshold: 類似度の閾値（0.0-1.0）
+            
+        Returns:
+            (建物名が確認できたか, 確認された建物名またはNone)
+        """
+        if not building_name_from_list or not page_content:
+            return False, None
+            
+        # 正規化（スペース、記号を除去）
+        normalized_list_name = re.sub(r'[\s　・－―～〜]+', '', building_name_from_list)
+        normalized_page_content = re.sub(r'[\s　・－―～〜]+', '', page_content)
+        
+        # 完全一致（正規化後）
+        if normalized_list_name.lower() in normalized_page_content.lower():
+            self.logger.info(f"建物名を詳細ページで確認（完全一致）: {building_name_from_list}")
+            return True, building_name_from_list
+            
+        # 部分一致（建物名の主要部分が含まれているか）
+        # 例：「グランドヒルズ東京タワー」→「グランドヒルズ」が含まれていればOK
+        main_parts = re.split(r'[・\s　]', building_name_from_list)
+        significant_parts = [part for part in main_parts if len(part) >= 3]  # 3文字以上の部分
+        
+        if significant_parts:
+            matched_count = sum(1 for part in significant_parts 
+                              if part.lower() in page_content.lower())
+            match_ratio = matched_count / len(significant_parts)
+            
+            if match_ratio >= threshold:
+                self.logger.info(
+                    f"建物名を詳細ページで確認（部分一致 {match_ratio:.0%}）: "
+                    f"{building_name_from_list}"
+                )
+                return True, building_name_from_list
+                
+        self.logger.warning(
+            f"一覧ページの建物名が詳細ページで確認できません: {building_name_from_list}"
+        )
+        return False, None
     
     def get_search_key_for_building(self, building_name: str) -> str:
         """建物検索用のキーを生成（最小限の正規化）"""
@@ -2103,10 +2190,15 @@ class BaseScraper(ABC):
             listing_building_name = kwargs.get('listing_building_name')
             if listing_building_name and listing.listing_building_name != listing_building_name:
                 old_building_name = listing.listing_building_name
-                if old_building_name:  # 既存の建物名がある場合のみ変更として扱う
-                    other_changed = True
+                other_changed = True
+                if old_building_name:
+                    # 既存の建物名がある場合
                     changed_fields.append(f'建物名({old_building_name}→{listing_building_name})')
                     self.logger.info(f"建物名更新検出: {old_building_name} → {listing_building_name}")
+                else:
+                    # NULLから新規設定の場合
+                    changed_fields.append(f'建物名(新規設定: {listing_building_name})')
+                    self.logger.info(f"建物名新規設定: {listing_building_name}")
             
             listing.is_active = True
             listing.last_confirmed_at = datetime.now()
@@ -2120,7 +2212,7 @@ class BaseScraper(ABC):
             elif other_changed:
                 update_type = 'other_updates'
                 update_details = ', '.join(changed_fields)  # 変更内容を記録
-                self.logger.info(f"その他更新: {url}")
+                self.logger.info(f"その他更新: {url} - 詳細: {update_details}")
             else:
                 update_type = 'refetched_unchanged'
                 self.logger.debug(f"変更なし: {url}")
@@ -2129,10 +2221,66 @@ class BaseScraper(ABC):
             if published_at and (not listing.published_at or published_at > listing.published_at):
                 listing.published_at = published_at
             
-            # 追加の属性を更新
+            # 追加の属性を更新（変更を追跡）
             for key, value in kwargs.items():
                 if hasattr(listing, key) and value is not None:
+                    old_value = getattr(listing, key)
+                    if old_value != value:
+                        # 特定のフィールドについて変更を記録
+                        if key == 'listing_floor_number' and old_value is not None:
+                            other_changed = True
+                            changed_fields.append(f'所在階({old_value}階→{value}階)')
+                        elif key == 'listing_area' and old_value is not None:
+                            other_changed = True
+                            changed_fields.append(f'面積({old_value}㎡→{value}㎡)')
+                        elif key == 'listing_layout' and old_value is not None:
+                            other_changed = True
+                            changed_fields.append(f'間取り({old_value}→{value})')
+                        elif key == 'listing_direction' and old_value is not None:
+                            other_changed = True
+                            changed_fields.append(f'方角({old_value}→{value})')
+                        elif key == 'listing_total_floors' and old_value is not None:
+                            other_changed = True
+                            changed_fields.append(f'総階数({old_value}階→{value}階)')
+                        elif key == 'listing_balcony_area' and old_value is not None:
+                            other_changed = True
+                            changed_fields.append(f'バルコニー面積({old_value}㎡→{value}㎡)')
+                        else:
+                            # その他のフィールドも変更を記録
+                            # 除外するフィールド（これらは更新として扱わない）
+                            excluded_fields = {
+                                'remarks', 'agency_tel', 'detail_fetched_at', 'last_confirmed_at',
+                                'is_active', 'price_updated_at', 'scraped_from_area'
+                            }
+                            
+                            if not key.startswith('_') and key not in excluded_fields:
+                                # フィールド名を日本語に変換
+                                field_name_map = {
+                                    'listing_address': '住所',
+                                    'listing_building_name': '建物名',
+                                    'agency_name': '不動産会社'
+                                }
+                                field_display_name = field_name_map.get(key, key)
+                                
+                                if old_value is not None:
+                                    # 既存値がある場合の変更
+                                    other_changed = True
+                                    changed_fields.append(f'{field_display_name}({old_value}→{value})')
+                                    self.logger.debug(f"フィールド変更検出: {key} ({old_value} → {value})")
+                                elif key not in {'listing_building_name'}:  # 建物名は上で処理済み
+                                    # NULLから新規設定の場合（重要なフィールドのみ）
+                                    important_fields = {'listing_address', 'agency_name'}
+                                    if key in important_fields:
+                                        other_changed = True
+                                        changed_fields.append(f'{field_display_name}(新規設定: {value})')
+                                        self.logger.debug(f"フィールド新規設定: {key} = {value}")
                     setattr(listing, key, value)
+            
+            # 更新タイプを再判定（kwargsでの変更も含める）
+            if other_changed and update_type == 'refetched_unchanged':
+                update_type = 'other_updates'
+                update_details = ', '.join(changed_fields)
+                self.logger.info(f"その他更新（追加フィールド）: {url} - 詳細: {update_details}")
         else:
             # 新規作成
             try:
@@ -2262,8 +2410,17 @@ class BaseScraper(ABC):
                     self.logger.warning(f"物件建物名の更新に失敗しました (property_id={master_property.id}): {e}")
         
         # update_detailsがローカル変数でない場合のために初期化
+        # update_detailsが定義されていない場合の処理
         if 'update_details' not in locals():
-            update_details = None
+            # other_changedがTrueでchanged_fieldsがある場合は、update_detailsを生成
+            if update_type == 'other_updates' and 'changed_fields' in locals() and changed_fields:
+                update_details = ', '.join(changed_fields)
+            else:
+                update_details = None
+        
+        # デバッグログ
+        if update_type == 'other_updates' and not update_details:
+            self.logger.warning(f"その他更新と判定されたが詳細が空です - URL: {url}")
         
         return listing, update_type, update_details
     

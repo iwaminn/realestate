@@ -37,9 +37,6 @@ class RehouseScraper(BaseScraper):
     
     # 定数の定義
     MIN_PROPERTY_PRICE = 1000  # 物件価格の最小値（万円）
-    MAX_IMAGE_COUNT = 10  # 画像の最大取得数
-    MIN_REMARKS_LENGTH = 10  # 備考の最小文字数
-    MAX_SUMMARY_LENGTH = 200  # 要約の最大文字数
     
     # 価格を含まないキーワード（これらが含まれる価格情報は無視）
     PRICE_EXCLUDE_KEYWORDS = ['管理費', '修繕', '賃料', '駐車場']
@@ -52,7 +49,7 @@ class RehouseScraper(BaseScraper):
         self.http_session = requests.Session()
         self.http_session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ja-JP,ja;q=0.9,en;q=0.8',
         })
     
@@ -199,6 +196,12 @@ class RehouseScraper(BaseScraper):
         if price:
             property_data['price'] = price
         
+        # 建物名を取得（一覧ページから）
+        title_elem = item.select_one('.property-index-card-inner h3, .property-index-card-inner .title')
+        if title_elem:
+            building_name = title_elem.get_text(strip=True)
+            property_data['building_name_from_list'] = building_name
+        
         # description-section内の詳細情報
         desc_section = inner.select_one('.description-section')
         if desc_section:
@@ -280,7 +283,12 @@ class RehouseScraper(BaseScraper):
                 self.logger.error(f"[REHOUSE] 詳細ページで不正なsite_property_idを検出しました: '{site_property_id}'")
                 return None
                 
-            property_data = {'url': url, 'source_site': self.SOURCE_SITE, 'site_property_id': site_property_id}
+            property_data = {
+                'url': url, 
+                'source_site': self.SOURCE_SITE, 
+                'site_property_id': site_property_id,
+                '_page_text': soup.get_text()  # 建物名一致確認用
+            }
             
             # 物件名
             h1_elem = soup.find('h1')
@@ -303,11 +311,7 @@ class RehouseScraper(BaseScraper):
             # 日付情報を抽出
             self._extract_date_info(soup, property_data)
             
-            # 備考・特徴を抽出
-            self._extract_remarks(soup, property_data)
             
-            # 画像URLを抽出
-            self._extract_images(soup, property_data)
             
             # 詳細ページでの必須フィールドを検証
             if not self.validate_detail_page_fields(property_data, url):
@@ -577,46 +581,7 @@ class RehouseScraper(BaseScraper):
                 print(f"情報提供日: {property_data['published_at'].strftime('%Y-%m-%d')}")
                 break
     
-    def _extract_remarks(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
-        """備考・特記事項を抽出"""
-        remarks_selectors = [
-            '.remarks', '.feature', '.comment', '.description',
-            '[class*="remark"]', '[class*="feature"]', '[class*="comment"]'
-        ]
-        
-        remarks_texts = []
-        for selector in remarks_selectors:
-            remarks_elem = soup.select_one(selector)
-            if remarks_elem:
-                text = remarks_elem.get_text(strip=True)
-                if text and len(text) > self.MIN_REMARKS_LENGTH:
-                    remarks_texts.append(text)
-        
-        if remarks_texts:
-            property_data['remarks'] = '\n'.join(remarks_texts)
-            # 要約も生成
-            property_data['summary_remarks'] = property_data['remarks'][:self.MAX_SUMMARY_LENGTH]
     
-    def _extract_images(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
-        """画像URLを抽出"""
-        image_urls = []
-        img_selectors = [
-            'img[src*="property"]', 'img[src*="bukken"]',
-            '.property-image img', '.photo img'
-        ]
-        
-        for selector in img_selectors:
-            img_elements = soup.select(selector)
-            for img in img_elements:
-                src = img.get('src')
-                if src:
-                    if not src.startswith('http'):
-                        src = urljoin(self.BASE_URL, src)
-                    if src not in image_urls:
-                        image_urls.append(src)
-        
-        if image_urls:
-            property_data['image_urls'] = image_urls[:self.MAX_IMAGE_COUNT]
     
     def scrape_area(self, area: str = "minato", max_pages: int = 5):
         """エリアの物件をスクレイピング（東京都港区に対応）"""
@@ -630,10 +595,6 @@ class RehouseScraper(BaseScraper):
     
     def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
         """物件情報をデータベースに保存"""
-        # 画像URLをimagesに変換（基底クラスの期待する形式）
-        if property_data.get('image_urls'):
-            property_data['images'] = property_data['image_urls']
-        
         # 共通の保存処理を使用
         return self.save_property_common(property_data, existing_listing)
     

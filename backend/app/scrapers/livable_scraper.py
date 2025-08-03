@@ -27,7 +27,6 @@ class LivableScraper(BaseScraper):
     BASE_URL = "https://www.livable.co.jp"
     
     # 定数の定義
-    MAX_IMAGE_COUNT = 10  # 画像の最大取得数
     PRICE_MISMATCH_RETRY_DAYS = 7  # 価格不一致時の再試行日数
     PRICE_MISMATCH_THRESHOLD = 0.1  # 価格不一致の閾値（10%）
     DEFAULT_AGENCY_NAME = "東急リバブル"
@@ -164,6 +163,12 @@ class LivableScraper(BaseScraper):
         # 価格を取得
         self._extract_list_price(item, property_data)
         
+        # 建物名を取得（一覧ページから）
+        building_name_elem = item.select_one('.o-product-list__title, .o-map-search__property-title')
+        if building_name_elem:
+            building_name = building_name_elem.get_text(strip=True)
+            property_data['building_name_from_list'] = building_name
+        
         # 一覧ページでの必須フィールドを検証（基底クラスの共通メソッドを使用）
         if self.validate_list_page_fields(property_data):
             return property_data
@@ -295,7 +300,8 @@ class LivableScraper(BaseScraper):
                 
             property_data = {
                 'url': url,
-                'site_property_id': site_property_id
+                'site_property_id': site_property_id,
+                '_page_text': soup.get_text()  # 建物名一致確認用
             }
             
             detail_info = {}
@@ -373,8 +379,6 @@ class LivableScraper(BaseScraper):
         # 不動産会社情報を取得
         self._extract_agency_info(soup, property_data)
         
-        # 画像URLを取得
-        self._extract_images(soup, property_data, url)
         
         # 建物名が取得できなかった場合の警告
         if not property_data.get('building_name'):
@@ -572,20 +576,6 @@ class LivableScraper(BaseScraper):
         if tel_match:
             property_data['agency_tel'] = tel_match.group(0)
     
-    def _extract_images(self, soup: BeautifulSoup, property_data: Dict[str, Any], url: str):
-        """画像URLを抽出"""
-        image_urls = []
-        image_elements = soup.select('img.property-image, .gallery img, .slider img')
-        for img in image_elements[:self.MAX_IMAGE_COUNT]:
-            img_url = img.get('src') or img.get('data-src')
-            if img_url:
-                # 相対URLを絶対URLに変換
-                img_url = urljoin(url, img_url)
-                if img_url not in image_urls:
-                    image_urls.append(img_url)
-        
-        if image_urls:
-            property_data['image_urls'] = image_urls
     
     def _copy_detail_info_to_property_data(self, detail_info: Dict[str, Any], property_data: Dict[str, Any]):
         """detail_infoの重要な情報をproperty_dataにコピー"""

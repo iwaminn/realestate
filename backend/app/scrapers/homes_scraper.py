@@ -73,7 +73,7 @@ class HomesScraper(BaseScraper):
         """HTTPヘッダーの設定"""
         self.http_session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
             'Accept-Encoding': 'gzip, deflate, br',
             'Cache-Control': 'no-cache',
@@ -482,22 +482,6 @@ class HomesScraper(BaseScraper):
         
         return agency_name, agency_tel
     
-    def _extract_images(self, soup: BeautifulSoup) -> List[str]:
-        """画像URLを抽出"""
-        image_urls = []
-        
-        # メイン画像
-        main_image = soup.select_one('.mainPhoto img, .photo img, [class*="main-image"] img')
-        if main_image and main_image.get('src'):
-            image_urls.append(urljoin(self.BASE_URL, main_image.get('src')))
-        
-        # サブ画像
-        sub_images = soup.select('.subPhoto img, .thumbs img, [class*="sub-image"] img, .gallery img')
-        for img in sub_images[:9]:  # 最大10枚（メイン1枚 + サブ9枚）
-            if img.get('src'):
-                image_urls.append(urljoin(self.BASE_URL, img.get('src')))
-        
-        return image_urls
     
     def parse_property_detail(self, url: str, property_data_from_list: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         """物件詳細を解析
@@ -522,6 +506,7 @@ class HomesScraper(BaseScraper):
             
             property_data = {'url': url}
             page_text = soup.get_text()
+            property_data['_page_text'] = page_text  # 建物名一致確認用
             
             # URLから物件IDを抽出
             if not self._extract_site_property_id(url, property_data):
@@ -538,8 +523,6 @@ class HomesScraper(BaseScraper):
             if building_name:
                 property_data['building_name'] = building_name
                 property_data['title'] = building_name
-            else:
-                property_data['title'] = '物件名不明'
             
             if room_number:
                 property_data['room_number'] = room_number
@@ -582,34 +565,7 @@ class HomesScraper(BaseScraper):
             if agency_tel:
                 property_data['agency_tel'] = agency_tel
             
-            # 画像URL
-            image_urls = self._extract_images(soup)
-            if image_urls:
-                property_data['image_urls'] = image_urls
-                property_data['image_url'] = image_urls[0]  # 後方互換性
             
-            # 物件説明
-            description_elem = soup.select_one('.comment, .pr-comment, [class*="description"]')
-            if description_elem:
-                property_data['description'] = description_elem.get_text(strip=True)
-            
-            # デフォルト値設定
-            property_data.setdefault('building_type', 'マンション')
-            property_data.setdefault('address', '東京都港区')
-            
-            # 建物名が取得できない場合の処理
-            if not property_data.get('building_name'):
-                # タイトルから建物名を生成（最後の手段）
-                if property_data.get('address'):
-                    # 住所から建物名を生成
-                    property_data['building_name'] = f"{property_data['address']}の物件"
-                    property_data['title'] = property_data['building_name']
-                    self.logger.warning(f"[HOMES] 建物名が取得できないため、住所から生成: {property_data['building_name']}")
-                else:
-                    # それでも無理な場合は物件IDから生成
-                    property_data['building_name'] = f"物件ID: {property_data.get('site_property_id', 'unknown')}"
-                    property_data['title'] = property_data['building_name']
-                    self.logger.warning(f"[HOMES] 建物名が取得できないため、IDから生成: {property_data['building_name']}")
             
             # 詳細ページでの必須フィールドを検証
             if not self.validate_detail_page_fields(property_data, url):
@@ -818,8 +774,6 @@ class HomesScraper(BaseScraper):
                 print(f"    バルコニー面積を更新: {detail_data['balcony_area']}㎡")
             
             # 掲載情報を更新
-            if detail_data.get('description'):
-                listing.description = detail_data['description']
             
             if detail_data.get('station_info'):
                 listing.station_info = detail_data['station_info']
@@ -844,11 +798,6 @@ class HomesScraper(BaseScraper):
                 listing.remarks = detail_data['remarks']
                 print(f"    備考を更新")
             
-            # 画像を追加
-            if detail_data.get('image_urls'):
-                self.add_property_images(listing, detail_data['image_urls'])
-            elif detail_data.get('image_url'):
-                self.add_property_images(listing, [detail_data['image_url']])
             
             # 建物情報を更新
             building = listing.master_property.building

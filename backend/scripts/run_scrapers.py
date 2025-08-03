@@ -13,7 +13,7 @@ import time
 import logging
 import argparse
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from backend.app.scrapers.suumo_scraper import SuumoScraper
 from backend.app.scrapers.rehouse_scraper import RehouseScraper
 from backend.app.scrapers.homes_scraper import HomesScraper

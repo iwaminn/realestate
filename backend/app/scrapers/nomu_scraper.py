@@ -125,6 +125,7 @@ class NomuScraper(BaseScraper):
                 building_name = link.get_text(strip=True)
                 property_data['title'] = building_name
                 property_data['building_name'] = building_name
+                property_data['building_name_from_list'] = building_name  # 建物名一致確認用
                 property_data['url'] = urljoin(self.BASE_URL, link['href'])
                 
                 # URLから物件IDを抽出
@@ -304,7 +305,10 @@ class NomuScraper(BaseScraper):
         if not soup:
             return None
             
-        detail_data = {'url': url}
+        detail_data = {
+            'url': url,
+            '_page_text': soup.get_text()  # 建物名一致確認用
+        }
         
         # URLから物件IDを抽出
         id_match = re.search(r'/mansion/id/([^/]+)/', url)
