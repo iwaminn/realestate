@@ -215,19 +215,44 @@ class HomesScraper(BaseScraper):
         
         # それでも取得できない場合は従来のロジックを使用
         if not building_name:
-            # h1タグから情報を取得
+            # h1タグから情報を取得（新しい構造に対応）
             h1_elem = soup.select_one('h1.font-bold, h1[class*="text-2xl"], h1')
             if h1_elem:
-                h1_text = h1_elem.get_text(strip=True)
-                # 駅名情報のパターンを含む場合はスキップ
-                if any(pattern in h1_text for pattern in ['徒歩', '駅', '（', '区）', '市）', '線']):
-                    self.logger.warning(f"[HOMES] h1タグは駅名情報のため建物名として使用しません: {h1_text}")
+                # H1内のspan要素を探す
+                spans = h1_elem.select('span')
+                if len(spans) >= 2:
+                    # 2番目のspanタグが建物名
+                    building_name_text = spans[1].get_text(strip=True)
+                    # 階数情報を除去（例：「パルロイヤルアレフ赤坂 2階/207」→「パルロイヤルアレフ赤坂」）
+                    if ' ' in building_name_text:
+                        parts = building_name_text.split(' ')
+                        # 最後の部分が階数情報の場合は除去
+                        if parts[-1] and ('階' in parts[-1] or '/' in parts[-1]):
+                            building_name = ' '.join(parts[:-1])
+                        else:
+                            building_name = building_name_text
+                    else:
+                        building_name = building_name_text
+                    
+                    # 部屋番号も抽出（階数情報の後ろにある可能性）
+                    if ' ' in building_name_text and '/' in building_name_text:
+                        match = re.search(r'/(\d{3,4}[A-Z]?)(?:\s|$)', building_name_text)
+                        if match:
+                            room_number = match.group(1)
+                    
+                    self.logger.info(f"[HOMES] h1のspan要素から建物名を取得: {building_name}")
                 else:
-                    if '中古マンション' in h1_text:
-                        h1_text = h1_text.replace('中古マンション', '').strip()
-                    parts = h1_text.split('/')
-                    if parts:
-                        building_name = parts[0].strip()
+                    # 従来の方法（span要素がない場合）
+                    h1_text = h1_elem.get_text(strip=True)
+                    # 駅名情報のパターンを含む場合はスキップ
+                    if any(pattern in h1_text for pattern in ['徒歩', '駅', '（', '区）', '市）', '線']):
+                        self.logger.warning(f"[HOMES] h1タグは駅名情報のため建物名として使用しません: {h1_text}")
+                    else:
+                        if '中古マンション' in h1_text:
+                            h1_text = h1_text.replace('中古マンション', '').strip()
+                        parts = h1_text.split('/')
+                        if parts:
+                            building_name = parts[0].strip()
         
         # titleタグまたはog:titleから情報を取得
         if not building_name:
@@ -263,7 +288,6 @@ class HomesScraper(BaseScraper):
                 building_name = None
             else:
                 building_name = re.sub(r'^(中古マンション|マンション)', '', building_name).strip()
-                building_name = self.normalize_building_name(building_name)
         
         return building_name, room_number
     
