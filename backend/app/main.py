@@ -840,11 +840,6 @@ async def get_duplicate_buildings(
     
     app_logger.info(f"Loaded {len(exclusions)} exclusion pairs, total pairs in set: {len(excluded_pairs)}")
     
-    # デバッグ: 1552-2080のペアが含まれているか確認
-    if (1552, 2080) in excluded_pairs or (2080, 1552) in excluded_pairs:
-        app_logger.info(f"Exclusion pair 1552-2080 is loaded: (1552,2080)={(1552, 2080) in excluded_pairs}, (2080,1552)={(2080, 1552) in excluded_pairs}")
-    
-    
     # 重複候補を検出
     duplicates = []
     processed_ids = set()
@@ -859,10 +854,6 @@ async def get_duplicate_buildings(
         for j, (building2, count2) in enumerate(buildings_with_count[i+1:], i+1):
             if building2.id in processed_ids:
                 continue
-            
-            # デバッグ: 特定のペアを確認
-            if (building1.id == 1552 and building2.id == 2080) or (building1.id == 2080 and building2.id == 1552):
-                app_logger.info(f"Checking pair: {building1.id} vs {building2.id}, excluded_pairs contains: {(building1.id, building2.id) in excluded_pairs}")
             
             # 除外リストに含まれていたらスキップ
             if (building1.id, building2.id) in excluded_pairs:
