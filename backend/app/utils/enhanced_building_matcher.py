@@ -229,40 +229,35 @@ class EnhancedBuildingMatcher:
         scores = []
         weights = []
         
-        # 築年月の一致
+        # 築年月の一致（厳格な判定）
         if building1.built_year and building2.built_year:
-            year_diff = abs(building1.built_year - building2.built_year)
+            # 築月情報の取得
+            month1 = getattr(building1, 'built_month', None)
+            month2 = getattr(building2, 'built_month', None)
             
-            if year_diff == 0:
-                # 同じ年
-                if building1.built_month and building2.built_month:
-                    if building1.built_month == building2.built_month:
-                        scores.append(1.0)  # 年月とも一致
+            if building1.built_year == building2.built_year:
+                # 年が一致する場合
+                if month1 and month2:
+                    # 両方とも月情報がある場合
+                    if month1 == month2:
+                        scores.append(1.0)  # 年月とも完全一致
                     else:
-                        scores.append(0.9)  # 年は一致、月が異なる
+                        scores.append(0.0)  # 年は同じだが月が異なる
                 else:
-                    scores.append(0.95)  # 年のみ一致
-            elif year_diff == 1:
-                scores.append(0.7)  # 1年差（データ誤差の可能性）
-            elif year_diff <= 2:
-                scores.append(0.5)  # 2年差
+                    # 片方または両方の月情報がない場合
+                    scores.append(0.5)  # 年のみで比較（半分の類似度）
             else:
-                scores.append(0.0)  # 3年以上差がある
+                # 年が異なる場合
+                scores.append(0.0)
             
             weights.append(2.0)  # 築年月は重要度高
         
-        # 総階数の一致
+        # 総階数の一致（厳格な判定）
         if building1.total_floors and building2.total_floors:
-            floor_diff = abs(building1.total_floors - building2.total_floors)
-            
-            if floor_diff == 0:
-                scores.append(1.0)  # 完全一致
-            elif floor_diff == 1:
-                scores.append(0.8)  # 1階差（地下階の数え方の違い等）
-            elif floor_diff == 2:
-                scores.append(0.5)  # 2階差
+            if building1.total_floors == building2.total_floors:
+                scores.append(1.0)  # 完全一致のみ
             else:
-                scores.append(0.0)  # 3階以上差がある
+                scores.append(0.0)  # 異なる場合は0
             
             weights.append(1.5)  # 階数も重要
         
