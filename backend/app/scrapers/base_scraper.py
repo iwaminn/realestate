@@ -27,6 +27,7 @@ from ..utils.majority_vote_updater import MajorityVoteUpdater
 from ..utils.exceptions import TaskPausedException, TaskCancelledException, MaintenanceException
 import time as time_module
 from ..utils.debug_logger import debug_log
+from .building_external_id_handler import BuildingExternalIdHandler
 
 
 class BaseScraper(ABC):
@@ -88,6 +89,7 @@ class BaseScraper(ABC):
         self.normalizer = BuildingNameNormalizer()
         self.property_hasher = PropertyHasher()
         self.majority_updater = MajorityVoteUpdater(self.session)
+        self.external_id_handler = BuildingExternalIdHandler(self.session, self.logger)
         
         # スマートスクレイピング設定
         self.detail_refetch_days = self._get_detail_refetch_days()
@@ -1769,7 +1771,7 @@ class BaseScraper(ABC):
         return None
     
     def get_or_create_building(self, building_name: str, address: str = None, external_property_id: str = None, 
-                               built_year: int = None, total_floors: int = None, basement_floors: int = None,
+                               built_year: int = None, total_floors: int = None,
                                total_units: int = None, structure: str = None, land_rights: str = None, 
                                parking_info: str = None) -> Tuple[Optional[Building], Optional[str]]:
         """建物を取得または作成（改善版：元の建物名を保持）"""
@@ -1781,10 +1783,20 @@ class BaseScraper(ABC):
         
         # 外部IDがある場合は先に検索
         if external_property_id:
-            existing_external = self.session.query(BuildingExternalId).filter(
-                BuildingExternalId.source_site == self.source_site,
-                BuildingExternalId.external_id == external_property_id
-            ).first()
+            # トランザクション状態を確認
+            if self.session.is_active:
+                # 何らかのエラーが以前に発生していないか確認
+                try:
+                    # ダミークエリで状態確認
+                    self.session.execute(text("SELECT 1"))
+                except Exception as test_e:
+                    self.logger.warning(f"トランザクションが既にエラー状態: {type(test_e).__name__}")
+                    self.session.rollback()
+            
+            # ハンドラーを使用して既存の外部IDをチェック
+            existing_external = self.external_id_handler.get_existing_external_id(
+                self.source_site, external_property_id
+            )
             
             if existing_external:
                 # 既存の建物を使用
@@ -1804,9 +1816,6 @@ class BaseScraper(ABC):
                         updated = True
                     if total_floors and not building.total_floors:
                         building.total_floors = total_floors
-                        updated = True
-                    if basement_floors is not None and building.basement_floors is None:
-                        building.basement_floors = basement_floors
                         updated = True
                     if updated:
                         self.session.flush()
@@ -1863,20 +1872,8 @@ class BaseScraper(ABC):
                 if total_floors and not building.total_floors:
                     building.total_floors = total_floors
                     updated = True
-                if basement_floors is not None and building.basement_floors is None:
-                    building.basement_floors = basement_floors
-                    updated = True
-                if total_units and not building.total_units:
-                    building.total_units = total_units
-                    updated = True
-                if structure and not building.structure:
-                    building.structure = structure
-                    updated = True
-                if land_rights and not building.land_rights:
-                    building.land_rights = land_rights
-                    updated = True
-                if parking_info and not building.parking_info:
-                    building.parking_info = parking_info
+                if structure and not building.construction_type:
+                    building.construction_type = structure
                     updated = True
                 
                 if updated:
@@ -1884,35 +1881,12 @@ class BaseScraper(ABC):
                 
                 # 外部IDを追加（既存の建物でも、外部IDが未登録の場合は追加）
                 if external_property_id:
-                    existing_external_id = self.session.query(BuildingExternalId).filter(
-                        BuildingExternalId.building_id == building.id,
-                        BuildingExternalId.source_site == self.source_site,
-                        BuildingExternalId.external_id == external_property_id
-                    ).first()
-                    
-                    if not existing_external_id:
-                        try:
-                            external_id = BuildingExternalId(
-                                building_id=building.id,
-                                source_site=self.source_site,
-                                external_id=external_property_id
-                            )
-                            self.session.add(external_id)
-                            self.session.flush()
-                            print(f"[INFO] 既存建物に外部IDを追加: building_id={building.id}, external_id={external_property_id}")
-                        except Exception as e:
-                            # 外部ID追加時のエラーをキャッチ
-                            self.session.rollback()
-                            # 新しいトランザクションを開始
-                            self.session.begin()
-                            print(f"[WARNING] 外部ID追加エラー: {e}")
-                            # 既に別の建物に紐付いている可能性をチェック
-                            existing = self.session.query(BuildingExternalId).filter(
-                                BuildingExternalId.source_site == self.source_site,
-                                BuildingExternalId.external_id == external_property_id
-                            ).first()
-                            if existing:
-                                print(f"[WARNING] 外部ID {external_property_id} は既に建物ID {existing.building_id} に紐付いています")
+                    # ハンドラーを使用して外部IDを追加
+                    success = self.external_id_handler.add_external_id(
+                        building.id, self.source_site, external_property_id
+                    )
+                    if success:
+                        print(f"[INFO] 既存建物に外部IDを関連付け: building_id={building.id}, external_id={external_property_id}")
                 
                 return building, extracted_room_number
             
@@ -1927,46 +1901,19 @@ class BaseScraper(ABC):
             address=address,
             built_year=built_year,
             total_floors=total_floors,
-            basement_floors=basement_floors,
-            total_units=total_units,
-            structure=structure,
-            land_rights=land_rights,
-            parking_info=parking_info
+            construction_type=structure       # structureはconstruction_typeとして保存
         )
         self.session.add(building)
         self.session.flush()
         
         # 外部IDを追加（ある場合）
         if external_property_id:
-            # 既存の外部IDをチェック
-            existing_external_id = self.session.query(BuildingExternalId).filter(
-                BuildingExternalId.building_id == building.id,
-                BuildingExternalId.source_site == self.source_site,
-                BuildingExternalId.external_id == external_property_id
-            ).first()
-            
-            if not existing_external_id:
-                try:
-                    external_id = BuildingExternalId(
-                        building_id=building.id,
-                        source_site=self.source_site,
-                        external_id=external_property_id
-                    )
-                    self.session.add(external_id)
-                    self.session.flush()
-                except Exception as e:
-                    # 外部ID追加時のエラーをキャッチ
-                    self.session.rollback()
-                    # 新しいトランザクションを開始
-                    self.session.begin()
-                    print(f"[WARNING] 新規建物への外部ID追加エラー: {e}")
-                    # 既に別の建物に紐付いている可能性をチェック
-                    existing = self.session.query(BuildingExternalId).filter(
-                        BuildingExternalId.source_site == self.source_site,
-                        BuildingExternalId.external_id == external_property_id
-                    ).first()
-                    if existing:
-                        print(f"[WARNING] 外部ID {external_property_id} は既に建物ID {existing.building_id} に紐付いています")
+            # ハンドラーを使用して外部IDを追加
+            success = self.external_id_handler.add_external_id(
+                building.id, self.source_site, external_property_id
+            )
+            if success:
+                print(f"[INFO] 新規建物に外部IDを関連付け: building_id={building.id}, external_id={external_property_id}")
         
         return building, extracted_room_number
     
@@ -3027,11 +2974,7 @@ class BaseScraper(ABC):
                 external_property_id=property_data.get('site_property_id'),
                 built_year=property_data.get('built_year'),
                 total_floors=property_data.get('total_floors'),
-                basement_floors=property_data.get('basement_floors'),
-                total_units=property_data.get('total_units'),
-                structure=property_data.get('structure'),
-                land_rights=property_data.get('land_rights'),
-                parking_info=property_data.get('parking_info')
+                structure=property_data.get('structure')
             )
             
             if not building:
