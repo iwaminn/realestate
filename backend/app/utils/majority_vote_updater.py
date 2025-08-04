@@ -133,6 +133,7 @@ class MajorityVoteUpdater:
             'management_fees': [],
             'repair_funds': [],
             'station_infos': [],
+            'parking_infos': [],
             'addresses': [],
             'prices': []  # 価格情報も収集
         }
@@ -165,6 +166,8 @@ class MajorityVoteUpdater:
                 info['balcony_areas'].append((listing.listing_balcony_area, listing.source_site))
             if hasattr(listing, 'listing_address') and listing.listing_address:
                 info['addresses'].append((listing.listing_address, listing.source_site))
+            if hasattr(listing, 'listing_parking_info') and listing.listing_parking_info:
+                info['parking_infos'].append((listing.listing_parking_info, listing.source_site))
         
         return info
     
@@ -253,6 +256,14 @@ class MajorityVoteUpdater:
                 master_property.station_info = majority_station
                 updated = True
         
+        # 駐車場情報の多数決
+        if info['parking_infos']:
+            majority_parking = self.get_majority_value(info['parking_infos'], master_property.parking_info)
+            if majority_parking != master_property.parking_info:
+                logger.info(f"物件ID {master_property.id} の駐車場情報を更新")
+                master_property.parking_info = majority_parking
+                updated = True
+        
         return updated
     
     def update_building_by_majority(self, building: Building) -> bool:
@@ -292,12 +303,46 @@ class MajorityVoteUpdater:
                 building.built_year = majority_built_year
                 updated = True
         
+        # 築月の多数決
+        if building_info['built_months']:
+            majority_built_month = self.get_majority_value(building_info['built_months'], building.built_month)
+            if majority_built_month != building.built_month:
+                logger.info(f"建物 '{building.normalized_name}' の築月を "
+                          f"{building.built_month} → {majority_built_month} に更新")
+                building.built_month = majority_built_month
+                updated = True
+        
         # 構造の多数決
         if building_info['structures']:
-            majority_structure = self.get_majority_value(building_info['structures'], building.structure)
-            if majority_structure != building.structure:
+            majority_structure = self.get_majority_value(building_info['structures'], building.construction_type)
+            if majority_structure != building.construction_type:
                 logger.info(f"建物 '{building.normalized_name}' の構造を更新")
-                building.structure = majority_structure
+                building.construction_type = majority_structure
+                updated = True
+        
+        # 地下階数の多数決
+        if building_info['basement_floors']:
+            majority_basement_floors = self.get_majority_value(building_info['basement_floors'], building.basement_floors)
+            if majority_basement_floors != building.basement_floors:
+                logger.info(f"建物 '{building.normalized_name}' の地下階数を "
+                          f"{building.basement_floors} → {majority_basement_floors} に更新")
+                building.basement_floors = majority_basement_floors
+                updated = True
+        
+        # 敷地権利形態の多数決
+        if building_info['land_rights']:
+            majority_land_rights = self.get_majority_value(building_info['land_rights'], building.land_rights)
+            if majority_land_rights != building.land_rights:
+                logger.info(f"建物 '{building.normalized_name}' の敷地権利形態を更新")
+                building.land_rights = majority_land_rights
+                updated = True
+        
+        # 交通情報の多数決（建物レベル）
+        if building_info['station_infos']:
+            majority_station_info = self.get_majority_value(building_info['station_infos'], building.station_info)
+            if majority_station_info != building.station_info:
+                logger.info(f"建物 '{building.normalized_name}' の交通情報を更新")
+                building.station_info = majority_station_info
                 updated = True
         
         return updated
@@ -341,7 +386,11 @@ class MajorityVoteUpdater:
             'addresses': [],
             'total_floors': [],
             'built_years': [],
-            'structures': []
+            'built_months': [],
+            'structures': [],
+            'basement_floors': [],
+            'land_rights': [],
+            'station_infos': []
         }
         
         for listing in listings:
@@ -352,8 +401,16 @@ class MajorityVoteUpdater:
                 info['total_floors'].append((listing.listing_total_floors, listing.source_site))
             if hasattr(listing, 'listing_built_year') and listing.listing_built_year:
                 info['built_years'].append((listing.listing_built_year, listing.source_site))
+            if hasattr(listing, 'listing_built_month') and listing.listing_built_month:
+                info['built_months'].append((listing.listing_built_month, listing.source_site))
             if hasattr(listing, 'listing_building_structure') and listing.listing_building_structure:
                 info['structures'].append((listing.listing_building_structure, listing.source_site))
+            if hasattr(listing, 'listing_basement_floors') and listing.listing_basement_floors:
+                info['basement_floors'].append((listing.listing_basement_floors, listing.source_site))
+            if hasattr(listing, 'listing_land_rights') and listing.listing_land_rights:
+                info['land_rights'].append((listing.listing_land_rights, listing.source_site))
+            if hasattr(listing, 'listing_station_info') and listing.listing_station_info:
+                info['station_infos'].append((listing.listing_station_info, listing.source_site))
         
         return info
     

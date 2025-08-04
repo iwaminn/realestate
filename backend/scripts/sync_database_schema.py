@@ -131,7 +131,6 @@ def main():
             ('master_properties', 'MasterProperty'),
             ('property_listings', 'PropertyListing'),
             ('listing_price_history', 'ListingPriceHistory'),
-            ('property_images', 'PropertyImage'),
             ('building_external_ids', 'BuildingExternalId'),
             ('scraping_tasks', 'ScrapingTask'),
             ('building_merge_history', 'BuildingMergeHistory'),

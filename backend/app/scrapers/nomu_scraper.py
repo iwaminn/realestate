@@ -576,6 +576,10 @@ class NomuScraper(BaseScraper):
             built_year = extract_built_year(value)
             if built_year:
                 detail_data['built_year'] = built_year
+                # 月情報も取得
+                month_match = re.search(r'(\d{1,2})月', value)
+                if month_match:
+                    detail_data['built_month'] = int(month_match.group(1))
         
         elif label == "管理費":
             management_fee = extract_monthly_fee(value)

@@ -7,6 +7,7 @@ export interface Building {
   basement_floors?: number;
   total_units?: number;
   built_year?: number;
+  built_month?: number;
   structure?: string;
   land_rights?: string;
   parking_info?: string;

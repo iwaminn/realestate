@@ -48,6 +48,8 @@ interface DuplicateGroup {
     normalized_name: string;
     address: string;
     total_floors?: number | null;
+    built_year?: number | null;
+    built_month?: number | null;
     property_count: number;
   };
   candidates: Array<{
@@ -55,9 +57,14 @@ interface DuplicateGroup {
     normalized_name: string;
     address: string;
     total_floors?: number | null;
+    built_year?: number | null;
+    built_month?: number | null;
     property_count: number;
     similarity: number;
     address_similarity?: number;
+    name_similarity?: number;
+    attribute_similarity?: number;
+    match_reason?: string;
     floors_match?: boolean;
   }>;
 }
@@ -582,6 +589,7 @@ const BuildingDuplicateManager: React.FC = () => {
                               <TableCell>建物名</TableCell>
                               <TableCell>住所</TableCell>
                               <TableCell align="center">階数</TableCell>
+                              <TableCell align="center">築年</TableCell>
                               <TableCell align="center">物件数</TableCell>
                               <TableCell align="center">類似度</TableCell>
                             </TableRow>
@@ -592,22 +600,53 @@ const BuildingDuplicateManager: React.FC = () => {
                                 <TableCell>{candidate.normalized_name}</TableCell>
                                 <TableCell>{candidate.address || '-'}</TableCell>
                                 <TableCell align="center">{candidate.total_floors || '-'}F</TableCell>
+                                <TableCell align="center">
+                                  {candidate.built_year ? (
+                                    candidate.built_month ? 
+                                      `${candidate.built_year}年${candidate.built_month}月` : 
+                                      `${candidate.built_year}年`
+                                  ) : '-'}
+                                </TableCell>
                                 <TableCell align="center">{candidate.property_count}</TableCell>
                                 <TableCell align="center">
                                   <Box display="flex" flexDirection="column" alignItems="center" gap={0.5}>
                                     <Chip
-                                      label={`名前: ${(candidate.similarity * 100).toFixed(0)}%`}
+                                      label={`総合: ${(candidate.similarity * 100).toFixed(0)}%`}
                                       size="small"
                                       color={getSimilarityColor(candidate.similarity)}
-                                      sx={{ minWidth: '80px' }}
+                                      sx={{ minWidth: '90px' }}
                                     />
+                                    {candidate.name_similarity !== undefined && (
+                                      <Chip
+                                        label={`名前: ${(candidate.name_similarity * 100).toFixed(0)}%`}
+                                        size="small"
+                                        variant="outlined"
+                                        color={candidate.name_similarity >= 0.8 ? 'success' : 'default'}
+                                        sx={{ minWidth: '90px' }}
+                                      />
+                                    )}
                                     {candidate.address_similarity !== undefined && (
                                       <Chip
                                         label={`住所: ${(candidate.address_similarity * 100).toFixed(0)}%`}
                                         size="small"
                                         variant="outlined"
-                                        sx={{ minWidth: '80px' }}
+                                        color={candidate.address_similarity >= 0.9 ? 'success' : 'default'}
+                                        sx={{ minWidth: '90px' }}
                                       />
+                                    )}
+                                    {candidate.attribute_similarity !== undefined && (
+                                      <Chip
+                                        label={`属性: ${(candidate.attribute_similarity * 100).toFixed(0)}%`}
+                                        size="small"
+                                        variant="outlined"
+                                        color={candidate.attribute_similarity >= 0.8 ? 'success' : 'default'}
+                                        sx={{ minWidth: '90px' }}
+                                      />
+                                    )}
+                                    {candidate.match_reason && (
+                                      <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                                        {candidate.match_reason}
+                                      </Typography>
                                     )}
                                   </Box>
                                 </TableCell>

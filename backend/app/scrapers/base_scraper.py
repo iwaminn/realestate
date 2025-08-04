@@ -19,7 +19,7 @@ from ..config.scraping_config import PAUSE_TIMEOUT_SECONDS
 from ..database import SessionLocal
 from ..models import (
     Building, MasterProperty, PropertyListing, 
-    ListingPriceHistory, PropertyImage, BuildingExternalId, Url404Retry
+    ListingPriceHistory, BuildingExternalId, Url404Retry
 )
 from ..utils.building_normalizer import BuildingNameNormalizer
 from ..utils.property_hasher import PropertyHasher
@@ -1526,19 +1526,6 @@ class BaseScraper(ABC):
             property_data['property_saved'] = False
             return False
     
-    def add_property_images(self, listing: PropertyListing, image_urls: List[str]):
-        """物件画像を追加"""
-        # 既存の画像を削除
-        self.session.query(PropertyImage).filter_by(property_listing_id=listing.id).delete()
-        
-        # 新しい画像を追加
-        for i, url in enumerate(image_urls):
-            image = PropertyImage(
-                property_listing_id=listing.id,
-                image_url=url,
-                display_order=i
-            )
-            self.session.add(image)
     
     def validate_property_data(self, property_data: Dict[str, Any]) -> bool:
         """物件データの妥当性をチェック"""
@@ -1771,9 +1758,8 @@ class BaseScraper(ABC):
         return None
     
     def get_or_create_building(self, building_name: str, address: str = None, external_property_id: str = None, 
-                               built_year: int = None, total_floors: int = None,
-                               total_units: int = None, structure: str = None, land_rights: str = None, 
-                               parking_info: str = None) -> Tuple[Optional[Building], Optional[str]]:
+                               built_year: int = None, total_floors: int = None, basement_floors: int = None,
+                               total_units: int = None, structure: str = None, land_rights: str = None) -> Tuple[Optional[Building], Optional[str]]:
         """建物を取得または作成（改善版：元の建物名を保持）"""
         if not building_name:
             return None, None
@@ -1813,6 +1799,9 @@ class BaseScraper(ABC):
                         updated = True
                     if built_year and not building.built_year:
                         building.built_year = built_year
+                        updated = True
+                    if built_month and not building.built_month:
+                        building.built_month = built_month
                         updated = True
                     if total_floors and not building.total_floors:
                         building.total_floors = total_floors
@@ -1869,6 +1858,8 @@ class BaseScraper(ABC):
                 if built_year and not building.built_year:
                     building.built_year = built_year
                     updated = True
+                # built_monthは多数決で決定されるため、ここでは更新しない
+                # built_monthの更新はMajorityVoteUpdaterで行われる
                 if total_floors and not building.total_floors:
                     building.total_floors = total_floors
                     updated = True
@@ -1900,6 +1891,7 @@ class BaseScraper(ABC):
             canonical_name=search_key,        # 検索キーを保存
             address=address,
             built_year=built_year,
+            # built_monthは多数決で決定されるため、新規建物作成時は設定しない
             total_floors=total_floors,
             construction_type=structure       # structureはconstruction_typeとして保存
         )
@@ -2009,7 +2001,7 @@ class BaseScraper(ABC):
     
     def create_or_update_listing(self, master_property: MasterProperty, url: str, title: str,
                                price: int, agency_name: str = None, site_property_id: str = None,
-                               description: str = None, station_info: str = None, features: str = None,
+                               description: str = None, station_info: str = None,
                                management_fee: int = None, repair_fund: int = None,
                                published_at: datetime = None, first_published_at: datetime = None,
                                **kwargs) -> tuple[PropertyListing, str]:
@@ -2182,10 +2174,6 @@ class BaseScraper(ABC):
                 changed_fields.append('駅情報')
             listing.station_info = station_info or listing.station_info
             
-            if features and listing.features != features:
-                other_changed = True
-                changed_fields.append('特徴')
-            listing.features = features or listing.features
             
             if management_fee is not None and listing.management_fee != management_fee:
                 other_changed = True
@@ -2307,7 +2295,6 @@ class BaseScraper(ABC):
                     site_property_id=site_property_id,
                     description=description,
                     station_info=station_info,
-                    features=features,
                     management_fee=management_fee,
                     repair_fund=repair_fund,
                     is_active=True,
@@ -2353,8 +2340,7 @@ class BaseScraper(ABC):
                                 site_property_id=site_property_id,
                                 description=description,
                                 station_info=station_info,
-                                features=features,
-                                management_fee=management_fee,
+                                            management_fee=management_fee,
                                 repair_fund=repair_fund,
                                 is_active=True,
                                 published_at=published_at,
@@ -2973,8 +2959,12 @@ class BaseScraper(ABC):
                 address=property_data.get('address'),
                 external_property_id=property_data.get('site_property_id'),
                 built_year=property_data.get('built_year'),
+                # built_monthは多数決で決定されるため、ここでは渡さない
                 total_floors=property_data.get('total_floors'),
-                structure=property_data.get('structure')
+                basement_floors=property_data.get('basement_floors'),
+                structure=property_data.get('structure'),
+                land_rights=property_data.get('land_rights')
+                # station_infoも多数決で決定されるため、ここでは渡さない
             )
             
             if not building:
@@ -3022,7 +3012,6 @@ class BaseScraper(ABC):
                 site_property_id=property_data.get('site_property_id'),
                 description=property_data.get('description'),
                 station_info=property_data.get('station_info'),
-                features=property_data.get('features'),
                 management_fee=property_data.get('management_fee'),
                 repair_fund=property_data.get('repair_fund'),
                 published_at=property_data.get('published_at'),
@@ -3038,8 +3027,14 @@ class BaseScraper(ABC):
                 listing_layout=property_data.get('layout'),
                 listing_direction=property_data.get('direction'),
                 listing_total_floors=property_data.get('total_floors'),
+                listing_built_year=property_data.get('built_year'),
+                listing_built_month=property_data.get('built_month'),
                 listing_balcony_area=property_data.get('balcony_area'),
-                listing_address=property_data.get('address')
+                listing_address=property_data.get('address'),
+                listing_basement_floors=property_data.get('basement_floors'),
+                listing_land_rights=property_data.get('land_rights'),
+                listing_parking_info=property_data.get('parking_info'),
+                listing_station_info=property_data.get('station_info')
             )
             
             # 更新タイプをproperty_dataに設定（外部で使用するため）
@@ -3049,9 +3044,6 @@ class BaseScraper(ABC):
             # 保存成功フラグを設定
             property_data['property_saved'] = True
             
-            # 画像を追加
-            if property_data.get('images'):
-                self.add_property_images(listing, property_data['images'])
             
             # サブクラス固有の処理のためのフック
             self._post_listing_creation_hook(listing, property_data)

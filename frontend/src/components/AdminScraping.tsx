@@ -73,6 +73,16 @@ interface ScrapingTask {
   started_at: string;
   completed_at: string | null;
   created_at?: string;
+  // 並列タスクの統計情報（task直下）
+  total_processed?: number;
+  total_new?: number;
+  total_updated?: number;
+  total_errors?: number;
+  properties_found?: number;
+  detail_fetched?: number;
+  detail_skipped?: number;
+  price_missing?: number;
+  building_info_missing?: number;
   progress: {
     [key: string]: {
       scraper: string;
@@ -275,6 +285,12 @@ const AdminScraping: React.FC = () => {
         ? '/api/admin/scraping/tasks?active_only=true'
         : '/api/admin/scraping/tasks';
       const response = await axios.get(url);
+      
+      // デバッグ: APIレスポンスを確認
+      console.log('fetchTasks - API response:', response.data);
+      if (response.data && response.data.length > 0) {
+        console.log('fetchTasks - First task:', response.data[0]);
+      }
       
       // 実行中のタスクのみの場合
       if (activeOnly) {
@@ -631,23 +647,43 @@ const AdminScraping: React.FC = () => {
   };
   
   const getTaskStats = (task: ScrapingTask) => {
-    // デバッグ用ログ
-    console.log('getTaskStats called for task:', task.task_id, 'type:', task.type, 'statistics:', (task as any).statistics);
-    
-    // 並列タスクの場合、統計情報から取得
-    if (task.type === 'parallel' && (task as any).statistics) {
+    // 並列タスクの場合
+    if (task.type === 'parallel') {
+      // 各進捗から集計する
+      const progressItems = Object.values(task.progress || {});
+      
+      // デバッグログ
+      console.log('Parallel task progress items:', progressItems);
+      
+      // 各進捗の合計を計算
+      const aggregated = progressItems.reduce((stats, progress: any) => ({
+        total: stats.total + (progress.processed || 0),
+        new: stats.new + (progress.new_listings || progress.new || 0),
+        price_updated: stats.price_updated + (progress.price_updated || progress.updated || 0),
+        other_updates: stats.other_updates + (progress.other_updates || 0),
+        refetched_unchanged: stats.refetched_unchanged + (progress.refetched_unchanged || 0),
+        skipped: stats.skipped + (progress.skipped || 0),
+        save_failed: stats.save_failed + (progress.errors || 0)
+      }), { total: 0, new: 0, price_updated: 0, other_updates: 0, refetched_unchanged: 0, skipped: 0, save_failed: 0 });
+      
+      console.log('Parallel task aggregated stats:', aggregated);
+      
+      // statisticsフィールドがある場合は優先的に使用
       const stats = (task as any).statistics;
-      const result = {
-        total: stats.total_processed || 0,
-        new: stats.total_new || 0,
-        price_updated: stats.total_updated || 0,
-        other_updates: 0,
-        refetched_unchanged: 0,
-        skipped: 0,
-        save_failed: stats.total_errors || 0
-      };
-      console.log('Parallel task stats:', result);
-      return result;
+      if (stats) {
+        console.log('Using statistics field:', stats);
+        return {
+          total: stats.total_processed || aggregated.total,
+          new: stats.total_new || aggregated.new,
+          price_updated: stats.total_updated || aggregated.price_updated,
+          other_updates: aggregated.other_updates,
+          refetched_unchanged: aggregated.refetched_unchanged,
+          skipped: aggregated.skipped,
+          save_failed: stats.total_errors || aggregated.save_failed
+        };
+      }
+      
+      return aggregated;
     }
     
     // 従来の直列タスクの計算

@@ -636,8 +636,7 @@ class HomesScraper(BaseScraper):
                 if '/mansion/b-' in href:
                     full_url = urljoin(self.BASE_URL, href)
                     property_data = {
-                        'url': full_url,
-                        'has_update_mark': False
+                        'url': full_url
                     }
                     if self._extract_site_property_id(href, property_data):
                         # 一覧ページでの必須フィールドを検証（基底クラスの共通メソッドを使用）
@@ -675,8 +674,7 @@ class HomesScraper(BaseScraper):
         
         full_url = urljoin(self.BASE_URL, href)
         property_data = {
-            'url': full_url,
-            'has_update_mark': False
+            'url': full_url
         }
         
         # 価格情報を取得
@@ -873,7 +871,6 @@ class HomesScraper(BaseScraper):
             
             listing.detail_info = detail_info
             listing.detail_fetched_at = datetime.now()
-            listing.has_update_mark = False
             
             self.session.commit()
             return True

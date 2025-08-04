@@ -118,10 +118,6 @@ class SuumoScraper(BaseScraper):
                 
                 property_data['site_property_id'] = site_property_id
             
-            # 新着・更新マークを検出（詳細ページ取得の判定用）
-            is_new = bool(unit.select_one('.property_unit-newmark, .icon_new, [class*="new"]'))
-            is_updated = bool(unit.select_one('.property_unit-update, .icon_update, [class*="update"]'))
-            property_data['has_update_mark'] = is_new or is_updated
             
             # 価格を取得（一覧ページから）
             price_elem = unit.select_one('.dottable-value')
@@ -421,6 +417,10 @@ class SuumoScraper(BaseScraper):
             built_year = extract_built_year(value)
             if built_year:
                 property_data['built_year'] = built_year
+                # 月情報も取得
+                month_match = re.search(r'(\d{1,2})月', value)
+                if month_match:
+                    property_data['built_month'] = int(month_match.group(1))
         
         # 交通情報
         elif '交通' in label or 'アクセス' in label:
@@ -915,7 +915,6 @@ class SuumoScraper(BaseScraper):
             
             listing.detail_info = detail_info
             listing.detail_fetched_at = datetime.now()
-            listing.has_update_mark = False
             
             self.session.commit()
             return True

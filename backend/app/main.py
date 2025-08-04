@@ -18,7 +18,7 @@ import re
 from backend.app.database import get_db, init_db
 from backend.app.models import (
     Building, MasterProperty, PropertyListing, 
-    ListingPriceHistory, PropertyImage, BuildingExternalId,
+    ListingPriceHistory, BuildingExternalId,
     BuildingMergeExclusion, BuildingMergeHistory
 )
 from backend.app.utils.logger import app_logger, error_logger, api_logger, db_logger, LogContext, log_api_request, log_database_operation
@@ -412,12 +412,9 @@ async def get_properties_v2(
                 "normalized_name": building.normalized_name,
                 "address": building.address,
                 "total_floors": building.total_floors,
-                "basement_floors": building.basement_floors,
-                "total_units": building.total_units,
                 "built_year": building.built_year,
-                "structure": building.structure,
-                "land_rights": building.land_rights,
-                "parking_info": building.parking_info
+                "built_month": building.built_month,
+                "construction_type": building.construction_type
             },
             "room_number": mp.room_number,
             "floor_number": mp.floor_number,
@@ -425,11 +422,8 @@ async def get_properties_v2(
             "balcony_area": mp.balcony_area,
             "layout": mp.layout,
             "direction": mp.direction,
-            "summary_remarks": mp.summary_remarks,
-            "is_resale": mp.is_resale,
-            "resale_property_id": mp.resale_property_id,
-            "min_price": min_price if not mp.sold_at else mp.last_sale_price,
-            "max_price": max_price if not mp.sold_at else mp.last_sale_price,
+            "min_price": min_price if not mp.sold_at else mp.final_price,
+            "max_price": max_price if not mp.sold_at else mp.final_price,
             "listing_count": listing_count,
             "source_sites": source_sites.split(',') if source_sites else [],
             "has_active_listing": has_active,
@@ -442,7 +436,7 @@ async def get_properties_v2(
             "latest_price_update": str(latest_price_update) if latest_price_update else None,
             "has_price_change": has_price_change if has_price_change is not None else False,
             "sold_at": mp.sold_at.isoformat() if mp.sold_at else None,
-            "last_sale_price": mp.last_sale_price
+            "last_sale_price": mp.final_price
         })
     
     return {
@@ -712,16 +706,13 @@ async def get_building_properties_by_name(
             "balcony_area": mp.balcony_area,
             "layout": mp.layout,
             "direction": mp.direction,
-            "summary_remarks": mp.summary_remarks,
-            "is_resale": mp.is_resale,
-            "resale_property_id": mp.resale_property_id,
-            "min_price": min_price if not mp.sold_at else mp.last_sale_price,
-            "max_price": max_price if not mp.sold_at else mp.last_sale_price,
+            "min_price": min_price if not mp.sold_at else mp.final_price,
+            "max_price": max_price if not mp.sold_at else mp.final_price,
             "listing_count": listing_count or 0,
             "source_sites": source_sites.split(',') if source_sites else [],
             "earliest_published_at": earliest_published_at.isoformat() if earliest_published_at else None,
             "sold_at": mp.sold_at.isoformat() if mp.sold_at else None,
-            "last_sale_price": mp.last_sale_price
+            "last_sale_price": mp.final_price
         })
     
     return {
@@ -794,9 +785,6 @@ async def get_building_properties_v2(
             "balcony_area": mp.balcony_area,
             "layout": mp.layout,
             "direction": mp.direction,
-            "summary_remarks": mp.summary_remarks,
-            "is_resale": mp.is_resale,
-            "resale_property_id": mp.resale_property_id,
             "min_price": min_price,
             "max_price": max_price,
             "listing_count": listing_count,
@@ -815,12 +803,15 @@ async def get_duplicate_buildings(
     min_similarity: float = Query(0.94, description="最小類似度"),
     limit: int = Query(50, description="最大グループ数"),
     search: Optional[str] = Query(None, description="建物名検索"),
+    use_enhanced: bool = Query(True, description="高度なマッチングを使用"),
     db: Session = Depends(get_db)
 ):
     """重複の可能性がある建物を検出"""
     from backend.app.utils.building_normalizer import BuildingNameNormalizer
+    from backend.app.utils.enhanced_building_matcher import EnhancedBuildingMatcher
     
     normalizer = BuildingNameNormalizer()
+    enhanced_matcher = EnhancedBuildingMatcher() if use_enhanced else None
     
     # クエリを構築
     query = db.query(
@@ -927,42 +918,74 @@ async def get_duplicate_buildings(
                 if abs(building1.total_floors - building2.total_floors) > 2:
                     floors_match = False
             
-            # 建物名の類似度
+            # 類似度計算
             total_comparisons += 1
-            name_similarity = normalizer.calculate_similarity(building1.normalized_name, building2.normalized_name)
-            # 浮動小数点の精度問題を回避するため、小数第3位で丸める
-            name_similarity = round(name_similarity, 3)
             
-            # 総合的な判定
-            # 1. 名前が完全一致 → 同一建物
-            # 2. 名前の類似度が高く、住所も一致 → 同一建物
-            # 3. 名前の類似度が中程度でも、住所が完全一致し階数も一致 → 同一建物
-            # 4. 片方の住所が空の場合は、名前の類似度のみで判定
-            is_duplicate = False
-            
-            if norm_name1 == norm_name2:
-                is_duplicate = True
-            elif not building1.address or not building2.address:
-                # 片方でも住所がない場合は、名前の類似度のみで判定
-                if name_similarity >= min_similarity:
+            # 高度なマッチングを使用する場合
+            if enhanced_matcher:
+                # 総合的な類似度を計算
+                comprehensive_similarity = enhanced_matcher.calculate_comprehensive_similarity(
+                    building1, building2
+                )
+                # デバッグ情報を取得
+                debug_info = enhanced_matcher.get_debug_info()
+                
+                # 閾値チェック
+                is_duplicate = comprehensive_similarity >= min_similarity
+                
+                if is_duplicate:
+                    candidates.append({
+                        "id": building2.id,
+                        "normalized_name": building2.normalized_name,
+                        "address": building2.address,
+                        "total_floors": building2.total_floors,
+                        "built_year": building2.built_year,
+                        "built_month": building2.built_month,
+                        "property_count": count2,
+                        "similarity": comprehensive_similarity,
+                        "address_similarity": debug_info['scores'].get('address', 0),
+                        "name_similarity": debug_info['scores'].get('name', 0),
+                        "attribute_similarity": debug_info['scores'].get('attributes', 0),
+                        "match_reason": debug_info.get('match_reason', ''),
+                        "floors_match": floors_match
+                    })
+                    processed_ids.add(building2.id)
+            else:
+                # 従来のマッチング
+                name_similarity = normalizer.calculate_similarity(building1.normalized_name, building2.normalized_name)
+                # 浮動小数点の精度問題を回避するため、小数第3位で丸める
+                name_similarity = round(name_similarity, 3)
+                
+                # 総合的な判定
+                # 1. 名前が完全一致 → 同一建物
+                # 2. 名前の類似度が高く、住所も一致 → 同一建物
+                # 3. 名前の類似度が中程度でも、住所が完全一致し階数も一致 → 同一建物
+                # 4. 片方の住所が空の場合は、名前の類似度のみで判定
+                is_duplicate = False
+                
+                if norm_name1 == norm_name2:
                     is_duplicate = True
-            elif name_similarity >= min_similarity and addr_similarity >= 0.8:
-                is_duplicate = True
-            elif name_similarity >= 0.8 and addr_similarity >= 0.95 and floors_match:
-                is_duplicate = True
-            
-            if is_duplicate:
-                candidates.append({
-                    "id": building2.id,
-                    "normalized_name": building2.normalized_name,
-                    "address": building2.address,
-                    "total_floors": building2.total_floors,
-                    "property_count": count2,
-                    "similarity": name_similarity,
-                    "address_similarity": addr_similarity,
-                    "floors_match": floors_match
-                })
-                processed_ids.add(building2.id)
+                elif not building1.address or not building2.address:
+                    # 片方でも住所がない場合は、名前の類似度のみで判定
+                    if name_similarity >= min_similarity:
+                        is_duplicate = True
+                elif name_similarity >= min_similarity and addr_similarity >= 0.8:
+                    is_duplicate = True
+                elif name_similarity >= 0.8 and addr_similarity >= 0.95 and floors_match:
+                    is_duplicate = True
+                
+                if is_duplicate:
+                    candidates.append({
+                        "id": building2.id,
+                        "normalized_name": building2.normalized_name,
+                        "address": building2.address,
+                        "total_floors": building2.total_floors,
+                        "property_count": count2,
+                        "similarity": name_similarity,
+                        "address_similarity": addr_similarity,
+                        "floors_match": floors_match
+                    })
+                    processed_ids.add(building2.id)
         
         if candidates:
             duplicates.append({
@@ -971,6 +994,8 @@ async def get_duplicate_buildings(
                     "normalized_name": building1.normalized_name,
                     "address": building1.address,
                     "total_floors": building1.total_floors,
+                    "built_year": building1.built_year,
+                    "built_month": building1.built_month,
                     "property_count": count1
                 },
                 "candidates": candidates

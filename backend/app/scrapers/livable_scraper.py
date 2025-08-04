@@ -38,6 +38,46 @@ class LivableScraper(BaseScraper):
         super().__init__(SourceSite.LIVABLE, force_detail_fetch, max_properties, ignore_error_history)
         # 東急リバブルも一覧ページと詳細ページで建物名の表記が異なることがあるため、部分一致を許可
         self.allow_partial_building_name_match = True
+        self.building_name_match_threshold = 0.6  # 東急リバブルは詳細ページの建物名が長い傾向があるため閾値を下げる
+    
+    def verify_building_names_match(self, detail_building_name: str, building_name_from_list: str, 
+                                   allow_partial_match: bool = False, threshold: float = 0.8) -> Tuple[bool, Optional[str]]:
+        """東急リバブル特有の建物名マッチングロジック
+        
+        東急リバブルでは詳細ページの建物名が一覧ページよりも詳細な場合が多い
+        例：
+        - 一覧「ＴＨＥ　ＲＯＰＰＯＮＧＩ　ＴＯＫＹＯ」 → 詳細「ＴＨＥ ＲＯＰＰＯＮＧＩ ＴＯＫＹＯ ＣＬＵＢ ＲＥＳＩＤＥＮＣＥ」
+        - 一覧「三田ガーデンヒルズ」 → 詳細「三田ガーデンヒルズノースヒル」
+        """
+        # 基底クラスのメソッドを呼び出す
+        is_verified, verified_name = super().verify_building_names_match(
+            detail_building_name, building_name_from_list, allow_partial_match, threshold
+        )
+        
+        # 基底クラスで一致しなかった場合、追加のチェックを行う
+        if not is_verified and allow_partial_match:
+            # 正規化
+            normalized_list = self.normalize_building_name(building_name_from_list)
+            normalized_detail = self.normalize_building_name(detail_building_name)
+            
+            # 一覧の建物名が詳細の建物名の先頭部分と一致するかチェック
+            if normalized_detail.startswith(normalized_list):
+                self.logger.info(
+                    f"建物名が一致（前方一致）: 一覧「{building_name_from_list}」は詳細「{detail_building_name}」の先頭部分"
+                )
+                return True, detail_building_name
+            
+            # スペースを除去してもう一度チェック
+            list_no_space = normalized_list.replace(' ', '').replace('　', '')
+            detail_no_space = normalized_detail.replace(' ', '').replace('　', '')
+            
+            if detail_no_space.startswith(list_no_space):
+                self.logger.info(
+                    f"建物名が一致（前方一致・スペース除去後）: 一覧「{building_name_from_list}」は詳細「{detail_building_name}」の先頭部分"
+                )
+                return True, detail_building_name
+        
+        return is_verified, verified_name
     
     def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
         """東急リバブルのsite_property_idの妥当性を検証
@@ -158,9 +198,6 @@ class LivableScraper(BaseScraper):
             if site_property_id in self.DEBUG_PROPERTY_IDS:
                 self.logger.info(f"DEBUG: 一覧ページItem#{index} - ID: {site_property_id}, URL: {property_data['url']}")
         
-        # 新着・更新マークを検出
-        new_tag = item.select_one('.a-tag--new-date')
-        property_data['has_update_mark'] = bool(new_tag)
         
         # 価格を取得
         self._extract_list_price(item, property_data)
@@ -674,6 +711,10 @@ class LivableScraper(BaseScraper):
             built_year = extract_built_year(value)
             if built_year:
                 property_data['built_year'] = built_year
+                # 月情報も取得
+                month_match = re.search(r'(\d{1,2})月', value)
+                if month_match:
+                    property_data['built_month'] = int(month_match.group(1))
         
         # 総戸数
         elif '総戸数' in label:
@@ -957,6 +998,10 @@ class LivableScraper(BaseScraper):
             built_year = extract_built_year(value)
             if built_year:
                 property_data['built_year'] = built_year
+                # 月情報も取得
+                month_match = re.search(r'(\d{1,2})月', value)
+                if month_match:
+                    property_data['built_month'] = int(month_match.group(1))
         
         # 管理費
         elif '管理費' in label and '修繕' not in label:
