@@ -15,8 +15,14 @@ import {
   SelectChangeEvent,
   Chip,
   OutlinedInput,
+  Collapse,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import FilterListIcon from '@mui/icons-material/FilterList';
 import { SearchParams, Area } from '../types/property';
 import { propertyApi } from '../api/propertyApi';
 import { debounce } from 'lodash';
@@ -28,6 +34,10 @@ interface SearchFormProps {
 }
 
 const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValues }) => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
+  const [expandedFilters, setExpandedFilters] = useState(!isMobile);
+  
   const [searchParams, setSearchParams] = useState<SearchParams>({
     min_price: initialValues?.min_price || undefined,
     max_price: initialValues?.max_price || undefined,
@@ -144,15 +154,31 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
     onSearch({});
   };
 
+  // フィルター条件がアクティブかどうかを判定
+  const hasActiveFilters = () => {
+    return !!(
+      searchParams.min_price ||
+      searchParams.max_price ||
+      searchParams.min_area ||
+      searchParams.max_area ||
+      (searchParams.layouts && searchParams.layouts.length > 0) ||
+      searchParams.max_building_age ||
+      (searchParams.wards && searchParams.wards.length > 0)
+    );
+  };
+
   return (
     <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
       <form onSubmit={handleSubmit}>
         <Grid container spacing={2}>
           <Grid item xs={12}>
-            <Autocomplete
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Autocomplete
+                sx={{ flex: 1 }}
               freeSolo
               options={buildingOptions}
               loading={buildingLoading}
+              value={searchParams.building_name || ''}
               inputValue={buildingInputValue}
               onInputChange={(_, newInputValue) => {
                 setBuildingInputValue(newInputValue);
@@ -164,10 +190,12 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                 });
               }}
               onChange={(_, newValue) => {
+                const buildingName = typeof newValue === 'string' ? newValue : '';
                 setSearchParams({
                   ...searchParams,
-                  building_name: newValue || undefined,
+                  building_name: buildingName || undefined,
                 });
+                setBuildingInputValue(buildingName);
               }}
               renderInput={(params) => (
                 <TextField
@@ -195,9 +223,37 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                 />
               )}
             />
+            {isMobile && (
+              <Button
+                variant={hasActiveFilters() ? "contained" : "outlined"}
+                onClick={() => setExpandedFilters(!expandedFilters)}
+                startIcon={<FilterListIcon />}
+                endIcon={expandedFilters ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                size="medium"
+                sx={{ 
+                  minWidth: 'auto',
+                  whiteSpace: 'nowrap',
+                  px: 2,
+                }}
+              >
+                {hasActiveFilters() ? `条件(${
+                  [
+                    searchParams.min_price || searchParams.max_price ? 1 : 0,
+                    searchParams.min_area || searchParams.max_area ? 1 : 0,
+                    searchParams.layouts?.length || 0,
+                    searchParams.max_building_age ? 1 : 0,
+                    searchParams.wards?.length || 0,
+                  ].reduce((a, b) => a + b, 0)
+                })` : '条件'}
+              </Button>
+            )}
+            </Box>
           </Grid>
 
-          <Grid item xs={12} sm={12} md={6}>
+          <Grid item xs={12}>
+            <Collapse in={expandedFilters || !isMobile} timeout="auto">
+              <Grid container spacing={2}>
+                <Grid item xs={12} sm={12} md={6}>
             <FormControl fullWidth>
               <InputLabel id="area-multiple-chip-label">エリア</InputLabel>
               <Select
@@ -236,7 +292,15 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
             <Autocomplete
               freeSolo
               options={[1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 15000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000]}
-              value={searchParams.min_price || null}
+              value={searchParams.min_price || ''}
+              inputValue={searchParams.min_price?.toString() || ''}
+              onInputChange={(_, newInputValue) => {
+                const numValue = newInputValue ? parseInt(newInputValue) : undefined;
+                setSearchParams({
+                  ...searchParams,
+                  min_price: isNaN(numValue!) ? undefined : numValue,
+                });
+              }}
               onChange={(_, newValue) => {
                 setSearchParams({
                   ...searchParams,
@@ -268,7 +332,15 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
             <Autocomplete
               freeSolo
               options={[2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 15000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000]}
-              value={searchParams.max_price || null}
+              value={searchParams.max_price || ''}
+              inputValue={searchParams.max_price?.toString() || ''}
+              onInputChange={(_, newInputValue) => {
+                const numValue = newInputValue ? parseInt(newInputValue) : undefined;
+                setSearchParams({
+                  ...searchParams,
+                  max_price: isNaN(numValue!) ? undefined : numValue,
+                });
+              }}
               onChange={(_, newValue) => {
                 setSearchParams({
                   ...searchParams,
@@ -300,7 +372,15 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
             <Autocomplete
               freeSolo
               options={[30, 40, 50, 60, 70, 80, 90, 100, 120]}
-              value={searchParams.min_area || null}
+              value={searchParams.min_area || ''}
+              inputValue={searchParams.min_area?.toString() || ''}
+              onInputChange={(_, newInputValue) => {
+                const numValue = newInputValue ? parseFloat(newInputValue) : undefined;
+                setSearchParams({
+                  ...searchParams,
+                  min_area: isNaN(numValue!) ? undefined : numValue,
+                });
+              }}
               onChange={(_, newValue) => {
                 setSearchParams({
                   ...searchParams,
@@ -332,7 +412,15 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
             <Autocomplete
               freeSolo
               options={[40, 50, 60, 70, 80, 90, 100, 120, 150]}
-              value={searchParams.max_area || null}
+              value={searchParams.max_area || ''}
+              inputValue={searchParams.max_area?.toString() || ''}
+              onInputChange={(_, newInputValue) => {
+                const numValue = newInputValue ? parseFloat(newInputValue) : undefined;
+                setSearchParams({
+                  ...searchParams,
+                  max_area: isNaN(numValue!) ? undefined : numValue,
+                });
+              }}
               onChange={(_, newValue) => {
                 setSearchParams({
                   ...searchParams,
@@ -420,7 +508,9 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
               </Select>
             </FormControl>
           </Grid>
-
+              </Grid>
+            </Collapse>
+          </Grid>
         </Grid>
 
         <Box sx={{ mt: 3, display: 'flex', gap: 2, justifyContent: 'flex-end' }}>

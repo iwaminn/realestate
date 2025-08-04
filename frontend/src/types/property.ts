@@ -29,11 +29,14 @@ export interface Property {
   listing_count: number;
   source_sites: string[];
   station_info?: string;
+  management_fee?: number;
+  repair_fund?: number;
   earliest_published_at?: string;
   has_active_listing?: boolean;
   last_confirmed_at?: string;
   delisted_at?: string;
   latest_price_update?: string;
+  has_price_change?: boolean;
   sold_at?: string;
   last_sale_price?: number;
 }

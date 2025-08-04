@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, or_, and_, distinct, String
+from sqlalchemy import func, or_, and_, distinct, String, case
 from difflib import SequenceMatcher
 import os
 import re
@@ -268,7 +268,14 @@ async def get_properties_v2(
         func.coalesce(
             func.max(PropertyListing.price_updated_at),
             func.min(PropertyListing.published_at)
-        ).label('latest_price_update')
+        ).label('latest_price_update'),
+        # 価格変更があったかどうかのフラグ
+        # 各掲載の価格履歴で異なる価格が2つ以上ある場合はTrue
+        func.bool_or(
+            db.query(func.count(distinct(ListingPriceHistory.price)))
+            .filter(ListingPriceHistory.property_listing_id == PropertyListing.id)
+            .scalar_subquery() > 1
+        ).label('has_price_change')
     )
     
     # include_inactiveがFalseの場合はアクティブな物件のみ
@@ -292,7 +299,8 @@ async def get_properties_v2(
         price_subquery.c.delisted_at,
         price_subquery.c.station_info,
         price_subquery.c.earliest_published_at,
-        price_subquery.c.latest_price_update
+        price_subquery.c.latest_price_update,
+        price_subquery.c.has_price_change
     ).join(
         Building, MasterProperty.building_id == Building.id
     ).outerjoin(
@@ -396,7 +404,7 @@ async def get_properties_v2(
     
     # 結果を整形
     properties = []
-    for mp, building, min_price, max_price, listing_count, source_sites, has_active, last_confirmed, delisted, station_info, earliest_published_at, latest_price_update in results:
+    for mp, building, min_price, max_price, listing_count, source_sites, has_active, last_confirmed, delisted, station_info, earliest_published_at, latest_price_update, has_price_change in results:
         properties.append({
             "id": mp.id,
             "building": {
@@ -432,6 +440,7 @@ async def get_properties_v2(
             "repair_fund": mp.repair_fund,
             "earliest_published_at": earliest_published_at,
             "latest_price_update": str(latest_price_update) if latest_price_update else None,
+            "has_price_change": has_price_change if has_price_change is not None else False,
             "sold_at": mp.sold_at.isoformat() if mp.sold_at else None,
             "last_sale_price": mp.last_sale_price
         })

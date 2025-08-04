@@ -253,8 +253,9 @@ const PropertyCard: React.FC<PropertyCardProps> = ({ property }) => {
                 <>（掲載終了）</>
               )}
             </Typography>
-            {/* 価格改定日を表示（売出確認日と異なる場合のみ） */}
-            {property.latest_price_update && 
+            {/* 価格改定日を表示（価格変更があった場合のみ） */}
+            {property.has_price_change && 
+             property.latest_price_update && 
              property.earliest_published_at &&
              format(new Date(property.latest_price_update), 'yyyy-MM-dd') !== format(new Date(property.earliest_published_at), 'yyyy-MM-dd') && (
               <Typography variant="caption" color="text.secondary" display="block">

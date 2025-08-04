@@ -2366,7 +2366,7 @@ class BaseScraper(ABC):
                     is_active=True,
                     published_at=published_at,
                     first_published_at=first_published_at or published_at or datetime.now(),
-                    price_updated_at=datetime.now(),
+                    price_updated_at=first_published_at or published_at or datetime.now(),
                     last_confirmed_at=datetime.now(),
                     detail_fetched_at=datetime.now(),  # 詳細取得時刻を設定
                     scraped_from_area=getattr(self, 'current_area_code', None),  # 現在のエリアコードを設定
@@ -2379,9 +2379,6 @@ class BaseScraper(ABC):
                 if "property_listings_url_key" in str(e):
                     self.session.rollback()
                     self.logger.debug(f"URL重複エラー検出。既存レコードを再検索...")
-                    
-                    # 新しいトランザクションを開始
-                    self.session.begin()
                     
                     # 再度検索（他のプロセスが同時に作成した可能性）
                     listing = self.session.query(PropertyListing).filter(
@@ -2415,7 +2412,7 @@ class BaseScraper(ABC):
                                 is_active=True,
                                 published_at=published_at,
                                 first_published_at=first_published_at or published_at or datetime.now(),
-                                price_updated_at=datetime.now(),
+                                price_updated_at=first_published_at or published_at or datetime.now(),
                                 last_confirmed_at=datetime.now(),
                                 detail_fetched_at=datetime.now(),
                                 **kwargs
