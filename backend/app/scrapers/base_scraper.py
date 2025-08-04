@@ -1782,8 +1782,9 @@ class BaseScraper(ABC):
         return None
     
     def get_or_create_building(self, building_name: str, address: str = None, external_property_id: str = None, 
-                               built_year: int = None, total_floors: int = None, basement_floors: int = None,
-                               total_units: int = None, structure: str = None, land_rights: str = None) -> Tuple[Optional[Building], Optional[str]]:
+                               built_year: int = None, built_month: int = None, total_floors: int = None, 
+                               basement_floors: int = None, total_units: int = None, structure: str = None, 
+                               land_rights: str = None, station_info: str = None) -> Tuple[Optional[Building], Optional[str]]:
         """建物を取得または作成（改善版：元の建物名を保持）"""
         if not building_name:
             return None, None
@@ -1820,6 +1821,11 @@ class BaseScraper(ABC):
                     updated = False
                     if address and not building.address:
                         building.address = address
+                        # 正規化住所も更新
+                        if hasattr(building, 'normalized_address'):
+                            from backend.app.utils.address_normalizer import AddressNormalizer
+                            addr_normalizer = AddressNormalizer()
+                            building.normalized_address = addr_normalizer.normalize_for_comparison(address)
                         updated = True
                     if built_year and not building.built_year:
                         building.built_year = built_year
@@ -1829,6 +1835,18 @@ class BaseScraper(ABC):
                         updated = True
                     if total_floors and not building.total_floors:
                         building.total_floors = total_floors
+                        updated = True
+                    if basement_floors and not building.basement_floors:
+                        building.basement_floors = basement_floors
+                        updated = True
+                    if structure and not building.construction_type:
+                        building.construction_type = structure
+                        updated = True
+                    if land_rights and not building.land_rights:
+                        building.land_rights = land_rights
+                        updated = True
+                    if station_info and not building.station_info:
+                        building.station_info = station_info
                         updated = True
                     if updated:
                         self.session.flush()
@@ -1882,13 +1900,23 @@ class BaseScraper(ABC):
                 if built_year and not building.built_year:
                     building.built_year = built_year
                     updated = True
-                # built_monthは多数決で決定されるため、ここでは更新しない
-                # built_monthの更新はMajorityVoteUpdaterで行われる
+                if built_month and not building.built_month:
+                    building.built_month = built_month
+                    updated = True
                 if total_floors and not building.total_floors:
                     building.total_floors = total_floors
                     updated = True
+                if basement_floors and not building.basement_floors:
+                    building.basement_floors = basement_floors
+                    updated = True
                 if structure and not building.construction_type:
                     building.construction_type = structure
+                    updated = True
+                if land_rights and not building.land_rights:
+                    building.land_rights = land_rights
+                    updated = True
+                if station_info and not building.station_info:
+                    building.station_info = station_info
                     updated = True
                 
                 if updated:
@@ -1924,9 +1952,12 @@ class BaseScraper(ABC):
             address=address,
             normalized_address=normalized_addr,  # 正規化された住所を保存
             built_year=built_year,
-            # built_monthは多数決で決定されるため、新規建物作成時は設定しない
+            built_month=built_month,          # 最初の掲載情報から設定
             total_floors=total_floors,
-            construction_type=structure       # structureはconstruction_typeとして保存
+            basement_floors=basement_floors,  # 地下階数も設定
+            construction_type=structure,      # structureはconstruction_typeとして保存
+            land_rights=land_rights,          # 土地権利も設定
+            station_info=station_info         # 交通情報も設定
         )
         self.session.add(building)
         self.session.flush()
@@ -2992,12 +3023,12 @@ class BaseScraper(ABC):
                 address=property_data.get('address'),
                 external_property_id=property_data.get('site_property_id'),
                 built_year=property_data.get('built_year'),
-                # built_monthは多数決で決定されるため、ここでは渡さない
+                built_month=property_data.get('built_month'),  # 最初の掲載情報から設定
                 total_floors=property_data.get('total_floors'),
                 basement_floors=property_data.get('basement_floors'),
                 structure=property_data.get('structure'),
-                land_rights=property_data.get('land_rights')
-                # station_infoも多数決で決定されるため、ここでは渡さない
+                land_rights=property_data.get('land_rights'),
+                station_info=property_data.get('station_info')  # 最初の掲載情報から設定
             )
             
             if not building:
