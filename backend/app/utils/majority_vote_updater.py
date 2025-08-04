@@ -283,6 +283,13 @@ class MajorityVoteUpdater:
             if majority_address != building.address:
                 logger.info(f"建物 '{building.normalized_name}' の住所を更新")
                 building.address = majority_address
+                
+                # 正規化住所も更新
+                if hasattr(building, 'normalized_address'):
+                    from backend.app.utils.address_normalizer import AddressNormalizer
+                    normalizer = AddressNormalizer()
+                    building.normalized_address = normalizer.normalize_for_comparison(majority_address)
+                
                 updated = True
         
         # 総階数の多数決

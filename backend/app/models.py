@@ -19,6 +19,7 @@ class Building(Base):
     normalized_name = Column(String(200), nullable=False)     # 正規化された建物名（多数決で決定）
     canonical_name = Column(String(200))                       # 検索用正規化名（2025年1月追加）
     address = Column(String(500))                              # 住所（詳細）
+    normalized_address = Column(String(500))                   # 正規化された住所（比較用）
     total_floors = Column(Integer)                             # 総階数
     basement_floors = Column(Integer)                          # 地下階数
     built_year = Column(Integer)                               # 築年
@@ -40,6 +41,8 @@ class Building(Base):
         Index('idx_buildings_normalized_name', 'normalized_name'),
         Index('idx_buildings_canonical_name', 'canonical_name'),
         Index('idx_buildings_address', 'address'),
+        Index('idx_buildings_normalized_address', 'normalized_address'),
+        Index('idx_buildings_canonical_normalized_addr', 'canonical_name', 'normalized_address'),
         Index('idx_buildings_built_year', 'built_year'),
     )
 

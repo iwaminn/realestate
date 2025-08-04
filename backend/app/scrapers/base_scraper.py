@@ -1737,24 +1737,48 @@ class BaseScraper(ABC):
         return key
     
     def find_existing_building_by_key(self, search_key: str, address: str = None) -> Optional[Building]:
-        """検索キーで既存の建物を探す"""
-        # canonical_nameで直接検索（高速）
-        building = self.session.query(Building).filter(
+        """検索キーで既存の建物を探す（canonical_nameと住所の両方が一致する必要がある）"""
+        # 住所が指定されていない場合は、建物名だけでの判断は危険なのでNoneを返す
+        if not address:
+            self.logger.debug(f"住所が指定されていないため、建物検索をスキップ: {search_key}")
+            return None
+        
+        # 住所を正規化（表記ゆれを吸収）
+        from backend.app.utils.address_normalizer import AddressNormalizer
+        normalizer = AddressNormalizer()
+        normalized_address = normalizer.normalize_for_comparison(address)
+        
+        # まず、normalized_addressカラムがあれば高速検索を試みる
+        if hasattr(Building, 'normalized_address'):
+            building = self.session.query(Building).filter(
+                Building.canonical_name == search_key,
+                Building.normalized_address == normalized_address
+            ).first()
+            
+            if building:
+                self.logger.info(f"既存建物を発見（名前と正規化住所が一致・高速検索）: {building.normalized_name} at {building.address}")
+                return building
+        
+        # normalized_addressカラムがない、または見つからない場合は従来の方法
+        candidate_buildings = self.session.query(Building).filter(
             Building.canonical_name == search_key
-        ).first()
+        ).all()
         
-        if building:
-            # アドレスが指定されている場合は、アドレスも確認
-            if address and building.address != address:
-                # アドレスが異なる場合は、同じcanonical_nameでアドレスが一致する建物を探す
-                building_with_address = self.session.query(Building).filter(
-                    Building.canonical_name == search_key,
-                    Building.address == address
-                ).first()
-                if building_with_address:
-                    return building_with_address
-            return building
+        # 住所を正規化して比較
+        for building in candidate_buildings:
+            if building.address:
+                building_normalized_addr = normalizer.normalize_for_comparison(building.address)
+                if building_normalized_addr == normalized_address:
+                    self.logger.info(f"既存建物を発見（名前と正規化住所が一致）: {building.normalized_name} at {building.address}")
+                    
+                    # normalized_addressカラムがあれば更新
+                    if hasattr(building, 'normalized_address') and not building.normalized_address:
+                        building.normalized_address = building_normalized_addr
+                        self.session.flush()
+                    
+                    return building
         
+        self.logger.debug(f"一致する建物が見つかりません: {search_key} at {address} (正規化: {normalized_address})")
         return None
     
     def get_or_create_building(self, building_name: str, address: str = None, external_property_id: str = None, 
@@ -1886,10 +1910,19 @@ class BaseScraper(ABC):
         
         # 新規建物を作成
         print(f"[INFO] 新規建物を作成: {normalized_name}")
+        
+        # 住所を正規化
+        normalized_addr = None
+        if address:
+            from backend.app.utils.address_normalizer import AddressNormalizer
+            addr_normalizer = AddressNormalizer()
+            normalized_addr = addr_normalizer.normalize_for_comparison(address)
+        
         building = Building(
             normalized_name=normalized_name,  # 元の名前を使用
             canonical_name=search_key,        # 検索キーを保存
             address=address,
+            normalized_address=normalized_addr,  # 正規化された住所を保存
             built_year=built_year,
             # built_monthは多数決で決定されるため、新規建物作成時は設定しない
             total_floors=total_floors,
