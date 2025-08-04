@@ -224,7 +224,11 @@ class ListingPriceHistory(Base):
 
 
 class BuildingExternalId(Base):
-    """建物外部IDテーブル（各サイトの建物IDを管理）"""
+    """建物外部IDテーブル（各サイトの建物IDを管理）
+    
+    重複建物の防止のために実際に使用されています。
+    各不動産サイト固有の建物IDを記録し、同じ建物が複数回登録されることを防ぎます。
+    """
     __tablename__ = "building_external_ids"
     
     id = Column(Integer, primary_key=True, index=True)

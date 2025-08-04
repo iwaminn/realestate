@@ -84,11 +84,11 @@ class BuildingSchema(BaseModel):
     address: Optional[str]
     total_floors: Optional[int]
     basement_floors: Optional[int]
-    total_units: Optional[int]
     built_year: Optional[int]
-    structure: Optional[str]
+    built_month: Optional[int]
+    construction_type: Optional[str]
     land_rights: Optional[str]
-    parking_info: Optional[str]
+    station_info: Optional[str]
     
     class Config:
         from_attributes = True
@@ -132,9 +132,6 @@ class MasterPropertySchema(BaseModel):
     balcony_area: Optional[float]
     layout: Optional[str]
     direction: Optional[str]
-    summary_remarks: Optional[str]
-    is_resale: bool
-    resale_property_id: Optional[int]
     min_price: Optional[int]
     max_price: Optional[int]
     listing_count: int
@@ -144,7 +141,7 @@ class MasterPropertySchema(BaseModel):
     repair_fund: Optional[int]     # 修繕積立金（月額・円）
     earliest_published_at: Optional[datetime]  # 最も古い情報提供日
     sold_at: Optional[datetime]
-    last_sale_price: Optional[int]
+    final_price: Optional[int]
     has_active_listing: bool = True
     
     class Config:
@@ -564,9 +561,6 @@ async def get_property_detail_v2(
         "balcony_area": master_property.balcony_area,
         "layout": master_property.layout,
         "direction": master_property.direction,
-        "summary_remarks": master_property.summary_remarks,
-        "is_resale": master_property.is_resale,
-        "resale_property_id": master_property.resale_property_id,
         "min_price": min_price,
         "max_price": max_price,
         "listing_count": len(active_listings),
@@ -576,7 +570,7 @@ async def get_property_detail_v2(
         "repair_fund": master_property.repair_fund,
         "earliest_published_at": earliest_published_at,
         "sold_at": master_property.sold_at,
-        "last_sale_price": master_property.last_sale_price,
+        "final_price": master_property.final_price,
         "has_active_listing": len(active_listings) > 0
     }
     
