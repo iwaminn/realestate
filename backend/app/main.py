@@ -792,6 +792,14 @@ async def get_building_properties_v2(
         "total": len(property_list)
     }
 
+from functools import lru_cache
+from time import time
+
+# キャッシュ用の変数
+_duplicate_buildings_cache = {}
+_duplicate_buildings_cache_time = 0
+CACHE_DURATION = 300  # 5分間キャッシュ
+
 @app.get("/api/admin/duplicate-buildings", response_model=Dict[str, Any])
 async def get_duplicate_buildings(
     min_similarity: float = Query(0.94, description="最小類似度"),
@@ -799,13 +807,28 @@ async def get_duplicate_buildings(
     search: Optional[str] = Query(None, description="建物名検索"),
     db: Session = Depends(get_db)
 ):
-    """重複の可能性がある建物を検出（常に高度なマッチングを使用）"""
+    """重複の可能性がある建物を検出（SQL最適化版）"""
+    global _duplicate_buildings_cache, _duplicate_buildings_cache_time
+    
+    # キャッシュキーを作成
+    cache_key = f"{min_similarity}_{limit}_{search}"
+    current_time = time()
+    
+    # キャッシュが有効な場合は返す（検索なしの場合のみ）
+    if (not search and 
+        cache_key in _duplicate_buildings_cache and 
+        current_time - _duplicate_buildings_cache_time < CACHE_DURATION):
+        app_logger.info(f"Returning cached duplicate buildings result")
+        return _duplicate_buildings_cache[cache_key]
+    
     from backend.app.utils.enhanced_building_matcher import EnhancedBuildingMatcher
+    from sqlalchemy import or_, and_
+    import re
     
     enhanced_matcher = EnhancedBuildingMatcher()
     
-    # クエリを構築
-    query = db.query(
+    # ベースクエリ
+    base_query = db.query(
         Building,
         func.count(distinct(MasterProperty.id)).label('property_count')
     ).outerjoin(
@@ -819,13 +842,14 @@ async def get_duplicate_buildings(
     # 検索フィルタを適用
     if search:
         from backend.app.utils.building_search import apply_building_search_to_query
-        query = apply_building_search_to_query(query, search, Building)
+        base_query = apply_building_search_to_query(base_query, search, Building)
     
-    # 検索が指定されている場合でも、重複候補を見逃さないよう十分な数を取得
-    fetch_limit = 500 if search else 1000  # 検索時も十分な数を取得して類似度計算
-    buildings_with_count = query.order_by(
-        Building.normalized_name
-    ).limit(fetch_limit).all()
+    # 検索なしの場合は最初の100件のみ取得してSQLで候補を絞り込む
+    # 検索ありの場合は全て取得
+    if search:
+        buildings_with_count = base_query.order_by(Building.normalized_name).all()
+    else:
+        buildings_with_count = base_query.order_by(Building.normalized_name).limit(100).all()
     
     if search:
         app_logger.info(f"Search '{search}' returned {len(buildings_with_count)} buildings")
@@ -845,77 +869,206 @@ async def get_duplicate_buildings(
     processed_ids = set()
     total_comparisons = 0
     
-    for i, (building1, count1) in enumerate(buildings_with_count):
+    # SQLで大まかなグループを作成してから、グループ内で詳細な類似度判定
+    # ステップ1: 類似する可能性のある建物をグループ化
+    similar_groups = []  # 各グループは類似する可能性のある建物のリスト
+    
+    for building1, count1 in buildings_with_count:
         if building1.id in processed_ids:
             continue
-            
-        candidates = []
         
-        for j, (building2, count2) in enumerate(buildings_with_count[i+1:], i+1):
-            if building2.id in processed_ids:
-                continue
+        # SQLで類似候補を絞り込む条件を作成
+        base_address_condition = None
+        additional_conditions = []
+        
+        # 必須条件: 正規化された住所の区市町村と丁目までが一致
+        if building1.normalized_address:
+            # 正規化された住所から丁目レベルまでを抽出
+            # 例：「東京都港区六本木3-16-33」→「東京都港区六本木3」
+            addr_match = re.match(r'(.*?[区市町村].*?)(\d+)(?:-|$)', building1.normalized_address)
+            if addr_match:
+                # 区市町村 + 地域名 + 丁目番号
+                base_address_prefix = addr_match.group(1) + addr_match.group(2)
+                base_address_condition = Building.normalized_address.like(f"{base_address_prefix}%")
+            else:
+                # パターンが一致しない場合は区市町村まで
+                ward_match = re.search(r'(.*?[区市町村])', building1.normalized_address)
+                if ward_match:
+                    ward = ward_match.group(1)
+                    base_address_condition = Building.normalized_address.like(f"{ward}%")
+                else:
+                    base_address_condition = None
+        elif building1.address:
+            # normalized_addressがない場合はaddressから区市町村を抽出
+            ward_match = re.search(r'(.*?[区市町村])', building1.address)
+            if ward_match:
+                ward = ward_match.group(1)
+                base_address_condition = Building.address.like(f"{ward}%")
+        
+        # 住所条件がない場合はスキップ
+        if base_address_condition is None:
+            continue
+        
+        # 追加条件を設定
+        # 1. 建物名の類似性（最初の2文字が一致）
+        if building1.normalized_name and len(building1.normalized_name) >= 2:
+            name_prefix = building1.normalized_name[:2]
+            additional_conditions.append(Building.normalized_name.like(f"{name_prefix}%"))
+        
+        # 2. 築年の条件（類似度閾値に応じて調整）
+        if min_similarity >= 0.7:  # 類似度0.7以上は完全一致
+            if building1.built_year:
+                additional_conditions.append(
+                    Building.built_year == building1.built_year
+                )
+        else:  # 類似度0.7未満は未設定も許容、両方設定されていれば完全一致
+            if building1.built_year:
+                additional_conditions.append(
+                    or_(
+                        Building.built_year.is_(None),  # 相手が未設定
+                        Building.built_year == building1.built_year  # 完全一致
+                    )
+                )
+            else:
+                # building1の築年が未設定の場合は条件なし（すべて許可）
+                pass
+        
+        # 3. 総階数の条件（類似度閾値に応じて調整）
+        if min_similarity >= 0.7:  # 類似度0.7以上は完全一致
+            if building1.total_floors:
+                additional_conditions.append(
+                    Building.total_floors == building1.total_floors
+                )
+        else:  # 類似度0.7未満は未設定も許容、両方設定されていれば完全一致
+            if building1.total_floors:
+                additional_conditions.append(
+                    or_(
+                        Building.total_floors.is_(None),  # 相手が未設定
+                        Building.total_floors == building1.total_floors  # 完全一致
+                    )
+                )
+            else:
+                # building1の総階数が未設定の場合は条件なし（すべて許可）
+                pass
+        
+        # 候補をSQLで取得（必須条件（住所）＋追加条件のいずれか）
+        if True:  # 必ず実行
+            # 必須条件（住所）に加えて、追加条件がある場合はOR条件で結合
+            filter_conditions = [
+                Building.id.notin_(processed_ids),
+                base_address_condition
+            ]
             
-            # 除外リストに含まれていたらスキップ
-            if (building1.id, building2.id) in excluded_pairs:
-                app_logger.debug(f"Skipping excluded pair: {building1.id} ({building1.normalized_name}) - {building2.id} ({building2.normalized_name})")
-                continue
+            if additional_conditions:
+                # 追加条件のいずれかに合致
+                filter_conditions.append(or_(*additional_conditions))
             
-            # 類似度計算
-            total_comparisons += 1
-            
-            # 総合的な類似度を計算（常に高度なマッチングを使用）
-            comprehensive_similarity = enhanced_matcher.calculate_comprehensive_similarity(
-                building1, building2
+            candidates_query = db.query(
+                Building,
+                func.count(distinct(MasterProperty.id)).label('property_count')
+            ).outerjoin(
+                MasterProperty, Building.id == MasterProperty.building_id
+            ).filter(
+                *filter_conditions
+            ).group_by(
+                Building.id
+            ).having(
+                func.count(distinct(MasterProperty.id)) > 0
             )
-            # デバッグ情報を取得
-            debug_info = enhanced_matcher.get_debug_info()
             
-            # 閾値チェック
-            is_duplicate = comprehensive_similarity >= min_similarity
+            group_buildings = candidates_query.all()
             
-            if is_duplicate:
-                candidates.append({
-                    "id": building2.id,
-                    "normalized_name": building2.normalized_name,
-                    "address": building2.address,
-                    "total_floors": building2.total_floors,
-                    "built_year": building2.built_year,
-                    "built_month": building2.built_month,
-                    "property_count": count2,
-                    "similarity": comprehensive_similarity,
-                    "address_similarity": debug_info['scores'].get('address', 0),
-                    "name_similarity": debug_info['scores'].get('name', 0),
-                    "attribute_similarity": debug_info['scores'].get('attributes', 0),
-                    "match_reason": debug_info.get('match_reason', ''),
-                    "floors_match": True  # EnhancedBuildingMatcherが階数も考慮しているため常にTrue
-                })
-                processed_ids.add(building2.id)
-        
-        if candidates:
-            duplicates.append({
-                "primary": {
-                    "id": building1.id,
-                    "normalized_name": building1.normalized_name,
-                    "address": building1.address,
-                    "total_floors": building1.total_floors,
-                    "built_year": building1.built_year,
-                    "built_month": building1.built_month,
-                    "property_count": count1
-                },
-                "candidates": candidates
-            })
-            processed_ids.add(building1.id)
-            
-            # 制限に達したら終了
-            if len(duplicates) >= limit:
-                break
+            if len(group_buildings) >= 2:  # 2件以上ある場合のみグループとして処理
+                similar_groups.append(group_buildings)
+                # グループ内の全建物を処理済みにする
+                for b, _ in group_buildings:
+                    processed_ids.add(b.id)
     
-    return {
+    # ステップ2: 各グループ内で詳細な類似度判定
+    for group in similar_groups:
+        group_duplicates = []
+        group_processed = set()
+        
+        # グループ内の全ペアを比較
+        for i, (building1, count1) in enumerate(group):
+            if building1.id in group_processed:
+                continue
+            
+            candidates = []
+            
+            for j, (building2, count2) in enumerate(group[i+1:], i+1):
+                if building2.id in group_processed:
+                    continue
+                
+                # 除外リストに含まれていたらスキップ
+                if (building1.id, building2.id) in excluded_pairs:
+                    continue
+                
+                # 類似度計算
+                total_comparisons += 1
+                
+                # 総合的な類似度を計算
+                comprehensive_similarity = enhanced_matcher.calculate_comprehensive_similarity(
+                    building1, building2
+                )
+                debug_info = enhanced_matcher.get_debug_info()
+                
+                # 閾値チェック
+                if comprehensive_similarity >= min_similarity:
+                    candidates.append({
+                        "id": building2.id,
+                        "normalized_name": building2.normalized_name,
+                        "address": building2.address,
+                        "total_floors": building2.total_floors,
+                        "built_year": building2.built_year,
+                        "built_month": building2.built_month,
+                        "property_count": count2,
+                        "similarity": comprehensive_similarity,
+                        "address_similarity": debug_info['scores'].get('address', 0),
+                        "name_similarity": debug_info['scores'].get('name', 0),
+                        "attribute_similarity": debug_info['scores'].get('attributes', 0),
+                        "match_reason": debug_info.get('match_reason', ''),
+                        "floors_match": True
+                    })
+                    group_processed.add(building2.id)
+            
+            if candidates:
+                group_duplicates.append({
+                    "primary": {
+                        "id": building1.id,
+                        "normalized_name": building1.normalized_name,
+                        "address": building1.address,
+                        "total_floors": building1.total_floors,
+                        "built_year": building1.built_year,
+                        "built_month": building1.built_month,
+                        "property_count": count1
+                    },
+                    "candidates": candidates
+                })
+                group_processed.add(building1.id)
+        
+        # グループの重複候補を結果に追加
+        duplicates.extend(group_duplicates)
+        
+        # 制限に達したら終了
+        if len(duplicates) >= limit:
+            duplicates = duplicates[:limit]
+            break
+    
+    result = {
         "duplicate_groups": duplicates,
         "total_groups": len(duplicates),
         "total_buildings_checked": len(buildings_with_count),
         "total_comparisons": total_comparisons
     }
+    
+    # 検索なしの場合はキャッシュに保存
+    if not search:
+        _duplicate_buildings_cache[cache_key] = result
+        _duplicate_buildings_cache_time = current_time
+        app_logger.info(f"Cached duplicate buildings result for key: {cache_key}")
+    
+    return result
 
 
 @app.get("/api/admin/buildings/search", response_model=Dict[str, Any])

@@ -1799,7 +1799,7 @@ const AdminScraping: React.FC = () => {
                       <Typography variant="body2" sx={{ mt: 1 }}>
                         {alert.message}
                       </Typography>
-                      {alert.details && (
+                      {alert.details && alert.details.error_count !== undefined && alert.details.error_rate !== undefined && (
                         <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.5 }}>
                           エラー数: {alert.details.error_count} | 
                           エラー率: {(alert.details.error_rate * 100).toFixed(1)}%

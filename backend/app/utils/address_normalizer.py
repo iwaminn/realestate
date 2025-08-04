@@ -24,14 +24,17 @@ class AddressNormalizer:
         
         # 丁目・番地・号の表記パターン
         self.block_patterns = [
-            # 丁目-番地-号パターン
+            # 丁目-番地-号パターン（最も詳細なパターンから処理）
             (r'(\d+)\s*丁目\s*(\d+)\s*番地?\s*(\d+)\s*号?', r'\1-\2-\3'),
             (r'(\d+)\s*丁目\s*(\d+)\s*番地?', r'\1-\2'),
-            (r'(\d+)\s*丁目', r'\1'),
+            (r'(\d+)\s*丁目\s*(\d+)\s*[-－−]\s*(\d+)', r'\1-\2-\3'),  # 7丁目1-19のパターン
+            (r'(\d+)\s*丁目\s*(\d+)\s*号', r'\1-\2'),  # 7丁目119号のパターン
+            (r'(\d+)\s*丁目\s*(\d+)(?![番号])', r'\1-\2'),  # 7丁目119のパターン（番・号が続かない）
+            (r'(\d+)\s*丁目(?!\d)', r'\1'),  # 丁目のみ（後ろに数字が続かない場合）
             
             # 番地・号パターン（丁目なし）
             (r'(\d+)\s*番地?\s*(\d+)\s*号?', r'\1-\2'),
-            (r'(\d+)\s*番地?', r'\1'),
+            (r'(\d+)\s*番地?(?!\d)', r'\1'),  # 番地のみ（後ろに数字が続かない場合）
             
             # ハイフン区切りパターン（そのまま）
             (r'(\d+)\s*[-－−]\s*(\d+)\s*[-－−]\s*(\d+)', r'\1-\2-\3'),
@@ -51,36 +54,64 @@ class AddressNormalizer:
         """全角数字・漢数字を半角数字に変換"""
         normalized = text
         
-        # 単純な置換
-        for old, new in self.number_map.items():
-            normalized = normalized.replace(old, new)
-        
-        # 「十」を含む漢数字の処理
-        # 例: 「二十三」→「23」、「十五」→「15」
-        def convert_japanese_number(match):
-            num_str = match.group(0)
-            total = 0
+        # 複雑な漢数字を処理する関数
+        def convert_complex_japanese_number(text):
+            """千・百・十を含む漢数字を変換"""
+            # 基本的な数値マップ
+            basic_nums = {
+                '一': 1, '二': 2, '三': 3, '四': 4, '五': 5,
+                '六': 6, '七': 7, '八': 8, '九': 9, '〇': 0, '○': 0
+            }
             
-            # 十の位
-            if '十' in num_str:
-                parts = num_str.split('十')
-                if parts[0] and parts[0] in self.number_map:
-                    total += int(self.number_map[parts[0]]) * 10
-                elif parts[0] == '':
-                    total += 10
-                else:
-                    return num_str  # 変換できない場合は元の文字列を返す
+            # 位の値
+            positions = {'千': 1000, '百': 100, '十': 10}
+            
+            # 数値に変換
+            result = 0
+            current_num = 0
+            
+            i = 0
+            while i < len(text):
+                char = text[i]
                 
-                if len(parts) > 1 and parts[1] and parts[1] in self.number_map:
-                    total += int(self.number_map[parts[1]])
-            else:
-                # 十を含まない場合はそのまま
-                return num_str
+                if char in basic_nums:
+                    current_num = basic_nums[char]
+                elif char in positions:
+                    if current_num == 0:
+                        # 「百」「千」の前に数字がない場合は1とする
+                        current_num = 1
+                    result += current_num * positions[char]
+                    current_num = 0
+                else:
+                    # 変換できない文字が含まれる場合は元の文字列を返す
+                    return text
+                
+                i += 1
             
-            return str(total)
+            # 最後の数字を追加
+            result += current_num
+            
+            return str(result)
         
-        # 漢数字のパターンをマッチして変換
-        normalized = re.sub(r'[一二三四五六七八九]?十[一二三四五六七八九]?', convert_japanese_number, normalized)
+        # 千・百・十を含む漢数字のパターン
+        # 例：「二千三百四十五」「百十九」「千二百」
+        pattern = r'[一二三四五六七八九千百十〇○]+'
+        
+        def replace_func(match):
+            matched_text = match.group(0)
+            # 千・百・十のいずれかを含む場合のみ変換
+            if any(pos in matched_text for pos in ['千', '百', '十']):
+                return convert_complex_japanese_number(matched_text)
+            else:
+                # 単純な数字の場合はそのまま返す
+                return matched_text
+        
+        normalized = re.sub(pattern, replace_func, normalized)
+        
+        # その後、残った単純な数字を置換
+        for old, new in self.number_map.items():
+            if old not in ['千', '百', '十']:  # 千・百・十は上で処理済み
+                normalized = normalized.replace(old, new)
         
         return normalized
     
@@ -138,15 +169,30 @@ class AddressNormalizer:
             components['town'] = town_match.group(1)
             remaining = remaining[town_match.end():]
         
-        # 番地情報を抽出
-        block_match = re.search(r'(\d+(?:-\d+)*)', remaining)
-        if block_match:
-            components['block'] = block_match.group(1)
-            # 番地より前の部分を地域名として保存
-            components['area'] = remaining[:block_match.start()].strip()
-            # 番地より後の部分を建物名として保存
-            components['building'] = remaining[block_match.end():].strip()
-        else:
+        # 番地情報を抽出（より正確なパターン）
+        # 丁目を含むパターンを優先
+        block_patterns = [
+            r'(\d+)丁目(\d+)(?:-(\d+))?',  # N丁目N-N または N丁目N
+            r'(\d+)-(\d+)-(\d+)',           # N-N-N
+            r'(\d+)-(\d+)',                 # N-N
+            r'(\d+)丁目',                   # N丁目のみ
+            r'(\d+)',                       # 数字のみ
+        ]
+        
+        matched = False
+        for pattern in block_patterns:
+            match = re.search(pattern, remaining)
+            if match:
+                # マッチした部分全体を番地として保存
+                components['block'] = match.group(0)
+                # 番地より前の部分を地域名として保存
+                components['area'] = remaining[:match.start()].strip()
+                # 番地より後の部分を建物名として保存
+                components['building'] = remaining[match.end():].strip()
+                matched = True
+                break
+        
+        if not matched:
             # 番地がない場合は全体を地域名として保存
             components['area'] = remaining.strip()
         
@@ -160,20 +206,46 @@ class AddressNormalizer:
         # Unicode正規化
         normalized = unicodedata.normalize('NFKC', address)
         
-        # 数字を正規化
-        normalized = self.normalize_numbers(normalized)
-        
         # 余分なスペースを削除
         normalized = re.sub(r'\s+', ' ', normalized).strip()
-        
-        # 丁目・番地・号を正規化
-        normalized = self.normalize_block_number(normalized)
         
         # 句読点を削除
         normalized = re.sub(r'[、。，．]', '', normalized)
         
         # カッコ内の情報を削除（建物名など）
         normalized = re.sub(r'[（(][^）)]*[）)]', '', normalized).strip()
+        
+        # 丁目・番地・号の部分のみ数字を正規化
+        # まず、丁目・番地・号のパターンを特定
+        def normalize_chome_numbers(match):
+            """丁目・番地・号の数字のみを正規化"""
+            text = match.group(0)
+            num_part = match.group(1)
+            suffix = match.group(2) if len(match.groups()) > 1 else ''
+            
+            # 漢数字の「十」を含む場合の特別処理
+            if '十' in num_part:
+                num_part = self.normalize_numbers(num_part)
+            else:
+                # 単純な数字変換
+                for old, new in self.number_map.items():
+                    if old != '十':  # 十は特別処理
+                        num_part = num_part.replace(old, new)
+            
+            return num_part + suffix
+        
+        # 丁目・番地・号のパターンにマッチする部分のみ数字を変換
+        patterns = [
+            r'([０-９0-9一二三四五六七八九千百十〇○]+)(丁目)',
+            r'([０-９0-9一二三四五六七八九千百十〇○]+)(番地?)',
+            r'([０-９0-9一二三四五六七八九千百十〇○]+)(号)',
+        ]
+        
+        for pattern in patterns:
+            normalized = re.sub(pattern, normalize_chome_numbers, normalized)
+        
+        # 丁目・番地・号を正規化（統一形式に変換）
+        normalized = self.normalize_block_number(normalized)
         
         return normalized
     
