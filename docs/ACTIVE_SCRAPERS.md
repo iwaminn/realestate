@@ -52,10 +52,10 @@
 ### コマンドラインから実行
 ```bash
 # 単一スクレイパーを実行
-docker exec realestate-backend poetry run python /app/backend/scripts/run_scrapers.py --scraper suumo --area 13103 --pages 3
+docker exec realestate-backend poetry run python /app/backend/scripts/run_scrapers.py --scraper suumo --area 13103 --max-properties 100
 
 # 全スクレイパーを実行
-docker exec realestate-backend poetry run python /app/backend/scripts/run_scrapers.py --area 13103 --pages 3
+docker exec realestate-backend poetry run python /app/backend/scripts/run_scrapers.py --area 13103 --max-properties 100
 ```
 
 ### 利用可能なスクレイパー値

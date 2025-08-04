@@ -27,11 +27,11 @@
 #### Docker環境での実行（推奨）
 
 ```bash
-# 全スクレイパーを実行（港区、3ページ）
+# 全スクレイパーを実行（港区、最大100件）
 docker exec realestate-backend poetry run python /app/backend/scripts/run_scrapers.py
 
 # 特定のスクレイパーを実行
-docker exec realestate-backend poetry run python /app/backend/scripts/run_scrapers.py --scraper suumo --area minato --pages 5
+docker exec realestate-backend poetry run python /app/backend/scripts/run_scrapers.py --scraper suumo --area minato --max-properties 150
 
 # 詳細取得を強制（すべての物件の詳細を再取得）
 docker exec realestate-backend poetry run python /app/backend/scripts/run_scrapers.py --force-detail-fetch
@@ -47,7 +47,7 @@ cd backend
 poetry run python scripts/run_scrapers.py
 
 # 特定のスクレイパーを実行
-poetry run python scripts/run_scrapers.py --scraper homes --area minato --pages 10
+poetry run python scripts/run_scrapers.py --scraper homes --area minato --max-properties 300
 ```
 
 ### 3. スケジュール実行
@@ -70,7 +70,8 @@ docker exec -d realestate-backend poetry run python /app/backend/scripts/run_scr
 |----------|------|------------|
 | `--scraper` | 実行するスクレイパー（suumo, homes, rehouse, nomu, livable, all） | all |
 | `--area` | 検索エリア（minato, shibuya, shinjuku等） | minato |
-| `--pages` | 取得するページ数 | 3 |
+| `--max-properties` | 取得する最大物件数 | 100 |
+| `--pages` | 取得するページ数（非推奨、--max-propertiesを使用） | - |
 | `--force-detail-fetch` | すべての物件の詳細を強制取得 | false |
 | `--schedule` | スケジュール実行モード | false |
 | `--interval` | スケジュール実行間隔（時間） | 6 |

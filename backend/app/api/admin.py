@@ -3636,57 +3636,31 @@ def get_scraper_alerts(
 ):
     """スクレイパーのアラートを取得"""
     try:
-        # アラートテーブルの存在確認
-        check_sql = text("""
-            SELECT EXISTS (
-                SELECT FROM information_schema.tables 
-                WHERE table_name = 'scraper_alerts'
-            )
-        """)
-        table_exists = db.execute(check_sql).scalar()
-        
-        if not table_exists:
-            return {"alerts": [], "message": "アラートテーブルが存在しません"}
+        from ..models import ScraperAlert
         
         # アラートを取得
-        if include_resolved:
-            sql = text("""
-                SELECT 
-                    id, source_site, alert_type, field_name, 
-                    error_count, error_rate, message, 
-                    is_resolved, resolved_at, created_at
-                FROM scraper_alerts
-                ORDER BY created_at DESC
-                LIMIT 100
-            """)
-        else:
-            sql = text("""
-                SELECT 
-                    id, source_site, alert_type, field_name, 
-                    error_count, error_rate, message, 
-                    is_resolved, resolved_at, created_at
-                FROM scraper_alerts
-                WHERE is_resolved = FALSE
-                ORDER BY created_at DESC
-                LIMIT 50
-            """)
+        query = db.query(ScraperAlert)
         
-        result = db.execute(sql)
+        if not include_resolved:
+            query = query.filter(ScraperAlert.is_active == True)
+        
+        alerts_objs = query.order_by(ScraperAlert.created_at.desc()).limit(100 if include_resolved else 50).all()
+        
         alerts = []
-        
-        for row in result:
-            alerts.append({
-                "id": row[0],
-                "source_site": row[1],
-                "alert_type": row[2],
-                "field_name": row[3],
-                "error_count": row[4],
-                "error_rate": row[5],
-                "message": row[6],
-                "is_resolved": row[7],
-                "resolved_at": row[8].isoformat() if row[8] else None,
-                "created_at": row[9].isoformat() if row[9] else None
-            })
+        for alert in alerts_objs:
+            alert_dict = {
+                "id": alert.id,
+                "source_site": alert.source_site,
+                "alert_type": alert.alert_type,
+                "severity": alert.severity,
+                "message": alert.message,
+                "details": alert.details,
+                "is_active": alert.is_active,
+                "resolved_at": alert.resolved_at.isoformat() if alert.resolved_at else None,
+                "created_at": alert.created_at.isoformat() if alert.created_at else None,
+                "updated_at": alert.updated_at.isoformat() if alert.updated_at else None
+            }
+            alerts.append(alert_dict)
         
         return {"alerts": alerts}
         
@@ -3701,20 +3675,17 @@ def resolve_scraper_alert(
 ):
     """スクレイパーアラートを解決済みにする"""
     try:
-        sql = text("""
-            UPDATE scraper_alerts
-            SET is_resolved = TRUE, resolved_at = NOW()
-            WHERE id = :alert_id
-            RETURNING id
-        """)
+        from ..models import ScraperAlert
         
-        result = db.execute(sql, {"alert_id": alert_id})
-        updated_id = result.scalar()
+        alert = db.query(ScraperAlert).filter(ScraperAlert.id == alert_id).first()
         
-        if not updated_id:
+        if not alert:
             raise HTTPException(status_code=404, detail="アラートが見つかりません")
         
+        alert.is_active = False
+        alert.resolved_at = datetime.now()
         db.commit()
+        
         return {"message": "アラートを解決済みにしました", "alert_id": alert_id}
         
     except Exception as e:

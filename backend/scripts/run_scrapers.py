@@ -33,7 +33,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def run_all_scrapers(area: str = "minato", max_pages: int = 3, force_detail_fetch: bool = False):
+def run_all_scrapers(area: str = "minato", max_properties: int = 100, force_detail_fetch: bool = False):
     """全てのスクレイパーを実行（タスクを作成してから実行）"""
     # エリアコードに変換
     from backend.app.scrapers.area_config import get_area_code
@@ -43,7 +43,7 @@ def run_all_scrapers(area: str = "minato", max_pages: int = 3, force_detail_fetc
     task_id = create_or_get_task(
         scrapers=['suumo', 'rehouse', 'homes', 'nomu', 'livable'],
         areas=[area_code],
-        max_properties=100,
+        max_properties=max_properties,
         force_detail_fetch=force_detail_fetch
     )
     
@@ -56,11 +56,11 @@ def run_all_scrapers(area: str = "minato", max_pages: int = 3, force_detail_fetc
         logger.info("Force detail fetch mode is enabled")
     
     scrapers = [
-        ('SUUMO', SuumoScraper(force_detail_fetch=force_detail_fetch)),
-        ('REHOUSE', RehouseScraper(force_detail_fetch=force_detail_fetch)),
-        ('HOMES', HomesScraper(force_detail_fetch=force_detail_fetch)),
-        ('NOMU', NomuScraper(force_detail_fetch=force_detail_fetch)),
-        ('LIVABLE', LivableScraper(force_detail_fetch=force_detail_fetch)),
+        ('SUUMO', SuumoScraper(force_detail_fetch=force_detail_fetch, max_properties=max_properties)),
+        ('REHOUSE', RehouseScraper(force_detail_fetch=force_detail_fetch, max_properties=max_properties)),
+        ('HOMES', HomesScraper(force_detail_fetch=force_detail_fetch, max_properties=max_properties)),
+        ('NOMU', NomuScraper(force_detail_fetch=force_detail_fetch, max_properties=max_properties)),
+        ('LIVABLE', LivableScraper(force_detail_fetch=force_detail_fetch, max_properties=max_properties)),
     ]
     
     results = {
@@ -88,7 +88,7 @@ def run_all_scrapers(area: str = "minato", max_pages: int = 3, force_detail_fetc
             scraper.set_progress_callback(progress_callback)
             
             # エリアコードを渡す（各スクレイパーは内部で変換を行う）
-            scraper.scrape_area(area, max_pages)
+            scraper.scrape_area(area, max_properties=max_properties)
             results['success'] += 1
             logger.info(f"{name} scraper completed successfully")
             
@@ -120,7 +120,7 @@ def run_all_scrapers(area: str = "minato", max_pages: int = 3, force_detail_fetc
     return results
 
 
-def run_single_scraper(scraper_name: str, area: str = "minato", max_pages: int = 3, force_detail_fetch: bool = False):
+def run_single_scraper(scraper_name: str, area: str = "minato", max_properties: int = 100, force_detail_fetch: bool = False):
     """単一のスクレイパーを実行（タスクを作成してから実行）"""
     # エリアコードに変換
     from backend.app.scrapers.area_config import get_area_code
@@ -130,7 +130,7 @@ def run_single_scraper(scraper_name: str, area: str = "minato", max_pages: int =
     task_id = create_or_get_task(
         scrapers=[scraper_name],
         areas=[area_code],
-        max_properties=100,
+        max_properties=max_properties,
         force_detail_fetch=force_detail_fetch
     )
     
@@ -153,7 +153,7 @@ def run_single_scraper(scraper_name: str, area: str = "minato", max_pages: int =
         logger.info(f"Running {scraper_name} scraper for area: {area} (code: {area_code}) with task_id: {task_id}")
         if force_detail_fetch:
             logger.info("Force detail fetch mode is enabled")
-        scraper = scrapers[scraper_name.lower()](force_detail_fetch=force_detail_fetch)
+        scraper = scrapers[scraper_name.lower()](force_detail_fetch=force_detail_fetch, max_properties=max_properties)
         
         # スクレイパーにタスクIDを設定
         scraper._task_id = task_id
@@ -171,9 +171,9 @@ def run_single_scraper(scraper_name: str, area: str = "minato", max_pages: int =
             return
             
         if hasattr(scraper, 'run'):
-            scraper.run(area, max_pages)
+            scraper.run(area, max_properties=max_properties)
         else:
-            scraper.scrape_area(area, max_pages)
+            scraper.scrape_area(area, max_properties=max_properties)
             
         logger.info(f"{scraper_name} scraper completed successfully")
         
@@ -406,7 +406,8 @@ def main():
     parser = argparse.ArgumentParser(description='不動産スクレイピングツール')
     parser.add_argument('--scraper', type=str, help='実行するスクレイパー (suumo, athome, homes, rehouse, nomu, livable, all)')
     parser.add_argument('--area', type=str, default='minato', help='検索エリア（デフォルト: minato）')
-    parser.add_argument('--pages', type=int, default=3, help='取得するページ数（デフォルト: 3）')
+    parser.add_argument('--max-properties', type=int, default=100, help='取得する最大物件数（デフォルト: 100）')
+    parser.add_argument('--pages', type=int, help='取得するページ数（--max-propertiesを使用してください、非推奨）', dest='pages_deprecated')
     parser.add_argument('--schedule', action='store_true', help='スケジュール実行モード（非推奨）')
     parser.add_argument('--interval', type=int, default=6, help='スケジュール実行間隔（時間）（デフォルト: 6）')
     parser.add_argument('--force-detail-fetch', action='store_true', help='強制的にすべての物件の詳細を取得')
@@ -419,10 +420,17 @@ def main():
         return
     else:
         # 単発実行モード
-        if args.scraper and args.scraper.lower() != 'all':
-            run_single_scraper(args.scraper, args.area, args.pages, args.force_detail_fetch)
+        # --pagesが指定された場合は警告を表示
+        if args.pages_deprecated is not None:
+            logger.warning("--pagesオプションは非推奨です。--max-propertiesを使用してください。")
+            max_props = args.pages_deprecated * 30  # ページ数から物件数の概算
         else:
-            run_all_scrapers(args.area, args.pages, args.force_detail_fetch)
+            max_props = args.max_properties
+            
+        if args.scraper and args.scraper.lower() != 'all':
+            run_single_scraper(args.scraper, args.area, max_props, args.force_detail_fetch)
+        else:
+            run_all_scrapers(args.area, max_props, args.force_detail_fetch)
 
 
 if __name__ == "__main__":

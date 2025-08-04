@@ -22,7 +22,7 @@ from ..models import (
     ListingPriceHistory, BuildingExternalId, Url404Retry
 )
 from ..utils.building_normalizer import BuildingNameNormalizer
-from ..utils.property_hasher import PropertyHasher
+from ..utils.fuzzy_property_matcher import FuzzyPropertyMatcher
 from ..utils.majority_vote_updater import MajorityVoteUpdater
 from ..utils.exceptions import TaskPausedException, TaskCancelledException, MaintenanceException
 import time as time_module
@@ -87,7 +87,7 @@ class BaseScraper(ABC):
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         self.logger = self._setup_logger()
         self.normalizer = BuildingNameNormalizer()
-        self.property_hasher = PropertyHasher()
+        self.fuzzy_matcher = FuzzyPropertyMatcher()
         self.majority_updater = MajorityVoteUpdater(self.session)
         self.external_id_handler = BuildingExternalIdHandler(self.session, self.logger)
         
@@ -1978,23 +1978,70 @@ class BaseScraper(ABC):
                                     layout: str = None, direction: str = None,
                                     balcony_area: float = None, url: str = None) -> MasterProperty:
         """マスター物件を取得または作成"""
-        # プロパティハッシュを計算
-        property_hash = self.property_hasher.calculate_hash(
-            building_id=building.id,
-            floor_number=floor_number,
-            area=area,
-            layout=layout,
-            direction=direction
-        )
+        # 同一物件の絶対条件：建物、所在階、平米数が一致
+        # 方角は揺れを許容するため、まず方角なしで検索
         
         # デバッグログ
-        self.logger.info(f"Property hash calculation: building_id={building.id}, floor={floor_number}, "
-                        f"area={area}, layout={layout}, direction={direction}, hash={property_hash}")
+        self.logger.info(f"Property search: building_id={building.id}, floor={floor_number}, "
+                        f"area={area}, layout={layout}, direction={direction}")
         
-        # 既存のマスター物件を検索
-        master_property = self.session.query(MasterProperty).filter(
-            MasterProperty.property_hash == property_hash
-        ).first()
+        # 既存のマスター物件を検索（絶対条件で）
+        query = self.session.query(MasterProperty).filter(
+            MasterProperty.building_id == building.id
+        )
+        
+        # 階数と面積は必須条件
+        if floor_number is not None:
+            query = query.filter(MasterProperty.floor_number == floor_number)
+        else:
+            query = query.filter(MasterProperty.floor_number.is_(None))
+            
+        if area is not None:
+            # 面積は0.5㎡の誤差を許容
+            query = query.filter(
+                MasterProperty.area.between(area - 0.5, area + 0.5)
+            )
+        else:
+            query = query.filter(MasterProperty.area.is_(None))
+        
+        # 間取りも一致条件に含める
+        if layout:
+            normalized_layout = self.fuzzy_matcher.normalize_layout(layout)
+            query = query.filter(MasterProperty.layout == normalized_layout)
+        else:
+            query = query.filter(MasterProperty.layout.is_(None))
+        
+        # 部屋番号がある場合は、部屋番号も一致条件に含める
+        if room_number:
+            query = query.filter(MasterProperty.room_number == room_number)
+        else:
+            # 部屋番号がない場合のみ、方角を考慮（ユニーク制約対象）
+            query = query.filter(MasterProperty.room_number.is_(None))
+            
+            # 方角は正規化して比較
+            if direction:
+                normalized_direction = self.fuzzy_matcher.normalize_direction(direction)
+                # 方角の揺れを許容するため、方角ありとなしの両方を検索
+                candidates = query.all()
+                
+                # 方角が一致する物件を優先
+                for candidate in candidates:
+                    if candidate.direction:
+                        candidate_dir = self.fuzzy_matcher.normalize_direction(candidate.direction)
+                        if candidate_dir == normalized_direction:
+                            master_property = candidate
+                            break
+                else:
+                    # 方角が一致しない場合、方角なしの物件があればそれを使用
+                    for candidate in candidates:
+                        if not candidate.direction:
+                            master_property = candidate
+                            break
+                    else:
+                        master_property = None
+            else:
+                # 新規物件に方角がない場合
+                master_property = query.filter(MasterProperty.direction.is_(None)).first()
         
         if master_property:
             # 既存物件の情報を更新（より詳細な情報があれば）
@@ -2009,10 +2056,10 @@ class BaseScraper(ABC):
                 master_property.area = area
                 updated = True
             if layout and not master_property.layout:
-                master_property.layout = layout
+                master_property.layout = self.fuzzy_matcher.normalize_layout(layout)
                 updated = True
             if direction and not master_property.direction:
-                master_property.direction = direction
+                master_property.direction = self.fuzzy_matcher.normalize_direction(direction)
                 updated = True
             if balcony_area and not master_property.balcony_area:
                 master_property.balcony_area = balcony_area
@@ -2023,16 +2070,16 @@ class BaseScraper(ABC):
             
             return master_property
         
-        # 新規作成
+        # 新規作成（property_hashは一時的にNULLで作成）
         master_property = MasterProperty(
             building_id=building.id,
             room_number=room_number,
             floor_number=floor_number,
             area=area,
-            layout=layout,
-            direction=direction,
+            layout=self.fuzzy_matcher.normalize_layout(layout) if layout else None,
+            direction=self.fuzzy_matcher.normalize_direction(direction) if direction else None,
             balcony_area=balcony_area,
-            property_hash=property_hash
+            property_hash=None  # 一時的にNULL
         )
         self.session.add(master_property)
         
@@ -2041,22 +2088,16 @@ class BaseScraper(ABC):
         except Exception as e:
             # 重複エラーの場合はロールバックして再検索
             if "duplicate key value violates unique constraint" in str(e):
-                self.logger.warning(f"Duplicate property_hash detected, rolling back and retrying: {property_hash}")
+                self.logger.warning(f"Duplicate property detected, rolling back and retrying")
                 self.session.rollback()
                 # 新しいトランザクションを開始
                 self.session.begin()
                 
-                # 再度検索
-                master_property = self.session.query(MasterProperty).filter(
-                    MasterProperty.property_hash == property_hash
-                ).first()
-                
-                if master_property:
-                    self.logger.info(f"Found existing master property after rollback: id={master_property.id}")
-                    return master_property
-                else:
-                    # それでも見つからない場合はエラーを再発生
-                    raise
+                # 再度検索（同じ条件で）
+                return self.get_or_create_master_property(
+                    building, room_number, floor_number, area, 
+                    layout, direction, balcony_area, url
+                )
             else:
                 # その他のエラーは再発生
                 raise
@@ -3278,21 +3319,21 @@ class BaseScraper(ABC):
         """
         try:
             from sqlalchemy import text
+            from ..models import ScraperAlert
             
-            # まず既存の未解決アラートがあるか確認
-            check_sql = text("""
-                SELECT id FROM scraper_alerts 
-                WHERE source_site = :source_site 
-                AND alert_type = 'critical_field_error' 
-                AND field_name = :field_name 
-                AND is_resolved = false
-                LIMIT 1
-            """)
+            # まず既存のアクティブアラートがあるか確認
+            # field_nameはdetails JSON内に格納されているため、別の方法でチェック
+            existing_alerts = self.session.query(ScraperAlert).filter(
+                ScraperAlert.source_site == self.source_site,
+                ScraperAlert.alert_type == 'critical_field_error',
+                ScraperAlert.is_active == True
+            ).all()
             
-            existing = self.session.execute(check_sql, {
-                'source_site': self.source_site,
-                'field_name': field_name
-            }).fetchone()
+            existing_alert = None
+            for alert in existing_alerts:
+                if alert.details and alert.details.get('field_name') == field_name:
+                    existing_alert = alert
+                    break
             
             message = (
                 f"{self.source_site}のスクレイパーで重要フィールド'{field_name}'の"
@@ -3300,89 +3341,34 @@ class BaseScraper(ABC):
                 f"HTML構造の変更を確認してください。"
             )
             
-            if existing:
+            details = {
+                'error_count': error_count,
+                'error_rate': error_rate,
+                'field_name': field_name,
+                'threshold': self._error_thresholds
+            }
+            
+            if existing_alert:
                 # 既存のアラートを更新
-                update_sql = text("""
-                    UPDATE scraper_alerts 
-                    SET error_count = :error_count,
-                        error_rate = :error_rate,
-                        message = :message,
-                        created_at = NOW()
-                    WHERE id = :id
-                """)
-                
-                self.session.execute(update_sql, {
-                    'id': existing[0],
-                    'error_count': error_count,
-                    'error_rate': error_rate,
-                    'message': message
-                })
+                existing_alert.message = message
+                existing_alert.details = details
+                existing_alert.updated_at = datetime.now()
             else:
                 # 新規アラートを作成
-                insert_sql = text("""
-                    INSERT INTO scraper_alerts 
-                    (source_site, alert_type, field_name, error_count, error_rate, message, created_at)
-                    VALUES 
-                    (:source_site, 'critical_field_error', :field_name, :error_count, :error_rate, :message, NOW())
-                """)
-                
-                self.session.execute(insert_sql, {
-                    'source_site': self.source_site,
-                    'field_name': field_name,
-                    'error_count': error_count,
-                    'error_rate': error_rate,
-                    'message': message
-                })
+                new_alert = ScraperAlert(
+                    source_site=self.source_site,
+                    alert_type='critical_field_error',
+                    severity='high',
+                    message=message,
+                    details=details
+                )
+                self.session.add(new_alert)
             
             self.session.commit()
             
         except Exception as e:
             self.logger.error(f"アラート記録エラー: {e}")
-            # テーブルが存在しない場合は作成を試みる
-            if "relation \"scraper_alerts\" does not exist" in str(e):
-                self._create_scraper_alerts_table()
-                # リトライ
-                try:
-                    self.session.execute(sql, {
-                        'source_site': self.source_site,
-                        'field_name': field_name,
-                        'error_count': error_count,
-                        'error_rate': error_rate,
-                        'message': message
-                    })
-                    self.session.commit()
-                except Exception as retry_e:
-                    self.logger.error(f"アラート記録リトライエラー: {retry_e}")
-    
-    def _create_scraper_alerts_table(self):
-        """scraper_alertsテーブルを作成"""
-        try:
-            from sqlalchemy import text
-            
-            sql = text("""
-                CREATE TABLE IF NOT EXISTS scraper_alerts (
-                    id SERIAL PRIMARY KEY,
-                    source_site VARCHAR(50) NOT NULL,
-                    alert_type VARCHAR(50) NOT NULL,
-                    field_name VARCHAR(50),
-                    error_count INTEGER,
-                    error_rate FLOAT,
-                    message TEXT,
-                    is_resolved BOOLEAN DEFAULT FALSE,
-                    resolved_at TIMESTAMP,
-                    created_at TIMESTAMP NOT NULL DEFAULT NOW()
-                );
-                
-                CREATE INDEX IF NOT EXISTS idx_scraper_alerts_unresolved 
-                ON scraper_alerts(is_resolved, created_at DESC);
-            """)
-            
-            self.session.execute(sql)
-            self.session.commit()
-            self.logger.info("scraper_alertsテーブルを作成しました")
-            
-        except Exception as e:
-            self.logger.error(f"scraper_alertsテーブル作成エラー: {e}")
+            self.session.rollback()
     
     def track_selector_usage(self, soup: BeautifulSoup, selector: str, field_name: str, required: bool = True) -> Optional[any]:
         """セレクタの使用を追跡し、要素を返す

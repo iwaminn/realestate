@@ -28,6 +28,7 @@ import {
   List,
   ListItem,
   ListItemText,
+  ListItemSecondaryAction,
   Tabs,
   Tab,
   Autocomplete,
@@ -41,6 +42,7 @@ import {
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
   Delete as DeleteIcon,
+  Warning as WarningIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
 import DeleteConfirmDialog from './DeleteConfirmDialog';
@@ -54,13 +56,18 @@ interface ScraperAlert {
   id: number;
   source_site: string;
   alert_type: string;
-  field_name: string;
-  error_count: number;
-  error_rate: number;
+  severity: string;
   message: string;
-  is_resolved: boolean;
+  details: {
+    field_name?: string;
+    error_count?: number;
+    error_rate?: number;
+    threshold?: any;
+  } | null;
+  is_active: boolean;
   resolved_at: string | null;
   created_at: string;
+  updated_at: string | null;
 }
 
 interface ScrapingTask {
@@ -1750,6 +1757,74 @@ const AdminScraping: React.FC = () => {
           </TableContainer>
         )}
       </Paper>
+
+      {/* スクレイパーアラート */}
+      {alerts.length > 0 && (
+        <Paper elevation={2} sx={{ p: 2, mt: 3 }}>
+          <Typography variant="h6" gutterBottom color="error">
+            <WarningIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
+            スクレイパーアラート
+          </Typography>
+          <List>
+            {alerts.map((alert) => (
+              <ListItem
+                key={alert.id}
+                sx={{
+                  borderLeft: `4px solid ${
+                    alert.severity === 'high' ? '#d32f2f' :
+                    alert.severity === 'medium' ? '#ed6c02' : '#2e7d32'
+                  }`,
+                  mb: 1,
+                  backgroundColor: 'grey.50'
+                }}
+              >
+                <ListItemText
+                  primary={
+                    <Box display="flex" alignItems="center" justifyContent="space-between">
+                      <Typography variant="subtitle1">
+                        {alert.source_site} - {alert.alert_type}
+                      </Typography>
+                      <Chip
+                        label={alert.severity}
+                        size="small"
+                        color={
+                          alert.severity === 'high' ? 'error' :
+                          alert.severity === 'medium' ? 'warning' : 'success'
+                        }
+                      />
+                    </Box>
+                  }
+                  secondary={
+                    <Box>
+                      <Typography variant="body2" sx={{ mt: 1 }}>
+                        {alert.message}
+                      </Typography>
+                      {alert.details && (
+                        <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.5 }}>
+                          エラー数: {alert.details.error_count} | 
+                          エラー率: {(alert.details.error_rate * 100).toFixed(1)}%
+                        </Typography>
+                      )}
+                      <Typography variant="caption" color="text.secondary">
+                        発生日時: {new Date(alert.created_at).toLocaleString('ja-JP')}
+                      </Typography>
+                    </Box>
+                  }
+                />
+                <ListItemSecondaryAction>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    onClick={() => resolveAlert(alert.id)}
+                  >
+                    解決済みにする
+                  </Button>
+                </ListItemSecondaryAction>
+              </ListItem>
+            ))}
+          </List>
+        </Paper>
+      )}
 
       {/* 削除確認ダイアログ */}
       <DeleteConfirmDialog

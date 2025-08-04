@@ -137,7 +137,7 @@ make scrape
 make scrape-suumo
 
 # コンテナ内で直接実行
-docker exec realestate-backend poetry run python /app/backend/scripts/run_scrapers.py --scraper suumo --pages 3
+docker exec realestate-backend poetry run python /app/backend/scripts/run_scrapers.py --scraper suumo --max-properties 100
 
 # 詳細な実行方法は以下を参照
 # docs/SCRAPER_EXECUTION_GUIDE.md
