@@ -224,7 +224,7 @@ class ListingPriceHistory(Base):
 
 
 class BuildingExternalId(Base):
-    """建物外部IDテーブル（将来の拡張用）"""
+    """建物外部IDテーブル（各サイトの建物IDを管理）"""
     __tablename__ = "building_external_ids"
     
     id = Column(Integer, primary_key=True, index=True)
