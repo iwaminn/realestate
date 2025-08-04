@@ -797,15 +797,12 @@ async def get_duplicate_buildings(
     min_similarity: float = Query(0.94, description="最小類似度"),
     limit: int = Query(50, description="最大グループ数"),
     search: Optional[str] = Query(None, description="建物名検索"),
-    use_enhanced: bool = Query(True, description="高度なマッチングを使用"),
     db: Session = Depends(get_db)
 ):
-    """重複の可能性がある建物を検出"""
-    from backend.app.utils.building_normalizer import BuildingNameNormalizer
+    """重複の可能性がある建物を検出（常に高度なマッチングを使用）"""
     from backend.app.utils.enhanced_building_matcher import EnhancedBuildingMatcher
     
-    normalizer = BuildingNameNormalizer()
-    enhanced_matcher = EnhancedBuildingMatcher() if use_enhanced else None
+    enhanced_matcher = EnhancedBuildingMatcher()
     
     # クエリを構築
     query = db.query(
@@ -847,10 +844,6 @@ async def get_duplicate_buildings(
     if (1552, 2080) in excluded_pairs or (2080, 1552) in excluded_pairs:
         app_logger.info(f"Exclusion pair 1552-2080 is loaded: (1552,2080)={(1552, 2080) in excluded_pairs}, (2080,1552)={(2080, 1552) in excluded_pairs}")
     
-    # 事前に全ての建物名を正規化（キャッシュ）
-    normalized_names = {}
-    for building, _ in buildings_with_count:
-        normalized_names[building.id] = normalizer.normalize(building.normalized_name)
     
     # 重複候補を検出
     duplicates = []
@@ -862,7 +855,6 @@ async def get_duplicate_buildings(
             continue
             
         candidates = []
-        norm_name1 = normalized_names[building1.id]
         
         for j, (building2, count2) in enumerate(buildings_with_count[i+1:], i+1):
             if building2.id in processed_ids:
@@ -876,110 +868,37 @@ async def get_duplicate_buildings(
             if (building1.id, building2.id) in excluded_pairs:
                 app_logger.debug(f"Skipping excluded pair: {building1.id} ({building1.normalized_name}) - {building2.id} ({building2.normalized_name})")
                 continue
-                
-            # 同じ住所の場合は重複候補に含める（表記ゆれの可能性）
-            # if building1.address and building2.address and building1.address == building2.address:
-            #     continue
-                
-            # 簡易チェック：建物名の長さが大きく異なる場合はスキップ
-            if abs(len(building1.normalized_name) - len(building2.normalized_name)) > 10:
-                continue
-                
-            norm_name2 = normalized_names[building2.id]
-            
-            # 簡易チェック：最初の3文字が全く異なる場合はスキップ
-            # ただし、検索時は検索文字列を含む建物同士なので、このチェックをスキップ
-            if search is None and len(norm_name1) >= 3 and len(norm_name2) >= 3:
-                if norm_name1[:3] != norm_name2[:3]:
-                    continue
-            
-            # 住所の類似度をチェック
-            addr_similarity = 0.0
-            if building1.address and building2.address:
-                # 住所の正規化（空白、全角半角を統一）
-                addr1 = re.sub(r'[\s　]+', '', building1.address)
-                addr2 = re.sub(r'[\s　]+', '', building2.address)
-                addr_similarity = SequenceMatcher(None, addr1, addr2).ratio()
-                
-                # 住所が大きく異なる場合はスキップ（番地レベルの違いは許容）
-                if addr_similarity < 0.7:
-                    continue
-            
-            # 総階数のチェック
-            floors_match = True
-            if building1.total_floors and building2.total_floors:
-                # 総階数が2階以上異なる場合は別建物の可能性が高い
-                if abs(building1.total_floors - building2.total_floors) > 2:
-                    floors_match = False
             
             # 類似度計算
             total_comparisons += 1
             
-            # 高度なマッチングを使用する場合
-            if enhanced_matcher:
-                # 総合的な類似度を計算
-                comprehensive_similarity = enhanced_matcher.calculate_comprehensive_similarity(
-                    building1, building2
-                )
-                # デバッグ情報を取得
-                debug_info = enhanced_matcher.get_debug_info()
-                
-                # 閾値チェック
-                is_duplicate = comprehensive_similarity >= min_similarity
-                
-                if is_duplicate:
-                    candidates.append({
-                        "id": building2.id,
-                        "normalized_name": building2.normalized_name,
-                        "address": building2.address,
-                        "total_floors": building2.total_floors,
-                        "built_year": building2.built_year,
-                        "built_month": building2.built_month,
-                        "property_count": count2,
-                        "similarity": comprehensive_similarity,
-                        "address_similarity": debug_info['scores'].get('address', 0),
-                        "name_similarity": debug_info['scores'].get('name', 0),
-                        "attribute_similarity": debug_info['scores'].get('attributes', 0),
-                        "match_reason": debug_info.get('match_reason', ''),
-                        "floors_match": floors_match
-                    })
-                    processed_ids.add(building2.id)
-            else:
-                # 従来のマッチング
-                name_similarity = normalizer.calculate_similarity(building1.normalized_name, building2.normalized_name)
-                # 浮動小数点の精度問題を回避するため、小数第3位で丸める
-                name_similarity = round(name_similarity, 3)
-                
-                # 総合的な判定
-                # 1. 名前が完全一致 → 同一建物
-                # 2. 名前の類似度が高く、住所も一致 → 同一建物
-                # 3. 名前の類似度が中程度でも、住所が完全一致し階数も一致 → 同一建物
-                # 4. 片方の住所が空の場合は、名前の類似度のみで判定
-                is_duplicate = False
-                
-                if norm_name1 == norm_name2:
-                    is_duplicate = True
-                elif not building1.address or not building2.address:
-                    # 片方でも住所がない場合は、名前の類似度のみで判定
-                    if name_similarity >= min_similarity:
-                        is_duplicate = True
-                elif name_similarity >= min_similarity and addr_similarity >= 0.8:
-                    is_duplicate = True
-                elif name_similarity >= 0.8 and addr_similarity >= 0.95 and floors_match:
-                    is_duplicate = True
-                
-                if is_duplicate:
-                    candidates.append({
-                        "id": building2.id,
-                        "normalized_name": building2.normalized_name,
-                        "address": building2.address,
-                        "total_floors": building2.total_floors,
-                        "property_count": count2,
-                        "similarity": name_similarity,
-                        "address_similarity": addr_similarity,
-                        "floors_match": floors_match
-                    })
-                    processed_ids.add(building2.id)
+            # 総合的な類似度を計算（常に高度なマッチングを使用）
+            comprehensive_similarity = enhanced_matcher.calculate_comprehensive_similarity(
+                building1, building2
+            )
+            # デバッグ情報を取得
+            debug_info = enhanced_matcher.get_debug_info()
+            
+            # 閾値チェック
+            is_duplicate = comprehensive_similarity >= min_similarity
+            
+            if is_duplicate:
+                candidates.append({
+                    "id": building2.id,
+                    "normalized_name": building2.normalized_name,
+                    "address": building2.address,
+                    "total_floors": building2.total_floors,
+                    "built_year": building2.built_year,
+                    "built_month": building2.built_month,
+                    "property_count": count2,
+                    "similarity": comprehensive_similarity,
+                    "address_similarity": debug_info['scores'].get('address', 0),
+                    "name_similarity": debug_info['scores'].get('name', 0),
+                    "attribute_similarity": debug_info['scores'].get('attributes', 0),
+                    "match_reason": debug_info.get('match_reason', ''),
+                    "floors_match": True  # EnhancedBuildingMatcherが階数も考慮しているため常にTrue
+                })
+                processed_ids.add(building2.id)
         
         if candidates:
             duplicates.append({
