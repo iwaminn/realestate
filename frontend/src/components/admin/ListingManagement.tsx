@@ -21,6 +21,7 @@ import {
   Dialog,
   DialogTitle,
   DialogContent,
+  DialogActions,
   Grid,
   Tabs,
   Tab,
@@ -643,6 +644,7 @@ export const ListingManagement: React.FC = () => {
         onClose={() => setDetailOpen(false)}
         maxWidth="lg"
         fullWidth
+        scroll="paper"
       >
         {selectedListing && (
           <>
@@ -667,9 +669,11 @@ export const ListingManagement: React.FC = () => {
             <DialogContent>
               <Tabs value={tabIndex} onChange={(_, v) => setTabIndex(v)} sx={{ mb: 2 }}>
                 <Tab label="基本情報" />
+                <Tab label="掲載情報" />
                 <Tab label="価格履歴" />
+                <Tab label="タイムスタンプ" />
                 <Tab label="画像" />
-                <Tab label="詳細情報" />
+                <Tab label="詳細JSON" />
               </Tabs>
 
               {tabIndex === 0 && (
@@ -694,30 +698,82 @@ export const ListingManagement: React.FC = () => {
                     </Box>
                   </Grid>
                   <Grid item xs={12}>
-                    <Typography variant="subtitle2" color="textSecondary">掲載情報</Typography>
+                    <Typography variant="subtitle2" color="textSecondary">価格・費用情報</Typography>
                     <Box>
-                      <Typography><strong>タイトル:</strong> {selectedListing.title}</Typography>
                       <Typography><strong>現在価格:</strong> {formatPrice(selectedListing.current_price)}</Typography>
+                      {selectedListing.previous_price && (
+                        <Typography><strong>前回価格:</strong> {formatPrice(selectedListing.previous_price)}</Typography>
+                      )}
                       <Typography><strong>管理費:</strong> {selectedListing.management_fee ? `${selectedListing.management_fee.toLocaleString()}円` : '-'}</Typography>
                       <Typography><strong>修繕積立金:</strong> {selectedListing.repair_fund ? `${selectedListing.repair_fund.toLocaleString()}円` : '-'}</Typography>
-                      <Typography><strong>不動産会社:</strong> {selectedListing.agency_name || '-'}</Typography>
-                      <Typography><strong>電話番号:</strong> {selectedListing.agency_tel || '-'}</Typography>
-                    </Box>
-                  </Grid>
-                  <Grid item xs={12}>
-                    <Typography variant="subtitle2" color="textSecondary">タイムスタンプ</Typography>
-                    <Box>
-                      <Typography><strong>初回確認:</strong> {formatDate(selectedListing.first_seen_at)}</Typography>
-                      <Typography><strong>最終確認:</strong> {formatDate(selectedListing.last_confirmed_at)}</Typography>
-                      {selectedListing.delisted_at && (
-                        <Typography><strong>削除日時:</strong> {formatDate(selectedListing.delisted_at)}</Typography>
-                      )}
                     </Box>
                   </Grid>
                 </Grid>
               )}
 
               {tabIndex === 1 && (
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="subtitle2" color="textSecondary">掲載基本情報</Typography>
+                    <Box sx={{ mb: 2 }}>
+                      <Typography><strong>掲載ID:</strong> {selectedListing.id}</Typography>
+                      <Typography><strong>マスター物件ID:</strong> {selectedListing.master_property.id}</Typography>
+                      <Typography><strong>建物ID:</strong> {selectedListing.building.id}</Typography>
+                      <Typography><strong>サイトID:</strong> {selectedListing.site_property_id || '-'}</Typography>
+                      <Typography><strong>タイトル:</strong> {selectedListing.title}</Typography>
+                      <Typography><strong>掲載建物名:</strong> {selectedListing.listing_building_name || '-'}</Typography>
+                      {selectedListing.listing_building_name !== selectedListing.building.normalized_name && (
+                        <Typography variant="caption" color="textSecondary">
+                          （正規化名: {selectedListing.building.normalized_name}）
+                        </Typography>
+                      )}
+                      <Typography><strong>掲載URL:</strong> <Link href={selectedListing.url} target="_blank">{selectedListing.url}</Link></Typography>
+                      <Typography><strong>ステータス:</strong> {selectedListing.is_active ? 'アクティブ' : '非アクティブ'}</Typography>
+                      <Typography><strong>新着:</strong> {selectedListing.is_new ? 'はい' : 'いいえ'}</Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="subtitle2" color="textSecondary">掲載固有情報</Typography>
+                    <Box sx={{ mb: 2 }}>
+                      <Typography><strong>駅情報:</strong> {selectedListing.station_info || '-'}</Typography>
+                      <Typography><strong>掲載階数:</strong> {selectedListing.listing_floor_number ? `${selectedListing.listing_floor_number}階` : '-'}</Typography>
+                      <Typography><strong>掲載面積:</strong> {selectedListing.listing_area ? `${selectedListing.listing_area}㎡` : '-'}</Typography>
+                      <Typography><strong>掲載間取り:</strong> {selectedListing.listing_layout || '-'}</Typography>
+                      <Typography><strong>掲載方角:</strong> {selectedListing.listing_direction || '-'}</Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" color="textSecondary">不動産会社情報</Typography>
+                    <Box sx={{ mb: 2 }}>
+                      <Typography><strong>不動産会社:</strong> {selectedListing.agency_name || '-'}</Typography>
+                      <Typography><strong>電話番号:</strong> {selectedListing.agency_tel || '-'}</Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" color="textSecondary">備考</Typography>
+                    <Box>
+                      {selectedListing.remarks && (
+                        <Paper sx={{ p: 2, bgcolor: 'grey.50', mb: 1 }}>
+                          <Typography variant="body2" style={{ whiteSpace: 'pre-wrap' }}>
+                            {selectedListing.remarks}
+                          </Typography>
+                        </Paper>
+                      )}
+                      {selectedListing.summary_remarks && (
+                        <Box>
+                          <Typography variant="caption" color="textSecondary">要約:</Typography>
+                          <Typography variant="body2">{selectedListing.summary_remarks}</Typography>
+                        </Box>
+                      )}
+                      {!selectedListing.remarks && !selectedListing.summary_remarks && (
+                        <Typography color="textSecondary">備考なし</Typography>
+                      )}
+                    </Box>
+                  </Grid>
+                </Grid>
+              )}
+
+              {tabIndex === 2 && (
                 <Box>
                   <Typography variant="subtitle2" color="textSecondary" sx={{ mb: 2 }}>
                     価格履歴 ({selectedListing.price_history.length}件)
@@ -747,7 +803,47 @@ export const ListingManagement: React.FC = () => {
                 </Box>
               )}
 
-              {tabIndex === 2 && (
+              {tabIndex === 3 && (
+                <Grid container spacing={2}>
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="subtitle2" color="textSecondary">掲載関連日時</Typography>
+                    <Box sx={{ mb: 2 }}>
+                      <Typography><strong>初回確認日時:</strong> {formatDate(selectedListing.first_seen_at)}</Typography>
+                      <Typography><strong>最終確認日時:</strong> {formatDate(selectedListing.last_confirmed_at)}</Typography>
+                      <Typography><strong>初回公開日時:</strong> {formatDate(selectedListing.first_published_at)}</Typography>
+                      <Typography><strong>公開日時:</strong> {formatDate(selectedListing.published_at)}</Typography>
+                      {selectedListing.delisted_at && (
+                        <Typography><strong>削除日時:</strong> {formatDate(selectedListing.delisted_at)}</Typography>
+                      )}
+                      <Typography><strong>詳細取得日時:</strong> {formatDate(selectedListing.detail_fetched_at)}</Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12} md={6}>
+                    <Typography variant="subtitle2" color="textSecondary">システム日時</Typography>
+                    <Box sx={{ mb: 2 }}>
+                      <Typography><strong>作成日時:</strong> {formatDate(selectedListing.created_at)}</Typography>
+                      <Typography><strong>更新日時:</strong> {formatDate(selectedListing.updated_at)}</Typography>
+                      {selectedListing.price_updated_at && (
+                        <Typography><strong>価格更新日時:</strong> {formatDate(selectedListing.price_updated_at)}</Typography>
+                      )}
+                    </Box>
+                  </Grid>
+                  <Grid item xs={12}>
+                    <Typography variant="subtitle2" color="textSecondary">日時の説明</Typography>
+                    <Box>
+                      <Typography variant="body2" color="textSecondary">
+                        • <strong>初回確認:</strong> システムが初めてこの掲載を発見した日時<br/>
+                        • <strong>最終確認:</strong> システムが最後にこの掲載の存在を確認した日時<br/>
+                        • <strong>初回公開:</strong> 掲載サイトでの最初の公開日時（推定）<br/>
+                        • <strong>詳細取得:</strong> 詳細ページから情報を取得した最新日時<br/>
+                        • <strong>価格更新:</strong> 価格が最後に変更された日時
+                      </Typography>
+                    </Box>
+                  </Grid>
+                </Grid>
+              )}
+
+              {tabIndex === 4 && (
                 <Box>
                   <Typography variant="subtitle2" color="textSecondary" sx={{ mb: 2 }}>
                     画像 ({selectedListing.images.length}件)
@@ -769,7 +865,7 @@ export const ListingManagement: React.FC = () => {
                 </Box>
               )}
 
-              {tabIndex === 3 && (
+              {tabIndex === 5 && (
                 <Box>
                   <Typography variant="subtitle2" color="textSecondary" sx={{ mb: 2 }}>
                     詳細情報JSON
@@ -782,6 +878,18 @@ export const ListingManagement: React.FC = () => {
                 </Box>
               )}
             </DialogContent>
+            <DialogActions>
+              <Button
+                startIcon={refreshingListings.has(selectedListing.id) ? <CircularProgress size={20} /> : <RefreshIcon />}
+                onClick={() => {
+                  handleRefreshDetail(selectedListing.id);
+                }}
+                disabled={refreshingListings.has(selectedListing.id)}
+              >
+                詳細を再取得
+              </Button>
+              <Button onClick={() => setDetailOpen(false)}>閉じる</Button>
+            </DialogActions>
           </>
         )}
       </Dialog>
