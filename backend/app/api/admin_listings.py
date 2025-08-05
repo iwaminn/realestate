@@ -412,10 +412,10 @@ async def refresh_listing_detail(
     
     # 既存の実行中タスクがないか確認
     from backend.app.models_scraping_task import ScrapingTask
+    from sqlalchemy import cast, String
     existing_task = db.query(ScrapingTask).filter(
         ScrapingTask.status.in_(['running', 'pending']),
-        ScrapingTask.scrapers.contains([listing.source_site]),
-        ScrapingTask.task_id.like(f'%detail_refresh%')
+        ScrapingTask.task_id.like(f'%detail_refresh_{listing.source_site}%')
     ).first()
     
     if existing_task:
@@ -498,7 +498,7 @@ async def refresh_listing_detail(
             if not scraper_class:
                 raise ValueError(f"Unknown scraper: {listing_db.source_site}")
             
-            scraper = scraper_class(listing_db.source_site, force_detail_fetch=True)
+            scraper = scraper_class(force_detail_fetch=True)
             
             # 詳細ページのHTMLを取得
             soup = scraper.fetch_page(listing_db.url)
