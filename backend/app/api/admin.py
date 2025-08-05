@@ -994,55 +994,7 @@ def search_properties_for_merge(
     }
 
 
-@router.get("/properties/{property_id}", response_model=PropertyDetail)
-def get_property_detail_for_admin(property_id: int, db: Session = Depends(get_db)):
-    """管理画面用の物件詳細情報を取得"""
-    
-    # 物件情報を取得
-    property = db.query(MasterProperty).filter(
-        MasterProperty.id == property_id
-    ).first()
-    
-    if not property:
-        raise HTTPException(status_code=404, detail="Property not found")
-    
-    # 建物情報を取得
-    building = db.query(Building).filter(
-        Building.id == property.building_id
-    ).first()
-    
-    # 掲載情報を取得（アクティブなもののみ）
-    listings = db.query(PropertyListing).filter(
-        PropertyListing.master_property_id == property_id,
-        PropertyListing.is_active == True
-    ).all()
-    
-    # レスポンスを構築
-    listing_data = []
-    for listing in listings:
-        listing_data.append({
-            "id": listing.id,
-            "source_site": listing.source_site,
-            "url": listing.url,
-            "title": listing.title,
-            "current_price": listing.current_price,
-            "agency_name": listing.agency_name,
-            "is_active": listing.is_active,
-            "last_scraped_at": listing.last_scraped_at.isoformat() if listing.last_scraped_at else None
-        })
-    
-    return PropertyDetail(
-        id=property.id,
-        building_id=property.building_id,
-        building_name=building.normalized_name,
-        display_building_name=property.display_building_name,
-        room_number=property.room_number,
-        floor_number=property.floor_number,
-        area=property.area,
-        layout=property.layout,
-        direction=property.direction,
-        listings=listing_data
-    )
+# 削除: admin_properties.pyに移行
 
 
 @router.post("/merge-properties")

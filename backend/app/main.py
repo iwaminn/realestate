@@ -28,6 +28,7 @@ from backend.app.api.price_analysis import (
 )
 from backend.app.api import admin
 from backend.app.api import admin_listings
+from backend.app.api import admin_properties
 
 app = FastAPI(title="不動産横断検索API v2", version="2.0.0")
 
@@ -185,6 +186,7 @@ async def startup_event():
 # 管理画面用ルーターを追加
 app.include_router(admin.router)
 app.include_router(admin_listings.router)
+app.include_router(admin_properties.router)
 
 @app.get("/")
 async def root():
