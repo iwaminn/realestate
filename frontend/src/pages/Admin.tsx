@@ -45,6 +45,7 @@ import ManualPropertyMerger from '../components/ManualPropertyMerger';
 import PropertyDuplicateGroups from '../components/PropertyDuplicateGroups';
 import PropertyExclusionHistory from '../components/PropertyExclusionHistory';
 import BuildingExclusionHistory from '../components/BuildingExclusionHistory';
+import { ListingManagement } from '../components/admin/ListingManagement';
 
 
 const Admin: React.FC = () => {
@@ -103,6 +104,7 @@ const Admin: React.FC = () => {
           <Tab label="物件重複管理" />
           <Tab label="建物重複管理" />
           <Tab label="スクレイピング" />
+          <Tab label="掲載情報管理" />
         </Tabs>
       </Paper>
 
@@ -163,6 +165,12 @@ const Admin: React.FC = () => {
       {activeTab === 2 && (
         <Box>
           <AdminScraping />
+        </Box>
+      )}
+
+      {activeTab === 3 && (
+        <Box>
+          <ListingManagement />
         </Box>
       )}
 
