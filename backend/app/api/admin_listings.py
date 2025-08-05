@@ -480,65 +480,129 @@ async def refresh_listing_detail(
                 task_db.started_at = datetime.now()
                 db_session.commit()
             
+            # 既存の掲載情報とマスター物件情報を取得
+            listing_db = db_session.query(PropertyListing).filter(PropertyListing.id == listing_id).first()
+            if not listing_db:
+                raise ValueError(f"Listing {listing_id} not found in database")
+            
+            master_property = db_session.query(MasterProperty).filter(
+                MasterProperty.id == listing_db.master_property_id
+            ).first()
+            
+            building = db_session.query(Building).filter(
+                Building.id == master_property.building_id
+            ).first() if master_property else None
+            
             # スクレイパーインスタンスを取得
-            scraper_class = get_scraper_class(listing.source_site)
+            scraper_class = get_scraper_class(listing_db.source_site)
             if not scraper_class:
-                raise ValueError(f"Unknown scraper: {listing.source_site}")
+                raise ValueError(f"Unknown scraper: {listing_db.source_site}")
             
-            scraper = scraper_class(listing.source_site, force_detail_fetch=True)
+            scraper = scraper_class(listing_db.source_site, force_detail_fetch=True)
             
-            # 詳細ページを取得・解析
-            property_data = scraper.parse_property_detail(listing.url)
+            # 詳細ページのHTMLを取得
+            soup = scraper.fetch_page(listing_db.url)
+            if not soup:
+                raise ValueError(f"Failed to fetch page: {listing_db.url}")
+            
+            # 既存の情報を使って詳細データを構築
+            property_data_from_list = {
+                'url': listing_db.url,
+                'site_property_id': listing_db.site_property_id,
+                'title': listing_db.title,
+                'price': listing_db.current_price,
+                'building_name': listing_db.listing_building_name or (building.normalized_name if building else None),
+                'floor_number': listing_db.listing_floor_number or (master_property.floor_number if master_property else None),
+                'area': listing_db.listing_area or (master_property.area if master_property else None),
+                'layout': listing_db.listing_layout or (master_property.layout if master_property else None),
+                'direction': listing_db.listing_direction or (master_property.direction if master_property else None),
+                'station_info': listing_db.station_info,
+            }
+            
+            # 詳細ページを解析（既存の情報を渡す）
+            property_data = None
+            if hasattr(scraper, 'parse_property_detail'):
+                # parse_property_detailメソッドの引数を確認
+                import inspect
+                sig = inspect.signature(scraper.parse_property_detail)
+                params = list(sig.parameters.keys())
+                
+                if 'property_data_from_list' in params:
+                    # LIFULL HOME'Sのような場合
+                    property_data = scraper.parse_property_detail(listing_db.url, property_data_from_list)
+                else:
+                    # その他のスクレイパー
+                    property_data = scraper.parse_property_detail(listing_db.url)
             
             if property_data:
-                # 既存の掲載情報を更新
-                listing_db = db_session.query(PropertyListing).filter(PropertyListing.id == listing_id).first()
-                if listing_db:
-                    # 詳細ページから取得した情報で更新
-                    listing_db.title = property_data.get('title', listing_db.title)
-                    listing_db.listing_building_name = property_data.get('building_name', listing_db.listing_building_name)
-                    listing_db.listing_floor_number = property_data.get('floor_number', listing_db.listing_floor_number)
-                    listing_db.listing_area = property_data.get('area', listing_db.listing_area)
-                    listing_db.listing_layout = property_data.get('layout', listing_db.listing_layout)
-                    listing_db.listing_direction = property_data.get('direction', listing_db.listing_direction)
-                    listing_db.management_fee = property_data.get('management_fee', listing_db.management_fee)
-                    listing_db.repair_fund = property_data.get('repair_fund', listing_db.repair_fund)
-                    listing_db.agency_name = property_data.get('agency_name', listing_db.agency_name)
-                    listing_db.agency_tel = property_data.get('agency_tel', listing_db.agency_tel)
-                    listing_db.remarks = property_data.get('remarks', listing_db.remarks)
-                    listing_db.summary_remarks = property_data.get('summary_remarks', listing_db.summary_remarks)
-                    listing_db.detail_info = property_data.get('detail_info', listing_db.detail_info)
-                    listing_db.detail_fetched_at = datetime.now()
-                    listing_db.updated_at = datetime.now()
+                # 詳細ページから取得した情報で更新（Noneでない値のみ更新）
+                if property_data.get('title'):
+                    listing_db.title = property_data['title']
+                if property_data.get('building_name'):
+                    listing_db.listing_building_name = property_data['building_name']
+                if property_data.get('floor_number') is not None:
+                    listing_db.listing_floor_number = property_data['floor_number']
+                if property_data.get('area') is not None:
+                    listing_db.listing_area = property_data['area']
+                if property_data.get('layout'):
+                    listing_db.listing_layout = property_data['layout']
+                if property_data.get('direction'):
+                    listing_db.listing_direction = property_data['direction']
+                if property_data.get('management_fee') is not None:
+                    listing_db.management_fee = property_data['management_fee']
+                if property_data.get('repair_fund') is not None:
+                    listing_db.repair_fund = property_data['repair_fund']
+                if property_data.get('agency_name'):
+                    listing_db.agency_name = property_data['agency_name']
+                if property_data.get('agency_tel'):
+                    listing_db.agency_tel = property_data['agency_tel']
+                if property_data.get('remarks'):
+                    listing_db.remarks = property_data['remarks']
+                if property_data.get('summary_remarks'):
+                    listing_db.summary_remarks = property_data['summary_remarks']
+                if property_data.get('detail_info'):
+                    listing_db.detail_info = property_data['detail_info']
+                
+                listing_db.detail_fetched_at = datetime.now()
+                listing_db.updated_at = datetime.now()
+                
+                # 価格が変更されていれば更新
+                new_price = property_data.get('price')
+                if new_price and new_price != listing_db.current_price:
+                    listing_db.previous_price = listing_db.current_price
+                    listing_db.current_price = new_price
+                    listing_db.price_updated_at = datetime.now()
                     
-                    # 価格が変更されていれば更新
-                    new_price = property_data.get('price')
-                    if new_price and new_price != listing_db.current_price:
-                        listing_db.previous_price = listing_db.current_price
-                        listing_db.current_price = new_price
-                        listing_db.price_updated_at = datetime.now()
-                        
-                        # 価格履歴を追加
-                        price_history = ListingPriceHistory(
-                            property_listing_id=listing_id,
-                            price=new_price,
-                            recorded_at=datetime.now(),
-                            is_initial=False
-                        )
-                        db_session.add(price_history)
-                    
-                    db_session.commit()
-                    
-                    # タスクを完了
-                    task_db.status = 'completed'
-                    task_db.completed_at = datetime.now()
-                    task_db.total_processed = 1
-                    task_db.total_updated = 1
-                    task_db.detail_fetched = 1
-                    task_db.elapsed_time = (datetime.now() - task_db.started_at).total_seconds()
-                    db_session.commit()
-                else:
-                    raise ValueError(f"Listing {listing_id} not found in database")
+                    # 価格履歴を追加
+                    price_history = ListingPriceHistory(
+                        property_listing_id=listing_id,
+                        price=new_price,
+                        recorded_at=datetime.now(),
+                        is_initial=False
+                    )
+                    db_session.add(price_history)
+                
+                # 掲載状態の確認（販売終了チェック）
+                if hasattr(scraper, '_check_if_sold') and property_data.get('url'):
+                    is_sold = scraper._check_if_sold(soup, property_data['url'])
+                    if is_sold and listing_db.is_active:
+                        listing_db.is_active = False
+                        listing_db.delisted_at = datetime.now()
+                        api_logger.info(f"Property marked as sold: {listing_db.url}")
+                
+                db_session.commit()
+                
+                # タスクを完了
+                task_db.status = 'completed'
+                task_db.completed_at = datetime.now()
+                task_db.total_processed = 1
+                task_db.total_updated = 1
+                task_db.detail_fetched = 1
+                task_db.elapsed_time = (datetime.now() - task_db.started_at).total_seconds()
+                task_db.progress_detail['updated_fields'] = list(property_data.keys())
+                db_session.commit()
+                
+                api_logger.info(f"Successfully refreshed detail for listing {listing_id}")
             else:
                 # 詳細取得失敗
                 task_db.status = 'error'
@@ -547,13 +611,13 @@ async def refresh_listing_detail(
                 task_db.total_errors = 1
                 task_db.error_logs = [{
                     'timestamp': datetime.now().isoformat(),
-                    'error': 'Failed to fetch property detail',
-                    'url': listing.url
+                    'error': 'Failed to parse property detail',
+                    'url': listing_db.url
                 }]
                 db_session.commit()
                 
         except Exception as e:
-            api_logger.error(f"Error in detail refresh for listing {listing_id}: {str(e)}")
+            api_logger.error(f"Error in detail refresh for listing {listing_id}: {str(e)}", exc_info=True)
             # タスクをエラーステータスに
             task_db = db_session.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
             if task_db:
