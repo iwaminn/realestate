@@ -349,14 +349,39 @@ export const ListingManagement: React.FC = () => {
             </FormControl>
           </Grid>
           <Grid item xs={12} md={2}>
-            <TextField
-              fullWidth
-              size="small"
-              label="区名"
-              value={filters.ward}
-              onChange={(e) => setFilters({ ...filters, ward: e.target.value })}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-            />
+            <FormControl fullWidth size="small">
+              <InputLabel>エリア（区）</InputLabel>
+              <Select
+                value={filters.ward}
+                onChange={(e: SelectChangeEvent) => setFilters({ ...filters, ward: e.target.value })}
+                label="エリア（区）"
+              >
+                <MenuItem value="">全て</MenuItem>
+                <MenuItem value="千代田区">千代田区</MenuItem>
+                <MenuItem value="中央区">中央区</MenuItem>
+                <MenuItem value="港区">港区</MenuItem>
+                <MenuItem value="新宿区">新宿区</MenuItem>
+                <MenuItem value="文京区">文京区</MenuItem>
+                <MenuItem value="台東区">台東区</MenuItem>
+                <MenuItem value="墨田区">墨田区</MenuItem>
+                <MenuItem value="江東区">江東区</MenuItem>
+                <MenuItem value="品川区">品川区</MenuItem>
+                <MenuItem value="目黒区">目黒区</MenuItem>
+                <MenuItem value="大田区">大田区</MenuItem>
+                <MenuItem value="世田谷区">世田谷区</MenuItem>
+                <MenuItem value="渋谷区">渋谷区</MenuItem>
+                <MenuItem value="中野区">中野区</MenuItem>
+                <MenuItem value="杉並区">杉並区</MenuItem>
+                <MenuItem value="豊島区">豊島区</MenuItem>
+                <MenuItem value="北区">北区</MenuItem>
+                <MenuItem value="荒川区">荒川区</MenuItem>
+                <MenuItem value="板橋区">板橋区</MenuItem>
+                <MenuItem value="練馬区">練馬区</MenuItem>
+                <MenuItem value="足立区">足立区</MenuItem>
+                <MenuItem value="葛飾区">葛飾区</MenuItem>
+                <MenuItem value="江戸川区">江戸川区</MenuItem>
+              </Select>
+            </FormControl>
           </Grid>
           <Grid item xs={12} md={1}>
             <Box sx={{ display: 'flex', gap: 1 }}>
