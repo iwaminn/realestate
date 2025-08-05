@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 from pydantic import BaseModel, Field
 
-from backend.app.database import get_db
+from backend.app.database import get_db, SessionLocal
 from backend.app.models import (
     PropertyListing, MasterProperty, Building, 
     ListingPriceHistory
@@ -410,8 +410,169 @@ async def refresh_listing_detail(
     if not listing:
         raise HTTPException(status_code=404, detail="Listing not found")
     
-    # TODO: スクレイピングジョブをキューに追加
-    # 現在は未実装のため、プレースホルダーを返す
+    # 既存の実行中タスクがないか確認
+    from backend.app.models_scraping_task import ScrapingTask
+    existing_task = db.query(ScrapingTask).filter(
+        ScrapingTask.status.in_(['running', 'pending']),
+        ScrapingTask.scrapers.contains([listing.source_site]),
+        ScrapingTask.task_id.like(f'%detail_refresh%')
+    ).first()
+    
+    if existing_task:
+        api_logger.warning(f"Detail refresh task already exists for {listing.source_site}")
+        return {
+            "success": False,
+            "message": f"{listing.source_site}の詳細再取得タスクが既に実行中です",
+            "listing_id": listing_id,
+            "url": listing.url,
+            "source_site": listing.source_site,
+            "existing_task_id": existing_task.task_id
+        }
+    
+    # 個別の詳細取得タスクを作成
+    import uuid
+    from datetime import datetime
+    
+    task_id = f"detail_refresh_{listing.source_site}_{listing_id}_{uuid.uuid4().hex[:8]}"
+    
+    task = ScrapingTask(
+        task_id=task_id,
+        status='pending',
+        scrapers=[listing.source_site],
+        areas=[],  # 個別詳細取得なのでエリアは空
+        max_properties=1,
+        force_detail_fetch=True,
+        created_at=datetime.now(),
+        properties_found=0,
+        detail_fetched=0,
+        detail_skipped=0,
+        price_missing=0,
+        building_info_missing=0,
+        total_processed=0,
+        total_new=0,
+        total_updated=0,
+        total_errors=0,
+        progress_detail={
+            'type': 'detail_refresh',
+            'target_listings': [{
+                'id': listing_id,
+                'url': listing.url,
+                'source_site': listing.source_site
+            }]
+        }
+    )
+    
+    db.add(task)
+    db.commit()
+    
+    # バックグラウンドでスクレイピングを実行
+    from fastapi import BackgroundTasks
+    from backend.app.scrapers import get_scraper_class
+    
+    def run_detail_refresh():
+        """詳細再取得を実行"""
+        db_session = SessionLocal()
+        try:
+            # タスクのステータスを更新
+            task_db = db_session.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
+            if task_db:
+                task_db.status = 'running'
+                task_db.started_at = datetime.now()
+                db_session.commit()
+            
+            # スクレイパーインスタンスを取得
+            scraper_class = get_scraper_class(listing.source_site)
+            if not scraper_class:
+                raise ValueError(f"Unknown scraper: {listing.source_site}")
+            
+            scraper = scraper_class(listing.source_site, force_detail_fetch=True)
+            
+            # 詳細ページを取得・解析
+            property_data = scraper.parse_property_detail(listing.url)
+            
+            if property_data:
+                # 既存の掲載情報を更新
+                listing_db = db_session.query(PropertyListing).filter(PropertyListing.id == listing_id).first()
+                if listing_db:
+                    # 詳細ページから取得した情報で更新
+                    listing_db.title = property_data.get('title', listing_db.title)
+                    listing_db.listing_building_name = property_data.get('building_name', listing_db.listing_building_name)
+                    listing_db.listing_floor_number = property_data.get('floor_number', listing_db.listing_floor_number)
+                    listing_db.listing_area = property_data.get('area', listing_db.listing_area)
+                    listing_db.listing_layout = property_data.get('layout', listing_db.listing_layout)
+                    listing_db.listing_direction = property_data.get('direction', listing_db.listing_direction)
+                    listing_db.management_fee = property_data.get('management_fee', listing_db.management_fee)
+                    listing_db.repair_fund = property_data.get('repair_fund', listing_db.repair_fund)
+                    listing_db.agency_name = property_data.get('agency_name', listing_db.agency_name)
+                    listing_db.agency_tel = property_data.get('agency_tel', listing_db.agency_tel)
+                    listing_db.remarks = property_data.get('remarks', listing_db.remarks)
+                    listing_db.summary_remarks = property_data.get('summary_remarks', listing_db.summary_remarks)
+                    listing_db.detail_info = property_data.get('detail_info', listing_db.detail_info)
+                    listing_db.detail_fetched_at = datetime.now()
+                    listing_db.updated_at = datetime.now()
+                    
+                    # 価格が変更されていれば更新
+                    new_price = property_data.get('price')
+                    if new_price and new_price != listing_db.current_price:
+                        listing_db.previous_price = listing_db.current_price
+                        listing_db.current_price = new_price
+                        listing_db.price_updated_at = datetime.now()
+                        
+                        # 価格履歴を追加
+                        price_history = ListingPriceHistory(
+                            property_listing_id=listing_id,
+                            price=new_price,
+                            recorded_at=datetime.now(),
+                            is_initial=False
+                        )
+                        db_session.add(price_history)
+                    
+                    db_session.commit()
+                    
+                    # タスクを完了
+                    task_db.status = 'completed'
+                    task_db.completed_at = datetime.now()
+                    task_db.total_processed = 1
+                    task_db.total_updated = 1
+                    task_db.detail_fetched = 1
+                    task_db.elapsed_time = (datetime.now() - task_db.started_at).total_seconds()
+                    db_session.commit()
+                else:
+                    raise ValueError(f"Listing {listing_id} not found in database")
+            else:
+                # 詳細取得失敗
+                task_db.status = 'error'
+                task_db.completed_at = datetime.now()
+                task_db.total_processed = 1
+                task_db.total_errors = 1
+                task_db.error_logs = [{
+                    'timestamp': datetime.now().isoformat(),
+                    'error': 'Failed to fetch property detail',
+                    'url': listing.url
+                }]
+                db_session.commit()
+                
+        except Exception as e:
+            api_logger.error(f"Error in detail refresh for listing {listing_id}: {str(e)}")
+            # タスクをエラーステータスに
+            task_db = db_session.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
+            if task_db:
+                task_db.status = 'error'
+                task_db.completed_at = datetime.now()
+                task_db.total_errors = 1
+                task_db.error_logs = [{
+                    'timestamp': datetime.now().isoformat(),
+                    'error': str(e),
+                    'url': listing.url
+                }]
+                db_session.commit()
+        finally:
+            db_session.close()
+    
+    # バックグラウンドタスクとして実行
+    import threading
+    thread = threading.Thread(target=run_detail_refresh)
+    thread.start()
     
     return {
         "success": True,
@@ -419,6 +580,7 @@ async def refresh_listing_detail(
         "listing_id": listing_id,
         "url": listing.url,
         "source_site": listing.source_site,
+        "task_id": task_id
     }
 
 

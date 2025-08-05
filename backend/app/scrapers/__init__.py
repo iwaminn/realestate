@@ -23,6 +23,26 @@ from .data_normalizer import (
     parse_date,
 )
 
+# スクレイパークラスのインポート
+from .suumo_scraper import SuumoScraper
+from .homes_scraper import HomesScraper
+from .rehouse_scraper import RehouseScraper
+from .nomu_scraper import NomuScraper
+from .livable_scraper import LivableScraper
+
+
+def get_scraper_class(source_site: str):
+    """サイト名からスクレイパークラスを取得"""
+    scrapers = {
+        'suumo': SuumoScraper,
+        'homes': HomesScraper,
+        'rehouse': RehouseScraper,
+        'nomu': NomuScraper,
+        'livable': LivableScraper,
+    }
+    return scrapers.get(source_site.lower())
+
+
 __all__ = [
     'SourceSite',
     'DataNormalizer',
@@ -41,4 +61,10 @@ __all__ = [
     'extract_monthly_fee',
     'extract_built_year',
     'parse_date',
+    'get_scraper_class',
+    'SuumoScraper',
+    'HomesScraper',
+    'RehouseScraper',
+    'NomuScraper',
+    'LivableScraper',
 ]

@@ -81,6 +81,8 @@ export const listingApi = {
     listing_id: number;
     url: string;
     source_site: string;
+    task_id?: string;
+    existing_task_id?: string;
   }> => {
     const response = await api.post(`/admin/listings/${listingId}/refresh-detail`);
     return response.data;

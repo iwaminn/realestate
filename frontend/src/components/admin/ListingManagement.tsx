@@ -31,6 +31,7 @@ import {
   CircularProgress,
   SelectChangeEvent,
   Link,
+  Tooltip,
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -192,13 +193,30 @@ export const ListingManagement: React.FC = () => {
     }
   };
 
+  const [refreshingListings, setRefreshingListings] = useState<Set<number>>(new Set());
+
   const handleRefreshDetail = async (listingId: number) => {
+    setRefreshingListings(prev => new Set(prev).add(listingId));
     try {
-      await listingApi.refreshListingDetail(listingId);
-      alert('詳細再取得をキューに追加しました');
+      const response = await listingApi.refreshListingDetail(listingId);
+      if (response.success) {
+        setError(null);
+        // 成功メッセージを表示
+        const message = `${response.message}\nタスクID: ${response.task_id}`;
+        alert(message);
+      } else {
+        // 既存タスクがある場合
+        alert(response.message);
+      }
     } catch (err) {
       console.error('Failed to refresh listing detail:', err);
-      alert('詳細再取得に失敗しました');
+      setError('詳細再取得に失敗しました');
+    } finally {
+      setRefreshingListings(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(listingId);
+        return newSet;
+      });
     }
   };
 
@@ -596,12 +614,21 @@ export const ListingManagement: React.FC = () => {
                     >
                       <OpenInNewIcon fontSize="small" />
                     </IconButton>
-                    <IconButton
-                      size="small"
-                      onClick={() => handleRefreshDetail(listing.id)}
-                    >
-                      <RefreshIcon fontSize="small" />
-                    </IconButton>
+                    <Tooltip title="最新の詳細情報を再取得">
+                      <span>
+                        <IconButton
+                          size="small"
+                          onClick={() => handleRefreshDetail(listing.id)}
+                          disabled={refreshingListings.has(listing.id)}
+                        >
+                          {refreshingListings.has(listing.id) ? (
+                            <CircularProgress size={18} />
+                          ) : (
+                            <RefreshIcon fontSize="small" />
+                          )}
+                        </IconButton>
+                      </span>
+                    </Tooltip>
                   </Box>
                 </TableCell>
               </TableRow>
