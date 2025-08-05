@@ -2109,17 +2109,28 @@ def get_all_scraping_tasks(active_only: bool = False):
                         
                         # progress_detailからも進捗情報を取得（コマンドライン実行用）
                         if db_task.progress_detail:
-                            for key, detail in db_task.progress_detail.items():
-                                if key not in progress:  # 既存の進捗情報を優先
-                                    progress[key] = detail
+                            # 詳細再取得タスクの場合は特別な処理
+                            if db_task.progress_detail.get('type') == 'detail_refresh':
+                                # progress_detailはそのまま保持（progressフィールドには含めない）
+                                pass
+                            else:
+                                # 通常のスクレイピングタスクの場合
+                                for key, detail in db_task.progress_detail.items():
+                                    if key not in progress:  # 既存の進捗情報を優先
+                                        progress[key] = detail
+                        
+                        # タスクのタイプを判定
+                        task_type = 'parallel'
+                        if db_task.progress_detail and db_task.progress_detail.get('type') == 'detail_refresh':
+                            task_type = 'detail_refresh'
                         
                         # タスク情報を構築
                         task = {
                             'task_id': db_task.task_id,
-                            'type': 'parallel',
+                            'type': task_type,
                             'status': db_task.status,
-                            'scrapers': db_task.scrapers,
-                            'area_codes': db_task.areas,
+                            'scrapers': db_task.scrapers or [],
+                            'area_codes': db_task.areas or [],
                             'max_properties': db_task.max_properties,
                             'started_at': db_task.started_at.isoformat() if db_task.started_at else None,
                             'completed_at': db_task.completed_at.isoformat() if db_task.completed_at else None,
