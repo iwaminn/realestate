@@ -117,7 +117,6 @@ export const ListingManagement: React.FC = () => {
     source_site: '',
     building_name: '',
     is_active: '',
-    has_detail: '',
     ward: '',
   });
   
@@ -140,7 +139,6 @@ export const ListingManagement: React.FC = () => {
       if (filters.source_site) params.source_site = filters.source_site;
       if (filters.building_name) params.building_name = filters.building_name;
       if (filters.is_active !== '') params.is_active = filters.is_active === 'true';
-      if (filters.has_detail !== '') params.has_detail = filters.has_detail === 'true';
       if (filters.ward) params.ward = filters.ward;
       
       const response = await listingApi.getListings(params);
@@ -165,7 +163,6 @@ export const ListingManagement: React.FC = () => {
       source_site: '',
       building_name: '',
       is_active: '',
-      has_detail: '',
       ward: '',
     });
     setPage(0);
@@ -239,7 +236,7 @@ export const ListingManagement: React.FC = () => {
       {/* 統計情報 */}
       {stats && (
         <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={3}>
+          <Grid item xs={4}>
             <Card>
               <CardContent>
                 <Typography color="textSecondary" gutterBottom>
@@ -251,7 +248,7 @@ export const ListingManagement: React.FC = () => {
               </CardContent>
             </Card>
           </Grid>
-          <Grid item xs={3}>
+          <Grid item xs={4}>
             <Card>
               <CardContent>
                 <Typography color="textSecondary" gutterBottom>
@@ -263,7 +260,7 @@ export const ListingManagement: React.FC = () => {
               </CardContent>
             </Card>
           </Grid>
-          <Grid item xs={3}>
+          <Grid item xs={4}>
             <Card>
               <CardContent>
                 <Typography color="textSecondary" gutterBottom>
@@ -271,18 +268,6 @@ export const ListingManagement: React.FC = () => {
                 </Typography>
                 <Typography variant="h5">
                   {stats.active_listings?.toLocaleString()}
-                </Typography>
-              </CardContent>
-            </Card>
-          </Grid>
-          <Grid item xs={3}>
-            <Card>
-              <CardContent>
-                <Typography color="textSecondary" gutterBottom>
-                  詳細取得済み
-                </Typography>
-                <Typography variant="h5">
-                  {stats.with_details?.toLocaleString()}
                 </Typography>
               </CardContent>
             </Card>
@@ -331,20 +316,6 @@ export const ListingManagement: React.FC = () => {
                 <MenuItem value="">全て</MenuItem>
                 <MenuItem value="true">アクティブ</MenuItem>
                 <MenuItem value="false">非アクティブ</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} md={2}>
-            <FormControl fullWidth size="small">
-              <InputLabel>詳細取得</InputLabel>
-              <Select
-                value={filters.has_detail}
-                onChange={(e: SelectChangeEvent) => setFilters({ ...filters, has_detail: e.target.value })}
-                label="詳細取得"
-              >
-                <MenuItem value="">全て</MenuItem>
-                <MenuItem value="true">取得済み</MenuItem>
-                <MenuItem value="false">未取得</MenuItem>
               </Select>
             </FormControl>
           </Grid>
@@ -426,7 +397,6 @@ export const ListingManagement: React.FC = () => {
               <TableCell>間取り</TableCell>
               <TableCell align="right">価格</TableCell>
               <TableCell>状態</TableCell>
-              <TableCell>詳細</TableCell>
               <TableCell>最終確認</TableCell>
               <TableCell align="center">操作</TableCell>
             </TableRow>
@@ -461,13 +431,6 @@ export const ListingManagement: React.FC = () => {
                     label={listing.is_active ? 'アクティブ' : '非アクティブ'}
                     size="small"
                     color={listing.is_active ? 'success' : 'default'}
-                  />
-                </TableCell>
-                <TableCell>
-                  <Chip
-                    label={listing.detail_fetched_at ? '取得済' : '未取得'}
-                    size="small"
-                    color={listing.detail_fetched_at ? 'primary' : 'default'}
                   />
                 </TableCell>
                 <TableCell>
@@ -587,7 +550,6 @@ export const ListingManagement: React.FC = () => {
                     <Box>
                       <Typography><strong>初回確認:</strong> {formatDate(selectedListing.first_seen_at)}</Typography>
                       <Typography><strong>最終確認:</strong> {formatDate(selectedListing.last_confirmed_at)}</Typography>
-                      <Typography><strong>詳細取得:</strong> {formatDate(selectedListing.detail_fetched_at)}</Typography>
                       {selectedListing.delisted_at && (
                         <Typography><strong>削除日時:</strong> {formatDate(selectedListing.delisted_at)}</Typography>
                       )}
