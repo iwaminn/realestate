@@ -47,8 +47,6 @@ interface PropertyMergeHistory {
   merge_details: any;
   merged_by: string;
   merged_at: string;
-  reverted_at: string | null;
-  reverted_by: string | null;
 }
 
 const PropertyMergeHistory: React.FC = () => {
@@ -56,19 +54,17 @@ const PropertyMergeHistory: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [selectedHistory, setSelectedHistory] = useState<PropertyMergeHistory | null>(null);
   const [reverting, setReverting] = useState(false);
-  const [includeReverted, setIncludeReverted] = useState(false);
 
   useEffect(() => {
     fetchHistories();
-  }, [includeReverted]);
+  }, []);
 
   const fetchHistories = async () => {
     setLoading(true);
     try {
       const response = await axios.get('/api/admin/property-merge-history', {
         params: {
-          limit: 50,
-          include_reverted: includeReverted
+          limit: 50
         }
       });
       setHistories(response.data.histories);
@@ -125,12 +121,6 @@ const PropertyMergeHistory: React.FC = () => {
       <Paper sx={{ p: 3, mb: 3 }}>
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
           <Typography variant="h6">物件統合履歴</Typography>
-          <Button
-            variant={includeReverted ? 'contained' : 'outlined'}
-            onClick={() => setIncludeReverted(!includeReverted)}
-          >
-            取り消し済みを{includeReverted ? '非表示' : '表示'}
-          </Button>
         </Box>
 
         {histories.length === 0 ? (
@@ -180,11 +170,7 @@ const PropertyMergeHistory: React.FC = () => {
                     )}
                   </TableCell>
                   <TableCell align="center">
-                    {history.reverted_at ? (
-                      <Chip label="取り消し済み" size="small" />
-                    ) : (
-                      <Chip label="有効" size="small" color="primary" />
-                    )}
+                    <Chip label="有効" size="small" color="primary" />
                   </TableCell>
                   <TableCell align="center">
                     <Tooltip title="詳細を表示">
@@ -195,18 +181,16 @@ const PropertyMergeHistory: React.FC = () => {
                         <InfoIcon />
                       </IconButton>
                     </Tooltip>
-                    {!history.reverted_at && (
-                      <Tooltip title="統合を取り消す">
-                        <IconButton
-                          size="small"
-                          color="warning"
-                          onClick={() => handleRevert(history.id)}
-                          disabled={reverting}
-                        >
-                          <UndoIcon />
-                        </IconButton>
-                      </Tooltip>
-                    )}
+                    <Tooltip title="統合を取り消す">
+                      <IconButton
+                        size="small"
+                        color="warning"
+                        onClick={() => handleRevert(history.id)}
+                        disabled={reverting}
+                      >
+                        <UndoIcon />
+                      </IconButton>
+                    </Tooltip>
                   </TableCell>
                 </TableRow>
               ))}
@@ -278,12 +262,6 @@ const PropertyMergeHistory: React.FC = () => {
                 )}
               </Box>
 
-              {selectedHistory.reverted_at && (
-                <Alert severity="info" sx={{ mt: 2 }}>
-                  {formatDate(selectedHistory.reverted_at)} に取り消されました
-                  {selectedHistory.reverted_by && ` (実行者: ${selectedHistory.reverted_by})`}
-                </Alert>
-              )}
             </Box>
           )}
         </DialogContent>

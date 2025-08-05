@@ -336,6 +336,8 @@ class PropertyMergeHistory(Base):
     id = Column(Integer, primary_key=True, index=True)
     primary_property_id = Column(Integer, ForeignKey("master_properties.id"), nullable=False)
     merged_property_id = Column(Integer, nullable=False)      # 統合された物件ID（削除済み）
+    moved_listings = Column(Integer)                          # 移動した掲載情報数
+    merge_details = Column(JSON)                              # 統合の詳細情報
     merged_by = Column(String(100))                           # 統合実行者
     merged_at = Column(DateTime, server_default=func.now())
     reason = Column(Text)                                     # 統合理由

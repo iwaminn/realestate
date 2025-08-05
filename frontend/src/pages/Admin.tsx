@@ -47,6 +47,7 @@ import PropertyExclusionHistory from '../components/PropertyExclusionHistory';
 import BuildingExclusionHistory from '../components/BuildingExclusionHistory';
 import { ListingManagement } from '../components/admin/ListingManagement';
 import { PropertyManagement } from '../components/admin/PropertyManagement';
+import { BuildingManagement } from '../components/admin/BuildingManagement';
 
 
 const Admin: React.FC = () => {
@@ -107,6 +108,7 @@ const Admin: React.FC = () => {
           <Tab label="スクレイピング" />
           <Tab label="掲載情報管理" />
           <Tab label="物件管理" />
+          <Tab label="建物管理" />
         </Tabs>
       </Paper>
 
@@ -179,6 +181,12 @@ const Admin: React.FC = () => {
       {activeTab === 4 && (
         <Box>
           <PropertyManagement />
+        </Box>
+      )}
+
+      {activeTab === 5 && (
+        <Box>
+          <BuildingManagement />
         </Box>
       )}
 

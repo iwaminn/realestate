@@ -131,7 +131,11 @@ export const propertyApi = {
         id: number;
         normalized_name: string;
       };
-      merged_building_ids: number[];
+      secondary_building?: {
+        id: number;
+        normalized_name: string;
+        properties_moved: number | null;
+      };
       moved_properties: number;
       merge_details: any;
       created_at: string;
@@ -140,7 +144,7 @@ export const propertyApi = {
     }>;
     total: number;
   }> => {
-    const response = await api.get('/admin/merge-history', { params });
+    const response = await api.get('/admin/building-merge-history', { params });
     return response.data;
   },
 

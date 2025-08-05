@@ -1,154 +1,233 @@
 """
-建物管理用のAPIエンドポイント
-高パフォーマンス版の重複検出を実装
+管理者用建物管理API
 """
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, and_, or_, Integer
+from typing import Optional, List, Dict, Any
+from datetime import datetime
 
-from typing import Dict, Any, List, Optional
-from fastapi import APIRouter, Query, Depends, HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy import func, distinct
-from backend.app.database import get_db
-from backend.app.models import Building, MasterProperty, BuildingMergeExclusion
-from backend.app.utils.enhanced_building_matcher import EnhancedBuildingMatcher
-from backend.app.schemas import BuildingSchema
-import logging
-
-app_logger = logging.getLogger("api")
+from ..database import get_db
+from ..models import Building, MasterProperty, PropertyListing
+from ..auth import verify_admin_credentials
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
-@router.get("/duplicate-buildings-fast", response_model=Dict[str, Any])
-async def get_duplicate_buildings_fast(
-    min_similarity: float = Query(0.94, description="最小類似度"),
-    limit: int = Query(50, description="最大グループ数"),
-    search: Optional[str] = Query(None, description="建物名検索"),
-    db: Session = Depends(get_db)
+@router.get("/buildings")
+async def get_buildings(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=100),
+    name: Optional[str] = None,
+    address: Optional[str] = None,
+    min_built_year: Optional[int] = None,
+    max_built_year: Optional[int] = None,
+    min_total_floors: Optional[int] = None,
+    max_total_floors: Optional[int] = None,
+    has_active_listings: Optional[bool] = None,
+    db: Session = Depends(get_db),
+    _: Any = Depends(verify_admin_credentials)
 ):
-    """高速版：重複の可能性がある建物を検出"""
-    from backend.app.utils.address_normalizer import AddressNormalizer
+    """建物一覧を取得（管理者用）"""
+    query = db.query(Building)
     
-    enhanced_matcher = EnhancedBuildingMatcher()
-    address_normalizer = AddressNormalizer()
+    # フィルタリング
+    if name:
+        query = query.filter(Building.normalized_name.ilike(f"%{name}%"))
     
-    # クエリを構築
-    query = db.query(
-        Building,
-        func.count(distinct(MasterProperty.id)).label('property_count')
-    ).outerjoin(
-        MasterProperty, Building.id == MasterProperty.building_id
-    ).group_by(
-        Building.id
-    ).having(
-        func.count(distinct(MasterProperty.id)) > 0  # 物件がある建物のみ
-    )
+    if address:
+        query = query.filter(Building.address.ilike(f"%{address}%"))
     
-    # 検索フィルタを適用
-    if search:
-        from backend.app.utils.building_search import apply_building_search_to_query
-        query = apply_building_search_to_query(query, search, Building)
+    if min_built_year is not None:
+        query = query.filter(Building.built_year >= min_built_year)
     
-    # すべての建物を取得（制限なし）
-    buildings_with_count = query.order_by(Building.normalized_name).all()
+    if max_built_year is not None:
+        query = query.filter(Building.built_year <= max_built_year)
     
-    if search:
-        app_logger.info(f"Search '{search}' returned {len(buildings_with_count)} buildings")
+    if min_total_floors is not None:
+        query = query.filter(Building.total_floors >= min_total_floors)
     
-    # 除外ペアを取得
-    exclusions = db.query(BuildingMergeExclusion).all()
-    excluded_pairs = set()
-    for exclusion in exclusions:
-        excluded_pairs.add((exclusion.building1_id, exclusion.building2_id))
-        excluded_pairs.add((exclusion.building2_id, exclusion.building1_id))
+    if max_total_floors is not None:
+        query = query.filter(Building.total_floors <= max_total_floors)
     
-    # 住所でグループ化して効率的に比較
-    address_groups = {}
-    for building, count in buildings_with_count:
-        # 住所を正規化
-        normalized_addr = address_normalizer.normalize(building.address)
-        base_addr = normalized_addr.split('丁目')[0]  # 丁目より前の部分で大まかにグループ化
+    # 掲載状態でフィルタ
+    if has_active_listings is not None:
+        active_building_subquery = db.query(MasterProperty.building_id).join(
+            PropertyListing
+        ).filter(
+            PropertyListing.is_active == True
+        ).distinct().subquery()
         
-        if base_addr not in address_groups:
-            address_groups[base_addr] = []
-        address_groups[base_addr].append((building, count))
+        if has_active_listings:
+            query = query.filter(Building.id.in_(active_building_subquery))
+        else:
+            query = query.filter(~Building.id.in_(active_building_subquery))
     
-    # 重複候補を検出
-    duplicates = []
-    processed_ids = set()
-    total_comparisons = 0
+    # 総件数を取得
+    total = query.count()
     
-    # 各住所グループ内でのみ比較
-    for base_addr, buildings_in_group in address_groups.items():
-        # 住所グループ内での比較
-        for i, (building1, count1) in enumerate(buildings_in_group):
-            if building1.id in processed_ids:
-                continue
-                
-            candidates = []
-            
-            for j, (building2, count2) in enumerate(buildings_in_group[i+1:], i+1):
-                if building2.id in processed_ids:
-                    continue
-                
-                # 除外リストに含まれていたらスキップ
-                if (building1.id, building2.id) in excluded_pairs:
-                    continue
-                
-                # 類似度計算
-                total_comparisons += 1
-                
-                # 総合的な類似度を計算
-                comprehensive_similarity = enhanced_matcher.calculate_comprehensive_similarity(
-                    building1, building2
-                )
-                debug_info = enhanced_matcher.get_debug_info()
-                
-                # 閾値チェック
-                if comprehensive_similarity >= min_similarity:
-                    candidates.append({
-                        "id": building2.id,
-                        "normalized_name": building2.normalized_name,
-                        "address": building2.address,
-                        "total_floors": building2.total_floors,
-                        "built_year": building2.built_year,
-                        "built_month": building2.built_month,
-                        "property_count": count2,
-                        "similarity": comprehensive_similarity,
-                        "address_similarity": debug_info['scores'].get('address', 0),
-                        "name_similarity": debug_info['scores'].get('name', 0),
-                        "attribute_similarity": debug_info['scores'].get('attributes', 0),
-                        "match_reason": debug_info.get('match_reason', ''),
-                        "floors_match": True
-                    })
-                    processed_ids.add(building2.id)
-            
-            if candidates:
-                duplicates.append({
-                    "primary": {
-                        "id": building1.id,
-                        "normalized_name": building1.normalized_name,
-                        "address": building1.address,
-                        "total_floors": building1.total_floors,
-                        "built_year": building1.built_year,
-                        "built_month": building1.built_month,
-                        "property_count": count1
-                    },
-                    "candidates": candidates
-                })
-                processed_ids.add(building1.id)
-                
-                # 制限に達したら終了
-                if len(duplicates) >= limit:
-                    break
-            
-        # 制限に達したら終了
-        if len(duplicates) >= limit:
-            break
+    # ページネーション
+    buildings = query.offset(offset).limit(limit).all()
+    
+    # 各建物の統計情報を取得
+    building_ids = [b.id for b in buildings]
+    
+    # 物件数と掲載情報の集計
+    stats = db.query(
+        MasterProperty.building_id,
+        func.count(func.distinct(MasterProperty.id)).label('property_count'),
+        func.count(func.distinct(PropertyListing.id)).filter(PropertyListing.is_active == True).label('active_listing_count'),
+        func.min(PropertyListing.current_price).filter(PropertyListing.is_active == True).label('min_price'),
+        func.max(PropertyListing.current_price).filter(PropertyListing.is_active == True).label('max_price')
+    ).join(
+        PropertyListing, MasterProperty.id == PropertyListing.master_property_id, isouter=True
+    ).filter(
+        MasterProperty.building_id.in_(building_ids)
+    ).group_by(MasterProperty.building_id).all()
+    
+    stats_dict = {
+        stat.building_id: {
+            'property_count': stat.property_count or 0,
+            'active_listing_count': stat.active_listing_count or 0,
+            'min_price': stat.min_price,
+            'max_price': stat.max_price
+        }
+        for stat in stats
+    }
+    
+    # レスポンスの構築
+    items = []
+    for building in buildings:
+        building_stats = stats_dict.get(building.id, {
+            'property_count': 0,
+            'active_listing_count': 0,
+            'min_price': None,
+            'max_price': None
+        })
+        
+        items.append({
+            'id': building.id,
+            'normalized_name': building.normalized_name,
+            'address': building.address,
+            'total_floors': building.total_floors,
+            'built_year': building.built_year,
+            'created_at': building.created_at.isoformat() if building.created_at else None,
+            'updated_at': building.updated_at.isoformat() if building.updated_at else None,
+            **building_stats
+        })
     
     return {
-        "duplicate_groups": duplicates,
-        "total_groups": len(duplicates),
-        "total_buildings_checked": len(buildings_with_count),
-        "total_comparisons": total_comparisons,
-        "address_groups": len(address_groups)
+        'items': items,
+        'total': total,
+        'offset': offset,
+        'limit': limit
     }
+
+
+@router.get("/buildings/{building_id}")
+async def get_building_detail(
+    building_id: int,
+    db: Session = Depends(get_db),
+    _: Any = Depends(verify_admin_credentials)
+):
+    """建物詳細を取得（管理者用）"""
+    building = db.query(Building).filter(Building.id == building_id).first()
+    
+    if not building:
+        raise HTTPException(status_code=404, detail="建物が見つかりません")
+    
+    # 物件一覧を取得
+    properties = db.query(
+        MasterProperty.id,
+        MasterProperty.room_number,
+        MasterProperty.floor_number,
+        MasterProperty.area,
+        MasterProperty.layout,
+        MasterProperty.direction,
+        func.count(PropertyListing.id).filter(PropertyListing.is_active == True).label('active_listing_count'),
+        func.min(PropertyListing.current_price).filter(PropertyListing.is_active == True).label('min_price'),
+        func.max(PropertyListing.current_price).filter(PropertyListing.is_active == True).label('max_price')
+    ).join(
+        PropertyListing, MasterProperty.id == PropertyListing.master_property_id, isouter=True
+    ).filter(
+        MasterProperty.building_id == building_id
+    ).group_by(
+        MasterProperty.id,
+        MasterProperty.room_number,
+        MasterProperty.floor_number,
+        MasterProperty.area,
+        MasterProperty.layout,
+        MasterProperty.direction
+    ).order_by(
+        MasterProperty.floor_number.nullslast(),
+        MasterProperty.room_number.nullslast()
+    ).all()
+    
+    # 統計情報を計算
+    property_count = len(properties)
+    active_listing_count = sum(1 for p in properties if p.active_listing_count > 0)
+    all_prices = [p.min_price for p in properties if p.min_price] + [p.max_price for p in properties if p.max_price]
+    min_price = min(all_prices) if all_prices else None
+    max_price = max(all_prices) if all_prices else None
+    
+    return {
+        'id': building.id,
+        'normalized_name': building.normalized_name,
+        'address': building.address,
+        'total_floors': building.total_floors,
+        'built_year': building.built_year,
+        'created_at': building.created_at.isoformat() if building.created_at else None,
+        'updated_at': building.updated_at.isoformat() if building.updated_at else None,
+        'property_count': property_count,
+        'active_listing_count': active_listing_count,
+        'min_price': min_price,
+        'max_price': max_price,
+        'properties': [
+            {
+                'id': p.id,
+                'room_number': p.room_number,
+                'floor_number': p.floor_number,
+                'area': p.area,
+                'layout': p.layout,
+                'direction': p.direction,
+                'active_listing_count': p.active_listing_count or 0,
+                'min_price': p.min_price,
+                'max_price': p.max_price
+            }
+            for p in properties
+        ]
+    }
+
+
+@router.patch("/buildings/{building_id}")
+async def update_building(
+    building_id: int,
+    data: Dict[str, Any],
+    db: Session = Depends(get_db),
+    _: Any = Depends(verify_admin_credentials)
+):
+    """建物情報を更新（管理者用）"""
+    building = db.query(Building).filter(Building.id == building_id).first()
+    
+    if not building:
+        raise HTTPException(status_code=404, detail="建物が見つかりません")
+    
+    # 更新可能なフィールドのみ更新
+    updatable_fields = [
+        'normalized_name', 'address', 
+        'total_floors', 'built_year'
+    ]
+    
+    for field in updatable_fields:
+        if field in data:
+            setattr(building, field, data[field])
+    
+    building.updated_at = datetime.utcnow()
+    
+    try:
+        db.commit()
+        db.refresh(building)
+        return {"message": "建物情報を更新しました", "building_id": building.id}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"更新に失敗しました: {str(e)}")

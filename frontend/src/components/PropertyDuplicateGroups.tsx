@@ -71,22 +71,38 @@ interface DuplicateGroup {
 interface PropertyDetail {
   id: number;
   building_id: number;
-  building_name: string;
+  building: {
+    id: number;
+    normalized_name: string;
+    address?: string;
+    total_floors?: number;
+    built_year?: number;
+  };
   display_building_name: string | null;
   room_number: string | null;
   floor_number: number | null;
   area: number | null;
   layout: string | null;
   direction: string | null;
-  listings: Array<{
+  active_listings: Array<{
     id: number;
     source_site: string;
     url: string;
-    title: string;
     current_price: number | null;
-    agency_name: string | null;
-    is_active: boolean;
-    last_scraped_at: string | null;
+    station_info?: string;
+    last_confirmed_at?: string;
+  }>;
+  inactive_listings: Array<{
+    id: number;
+    source_site: string;
+    url: string;
+    current_price: number | null;
+    delisted_at?: string;
+  }>;
+  price_history: Array<{
+    price: number;
+    recorded_at: string;
+    source_site: string;
   }>;
 }
 
@@ -437,13 +453,13 @@ const PropertyDuplicateGroups: React.FC = () => {
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
                 whiteSpace: 'nowrap',
-                color: detail.display_building_name !== detail.building_name ? 'error.main' : 'text.primary'
+                color: detail.display_building_name !== detail.building.normalized_name ? 'error.main' : 'text.primary'
               }}>
-                {detail.display_building_name || detail.building_name}
+                {detail.display_building_name || detail.building.normalized_name}
               </Typography>
-              {detail.display_building_name && detail.display_building_name !== detail.building_name && (
+              {detail.display_building_name && detail.display_building_name !== detail.building.normalized_name && (
                 <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                  （建物マスター: {detail.building_name}）
+                  （建物マスター: {detail.building.normalized_name}）
                 </Typography>
               )}
             </Box>
@@ -487,14 +503,15 @@ const PropertyDuplicateGroups: React.FC = () => {
               掲載: {property.listing_count}件 / {property.source_count}サイト
             </Typography>
             
-            {detail && detail.listings.length > 0 && (
+            {detail && (detail.active_listings.length > 0 || detail.inactive_listings.length > 0) && (
               <Box sx={{ mt: 0.5 }}>
-                {detail.listings.slice(0, 4).map(listing => (
-                  <Box key={listing.id} display="flex" alignItems="center" gap={0.5} mb={0.25}>
+                {/* アクティブな掲載を優先表示 */}
+                {detail.active_listings.slice(0, 3).map(listing => (
+                  <Box key={`active-${listing.id}`} display="flex" alignItems="center" gap={0.5} mb={0.25}>
                     <Chip 
                       label={listing.source_site} 
                       size="small" 
-                      color={listing.is_active ? 'success' : 'default'}
+                      color="success"
                       sx={{ height: 16, fontSize: '0.65rem' }}
                     />
                     <Typography variant="caption" sx={{ fontSize: '0.75rem' }}>
@@ -502,9 +519,23 @@ const PropertyDuplicateGroups: React.FC = () => {
                     </Typography>
                   </Box>
                 ))}
-                {detail.listings.length > 4 && (
+                {/* アクティブが3件未満の場合、非アクティブも表示 */}
+                {detail.active_listings.length < 3 && detail.inactive_listings.slice(0, 3 - detail.active_listings.length).map(listing => (
+                  <Box key={`inactive-${listing.id}`} display="flex" alignItems="center" gap={0.5} mb={0.25}>
+                    <Chip 
+                      label={listing.source_site} 
+                      size="small" 
+                      color="default"
+                      sx={{ height: 16, fontSize: '0.65rem' }}
+                    />
+                    <Typography variant="caption" sx={{ fontSize: '0.75rem' }}>
+                      {listing.current_price?.toLocaleString()}万円
+                    </Typography>
+                  </Box>
+                ))}
+                {(detail.active_listings.length + detail.inactive_listings.length) > 3 && (
                   <Typography variant="caption" color="text.secondary" sx={{ fontSize: '0.7rem' }}>
-                    他{detail.listings.length - 4}件の掲載あり
+                    他{detail.active_listings.length + detail.inactive_listings.length - 3}件の掲載あり
                   </Typography>
                 )}
               </Box>
@@ -973,14 +1004,23 @@ const PropertyDuplicateGroups: React.FC = () => {
               </Button>
             </span>
           </Tooltip>
-          <Button 
-            onClick={handleMerge} 
-            variant="contained" 
-            startIcon={<MergeIcon />}
-            disabled={!primaryProperty || selectedProperties.size < 2 || !selectedProperties.has(primaryProperty) || merging}
-          >
-            {merging ? '統合中...' : `選択した物件を統合 (${selectedProperties.size}件→1件)`}
-          </Button>
+          <Tooltip title={
+            !primaryProperty ? "統合先の物件を選択してください（ラジオボタンで選択）" :
+            selectedProperties.size < 2 ? "2件以上の物件を選択してください（チェックボックスで選択）" :
+            !selectedProperties.has(primaryProperty) ? "統合先の物件も選択対象に含めてください" :
+            ""
+          }>
+            <span>
+              <Button 
+                onClick={handleMerge} 
+                variant="contained" 
+                startIcon={<MergeIcon />}
+                disabled={!primaryProperty || selectedProperties.size < 2 || !selectedProperties.has(primaryProperty) || merging}
+              >
+                {merging ? '統合中...' : `選択した物件を統合 (${selectedProperties.size}件→1件)`}
+              </Button>
+            </span>
+          </Tooltip>
         </DialogActions>
       </Dialog>
       
