@@ -1,4 +1,4 @@
-# Makefile for マンション一括検索サービス
+# Makefile for 都心マンションDBサービス
 
 .PHONY: help build up down logs shell clean
 

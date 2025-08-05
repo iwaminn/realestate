@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "realestate-search"
 version = "0.1.0"
-description = "マンション一括検索システム"
+description = "都心マンションDBシステム"
 authors = ["Your Name <you@example.com>"]
 readme = "README.md"
 
