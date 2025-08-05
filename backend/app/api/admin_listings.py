@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException
 from sqlalchemy import func, or_, and_, distinct, String, desc, case
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 from pydantic import BaseModel, Field
 
 from backend.app.database import get_db, SessionLocal
@@ -410,12 +410,27 @@ async def refresh_listing_detail(
     if not listing:
         raise HTTPException(status_code=404, detail="Listing not found")
     
-    # 既存の実行中タスクがないか確認
+    # 古い詳細再取得タスクをクリーンアップ（1時間以上前のものを削除）
     from backend.app.models_scraping_task import ScrapingTask
     from sqlalchemy import cast, String
+    
+    one_hour_ago = datetime.now() - timedelta(hours=1)
+    old_tasks = db.query(ScrapingTask).filter(
+        ScrapingTask.task_id.like('%detail_refresh_%'),
+        ScrapingTask.created_at < one_hour_ago
+    ).all()
+    
+    for old_task in old_tasks:
+        db.delete(old_task)
+    
+    if old_tasks:
+        db.commit()
+        api_logger.info(f"Cleaned up {len(old_tasks)} old detail refresh tasks")
+    
+    # 既存の実行中タスクがないか確認（同じ掲載IDの詳細再取得タスクのみチェック）
     existing_task = db.query(ScrapingTask).filter(
         ScrapingTask.status.in_(['running', 'pending']),
-        ScrapingTask.task_id.like(f'%detail_refresh_{listing.source_site}%')
+        ScrapingTask.task_id.like(f'%detail_refresh_{listing.source_site}_{listing_id}%')
     ).first()
     
     if existing_task:
@@ -431,7 +446,6 @@ async def refresh_listing_detail(
     
     # 個別の詳細取得タスクを作成
     import uuid
-    from datetime import datetime
     
     task_id = f"detail_refresh_{listing.source_site}_{listing_id}_{uuid.uuid4().hex[:8]}"
     
@@ -603,6 +617,11 @@ async def refresh_listing_detail(
                 db_session.commit()
                 
                 api_logger.info(f"Successfully refreshed detail for listing {listing_id}")
+                
+                # 詳細再取得タスクは完了後に削除
+                db_session.delete(task_db)
+                db_session.commit()
+                api_logger.info(f"Deleted completed detail refresh task: {task_id}")
             else:
                 # 詳細取得失敗
                 task_db.status = 'error'
@@ -615,6 +634,11 @@ async def refresh_listing_detail(
                     'url': listing_db.url
                 }]
                 db_session.commit()
+                
+                # エラーの場合も削除（ログは既に記録済み）
+                db_session.delete(task_db)
+                db_session.commit()
+                api_logger.info(f"Deleted failed detail refresh task: {task_id}")
                 
         except Exception as e:
             api_logger.error(f"Error in detail refresh for listing {listing_id}: {str(e)}", exc_info=True)
@@ -630,6 +654,11 @@ async def refresh_listing_detail(
                     'url': listing.url
                 }]
                 db_session.commit()
+                
+                # エラーの場合も削除
+                db_session.delete(task_db)
+                db_session.commit()
+                api_logger.info(f"Deleted error detail refresh task: {task_id}")
         finally:
             db_session.close()
     
