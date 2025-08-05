@@ -173,8 +173,10 @@ const PropertyListPage: React.FC = () => {
   }, [location.search]);
 
   const handleSearch = (params: SearchParams) => {
+    console.log('[PropertyListPage] handleSearch called with:', params);
     // クリアボタンから空のオブジェクトが渡された場合は、完全にリセット
     const newParams = Object.keys(params).length === 0 ? {} : { ...searchParams, ...params };
+    console.log('[PropertyListPage] New params:', newParams);
     setSearchParams(newParams);
     fetchProperties(newParams, 1);
   };

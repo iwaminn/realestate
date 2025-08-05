@@ -18,6 +18,7 @@ class Building(Base):
     # 建物基本情報
     normalized_name = Column(String(200), nullable=False)     # 正規化された建物名（多数決で決定）
     canonical_name = Column(String(200))                       # 検索用正規化名（2025年1月追加）
+    reading = Column(String(255))                              # 読み仮名（カタカナ）
     address = Column(String(500))                              # 住所（詳細）
     normalized_address = Column(String(500))                   # 正規化された住所（比較用）
     total_floors = Column(Integer)                             # 総階数

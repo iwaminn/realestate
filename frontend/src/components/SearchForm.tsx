@@ -135,6 +135,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('[SearchForm] Submit with params:', searchParams);
     onSearch(searchParams);
   };
 
