@@ -12,12 +12,12 @@ from pydantic import BaseModel, Field
 from backend.app.database import get_db
 from backend.app.models import (
     PropertyListing, MasterProperty, Building, 
-    ListingPriceHistory, PropertyImage
+    ListingPriceHistory
 )
 from backend.app.utils.logger import api_logger, db_logger
 from backend.app.utils.datetime_utils import to_jst_string
 
-router = APIRouter(prefix="/admin/listings", tags=["admin_listings"])
+router = APIRouter(prefix="/api/admin/listings", tags=["admin_listings"])
 
 
 class ListingListItemSchema(BaseModel):
@@ -222,8 +222,8 @@ async def get_listings(
     stats_query = db.query(
         func.count(distinct(PropertyListing.id)).label('total_listings'),
         func.count(distinct(PropertyListing.master_property_id)).label('unique_properties'),
-        func.count(distinct(case([(PropertyListing.is_active == True, PropertyListing.id)], else_=None))).label('active_listings'),
-        func.count(distinct(case([(PropertyListing.detail_fetched_at.isnot(None), PropertyListing.id)], else_=None))).label('with_details')
+        func.count(distinct(case((PropertyListing.is_active == True, PropertyListing.id), else_=None))).label('active_listings'),
+        func.count(distinct(case((PropertyListing.detail_fetched_at.isnot(None), PropertyListing.id), else_=None))).label('with_details')
     )
     
     if source_site:
@@ -257,7 +257,6 @@ async def get_listing_detail(
     # 掲載情報を取得
     listing = db.query(PropertyListing).options(
         joinedload(PropertyListing.master_property).joinedload(MasterProperty.building),
-        joinedload(PropertyListing.images),
         joinedload(PropertyListing.price_history)
     ).filter(PropertyListing.id == listing_id).first()
     
@@ -274,16 +273,8 @@ async def get_listing_detail(
             "is_initial": history.is_initial,
         })
     
-    # 画像を整形
+    # 画像を整形（現在はPropertyImageモデルが未実装のため空リスト）
     images = []
-    for image in listing.images:
-        images.append({
-            "id": image.id,
-            "image_url": image.image_url,
-            "image_type": image.image_type,
-            "caption": image.caption,
-            "display_order": image.display_order,
-        })
     
     # マスター物件情報
     master_property = listing.master_property
@@ -370,8 +361,8 @@ async def get_listings_stats_by_source(db: Session = Depends(get_db)):
         PropertyListing.source_site,
         func.count(distinct(PropertyListing.id)).label('total_listings'),
         func.count(distinct(PropertyListing.master_property_id)).label('unique_properties'),
-        func.count(distinct(case([(PropertyListing.is_active == True, PropertyListing.id)], else_=None))).label('active_listings'),
-        func.count(distinct(case([(PropertyListing.detail_fetched_at.isnot(None), PropertyListing.id)], else_=None))).label('with_details'),
+        func.count(distinct(case((PropertyListing.is_active == True, PropertyListing.id), else_=None))).label('active_listings'),
+        func.count(distinct(case((PropertyListing.detail_fetched_at.isnot(None), PropertyListing.id), else_=None))).label('with_details'),
         func.avg(PropertyListing.current_price).label('avg_price'),
         func.min(PropertyListing.first_seen_at).label('earliest_listing'),
         func.max(PropertyListing.last_confirmed_at).label('latest_update')
