@@ -1,4 +1,4 @@
-import axios from 'axios';
+import axios from '../utils/axiosConfig';
 import type { Property, PropertyDetail, SearchParams, ApiResponse, Area, Statistics } from '../types/property';
 
 const API_BASE_URL = '/api';
@@ -9,6 +9,20 @@ const api = axios.create({
     'Content-Type': 'application/json',
   },
 });
+
+// 認証情報を含めるためのインターセプター
+api.interceptors.request.use(
+  (config) => {
+    const authHeader = localStorage.getItem('adminAuth');
+    if (authHeader && config.headers) {
+      config.headers['Authorization'] = authHeader;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
 
 export const propertyApi = {
   // 物件一覧検索

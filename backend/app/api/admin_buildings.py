@@ -11,7 +11,7 @@ from ..database import get_db
 from ..models import Building, MasterProperty, PropertyListing
 from ..auth import verify_admin_credentials
 
-router = APIRouter(prefix="/api/admin", tags=["admin"])
+router = APIRouter(tags=["admin-buildings"])
 
 
 @router.get("/buildings")
@@ -124,6 +124,56 @@ async def get_buildings(
     }
 
 
+@router.get("/buildings/search")
+async def search_buildings_for_merge(
+    query: str = Query(..., min_length=1),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    credentials: Any = Depends(verify_admin_credentials)
+):
+    """建物検索（統合用）"""
+    # 検索文字列を正規化
+    search_term = f"%{query}%"
+    
+    # 建物を検索
+    buildings = db.query(
+        Building.id,
+        Building.normalized_name,
+        Building.address,
+        Building.total_floors,
+        func.count(MasterProperty.id).label('property_count')
+    ).outerjoin(
+        MasterProperty, Building.id == MasterProperty.building_id
+    ).filter(
+        or_(
+            Building.normalized_name.ilike(search_term),
+            Building.address.ilike(search_term)
+        )
+    ).group_by(
+        Building.id,
+        Building.normalized_name,
+        Building.address,
+        Building.total_floors
+    ).order_by(
+        func.count(MasterProperty.id).desc()
+    ).limit(limit).all()
+    
+    result = []
+    for building in buildings:
+        result.append({
+            "id": building.id,
+            "normalized_name": building.normalized_name,
+            "address": building.address,
+            "total_floors": building.total_floors,
+            "property_count": building.property_count
+        })
+    
+    return {
+        "buildings": result,
+        "total": len(result)
+    }
+
+
 @router.get("/buildings/{building_id}")
 async def get_building_detail(
     building_id: int,
@@ -231,3 +281,4 @@ async def update_building(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"更新に失敗しました: {str(e)}")
+

@@ -188,7 +188,7 @@ async def startup_event():
 app.include_router(admin.router)
 app.include_router(admin_listings.router)
 app.include_router(admin_properties.router)
-app.include_router(admin_buildings.router)
+app.include_router(admin_buildings.router, prefix="/api/admin")
 
 @app.get("/")
 async def root():
