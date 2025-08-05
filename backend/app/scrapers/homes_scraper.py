@@ -30,6 +30,9 @@ class HomesScraper(BaseScraper):
         super().__init__(self.SOURCE_SITE, force_detail_fetch, max_properties, ignore_error_history)
         # HOMESは一覧ページと詳細ページで建物名の表記が異なることがあるため、部分一致を許可
         self.allow_partial_building_name_match = True
+        # MULTI_SOURCEモードを使用（詳細ページの複数箇所から建物名を取得して検証）
+        from ..scrapers.base_scraper import BuildingNameVerificationMode
+        self.building_name_verification_mode = BuildingNameVerificationMode.MULTI_SOURCE
         self._setup_headers()
     
     def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
@@ -172,131 +175,202 @@ class HomesScraper(BaseScraper):
         self.logger.error("[HOMES] No price pattern found")
         return None
     
-    def _extract_building_name_and_room(self, soup: BeautifulSoup, building_name_from_list: Optional[str] = None) -> Tuple[Optional[str], Optional[str]]:
-        """建物名と部屋番号を抽出
+    def _extract_room_number(self, soup: BeautifulSoup) -> Optional[str]:
+        """部屋番号を抽出
         
         Args:
             soup: BeautifulSoupオブジェクト
-            building_name_from_list: 一覧ページから取得した建物名
         
         Returns:
-            建物名と部屋番号のタプル
+            部屋番号（存在しない場合はNone）
+        """
+        room_number = None
+        
+        # h1タグから部屋番号を抽出
+        _, h1_room = self._extract_building_name_from_h1(soup)
+        if h1_room:
+            room_number = h1_room
+            self.logger.debug(f"[HOMES] h1タグから部屋番号を取得: {room_number}")
+        
+        # 他のソースからも部屋番号を探すことができる
+        # 例: 物件概要テーブルの「部屋番号」「号室」など
+        
+        return room_number
+    
+    def get_building_names_from_detail(self, detail_data: Dict[str, Any]) -> List[str]:
+        """詳細ページから複数の建物名を取得（MULTI_SOURCEモード用）
+        
+        _building_names_candidatesから建物名候補を取得して返す。
+        
+        Args:
+            detail_data: 詳細ページから取得したデータ
+            
+        Returns:
+            建物名のリスト（最大2つ）
+        """
+        # 詳細データに保存された建物名候補を取得
+        candidates = detail_data.get('_building_names_candidates', [])
+        
+        # 重複を除去（完全一致のみ）
+        unique_names = []
+        seen = set()
+        
+        for name in candidates:
+            if name and name not in seen:
+                unique_names.append(name)
+                seen.add(name)
+                if len(unique_names) >= 2:  # 最大2つまで
+                    break
+        
+        # 候補がない場合は、通常のbuilding_nameを使用
+        if not unique_names and detail_data.get('building_name'):
+            unique_names = [detail_data['building_name']]
+        
+        return unique_names
+    
+    def _extract_building_name_from_breadcrumb(self, soup: BeautifulSoup) -> Optional[str]:
+        """パンくずリストから建物名を取得"""
+        # LIFULL HOME'Sのパンくずリスト：breadcrumb-listタグ内のol > li要素
+        breadcrumb_tag = soup.find('breadcrumb-list')
+        if breadcrumb_tag:
+            breadcrumb_list = breadcrumb_tag.select('ol > li')
+        else:
+            # フォールバック：最初のol要素（hide-scrollbarクラス）
+            breadcrumb_list = soup.select('ol.hide-scrollbar > li')
+        
+        if breadcrumb_list:
+            # 最後のli要素を取得
+            last_li = breadcrumb_list[-1]
+            
+            # li内のテキストを取得（a要素がある場合はその中のテキスト）
+            last_elem = last_li.select_one('a')
+            if last_elem:
+                last_text = last_elem.get_text(strip=True)
+            else:
+                last_text = last_li.get_text(strip=True)
+            
+            self.logger.debug(f"[HOMES] breadcrumb-list > ol > li の最後の要素: {last_text}")
+            
+            # 建物名として妥当かチェック
+            if self._is_valid_building_name(last_text):
+                building_name = re.sub(r'^(中古マンション|マンション)', '', last_text).strip()
+                
+                # 階数情報と部屋番号を除去
+                # 例: 「グランドパレス田町 4階/413」→「グランドパレス田町」
+                # 例: 「デュオ・スカーラ西麻布タワーWEST 12階」→「デュオ・スカーラ西麻布タワーWEST」
+                building_name = re.sub(r'\s+\d+階(?:/\d+[A-Z]?)?$', '', building_name)
+                
+                self.logger.info(f"[HOMES] パンくずリストから建物名を取得: {building_name}")
+                return building_name
+            else:
+                self.logger.debug(f"[HOMES] パンくずの最後の要素が建物名として無効: {last_text}")
+        else:
+            self.logger.debug("[HOMES] パンくずリスト（breadcrumb-list > ol > liまたはol.hide-scrollbar > li）が見つかりませんでした")
+        
+        return None
+    
+    def _is_valid_building_name(self, text: str) -> bool:
+        """建物名として妥当かチェック"""
+        if not text:
+            return False
+            
+        # 不要な文字列を除外
+        skip_patterns = [
+            'ホーム', 'HOME', 'トップ', 'TOP',
+            '中古マンション一覧', '中古マンション', 'マンション一覧',
+            '物件一覧', '一覧', '検索結果',
+            'LIFULL', 'ライフル', 'ホームズ', 'HOMES',
+            '>' # パンくずの区切り文字
+        ]
+        if any(skip in text for skip in skip_patterns):
+            return False
+            
+        # 「〇〇区」「〇〇市」などの地名でない場合
+        if re.search(r'(東京都|都|道|府|県|市|区|町|村)$', text):
+            return False
+            
+        # 数字のみでない場合
+        if text.isdigit():
+            return False
+            
+        # 極端に短い（2文字以下）または長い（50文字以上）場合は除外
+        if len(text) <= 2 or len(text) >= 50:
+            return False
+            
+        return True
+    
+    def _extract_building_name_from_detail_table(self, soup: BeautifulSoup) -> Optional[str]:
+        """物件概要テーブルから建物名を取得"""
+        detail_tables = soup.select('table.detailTable, table.mod-detailTable, table[class*="detail"]')
+        for table in detail_tables:
+            rows = table.select('tr')
+            for row in rows:
+                th = row.select_one('th')
+                td = row.select_one('td')
+                if th and td:
+                    header = th.get_text(strip=True)
+                    if '物件名' in header or 'マンション名' in header or '建物名' in header:
+                        building_name = td.get_text(strip=True)
+                        # 「中古マンション」などのプレフィックスを削除
+                        building_name = re.sub(r'^(中古マンション|マンション)', '', building_name).strip()
+                        return building_name
+        return None
+    
+    def _extract_building_name_from_h1(self, soup: BeautifulSoup) -> Tuple[Optional[str], Optional[str]]:
+        """h1タグから建物名と部屋番号を取得
+        
+        LIFULL HOME'Sの実際の構造:
+        - span要素が複数ある場合、4番目に建物名と階数が含まれる
         """
         building_name = None
         room_number = None
         
-        # 一覧ページから取得した建物名がある場合、詳細ページでその建物名を確認
-        if building_name_from_list:
-            # ページ全体のテキストを取得
-            page_text = soup.get_text()
-            
-            # 建物名が詳細ページに存在するか確認（大文字小文字を区別しない）
-            if building_name_from_list.lower() in page_text.lower():
-                building_name = building_name_from_list
-                self.logger.info(f"[HOMES] 一覧ページの建物名を使用（詳細ページで確認済み）: {building_name}")
-            else:
-                self.logger.warning(f"[HOMES] 一覧ページの建物名が詳細ページで見つかりません: {building_name_from_list}")
-        
-        # 一覧ページから建物名が取得できなかった、または詳細ページで確認できなかった場合
-        if not building_name:
-            # 物件概要テーブルから建物名を探す
-            detail_tables = soup.select('table.detailTable, table.mod-detailTable, table[class*="detail"]')
-            for table in detail_tables:
-                rows = table.select('tr')
-                for row in rows:
-                    th = row.select_one('th')
-                    td = row.select_one('td')
-                    if th and td:
-                        header = th.get_text(strip=True)
-                        if '物件名' in header or 'マンション名' in header or '建物名' in header:
-                            building_name = td.get_text(strip=True)
-                            self.logger.info(f"[HOMES] 物件概要テーブルから建物名を取得: {building_name}")
-                            break
-                if building_name:
-                    break
-        
-        # それでも取得できない場合は従来のロジックを使用
-        if not building_name:
-            # h1タグから情報を取得（Header__logoクラスを除外）
-            h1_elem = soup.find('h1', class_=lambda x: x and 'Header__logo' not in x)
-            if h1_elem:
-                # H1内のspan要素を探す
-                spans = h1_elem.select('span')
-                if len(spans) >= 2:
-                    # 2番目のspan要素を使用（通常はここに建物名または駅名情報がある）
-                    building_name_text = spans[1].get_text(strip=True)
-                    
-                    # ただし、2番目も「中古マンション」の場合は、それ以降のspan要素を確認
-                    if building_name_text == '中古マンション' and len(spans) > 2:
-                        # 「中古マンション」でない最初のspan要素を探す
-                        for i in range(2, min(len(spans), 5)):  # 最大5番目まで確認
-                            span_text = spans[i].get_text(strip=True)
-                            if span_text != '中古マンション' and '万円' not in span_text:
-                                building_name_text = span_text
-                                break
-                    
-                    # 階数情報を除去（例：「パルロイヤルアレフ赤坂 2階/207」→「パルロイヤルアレフ赤坂」）
-                    if ' ' in building_name_text:
-                        parts = building_name_text.split(' ')
-                        # 最後の部分が階数情報の場合は除去
-                        if parts[-1] and ('階' in parts[-1] or '/' in parts[-1]):
-                            building_name = ' '.join(parts[:-1])
-                        else:
-                            building_name = building_name_text
-                    else:
-                        building_name = building_name_text
-                    
-                    # 部屋番号も抽出（階数情報の後ろにある可能性）
-                    if ' ' in building_name_text and '/' in building_name_text:
-                        match = re.search(r'/(\d{3,4}[A-Z]?)(?:\s|$)', building_name_text)
+        # h1タグから情報を取得（Header__logoクラスを除外）
+        h1_elem = soup.find('h1', class_=lambda x: x and 'Header__logo' not in x)
+        if h1_elem:
+            # H1内のspan要素を探す
+            spans = h1_elem.select('span')
+            if len(spans) >= 4:
+                # 4番目のspan要素を使用（実際のHTML構造に基づく）
+                building_name_text = spans[3].get_text(strip=True)
+                
+                # 階数情報を除去（例：「パルロイヤルアレフ赤坂 2階/207」→「パルロイヤルアレフ赤坂」）
+                if ' ' in building_name_text:
+                    parts = building_name_text.split(' ')
+                    # 最後の部分が階数情報の場合は除去
+                    if parts[-1] and ('階' in parts[-1] or '/' in parts[-1]):
+                        building_name = ' '.join(parts[:-1])
+                        # 部屋番号を抽出
+                        match = re.search(r'/(\d{3,4}[A-Z]?)(?:\s|$)', parts[-1])
                         if match:
                             room_number = match.group(1)
-                    
-                    self.logger.info(f"[HOMES] h1のspan要素から建物名を取得: {building_name}")
-                else:
-                    # 従来の方法（span要素がない場合）
-                    h1_text = h1_elem.get_text(strip=True)
-                    # 駅名情報のパターンを含む場合はスキップ
-                    if any(pattern in h1_text for pattern in ['徒歩', '駅', '（', '区）', '市）', '線']):
-                        self.logger.warning(f"[HOMES] h1タグは駅名情報のため建物名として使用しません: {h1_text}")
                     else:
-                        if '中古マンション' in h1_text:
-                            h1_text = h1_text.replace('中古マンション', '').strip()
-                        parts = h1_text.split('/')
-                        if parts:
-                            building_name = parts[0].strip()
-        
-        # titleタグまたはog:titleから情報を取得
-        if not building_name:
-            title_elem = soup.select_one('title')
-            og_title = soup.select_one('meta[property="og:title"]')
-            title_text = (title_elem.get_text(strip=True) if title_elem else 
-                         og_title.get('content', '') if og_title else '')
-            
-            if title_text:
-                title_text = title_text.replace('【ホームズ】', '').strip()
-                property_name_part = (title_text.split('｜')[0].strip() if '｜' in title_text else 
-                                    title_text.split('|')[0].strip() if '|' in title_text else 
-                                    title_text.split('、')[0].strip())
+                        building_name = building_name_text
+                else:
+                    building_name = building_name_text
                 
-                # 部屋番号を抽出
-                room_match = re.search(r'\s+(\d{3,4}[A-Z]*)\s*($|｜|\|)', property_name_part)
-                if room_match:
-                    room_number = room_match.group(1)
-                    building_name = property_name_part.replace(room_number, '').strip()
-                else:
-                    parts = property_name_part.split()
-                    if len(parts) >= 2 and re.match(r'^\d{3,4}[A-Z]*$', parts[-1]):
-                        room_number = parts[-1]
-                        building_name = ' '.join(parts[:-1])
-                    else:
-                        building_name = property_name_part
+                # 部屋番号も抽出（階数情報の後ろにある可能性）
+                if not room_number and ' ' in building_name_text and '/' in building_name_text:
+                    match = re.search(r'/(\d{3,4}[A-Z]?)(?:\s|$)', building_name_text)
+                    if match:
+                        room_number = match.group(1)
+            else:
+                # 従来の方法（span要素がない場合）
+                h1_text = h1_elem.get_text(strip=True)
+                # 駅名情報のパターンを含む場合はスキップ
+                if not any(pattern in h1_text for pattern in ['徒歩', '駅', '（', '区）', '市）', '線']):
+                    if '中古マンション' in h1_text:
+                        h1_text = h1_text.replace('中古マンション', '').strip()
+                    parts = h1_text.split('/')
+                    if parts:
+                        building_name = parts[0].strip()
         
-        # 最終的なクリーンアップ（「中古マンション」や「マンション」のプレフィックスのみ削除）
+        # 最終的なクリーンアップ
         if building_name:
             building_name = re.sub(r'^(中古マンション|マンション)', '', building_name).strip()
         
         return building_name, room_number
+    
     
     def _extract_property_details_from_dl(self, soup: BeautifulSoup) -> Dict[str, Any]:
         """データリスト（dl/dt/dd）から情報を抽出"""
@@ -552,11 +626,38 @@ class HomesScraper(BaseScraper):
             if property_data_from_list and 'building_name_from_list' in property_data_from_list:
                 building_name_from_list = property_data_from_list['building_name_from_list']
             
-            # 建物名と部屋番号
-            building_name, room_number = self._extract_building_name_and_room(soup, building_name_from_list)
-            if building_name:
-                property_data['building_name'] = building_name
-                property_data['title'] = building_name
+            # 部屋番号を抽出
+            room_number = self._extract_room_number(soup)
+            
+            # MULTI_SOURCEモード用: 詳細ページから複数の建物名候補を収集
+            building_candidates = []
+            
+            # 1. パンくずリストから
+            breadcrumb_name = self._extract_building_name_from_breadcrumb(soup)
+            if breadcrumb_name:
+                building_candidates.append(breadcrumb_name)
+            
+            # 2. 物件概要テーブルから
+            table_name = self._extract_building_name_from_detail_table(soup)
+            if table_name:
+                building_candidates.append(table_name)
+            
+            # 3. h1タグから（フォールバック）
+            if len(building_candidates) < 2:
+                h1_name, _ = self._extract_building_name_from_h1(soup)
+                if h1_name:
+                    building_candidates.append(h1_name)
+            
+            # 候補を保存（get_building_names_from_detailで使用）
+            property_data['_building_names_candidates'] = building_candidates
+            
+            # 建物名を候補から設定
+            if building_candidates:
+                property_data['building_name'] = building_candidates[0]
+                property_data['title'] = building_candidates[0]
+                self.logger.info(f"[HOMES] 建物名を設定: {building_candidates[0]}")
+            else:
+                self.logger.error(f"[HOMES] 建物名を取得できませんでした: {url}")
             
             if room_number:
                 property_data['room_number'] = room_number

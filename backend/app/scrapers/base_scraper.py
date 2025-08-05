@@ -17,6 +17,7 @@ from difflib import SequenceMatcher
 from .constants import SourceSite
 from ..config.scraping_config import PAUSE_TIMEOUT_SECONDS
 from ..database import SessionLocal
+from enum import Enum
 from ..models import (
     Building, MasterProperty, PropertyListing, 
     ListingPriceHistory, BuildingExternalId, Url404Retry
@@ -28,6 +29,13 @@ from ..utils.exceptions import TaskPausedException, TaskCancelledException, Main
 import time as time_module
 from ..utils.debug_logger import debug_log
 from .building_external_id_handler import BuildingExternalIdHandler
+
+
+class BuildingNameVerificationMode(Enum):
+    """建物名検証モード"""
+    STRICT = "strict"  # 厳密一致（一覧と詳細が一致しない場合はエラー）
+    PARTIAL = "partial"  # 部分一致（類似度で判定）
+    MULTI_SOURCE = "multi_source"  # 複数箇所検証（詳細ページの複数箇所が一致すればOK）
 
 
 class BaseScraper(ABC):
@@ -76,6 +84,9 @@ class BaseScraper(ABC):
         
         # 建物名の部分一致を許可するかどうか（デフォルト: False = 完全一致のみ）
         self.allow_partial_building_name_match = False
+        
+        # 建物名検証モード（デフォルト: STRICT）
+        self.building_name_verification_mode = BuildingNameVerificationMode.STRICT
         
         self.session = SessionLocal()
         self.http_session = requests.Session()
@@ -1352,53 +1363,16 @@ class BaseScraper(ABC):
                     property_data['property_saved'] = False
                     return False
                 
-                # 建物名不一致チェック（一覧ページから建物名が取得されている場合のみ）
-                list_building_name = property_data.get('building_name_from_list')
-                detail_building_name = detail_data.get('building_name')
-                
-                if list_building_name and detail_building_name:
-                    # 建物名の一致を確認（詳細ページの建物名と一覧ページの建物名を比較）
-                    is_verified, verified_name = self.verify_building_names_match(
-                        detail_building_name, 
-                        list_building_name,
-                        allow_partial_match=self.allow_partial_building_name_match
-                    )
-                    
-                    if not is_verified:
-                        # 建物名が一致しない場合の警告
-                        self.logger.warning(
-                            f"建物名不一致を検出: {property_data.get('url')} - "
-                            f"一覧: {list_building_name}, 詳細: {detail_building_name}"
-                        )
-                        
-                        # エラーログを記録
-                        if hasattr(self, '_save_error_log'):
-                            self._save_error_log({
-                                'url': property_data.get('url', '不明'),
-                                'reason': f'建物名不一致: 一覧「{list_building_name}」, 詳細「{detail_building_name}」',
-                                'building_name': list_building_name,
-                                'price': property_data.get('price', ''),
-                                'timestamp': datetime.now().isoformat(),
-                                'site_property_id': property_data.get('site_property_id', ''),
-                                'source_site': self.source_site.value
-                            })
-                        
-                        # 更新をスキップ
-                        print(f"  → 建物名不一致のため更新をスキップ (一覧: {list_building_name}, 詳細: {detail_building_name})")
-                        property_data['detail_fetched'] = False
-                        self._last_detail_fetched = False
-                        self._scraping_stats['detail_fetch_failed'] += 1
-                        property_data['detail_fetch_attempted'] = True
-                        property_data['property_saved'] = False
-                        return False
-                    else:
-                        # 建物名が確認できた場合は、詳細ページの建物名を使用
-                        if verified_name:
-                            detail_data['building_name'] = verified_name
-                            if list_building_name != detail_building_name:
-                                self.logger.info(f"建物名を詳細ページの名前で更新: {list_building_name} → {verified_name}")
-                            else:
-                                self.logger.info(f"建物名が一致: {verified_name}")
+                # 建物名検証処理
+                if not self.validate_building_name_from_detail(property_data, detail_data):
+                    # 検証失敗の場合は更新をスキップ
+                    print(f"  → 建物名検証失敗のため更新をスキップ")
+                    property_data['detail_fetched'] = False
+                    self._last_detail_fetched = False
+                    self._scraping_stats['detail_fetch_failed'] += 1
+                    property_data['detail_fetch_attempted'] = True
+                    property_data['property_saved'] = False
+                    return False
                 
                 # 価格と建物名が一致している場合は通常通り処理
                 # 詳細データをマージ
@@ -1665,6 +1639,181 @@ class BaseScraper(ABC):
         normalized = re.sub(r'[\s　・－―～〜]+', '', normalized)
         
         return normalized
+    
+    def validate_building_name_from_detail(self, property_data: Dict[str, Any], detail_data: Dict[str, Any]) -> bool:
+        """詳細ページから取得した建物名を検証
+        
+        Args:
+            property_data: 一覧ページから取得した物件データ
+            detail_data: 詳細ページから取得した物件データ
+            
+        Returns:
+            bool: 検証が成功した場合True
+        """
+        list_building_name = property_data.get('building_name_from_list')
+        detail_building_name = detail_data.get('building_name')
+        
+        # 検証モードに応じて処理を分岐
+        if self.building_name_verification_mode == BuildingNameVerificationMode.MULTI_SOURCE:
+            # MULTI_SOURCEモード: 詳細ページの複数箇所から取得した建物名を検証
+            # 派生クラスでget_building_names_from_detailメソッドをオーバーライドして実装
+            building_names_from_detail = self.get_building_names_from_detail(detail_data)
+            
+            is_verified, verified_name = self.verify_building_names_multi_source(
+                building_names_from_detail, list_building_name
+            )
+            
+            if is_verified and verified_name:
+                detail_data['building_name'] = verified_name
+                if list_building_name and list_building_name != verified_name:
+                    self.logger.info(f"建物名を検証済みの名前で更新: {list_building_name} → {verified_name}")
+                return True
+            else:
+                self.logger.warning(
+                    f"建物名検証失敗（MULTI_SOURCE）: {property_data.get('url')} - "
+                    f"一覧: {list_building_name}, 詳細候補: {building_names_from_detail}"
+                )
+                # エラーログを記録
+                if hasattr(self, '_save_error_log'):
+                    self._save_error_log({
+                        'url': property_data.get('url', '不明'),
+                        'reason': f'建物名検証失敗（複数箇所不一致）: 一覧「{list_building_name}」, 詳細候補「{building_names_from_detail}」',
+                        'building_name': list_building_name,
+                        'price': property_data.get('price', ''),
+                        'timestamp': datetime.now().isoformat(),
+                        'site_property_id': property_data.get('site_property_id', ''),
+                        'source_site': self.source_site.value
+                    })
+                return False
+                
+        elif list_building_name and detail_building_name:
+            # STRICTまたはPARTIALモード: 従来の検証処理
+            is_verified, verified_name = self.verify_building_names_match(
+                detail_building_name, 
+                list_building_name,
+                allow_partial_match=(
+                    self.building_name_verification_mode == BuildingNameVerificationMode.PARTIAL 
+                    or self.allow_partial_building_name_match
+                )
+            )
+            
+            if not is_verified:
+                # 建物名が一致しない場合の警告
+                self.logger.warning(
+                    f"建物名不一致を検出: {property_data.get('url')} - "
+                    f"一覧: {list_building_name}, 詳細: {detail_building_name}"
+                )
+                
+                # エラーログを記録
+                if hasattr(self, '_save_error_log'):
+                    self._save_error_log({
+                        'url': property_data.get('url', '不明'),
+                        'reason': f'建物名不一致: 一覧「{list_building_name}」, 詳細「{detail_building_name}」',
+                        'building_name': list_building_name,
+                        'price': property_data.get('price', ''),
+                        'timestamp': datetime.now().isoformat(),
+                        'site_property_id': property_data.get('site_property_id', ''),
+                        'source_site': self.source_site.value
+                    })
+                
+                return False
+            else:
+                # 建物名が確認できた場合は、詳細ページの建物名を使用
+                if verified_name:
+                    detail_data['building_name'] = verified_name
+                    if list_building_name != detail_building_name:
+                        self.logger.info(f"建物名を詳細ページの名前で更新: {list_building_name} → {verified_name}")
+                    else:
+                        self.logger.info(f"建物名が一致: {verified_name}")
+                return True
+        
+        # 建物名が取得できていない場合は検証をスキップ
+        return True
+    
+    def get_building_names_from_detail(self, detail_data: Dict[str, Any]) -> List[str]:
+        """詳細ページから複数の建物名を取得（MULTI_SOURCEモード用）
+        
+        派生クラスでオーバーライドして実装する。
+        デフォルトでは、detail_dataのbuilding_nameを返す。
+        
+        Args:
+            detail_data: 詳細ページから取得したデータ
+            
+        Returns:
+            建物名のリスト
+        """
+        building_name = detail_data.get('building_name')
+        if building_name:
+            return [building_name]
+        return []
+    
+    def verify_building_names_multi_source(self, building_names_from_detail: List[str], building_name_from_list: Optional[str] = None) -> Tuple[bool, Optional[str]]:
+        """複数箇所から取得した建物名を検証（MULTI_SOURCEモード用）
+        
+        Args:
+            building_names_from_detail: 詳細ページの複数箇所から取得した建物名のリスト
+            building_name_from_list: 一覧ページから取得した建物名（省略可）
+            
+        Returns:
+            (建物名が確認できたか, 確認された建物名またはNone)
+        """
+        if not building_names_from_detail:
+            return False, None
+            
+        # 一覧ページの建物名がある場合、まず通常の検証を行う
+        if building_name_from_list:
+            for detail_name in building_names_from_detail:
+                if detail_name:
+                    is_verified, verified_name = self.verify_building_names_match(
+                        detail_name, building_name_from_list, 
+                        allow_partial_match=True, threshold=0.8
+                    )
+                    if is_verified:
+                        self.logger.info(f"一覧ページの建物名と詳細ページの建物名が一致: {verified_name}")
+                        return True, verified_name
+        
+        # 詳細ページの複数箇所から取得した建物名を検証
+        if len(building_names_from_detail) >= 2:
+            # 建物名の出現回数をカウント（正規化して比較）
+            name_counts = {}
+            original_names = {}  # 正規化前の名前を保持
+            
+            for name in building_names_from_detail:
+                if name:
+                    normalized_name = self.normalize_building_name(name)
+                    if normalized_name:
+                        # 小文字に変換して比較
+                        normalized_lower = normalized_name.lower()
+                        name_counts[normalized_lower] = name_counts.get(normalized_lower, 0) + 1
+                        # 最初に見つかった元の表記を保存
+                        if normalized_lower not in original_names:
+                            original_names[normalized_lower] = name
+            
+            # 2回以上出現する建物名があれば、それを採用
+            for normalized_name, count in name_counts.items():
+                if count >= 2:
+                    original_name = original_names[normalized_name]
+                    self.logger.info(
+                        f"詳細ページの複数箇所（{count}箇所）で一致する建物名を確認: {original_name}"
+                    )
+                    return True, original_name
+            
+            # 2回以上出現する建物名がない場合
+            if building_names_from_detail:
+                # 最初の候補を使用
+                first_name = building_names_from_detail[0]
+                self.logger.warning(
+                    f"詳細ページの建物名が複数箇所で一致しないため、最初の候補を使用: {first_name}"
+                )
+                return True, first_name
+        
+        # 建物名が1つしかない場合
+        elif len(building_names_from_detail) == 1:
+            building_name = building_names_from_detail[0]
+            self.logger.info(f"詳細ページから建物名を取得（1箇所のみ）: {building_name}")
+            return True, building_name
+        
+        return False, None
 
     def verify_building_names_match(self, detail_building_name: str, building_name_from_list: str, 
                                    allow_partial_match: bool = False, threshold: float = 0.8) -> Tuple[bool, Optional[str]]:
@@ -2011,9 +2160,13 @@ class BaseScraper(ABC):
         else:
             query = query.filter(MasterProperty.layout.is_(None))
         
+        # master_propertyを初期化
+        master_property = None
+        
         # 部屋番号がある場合は、部屋番号も一致条件に含める
         if room_number:
             query = query.filter(MasterProperty.room_number == room_number)
+            master_property = query.first()
         else:
             # 部屋番号がない場合のみ、方角を考慮（ユニーク制約対象）
             query = query.filter(MasterProperty.room_number.is_(None))
@@ -2031,14 +2184,13 @@ class BaseScraper(ABC):
                         if candidate_dir == normalized_direction:
                             master_property = candidate
                             break
-                else:
-                    # 方角が一致しない場合、方角なしの物件があればそれを使用
+                
+                # 方角が一致しない場合、方角なしの物件があればそれを使用
+                if not master_property:
                     for candidate in candidates:
                         if not candidate.direction:
                             master_property = candidate
                             break
-                    else:
-                        master_property = None
             else:
                 # 新規物件に方角がない場合
                 master_property = query.filter(MasterProperty.direction.is_(None)).first()
@@ -3090,20 +3242,50 @@ class BaseScraper(ABC):
             # 部屋番号の処理
             room_number = property_data.get('room_number', extracted_room_number)
             
-            # マスター物件を取得または作成
-            master_property = self.get_or_create_master_property(
-                building=building,
-                room_number=room_number,
-                floor_number=property_data.get('floor_number'),
-                area=property_data.get('area'),
-                layout=property_data.get('layout'),
-                direction=property_data.get('direction'),
-                balcony_area=property_data.get('balcony_area'),
-                url=property_data.get('url')
-            )
+            # マスター物件を取得または作成（初期化と例外処理を追加）
+            master_property = None
+            try:
+                master_property = self.get_or_create_master_property(
+                    building=building,
+                    room_number=room_number,
+                    floor_number=property_data.get('floor_number'),
+                    area=property_data.get('area'),
+                    layout=property_data.get('layout'),
+                    direction=property_data.get('direction'),
+                    balcony_area=property_data.get('balcony_area'),
+                    url=property_data.get('url')
+                )
+                
+                if not master_property:
+                    self.logger.warning("マスター物件の作成に失敗しました")
+                    # エラーログを記録
+                    if hasattr(self, '_save_error_log'):
+                        self._save_error_log({
+                            'url': property_data.get('url', '不明'),
+                            'reason': 'マスター物件の作成に失敗',
+                            'building_name': property_data.get('building_name', ''),
+                            'price': property_data.get('price', ''),
+                            'timestamp': datetime.now().isoformat()
+                        })
+                    property_data['property_saved'] = False
+                    return False
+                    
+            except Exception as e:
+                self.logger.error(f"マスター物件の取得・作成中にエラー: {e}")
+                # エラーログを記録
+                if hasattr(self, '_save_error_log'):
+                    self._save_error_log({
+                        'url': property_data.get('url', '不明'),
+                        'reason': f'マスター物件の取得・作成中にエラー: {str(e)}',
+                        'building_name': property_data.get('building_name', ''),
+                        'price': property_data.get('price', ''),
+                        'timestamp': datetime.now().isoformat()
+                    })
+                property_data['property_saved'] = False
+                return False
             
             # summary_remarksをMasterPropertyに保存
-            if property_data.get('summary_remarks') and not master_property.summary_remarks:
+            if property_data.get('summary_remarks') and master_property and not master_property.summary_remarks:
                 master_property.summary_remarks = property_data.get('summary_remarks')
                 self.session.flush()
             
