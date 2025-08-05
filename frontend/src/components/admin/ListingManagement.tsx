@@ -276,9 +276,31 @@ export const ListingManagement: React.FC = () => {
       )}
 
       {/* フィルター */}
-      <Paper sx={{ p: 2, mb: 3 }}>
+      <Paper sx={{ p: 3, mb: 3 }}>
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="h6" sx={{ fontWeight: 500, fontSize: '1.1rem' }}>
+            検索フィルター
+          </Typography>
+        </Box>
         <Grid container spacing={2} alignItems="center">
-          <Grid item xs={12} md={2}>
+          <Grid item xs={12} sm={6} md={4}>
+            <TextField
+              fullWidth
+              size="small"
+              label="建物名で検索"
+              value={filters.building_name}
+              onChange={(e) => setFilters({ ...filters, building_name: e.target.value })}
+              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              InputProps={{
+                startAdornment: (
+                  <Box sx={{ mr: 1, display: 'flex', alignItems: 'center' }}>
+                    <SearchIcon fontSize="small" color="action" />
+                  </Box>
+                ),
+              }}
+            />
+          </Grid>
+          <Grid item xs={12} sm={6} md={2}>
             <FormControl fullWidth size="small">
               <InputLabel>サイト</InputLabel>
               <Select
@@ -286,48 +308,50 @@ export const ListingManagement: React.FC = () => {
                 onChange={(e: SelectChangeEvent) => setFilters({ ...filters, source_site: e.target.value })}
                 label="サイト"
               >
-                <MenuItem value="">全て</MenuItem>
-                <MenuItem value="suumo">SUUMO</MenuItem>
-                <MenuItem value="homes">LIFULL HOME'S</MenuItem>
-                <MenuItem value="rehouse">三井のリハウス</MenuItem>
-                <MenuItem value="nomu">ノムコム</MenuItem>
-                <MenuItem value="livable">東急リバブル</MenuItem>
+                <MenuItem value="">
+                  <em>すべて</em>
+                </MenuItem>
+                <Divider />
+                <MenuItem value="suumo">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip label="SUUMO" size="small" color="primary" sx={{ height: 20 }} />
+                  </Box>
+                </MenuItem>
+                <MenuItem value="homes">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip label="HOME'S" size="small" color="secondary" sx={{ height: 20 }} />
+                  </Box>
+                </MenuItem>
+                <MenuItem value="rehouse">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip label="リハウス" size="small" color="success" sx={{ height: 20 }} />
+                  </Box>
+                </MenuItem>
+                <MenuItem value="nomu">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip label="ノムコム" size="small" color="warning" sx={{ height: 20 }} />
+                  </Box>
+                </MenuItem>
+                <MenuItem value="livable">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Chip label="リバブル" size="small" color="error" sx={{ height: 20 }} />
+                  </Box>
+                </MenuItem>
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} md={3}>
-            <TextField
-              fullWidth
-              size="small"
-              label="建物名"
-              value={filters.building_name}
-              onChange={(e) => setFilters({ ...filters, building_name: e.target.value })}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-            />
-          </Grid>
-          <Grid item xs={12} md={2}>
+          <Grid item xs={12} sm={6} md={2}>
             <FormControl fullWidth size="small">
-              <InputLabel>状態</InputLabel>
-              <Select
-                value={filters.is_active}
-                onChange={(e: SelectChangeEvent) => setFilters({ ...filters, is_active: e.target.value })}
-                label="状態"
-              >
-                <MenuItem value="">全て</MenuItem>
-                <MenuItem value="true">アクティブ</MenuItem>
-                <MenuItem value="false">非アクティブ</MenuItem>
-              </Select>
-            </FormControl>
-          </Grid>
-          <Grid item xs={12} md={2}>
-            <FormControl fullWidth size="small">
-              <InputLabel>エリア（区）</InputLabel>
+              <InputLabel>エリア</InputLabel>
               <Select
                 value={filters.ward}
                 onChange={(e: SelectChangeEvent) => setFilters({ ...filters, ward: e.target.value })}
-                label="エリア（区）"
+                label="エリア"
               >
-                <MenuItem value="">全て</MenuItem>
+                <MenuItem value="">
+                  <em>すべて</em>
+                </MenuItem>
+                <Divider />
                 <MenuItem value="千代田区">千代田区</MenuItem>
                 <MenuItem value="中央区">中央区</MenuItem>
                 <MenuItem value="港区">港区</MenuItem>
@@ -354,22 +378,109 @@ export const ListingManagement: React.FC = () => {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} md={1}>
-            <Box sx={{ display: 'flex', gap: 1 }}>
+          <Grid item xs={12} sm={6} md={2}>
+            <FormControl fullWidth size="small">
+              <InputLabel>状態</InputLabel>
+              <Select
+                value={filters.is_active}
+                onChange={(e: SelectChangeEvent) => setFilters({ ...filters, is_active: e.target.value })}
+                label="状態"
+              >
+                <MenuItem value="">
+                  <em>すべて</em>
+                </MenuItem>
+                <Divider />
+                <MenuItem value="true">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box
+                      sx={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        bgcolor: 'success.main',
+                      }}
+                    />
+                    アクティブ
+                  </Box>
+                </MenuItem>
+                <MenuItem value="false">
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box
+                      sx={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: '50%',
+                        bgcolor: 'grey.400',
+                      }}
+                    />
+                    非アクティブ
+                  </Box>
+                </MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+          <Grid item xs={12} sm={12} md={2}>
+            <Box sx={{ display: 'flex', gap: 1, justifyContent: { xs: 'flex-start', md: 'flex-end' } }}>
               <Button
                 variant="contained"
                 onClick={handleSearch}
                 startIcon={<SearchIcon />}
                 disabled={loading}
+                fullWidth
+                sx={{ maxWidth: { md: 120 } }}
               >
                 検索
               </Button>
-              <IconButton onClick={handleClearFilters} disabled={loading}>
+              <Button
+                variant="outlined"
+                onClick={handleClearFilters}
+                disabled={loading}
+                sx={{ minWidth: 'auto', px: 2 }}
+              >
                 <ClearIcon />
-              </IconButton>
+              </Button>
             </Box>
           </Grid>
         </Grid>
+        
+        {/* アクティブフィルター表示 */}
+        {(filters.source_site || filters.building_name || filters.is_active !== '' || filters.ward) && (
+          <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+            <Typography variant="body2" color="text.secondary">
+              適用中:
+            </Typography>
+            {filters.building_name && (
+              <Chip
+                size="small"
+                label={`建物名: ${filters.building_name}`}
+                onDelete={() => setFilters({ ...filters, building_name: '' })}
+              />
+            )}
+            {filters.source_site && (
+              <Chip
+                size="small"
+                label={`サイト: ${filters.source_site.toUpperCase()}`}
+                onDelete={() => setFilters({ ...filters, source_site: '' })}
+                color={getSourceChipColor(filters.source_site)}
+              />
+            )}
+            {filters.ward && (
+              <Chip
+                size="small"
+                label={`エリア: ${filters.ward}`}
+                onDelete={() => setFilters({ ...filters, ward: '' })}
+              />
+            )}
+            {filters.is_active !== '' && (
+              <Chip
+                size="small"
+                label={`状態: ${filters.is_active === 'true' ? 'アクティブ' : '非アクティブ'}`}
+                onDelete={() => setFilters({ ...filters, is_active: '' })}
+                color={filters.is_active === 'true' ? 'success' : 'default'}
+              />
+            )}
+          </Box>
+        )}
       </Paper>
 
       {/* エラー表示 */}
@@ -379,10 +490,41 @@ export const ListingManagement: React.FC = () => {
         </Alert>
       )}
 
+      {/* 結果表示 */}
+      <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Typography variant="body1" color="text.secondary">
+          検索結果: {totalCount.toLocaleString()}件
+        </Typography>
+        <TablePagination
+          component="div"
+          count={totalCount}
+          page={page}
+          onPageChange={handlePageChange}
+          rowsPerPage={rowsPerPage}
+          onRowsPerPageChange={handleRowsPerPageChange}
+          rowsPerPageOptions={[25, 50, 100]}
+          labelRowsPerPage="表示件数:"
+          labelDisplayedRows={({ from, to, count }) => `${from}-${to} / ${count !== -1 ? count : `${to}以上`}`}
+        />
+      </Box>
+
       {/* 掲載一覧 */}
-      <TableContainer component={Paper}>
+      <TableContainer component={Paper} sx={{ position: 'relative' }}>
         {loading && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+          <Box 
+            sx={{ 
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              bgcolor: 'rgba(255, 255, 255, 0.8)',
+              zIndex: 1000,
+            }}
+          >
             <CircularProgress />
           </Box>
         )}
@@ -466,16 +608,6 @@ export const ListingManagement: React.FC = () => {
             ))}
           </TableBody>
         </Table>
-        <TablePagination
-          component="div"
-          count={totalCount}
-          page={page}
-          onPageChange={handlePageChange}
-          rowsPerPage={rowsPerPage}
-          onRowsPerPageChange={handleRowsPerPageChange}
-          rowsPerPageOptions={[25, 50, 100]}
-          labelRowsPerPage="表示件数:"
-        />
       </TableContainer>
 
       {/* 詳細ダイアログ */}
