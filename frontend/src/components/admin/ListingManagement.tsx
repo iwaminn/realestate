@@ -72,7 +72,6 @@ interface Listing {
 interface ListingDetail extends Listing {
   previous_price?: number;
   price_updated_at?: string;
-  is_new: boolean;
   master_property: any;
   building: any;
   listing_floor_number?: number;
@@ -93,13 +92,6 @@ interface ListingDetail extends Listing {
     price: number;
     recorded_at: string;
     is_initial: boolean;
-  }>;
-  images: Array<{
-    id: number;
-    image_url: string;
-    image_type?: string;
-    caption?: string;
-    display_order?: number;
   }>;
 }
 
@@ -235,6 +227,8 @@ export const ListingManagement: React.FC = () => {
   const formatDate = (dateString?: string) => {
     if (!dateString) return '-';
     try {
+      // APIは既に日本時間（+09:00）で返しているので、そのまま表示
+      // date-fnsのformatはブラウザのタイムゾーンで表示する
       return format(new Date(dateString), 'yyyy/MM/dd HH:mm');
     } catch {
       return dateString;
@@ -648,22 +642,44 @@ export const ListingManagement: React.FC = () => {
       >
         {selectedListing && (
           <>
-            <DialogTitle>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                掲載詳細 - ID: {selectedListing.id}
-                <Chip
-                  label={selectedListing.source_site.toUpperCase()}
-                  size="small"
-                  color={getSourceChipColor(selectedListing.source_site)}
-                />
-                <Box sx={{ flexGrow: 1 }} />
-                <IconButton
-                  href={selectedListing.url}
-                  target="_blank"
-                  component="a"
-                >
-                  <OpenInNewIcon />
-                </IconButton>
+            <DialogTitle sx={{ pb: 1 }}>
+              <Box>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                  <Typography variant="h6" component="span">
+                    {selectedListing.building.normalized_name}
+                  </Typography>
+                  <Chip
+                    label={selectedListing.source_site.toUpperCase()}
+                    size="small"
+                    color={getSourceChipColor(selectedListing.source_site)}
+                  />
+                  <Box sx={{ flexGrow: 1 }} />
+                  <IconButton
+                    href={selectedListing.url}
+                    target="_blank"
+                    component="a"
+                    size="small"
+                  >
+                    <OpenInNewIcon />
+                  </IconButton>
+                </Box>
+                <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                  <Typography variant="body2" color="text.secondary">
+                    ID: {selectedListing.id}
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {selectedListing.master_property.floor_number}階 / {selectedListing.master_property.layout} / {selectedListing.master_property.area}㎡
+                  </Typography>
+                  <Typography variant="body2" color="primary" fontWeight="bold">
+                    {formatPrice(selectedListing.current_price)}
+                  </Typography>
+                  <Chip
+                    label={selectedListing.is_active ? 'アクティブ' : '非アクティブ'}
+                    size="small"
+                    color={selectedListing.is_active ? 'success' : 'default'}
+                    sx={{ height: 20 }}
+                  />
+                </Box>
               </Box>
             </DialogTitle>
             <DialogContent>
@@ -672,210 +688,498 @@ export const ListingManagement: React.FC = () => {
                 <Tab label="掲載情報" />
                 <Tab label="価格履歴" />
                 <Tab label="タイムスタンプ" />
-                <Tab label="画像" />
                 <Tab label="詳細JSON" />
               </Tabs>
 
               {tabIndex === 0 && (
-                <Grid container spacing={2}>
+                <Grid container spacing={3}>
                   <Grid item xs={12} md={6}>
-                    <Typography variant="subtitle2" color="textSecondary">建物情報</Typography>
-                    <Box sx={{ mb: 2 }}>
-                      <Typography><strong>建物名:</strong> {selectedListing.building.normalized_name}</Typography>
-                      <Typography><strong>住所:</strong> {selectedListing.building.address}</Typography>
-                      <Typography><strong>築年:</strong> {selectedListing.building.built_year}年</Typography>
-                      <Typography><strong>総階数:</strong> {selectedListing.building.total_floors}階</Typography>
-                    </Box>
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="subtitle1" fontWeight="bold" gutterBottom color="primary">
+                          建物情報
+                        </Typography>
+                        <Divider sx={{ mb: 2 }} />
+                        <Grid container spacing={1.5}>
+                          <Grid item xs={4}>
+                            <Typography variant="caption" color="text.secondary">建物名</Typography>
+                            <Typography variant="body2">{selectedListing.building.normalized_name}</Typography>
+                          </Grid>
+                          <Grid item xs={8}>
+                            <Typography variant="caption" color="text.secondary">住所</Typography>
+                            <Typography variant="body2">{selectedListing.building.address}</Typography>
+                          </Grid>
+                          <Grid item xs={4}>
+                            <Typography variant="caption" color="text.secondary">築年月</Typography>
+                            <Typography variant="body2">
+                              {selectedListing.building.built_year}年{selectedListing.building.built_month ? `${selectedListing.building.built_month}月` : ''}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={4}>
+                            <Typography variant="caption" color="text.secondary">総階数</Typography>
+                            <Typography variant="body2">{selectedListing.building.total_floors}階建</Typography>
+                          </Grid>
+                          <Grid item xs={4}>
+                            <Typography variant="caption" color="text.secondary">構造</Typography>
+                            <Typography variant="body2">{selectedListing.building.construction_type || '-'}</Typography>
+                          </Grid>
+                        </Grid>
+                      </CardContent>
+                    </Card>
                   </Grid>
                   <Grid item xs={12} md={6}>
-                    <Typography variant="subtitle2" color="textSecondary">物件情報</Typography>
-                    <Box sx={{ mb: 2 }}>
-                      <Typography><strong>部屋番号:</strong> {selectedListing.master_property.room_number || '-'}</Typography>
-                      <Typography><strong>階数:</strong> {selectedListing.master_property.floor_number}階</Typography>
-                      <Typography><strong>面積:</strong> {selectedListing.master_property.area}㎡</Typography>
-                      <Typography><strong>間取り:</strong> {selectedListing.master_property.layout}</Typography>
-                      <Typography><strong>方角:</strong> {selectedListing.master_property.direction || '-'}</Typography>
-                    </Box>
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="subtitle1" fontWeight="bold" gutterBottom color="primary">
+                          物件情報
+                        </Typography>
+                        <Divider sx={{ mb: 2 }} />
+                        <Grid container spacing={1.5}>
+                          <Grid item xs={4}>
+                            <Typography variant="caption" color="text.secondary">階数</Typography>
+                            <Typography variant="body2">{selectedListing.master_property.floor_number}階</Typography>
+                          </Grid>
+                          <Grid item xs={4}>
+                            <Typography variant="caption" color="text.secondary">専有面積</Typography>
+                            <Typography variant="body2">{selectedListing.master_property.area}㎡</Typography>
+                          </Grid>
+                          <Grid item xs={4}>
+                            <Typography variant="caption" color="text.secondary">間取り</Typography>
+                            <Typography variant="body2">{selectedListing.master_property.layout}</Typography>
+                          </Grid>
+                          <Grid item xs={4}>
+                            <Typography variant="caption" color="text.secondary">方角</Typography>
+                            <Typography variant="body2">{selectedListing.master_property.direction || '-'}</Typography>
+                          </Grid>
+                          <Grid item xs={4}>
+                            <Typography variant="caption" color="text.secondary">バルコニー</Typography>
+                            <Typography variant="body2">
+                              {selectedListing.master_property.balcony_area ? `${selectedListing.master_property.balcony_area}㎡` : '-'}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={4}>
+                            <Typography variant="caption" color="text.secondary">部屋番号</Typography>
+                            <Typography variant="body2">{selectedListing.master_property.room_number || '-'}</Typography>
+                          </Grid>
+                        </Grid>
+                      </CardContent>
+                    </Card>
                   </Grid>
                   <Grid item xs={12}>
-                    <Typography variant="subtitle2" color="textSecondary">価格・費用情報</Typography>
-                    <Box>
-                      <Typography><strong>現在価格:</strong> {formatPrice(selectedListing.current_price)}</Typography>
-                      {selectedListing.previous_price && (
-                        <Typography><strong>前回価格:</strong> {formatPrice(selectedListing.previous_price)}</Typography>
-                      )}
-                      <Typography><strong>管理費:</strong> {selectedListing.management_fee ? `${selectedListing.management_fee.toLocaleString()}円` : '-'}</Typography>
-                      <Typography><strong>修繕積立金:</strong> {selectedListing.repair_fund ? `${selectedListing.repair_fund.toLocaleString()}円` : '-'}</Typography>
-                    </Box>
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="subtitle1" fontWeight="bold" gutterBottom color="primary">
+                          価格・費用情報
+                        </Typography>
+                        <Divider sx={{ mb: 2 }} />
+                        <Grid container spacing={2}>
+                          <Grid item xs={12} sm={3}>
+                            <Paper sx={{ p: 2, bgcolor: 'primary.main', color: 'primary.contrastText', textAlign: 'center' }}>
+                              <Typography variant="caption">販売価格</Typography>
+                              <Typography variant="h5" fontWeight="bold">
+                                {formatPrice(selectedListing.current_price)}
+                              </Typography>
+                              {selectedListing.previous_price && selectedListing.previous_price !== selectedListing.current_price && (
+                                <Typography variant="caption">
+                                  前回: {formatPrice(selectedListing.previous_price)}
+                                </Typography>
+                              )}
+                            </Paper>
+                          </Grid>
+                          <Grid item xs={12} sm={3}>
+                            <Paper sx={{ p: 2, bgcolor: 'grey.100', textAlign: 'center' }}>
+                              <Typography variant="caption" color="text.secondary">管理費</Typography>
+                              <Typography variant="h6">
+                                {selectedListing.management_fee ? `${selectedListing.management_fee.toLocaleString()}円` : '-'}
+                              </Typography>
+                            </Paper>
+                          </Grid>
+                          <Grid item xs={12} sm={3}>
+                            <Paper sx={{ p: 2, bgcolor: 'grey.100', textAlign: 'center' }}>
+                              <Typography variant="caption" color="text.secondary">修繕積立金</Typography>
+                              <Typography variant="h6">
+                                {selectedListing.repair_fund ? `${selectedListing.repair_fund.toLocaleString()}円` : '-'}
+                              </Typography>
+                            </Paper>
+                          </Grid>
+                          <Grid item xs={12} sm={3}>
+                            <Paper sx={{ p: 2, bgcolor: 'grey.100', textAlign: 'center' }}>
+                              <Typography variant="caption" color="text.secondary">月額合計</Typography>
+                              <Typography variant="h6">
+                                {selectedListing.management_fee || selectedListing.repair_fund
+                                  ? `${((selectedListing.management_fee || 0) + (selectedListing.repair_fund || 0)).toLocaleString()}円`
+                                  : '-'
+                                }
+                              </Typography>
+                            </Paper>
+                          </Grid>
+                        </Grid>
+                      </CardContent>
+                    </Card>
                   </Grid>
                 </Grid>
               )}
 
               {tabIndex === 1 && (
-                <Grid container spacing={2}>
-                  <Grid item xs={12} md={6}>
-                    <Typography variant="subtitle2" color="textSecondary">掲載基本情報</Typography>
-                    <Box sx={{ mb: 2 }}>
-                      <Typography><strong>掲載ID:</strong> {selectedListing.id}</Typography>
-                      <Typography><strong>マスター物件ID:</strong> {selectedListing.master_property.id}</Typography>
-                      <Typography><strong>建物ID:</strong> {selectedListing.building.id}</Typography>
-                      <Typography><strong>サイトID:</strong> {selectedListing.site_property_id || '-'}</Typography>
-                      <Typography><strong>タイトル:</strong> {selectedListing.title}</Typography>
-                      <Typography><strong>掲載建物名:</strong> {selectedListing.listing_building_name || '-'}</Typography>
-                      {selectedListing.listing_building_name !== selectedListing.building.normalized_name && (
-                        <Typography variant="caption" color="textSecondary">
-                          （正規化名: {selectedListing.building.normalized_name}）
+                <Grid container spacing={3}>
+                  <Grid item xs={12}>
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="subtitle1" fontWeight="bold" gutterBottom color="primary">
+                          掲載基本情報
                         </Typography>
-                      )}
-                      <Typography><strong>掲載URL:</strong> <Link href={selectedListing.url} target="_blank">{selectedListing.url}</Link></Typography>
-                      <Typography><strong>ステータス:</strong> {selectedListing.is_active ? 'アクティブ' : '非アクティブ'}</Typography>
-                      <Typography><strong>新着:</strong> {selectedListing.is_new ? 'はい' : 'いいえ'}</Typography>
-                    </Box>
+                        <Divider sx={{ mb: 2 }} />
+                        <Grid container spacing={2}>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">掲載ID</Typography>
+                            <Typography variant="body2">{selectedListing.id}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">マスター物件ID</Typography>
+                            <Typography variant="body2">{selectedListing.master_property.id}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">建物ID</Typography>
+                            <Typography variant="body2">{selectedListing.building.id}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">サイトID</Typography>
+                            <Typography variant="body2">{selectedListing.site_property_id || '-'}</Typography>
+                          </Grid>
+                          <Grid item xs={12}>
+                            <Typography variant="caption" color="text.secondary">タイトル</Typography>
+                            <Typography variant="body2">{selectedListing.title}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6}>
+                            <Typography variant="caption" color="text.secondary">掲載建物名</Typography>
+                            <Typography variant="body2">
+                              {selectedListing.listing_building_name || '-'}
+                              {selectedListing.listing_building_name !== selectedListing.building.normalized_name && (
+                                <Typography variant="caption" color="text.secondary" component="span">
+                                  {' '}（正規化: {selectedListing.building.normalized_name}）
+                                </Typography>
+                              )}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6}>
+                            <Typography variant="caption" color="text.secondary">ステータス</Typography>
+                            <Box sx={{ mt: 0.5 }}>
+                              <Chip
+                                label={selectedListing.is_active ? 'アクティブ' : '非アクティブ'}
+                                size="small"
+                                color={selectedListing.is_active ? 'success' : 'default'}
+                              />
+                            </Box>
+                          </Grid>
+                          <Grid item xs={12}>
+                            <Typography variant="caption" color="text.secondary">掲載URL</Typography>
+                            <Typography variant="body2">
+                              <Link href={selectedListing.url} target="_blank" rel="noopener">
+                                {selectedListing.url}
+                              </Link>
+                            </Typography>
+                          </Grid>
+                        </Grid>
+                      </CardContent>
+                    </Card>
                   </Grid>
+                  
                   <Grid item xs={12} md={6}>
-                    <Typography variant="subtitle2" color="textSecondary">掲載固有情報</Typography>
-                    <Box sx={{ mb: 2 }}>
-                      <Typography><strong>駅情報:</strong> {selectedListing.station_info || '-'}</Typography>
-                      <Typography><strong>掲載階数:</strong> {selectedListing.listing_floor_number ? `${selectedListing.listing_floor_number}階` : '-'}</Typography>
-                      <Typography><strong>掲載面積:</strong> {selectedListing.listing_area ? `${selectedListing.listing_area}㎡` : '-'}</Typography>
-                      <Typography><strong>掲載間取り:</strong> {selectedListing.listing_layout || '-'}</Typography>
-                      <Typography><strong>掲載方角:</strong> {selectedListing.listing_direction || '-'}</Typography>
-                    </Box>
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="subtitle1" fontWeight="bold" gutterBottom color="primary">
+                          掲載固有情報
+                        </Typography>
+                        <Divider sx={{ mb: 2 }} />
+                        <Grid container spacing={2}>
+                          <Grid item xs={12}>
+                            <Typography variant="caption" color="text.secondary">駅情報</Typography>
+                            <Typography variant="body2" style={{ whiteSpace: 'pre-line' }}>
+                              {selectedListing.station_info || '-'}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={6}>
+                            <Typography variant="caption" color="text.secondary">掲載階数</Typography>
+                            <Typography variant="body2">
+                              {selectedListing.listing_floor_number ? `${selectedListing.listing_floor_number}階` : '-'}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={6}>
+                            <Typography variant="caption" color="text.secondary">掲載面積</Typography>
+                            <Typography variant="body2">
+                              {selectedListing.listing_area ? `${selectedListing.listing_area}㎡` : '-'}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={6}>
+                            <Typography variant="caption" color="text.secondary">掲載間取り</Typography>
+                            <Typography variant="body2">{selectedListing.listing_layout || '-'}</Typography>
+                          </Grid>
+                          <Grid item xs={6}>
+                            <Typography variant="caption" color="text.secondary">掲載方角</Typography>
+                            <Typography variant="body2">{selectedListing.listing_direction || '-'}</Typography>
+                          </Grid>
+                        </Grid>
+                      </CardContent>
+                    </Card>
                   </Grid>
-                  <Grid item xs={12}>
-                    <Typography variant="subtitle2" color="textSecondary">不動産会社情報</Typography>
-                    <Box sx={{ mb: 2 }}>
-                      <Typography><strong>不動産会社:</strong> {selectedListing.agency_name || '-'}</Typography>
-                      <Typography><strong>電話番号:</strong> {selectedListing.agency_tel || '-'}</Typography>
-                    </Box>
+                  
+                  <Grid item xs={12} md={6}>
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="subtitle1" fontWeight="bold" gutterBottom color="primary">
+                          不動産会社情報
+                        </Typography>
+                        <Divider sx={{ mb: 2 }} />
+                        <Grid container spacing={2}>
+                          <Grid item xs={12}>
+                            <Typography variant="caption" color="text.secondary">不動産会社</Typography>
+                            <Typography variant="body2">{selectedListing.agency_name || '-'}</Typography>
+                          </Grid>
+                          <Grid item xs={12}>
+                            <Typography variant="caption" color="text.secondary">電話番号</Typography>
+                            <Typography variant="body2">{selectedListing.agency_tel || '-'}</Typography>
+                          </Grid>
+                        </Grid>
+                      </CardContent>
+                    </Card>
                   </Grid>
+                  
                   <Grid item xs={12}>
-                    <Typography variant="subtitle2" color="textSecondary">備考</Typography>
-                    <Box>
-                      {selectedListing.remarks && (
-                        <Paper sx={{ p: 2, bgcolor: 'grey.50', mb: 1 }}>
-                          <Typography variant="body2" style={{ whiteSpace: 'pre-wrap' }}>
-                            {selectedListing.remarks}
-                          </Typography>
-                        </Paper>
-                      )}
-                      {selectedListing.summary_remarks && (
-                        <Box>
-                          <Typography variant="caption" color="textSecondary">要約:</Typography>
-                          <Typography variant="body2">{selectedListing.summary_remarks}</Typography>
-                        </Box>
-                      )}
-                      {!selectedListing.remarks && !selectedListing.summary_remarks && (
-                        <Typography color="textSecondary">備考なし</Typography>
-                      )}
-                    </Box>
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="subtitle1" fontWeight="bold" gutterBottom color="primary">
+                          備考
+                        </Typography>
+                        <Divider sx={{ mb: 2 }} />
+                        {selectedListing.remarks ? (
+                          <Box>
+                            <Paper sx={{ p: 2, bgcolor: 'grey.50' }}>
+                              <Typography variant="body2" style={{ whiteSpace: 'pre-wrap' }}>
+                                {selectedListing.remarks}
+                              </Typography>
+                            </Paper>
+                            {selectedListing.summary_remarks && (
+                              <Box sx={{ mt: 2 }}>
+                                <Typography variant="caption" color="text.secondary">要約:</Typography>
+                                <Typography variant="body2">{selectedListing.summary_remarks}</Typography>
+                              </Box>
+                            )}
+                          </Box>
+                        ) : (
+                          <Typography color="text.secondary">備考なし</Typography>
+                        )}
+                      </CardContent>
+                    </Card>
                   </Grid>
                 </Grid>
               )}
 
               {tabIndex === 2 && (
-                <Box>
-                  <Typography variant="subtitle2" color="textSecondary" sx={{ mb: 2 }}>
-                    価格履歴 ({selectedListing.price_history.length}件)
-                  </Typography>
-                  <TableContainer>
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>記録日時</TableCell>
-                          <TableCell align="right">価格</TableCell>
-                          <TableCell>初回</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {selectedListing.price_history.map((history) => (
-                          <TableRow key={history.id}>
-                            <TableCell>{formatDate(history.recorded_at)}</TableCell>
-                            <TableCell align="right">{formatPrice(history.price)}</TableCell>
-                            <TableCell>
-                              {history.is_initial && <Chip label="初回" size="small" />}
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                </Box>
+                <Card variant="outlined">
+                  <CardContent>
+                    <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+                      <Typography variant="subtitle1" fontWeight="bold" color="primary">
+                        価格履歴
+                      </Typography>
+                      <Chip label={`${selectedListing.price_history.length}件`} size="small" color="primary" variant="outlined" />
+                    </Box>
+                    <Divider sx={{ mb: 2 }} />
+                    {selectedListing.price_history.length > 0 ? (
+                      <TableContainer>
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell>記録日時</TableCell>
+                              <TableCell align="right">価格</TableCell>
+                              <TableCell align="center">変動</TableCell>
+                              <TableCell align="center">ステータス</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {selectedListing.price_history.map((history, index) => {
+                              const prevPrice = index < selectedListing.price_history.length - 1 
+                                ? selectedListing.price_history[index + 1].price 
+                                : null;
+                              const priceChange = prevPrice ? history.price - prevPrice : 0;
+                              const changePercent = prevPrice ? ((priceChange / prevPrice) * 100).toFixed(1) : null;
+                              
+                              return (
+                                <TableRow key={history.id} hover>
+                                  <TableCell>{formatDate(history.recorded_at)}</TableCell>
+                                  <TableCell align="right">
+                                    <Typography variant="body2" fontWeight={index === 0 ? 'bold' : 'normal'}>
+                                      {formatPrice(history.price)}
+                                    </Typography>
+                                  </TableCell>
+                                  <TableCell align="center">
+                                    {prevPrice && priceChange !== 0 && (
+                                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
+                                        <Typography 
+                                          variant="caption" 
+                                          color={priceChange > 0 ? 'error.main' : 'success.main'}
+                                          fontWeight="bold"
+                                        >
+                                          {priceChange > 0 ? '+' : ''}{priceChange}万円
+                                        </Typography>
+                                        <Typography 
+                                          variant="caption" 
+                                          color={priceChange > 0 ? 'error.main' : 'success.main'}
+                                        >
+                                          ({changePercent}%)
+                                        </Typography>
+                                      </Box>
+                                    )}
+                                    {(!prevPrice || priceChange === 0) && '-'}
+                                  </TableCell>
+                                  <TableCell align="center">
+                                    {history.is_initial && <Chip label="初回" size="small" color="info" />}
+                                    {index === 0 && !history.is_initial && <Chip label="最新" size="small" color="primary" />}
+                                  </TableCell>
+                                </TableRow>
+                              );
+                            })}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    ) : (
+                      <Typography color="text.secondary" align="center">
+                        価格履歴なし
+                      </Typography>
+                    )}
+                  </CardContent>
+                </Card>
               )}
 
               {tabIndex === 3 && (
-                <Grid container spacing={2}>
+                <Grid container spacing={3}>
                   <Grid item xs={12} md={6}>
-                    <Typography variant="subtitle2" color="textSecondary">掲載関連日時</Typography>
-                    <Box sx={{ mb: 2 }}>
-                      <Typography><strong>初回確認日時:</strong> {formatDate(selectedListing.first_seen_at)}</Typography>
-                      <Typography><strong>最終確認日時:</strong> {formatDate(selectedListing.last_confirmed_at)}</Typography>
-                      <Typography><strong>初回公開日時:</strong> {formatDate(selectedListing.first_published_at)}</Typography>
-                      <Typography><strong>公開日時:</strong> {formatDate(selectedListing.published_at)}</Typography>
-                      {selectedListing.delisted_at && (
-                        <Typography><strong>削除日時:</strong> {formatDate(selectedListing.delisted_at)}</Typography>
-                      )}
-                      <Typography><strong>詳細取得日時:</strong> {formatDate(selectedListing.detail_fetched_at)}</Typography>
-                    </Box>
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="subtitle1" fontWeight="bold" gutterBottom color="primary">
+                          掲載関連日時
+                        </Typography>
+                        <Divider sx={{ mb: 2 }} />
+                        <Grid container spacing={1.5}>
+                          <Grid item xs={12}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 0.5 }}>
+                              <Typography variant="body2" color="text.secondary">初回確認</Typography>
+                              <Typography variant="body2">{formatDate(selectedListing.first_seen_at)}</Typography>
+                            </Box>
+                          </Grid>
+                          <Grid item xs={12}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 0.5 }}>
+                              <Typography variant="body2" color="text.secondary">最終確認</Typography>
+                              <Typography variant="body2">{formatDate(selectedListing.last_confirmed_at)}</Typography>
+                            </Box>
+                          </Grid>
+                          <Grid item xs={12}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 0.5 }}>
+                              <Typography variant="body2" color="text.secondary">初回公開</Typography>
+                              <Typography variant="body2">{formatDate(selectedListing.first_published_at)}</Typography>
+                            </Box>
+                          </Grid>
+                          <Grid item xs={12}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 0.5 }}>
+                              <Typography variant="body2" color="text.secondary">公開日時</Typography>
+                              <Typography variant="body2">{formatDate(selectedListing.published_at)}</Typography>
+                            </Box>
+                          </Grid>
+                          {selectedListing.delisted_at && (
+                            <Grid item xs={12}>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 0.5 }}>
+                                <Typography variant="body2" color="text.secondary">削除日時</Typography>
+                                <Typography variant="body2" color="error">{formatDate(selectedListing.delisted_at)}</Typography>
+                              </Box>
+                            </Grid>
+                          )}
+                          <Grid item xs={12}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 0.5 }}>
+                              <Typography variant="body2" color="text.secondary">詳細取得</Typography>
+                              <Typography variant="body2">{formatDate(selectedListing.detail_fetched_at)}</Typography>
+                            </Box>
+                          </Grid>
+                        </Grid>
+                      </CardContent>
+                    </Card>
                   </Grid>
                   <Grid item xs={12} md={6}>
-                    <Typography variant="subtitle2" color="textSecondary">システム日時</Typography>
-                    <Box sx={{ mb: 2 }}>
-                      <Typography><strong>作成日時:</strong> {formatDate(selectedListing.created_at)}</Typography>
-                      <Typography><strong>更新日時:</strong> {formatDate(selectedListing.updated_at)}</Typography>
-                      {selectedListing.price_updated_at && (
-                        <Typography><strong>価格更新日時:</strong> {formatDate(selectedListing.price_updated_at)}</Typography>
-                      )}
-                    </Box>
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="subtitle1" fontWeight="bold" gutterBottom color="primary">
+                          システム日時
+                        </Typography>
+                        <Divider sx={{ mb: 2 }} />
+                        <Grid container spacing={1.5}>
+                          <Grid item xs={12}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 0.5 }}>
+                              <Typography variant="body2" color="text.secondary">作成日時</Typography>
+                              <Typography variant="body2">{formatDate(selectedListing.created_at)}</Typography>
+                            </Box>
+                          </Grid>
+                          <Grid item xs={12}>
+                            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 0.5 }}>
+                              <Typography variant="body2" color="text.secondary">更新日時</Typography>
+                              <Typography variant="body2">{formatDate(selectedListing.updated_at)}</Typography>
+                            </Box>
+                          </Grid>
+                          {selectedListing.price_updated_at && (
+                            <Grid item xs={12}>
+                              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', py: 0.5 }}>
+                                <Typography variant="body2" color="text.secondary">価格更新</Typography>
+                                <Typography variant="body2" color="warning.main">{formatDate(selectedListing.price_updated_at)}</Typography>
+                              </Box>
+                            </Grid>
+                          )}
+                        </Grid>
+                      </CardContent>
+                    </Card>
                   </Grid>
                   <Grid item xs={12}>
-                    <Typography variant="subtitle2" color="textSecondary">日時の説明</Typography>
-                    <Box>
-                      <Typography variant="body2" color="textSecondary">
-                        • <strong>初回確認:</strong> システムが初めてこの掲載を発見した日時<br/>
-                        • <strong>最終確認:</strong> システムが最後にこの掲載の存在を確認した日時<br/>
-                        • <strong>初回公開:</strong> 掲載サイトでの最初の公開日時（推定）<br/>
-                        • <strong>詳細取得:</strong> 詳細ページから情報を取得した最新日時<br/>
-                        • <strong>価格更新:</strong> 価格が最後に変更された日時
+                    <Alert severity="info" icon={false}>
+                      <Typography variant="body2">
+                        <strong>日時の説明</strong>
                       </Typography>
-                    </Box>
+                      <Box sx={{ mt: 1 }}>
+                        <Typography variant="body2" component="div">
+                          • <strong>初回確認:</strong> システムが初めてこの掲載を発見した日時<br/>
+                          • <strong>最終確認:</strong> システムが最後にこの掲載の存在を確認した日時<br/>
+                          • <strong>初回公開:</strong> 掲載サイトでの最初の公開日時（推定）<br/>
+                          • <strong>詳細取得:</strong> 詳細ページから情報を取得した最新日時<br/>
+                          • <strong>価格更新:</strong> 価格が最後に変更された日時
+                        </Typography>
+                      </Box>
+                    </Alert>
                   </Grid>
                 </Grid>
               )}
 
               {tabIndex === 4 && (
-                <Box>
-                  <Typography variant="subtitle2" color="textSecondary" sx={{ mb: 2 }}>
-                    画像 ({selectedListing.images.length}件)
-                  </Typography>
-                  <Grid container spacing={2}>
-                    {selectedListing.images.map((image) => (
-                      <Grid item xs={6} md={4} key={image.id}>
-                        <Box sx={{ textAlign: 'center' }}>
-                          <img
-                            src={image.image_url}
-                            alt={image.caption || '物件画像'}
-                            style={{ width: '100%', maxHeight: 200, objectFit: 'cover' }}
-                          />
-                          <Typography variant="caption">{image.caption}</Typography>
-                        </Box>
-                      </Grid>
-                    ))}
-                  </Grid>
-                </Box>
-              )}
-
-              {tabIndex === 5 && (
-                <Box>
-                  <Typography variant="subtitle2" color="textSecondary" sx={{ mb: 2 }}>
-                    詳細情報JSON
-                  </Typography>
-                  <Paper sx={{ p: 2, bgcolor: 'grey.100' }}>
-                    <pre style={{ overflow: 'auto', fontSize: '0.8rem' }}>
-                      {JSON.stringify(selectedListing.detail_info, null, 2)}
-                    </pre>
-                  </Paper>
-                </Box>
+                <Card variant="outlined">
+                  <CardContent>
+                    <Typography variant="subtitle1" fontWeight="bold" gutterBottom color="primary">
+                      詳細情報 (JSON)
+                    </Typography>
+                    <Divider sx={{ mb: 2 }} />
+                    {selectedListing.detail_info && Object.keys(selectedListing.detail_info).length > 0 ? (
+                      <Paper sx={{ p: 2, bgcolor: 'grey.50', maxHeight: '500px', overflow: 'auto' }}>
+                        <pre style={{ 
+                          margin: 0,
+                          fontFamily: 'Consolas, Monaco, "Courier New", monospace',
+                          fontSize: '0.875rem',
+                          lineHeight: 1.5
+                        }}>
+                          {JSON.stringify(selectedListing.detail_info, null, 2)}
+                        </pre>
+                      </Paper>
+                    ) : (
+                      <Box sx={{ textAlign: 'center', py: 4 }}>
+                        <Typography color="text.secondary">
+                          詳細情報なし
+                        </Typography>
+                      </Box>
+                    )}
+                  </CardContent>
+                </Card>
               )}
             </DialogContent>
             <DialogActions>

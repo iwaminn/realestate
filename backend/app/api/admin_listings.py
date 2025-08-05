@@ -61,7 +61,6 @@ class ListingDetailSchema(BaseModel):
     previous_price: Optional[int]
     price_updated_at: Optional[str]
     is_active: bool
-    is_new: bool
     
     # マスター物件情報
     master_property: Dict[str, Any]
@@ -265,13 +264,26 @@ async def get_listing_detail(
     
     # 価格履歴を整形
     price_history = []
-    for history in sorted(listing.price_history, key=lambda x: x.recorded_at, reverse=True):
+    sorted_history = sorted(listing.price_history, key=lambda x: x.recorded_at, reverse=True)
+    previous_price = None
+    price_updated_at = None
+    
+    for i, history in enumerate(sorted_history):
         price_history.append({
             "id": history.id,
             "price": history.price,
+            "management_fee": history.management_fee,
+            "repair_fund": history.repair_fund,
             "recorded_at": to_jst_string(history.recorded_at),
-            "is_initial": history.is_initial,
+            "is_initial": i == len(sorted_history) - 1,  # 最古のレコードを初回とする
         })
+        
+        # 前回価格を取得（2番目に新しい価格）
+        if i == 1:
+            previous_price = history.price
+        # 最新の価格更新日時
+        if i == 0 and len(sorted_history) > 1:
+            price_updated_at = to_jst_string(history.recorded_at)
     
     # 画像を整形（現在はPropertyImageモデルが未実装のため空リスト）
     images = []
@@ -289,8 +301,6 @@ async def get_listing_detail(
         "display_building_name": master_property.display_building_name,
         "management_fee": master_property.management_fee,
         "repair_fund": master_property.repair_fund,
-        "sold_at": to_jst_string(master_property.sold_at),
-        "last_sale_price": master_property.last_sale_price,
     }
     
     # 建物情報
@@ -298,16 +308,16 @@ async def get_listing_detail(
     building_data = {
         "id": building.id,
         "normalized_name": building.normalized_name,
-        "canonical_name": building.canonical_name,
+        "canonical_name": getattr(building, 'canonical_name', None),
         "reading": building.reading,
         "address": building.address,
         "normalized_address": building.normalized_address,
         "total_floors": building.total_floors,
-        "basement_floors": building.basement_floors,
+        "basement_floors": getattr(building, 'basement_floors', None),
         "built_year": building.built_year,
         "built_month": building.built_month,
-        "construction_type": building.construction_type,
-        "land_rights": building.land_rights,
+        "construction_type": getattr(building, 'construction_type', None),
+        "land_rights": getattr(building, 'land_rights', None),
     }
     
     # 詳細データを構築
@@ -319,10 +329,9 @@ async def get_listing_detail(
         "title": listing.title,
         "listing_building_name": listing.listing_building_name,
         "current_price": listing.current_price,
-        "previous_price": listing.previous_price,
-        "price_updated_at": to_jst_string(listing.price_updated_at),
+        "previous_price": previous_price,
+        "price_updated_at": price_updated_at,
         "is_active": listing.is_active,
-        "is_new": listing.is_new,
         "master_property": master_property_data,
         "building": building_data,
         "station_info": listing.station_info,
@@ -549,6 +558,11 @@ async def refresh_listing_detail(
                     property_data = scraper.parse_property_detail(listing_db.url)
             
             if property_data:
+                # 詳細ページの解析に成功したら、detail_fetched_atを更新
+                # 日本時間で保存
+                jst_now = datetime.now()
+                listing_db.detail_fetched_at = jst_now
+                listing_db.updated_at = jst_now
                 # 詳細ページから取得した情報で更新（Noneでない値のみ更新）
                 if property_data.get('title'):
                     listing_db.title = property_data['title']
@@ -577,21 +591,18 @@ async def refresh_listing_detail(
                 if property_data.get('detail_info'):
                     listing_db.detail_info = property_data['detail_info']
                 
-                listing_db.detail_fetched_at = datetime.now()
-                listing_db.updated_at = datetime.now()
-                
                 # 価格が変更されていれば更新
                 new_price = property_data.get('price')
                 if new_price and new_price != listing_db.current_price:
                     listing_db.previous_price = listing_db.current_price
                     listing_db.current_price = new_price
-                    listing_db.price_updated_at = datetime.now()
+                    listing_db.price_updated_at = jst_now
                     
                     # 価格履歴を追加
                     price_history = ListingPriceHistory(
                         property_listing_id=listing_id,
                         price=new_price,
-                        recorded_at=datetime.now(),
+                        recorded_at=jst_now,
                         is_initial=False
                     )
                     db_session.add(price_history)
@@ -601,7 +612,7 @@ async def refresh_listing_detail(
                     is_sold = scraper._check_if_sold(soup, property_data['url'])
                     if is_sold and listing_db.is_active:
                         listing_db.is_active = False
-                        listing_db.delisted_at = datetime.now()
+                        listing_db.delisted_at = jst_now
                         api_logger.info(f"Property marked as sold: {listing_db.url}")
                 
                 db_session.commit()

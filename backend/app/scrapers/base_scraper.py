@@ -26,6 +26,7 @@ from ..utils.building_normalizer import BuildingNameNormalizer
 from ..utils.fuzzy_property_matcher import FuzzyPropertyMatcher
 from ..utils.majority_vote_updater import MajorityVoteUpdater
 from ..utils.exceptions import TaskPausedException, TaskCancelledException, MaintenanceException
+from ..utils.datetime_utils import get_utc_now
 import time as time_module
 from ..utils.debug_logger import debug_log
 from .building_external_id_handler import BuildingExternalIdHandler
@@ -554,7 +555,7 @@ class BaseScraper(ABC):
                         # 既存物件の場合は最終確認日時を更新
                         if existing_listing:
                             try:
-                                existing_listing.last_confirmed_at = datetime.now()
+                                existing_listing.last_confirmed_at = get_utc_now()
                                 self.session.flush()
                             except Exception as e:
                                 self.logger.warning(f"最終確認日時の更新に失敗: {e}")
@@ -2307,7 +2308,7 @@ class BaseScraper(ABC):
                     # 別の物件の場合、古い方を非アクティブにする
                     self.logger.info(f"同じURLで別の物件が存在 (旧物件ID: {existing_with_same_url.master_property_id})")
                     existing_with_same_url.is_active = False
-                    existing_with_same_url.delisted_at = datetime.now()
+                    existing_with_same_url.delisted_at = get_utc_now()
                     self.session.flush()
                 else:
                     # 同じ物件の場合は、既存のレコードを使用
@@ -2391,13 +2392,13 @@ class BaseScraper(ABC):
                 price_history = ListingPriceHistory(
                     property_listing_id=listing.id,
                     price=price,
-                    recorded_at=datetime.now()
+                    recorded_at=get_utc_now()
                 )
                 self.session.add(price_history)
                 
                 # 現在価格を更新
                 listing.current_price = price
-                listing.price_updated_at = datetime.now()
+                listing.price_updated_at = get_utc_now()
             
             # その他の情報を更新（変更を追跡）
             if listing.title != title:
@@ -2459,8 +2460,8 @@ class BaseScraper(ABC):
                     self.logger.info(f"建物名新規設定: {listing_building_name}")
             
             listing.is_active = True
-            listing.last_confirmed_at = datetime.now()
-            listing.detail_fetched_at = datetime.now()  # 詳細取得時刻を更新
+            listing.last_confirmed_at = get_utc_now()
+            listing.detail_fetched_at = get_utc_now()  # 詳細取得時刻を更新
             
             # 更新タイプを判定
             update_details = None
@@ -2556,10 +2557,10 @@ class BaseScraper(ABC):
                     repair_fund=repair_fund,
                     is_active=True,
                     published_at=published_at,
-                    first_published_at=first_published_at or published_at or datetime.now(),
-                    price_updated_at=first_published_at or published_at or datetime.now(),
-                    last_confirmed_at=datetime.now(),
-                    detail_fetched_at=datetime.now(),  # 詳細取得時刻を設定
+                    first_published_at=first_published_at or published_at or get_utc_now(),
+                    price_updated_at=first_published_at or published_at or get_utc_now(),
+                    last_confirmed_at=get_utc_now(),
+                    detail_fetched_at=get_utc_now(),  # 詳細取得時刻を設定
                     scraped_from_area=getattr(self, 'current_area_code', None),  # 現在のエリアコードを設定
                     **kwargs
                 )
@@ -2583,7 +2584,7 @@ class BaseScraper(ABC):
                             # 別の物件の場合は、古い方を非アクティブにする
                             print(f"  → 別の物件のため、古い方を非アクティブ化")
                             listing.is_active = False
-                            listing.delisted_at = datetime.now()
+                            listing.delisted_at = get_utc_now()
                             self.session.flush()
                             
                             # 新しいレコードを作成（再試行）
