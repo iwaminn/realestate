@@ -132,11 +132,21 @@ async def search_buildings_for_merge(
     credentials: Any = Depends(verify_admin_credentials)
 ):
     """建物検索（統合用）"""
-    # 検索文字列を正規化
-    search_term = f"%{query}%"
+    import logging
+    from ..utils.search_normalizer import create_search_patterns, normalize_search_text
     
-    # 建物を検索
-    buildings = db.query(
+    logger = logging.getLogger(__name__)
+    
+    # 検索文字列を正規化してAND検索用に分割
+    normalized_search = normalize_search_text(query)
+    search_terms = normalized_search.split()
+    
+    logger.info(f"検索クエリ: {query}")
+    logger.info(f"正規化後: {normalized_search}")
+    logger.info(f"分割後: {search_terms}")
+    
+    # クエリ構築
+    name_query = db.query(
         Building.id,
         Building.normalized_name,
         Building.address,
@@ -144,12 +154,36 @@ async def search_buildings_for_merge(
         func.count(MasterProperty.id).label('property_count')
     ).outerjoin(
         MasterProperty, Building.id == MasterProperty.building_id
-    ).filter(
-        or_(
-            Building.normalized_name.ilike(search_term),
-            Building.address.ilike(search_term)
-        )
-    ).group_by(
+    )
+    
+    # 複数の検索語がある場合はAND検索
+    if len(search_terms) > 1:
+        # AND条件（全ての単語を含む）
+        and_conditions = []
+        for term in search_terms:
+            term_patterns = create_search_patterns(term)
+            term_conditions = []
+            for pattern in term_patterns:
+                term_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
+            if term_conditions:
+                # 各検索語について、いずれかのパターンにマッチ
+                and_conditions.append(or_(*term_conditions))
+        
+        if and_conditions:
+            # 全ての検索語を含む（AND条件）
+            name_query = name_query.filter(and_(*and_conditions))
+    else:
+        # 単一の検索語の場合
+        search_patterns = create_search_patterns(query)
+        search_conditions = []
+        for pattern in search_patterns:
+            search_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
+        
+        if search_conditions:
+            name_query = name_query.filter(or_(*search_conditions))
+    
+    # グループ化と並び替え
+    buildings = name_query.group_by(
         Building.id,
         Building.normalized_name,
         Building.address,
@@ -157,6 +191,8 @@ async def search_buildings_for_merge(
     ).order_by(
         func.count(MasterProperty.id).desc()
     ).limit(limit).all()
+    
+    logger.info(f"検索結果: {len(buildings)}件")
     
     result = []
     for building in buildings:

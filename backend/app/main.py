@@ -1116,6 +1116,13 @@ async def search_buildings_for_merge(
     normalized_query = normalize_search_text(query)
     search_terms = normalized_query.split()
     
+    # デバッグログを追加
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[DEBUG] Search query: '{query}'")
+    logger.info(f"[DEBUG] Normalized: '{normalized_query}'")
+    logger.info(f"[DEBUG] Terms: {search_terms}")
+    
     name_query = db.query(
         Building,
         func.count(distinct(MasterProperty.id)).label('property_count')
@@ -1129,6 +1136,7 @@ async def search_buildings_for_merge(
         and_conditions = []
         for term in search_terms:
             term_patterns = create_search_patterns(term)
+            app_logger.info(f"[DEBUG] Patterns for '{term}': {term_patterns}")
             term_conditions = []
             for pattern in term_patterns:
                 term_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
@@ -1138,15 +1146,18 @@ async def search_buildings_for_merge(
         
         if and_conditions:
             # 全ての検索語を含む（AND条件）
+            app_logger.info(f"[DEBUG] Applying AND conditions: {len(and_conditions)} conditions")
             name_query = name_query.filter(and_(*and_conditions))
     else:
         # 単一の検索語の場合
         search_patterns = create_search_patterns(query)
+        app_logger.info(f"[DEBUG] Single term patterns: {search_patterns}")
         search_conditions = []
         for pattern in search_patterns:
             search_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
         
         if search_conditions:
+            app_logger.info(f"[DEBUG] Applying OR conditions: {len(search_conditions)} conditions")
             name_query = name_query.filter(or_(*search_conditions))
     
     name_results = name_query.group_by(
@@ -1154,6 +1165,8 @@ async def search_buildings_for_merge(
     ).order_by(
         Building.normalized_name
     ).limit(limit).all()
+    
+    app_logger.info(f"[DEBUG] Query returned {len(name_results)} results")
     
     for building, count in name_results:
         # 既にIDで見つかった建物は除外
