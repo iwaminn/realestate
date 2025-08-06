@@ -44,12 +44,8 @@ def create_building_search_filter(building_name: str, column_name: str = "normal
                 and_conditions.append(f"({' OR '.join(term_conditions)})")
         
         if and_conditions:
+            # 全ての検索語を含む（AND条件のみ）
             conditions.append(f"({' AND '.join(and_conditions)})")
-        
-        # 全体文字列のパターンでも検索（OR条件）
-        for pattern in search_patterns:
-            col = f"{table_alias}{column_name}" if table_alias else column_name
-            conditions.append(f"{col}.ilike('%{pattern}%')")
     else:
         # 単一の検索語の場合
         for pattern in search_patterns:
@@ -101,13 +97,13 @@ def create_building_search_params(building_name: str, param_prefix: str = "build
         
         if and_conditions:
             all_conditions.append(f"({' AND '.join(and_conditions)})")
-    
-    # 全体文字列のパターンでも検索（OR条件として追加）
-    for pattern in search_patterns:
-        param_name = f"{param_prefix}_{param_count}"
-        all_conditions.append(f":{param_name}")
-        params[param_name] = f"%{pattern}%"
-        param_count += 1
+    else:
+        # 単一の検索語の場合
+        for pattern in search_patterns:
+            param_name = f"{param_prefix}_{param_count}"
+            all_conditions.append(f":{param_name}")
+            params[param_name] = f"%{pattern}%"
+            param_count += 1
     
     return all_conditions, params
 
@@ -136,8 +132,6 @@ def apply_building_search_to_query(query, building_name: str, building_table):
     
     # 複数の検索語がある場合
     if len(search_terms) > 1:
-        all_conditions = []
-        
         # AND条件（全ての単語を含む）
         and_conditions = []
         for term in search_terms:
@@ -146,17 +140,12 @@ def apply_building_search_to_query(query, building_name: str, building_table):
             for pattern in term_patterns:
                 term_conditions.append(building_table.normalized_name.ilike(f"%{pattern}%"))
             if term_conditions:
+                # 各検索語について、いずれかのパターンにマッチ
                 and_conditions.append(or_(*term_conditions))
         
         if and_conditions:
-            all_conditions.append(and_(*and_conditions))
-        
-        # 全体文字列のパターンでも検索
-        for pattern in search_patterns:
-            all_conditions.append(building_table.normalized_name.ilike(f"%{pattern}%"))
-        
-        if all_conditions:
-            query = query.filter(or_(*all_conditions))
+            # 全ての検索語を含む（AND条件）
+            query = query.filter(and_(*and_conditions))
     else:
         # 単一の検索語の場合
         search_conditions = []
