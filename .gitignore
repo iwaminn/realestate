@@ -78,4 +78,5 @@ cleanup_root_files.sh
 
 # Docker volumes
 postgres_data/
-redis_data/.serena/
+redis_data/
+.serena/
