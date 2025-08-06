@@ -602,7 +602,7 @@ const BuildingDuplicateManager: React.FC = () => {
                               <TableCell>建物名</TableCell>
                               <TableCell>住所</TableCell>
                               <TableCell align="center">階数</TableCell>
-                              <TableCell align="center">築年</TableCell>
+                              <TableCell align="center">築年月</TableCell>
                               <TableCell align="center">物件数</TableCell>
                               <TableCell align="center">類似度</TableCell>
                             </TableRow>
