@@ -108,6 +108,12 @@ export const propertyApi = {
     moved_properties: number;
     primary_building: any;
   }> => {
+    console.log('[DEBUG] API mergeBuildings called with:', {
+      primaryId,
+      secondaryIds,
+      primaryIdType: typeof primaryId,
+      secondaryIdsTypes: secondaryIds.map(id => typeof id)
+    });
     const response = await api.post('/admin/merge-buildings', {
       primary_id: primaryId,
       secondary_ids: secondaryIds

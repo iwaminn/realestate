@@ -306,6 +306,12 @@ const BuildingDuplicateManager: React.FC = () => {
       const allBuildingIds = selectedCandidates; // 選択された建物のみ
       const buildingsToMerge = allBuildingIds.filter(id => id !== selectedMasterId);
       
+      console.log('[DEBUG] Merge request:', {
+        selectedMasterId,
+        buildingsToMerge,
+        selectedCandidates
+      });
+      
       const response = await propertyApi.mergeBuildings(
         selectedMasterId,
         buildingsToMerge

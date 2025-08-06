@@ -1233,7 +1233,16 @@ def merge_buildings(
     # 副建物を取得
     secondary_buildings = db.query(Building).filter(Building.id.in_(secondary_ids)).all()
     if len(secondary_buildings) != len(secondary_ids):
-        raise HTTPException(status_code=404, detail="One or more secondary buildings not found")
+        # デバッグ情報を追加
+        found_ids = [b.id for b in secondary_buildings]
+        missing_ids = [sid for sid in secondary_ids if sid not in found_ids]
+        logger.error(f"[DEBUG] Requested secondary_ids: {secondary_ids}")
+        logger.error(f"[DEBUG] Found building IDs: {found_ids}")
+        logger.error(f"[DEBUG] Missing building IDs: {missing_ids}")
+        raise HTTPException(
+            status_code=404, 
+            detail=f"One or more secondary buildings not found. Missing IDs: {missing_ids}"
+        )
     
     try:
         merged_count = 0
