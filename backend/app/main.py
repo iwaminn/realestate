@@ -1124,11 +1124,8 @@ async def search_buildings_for_merge(
     )
     
     if len(search_terms) > 1:
-        # 複数の検索語がある場合
-        # 各検索語のパターンを生成
-        all_conditions = []
-        
-        # AND条件（全ての単語を含む）
+        # 複数の検索語がある場合はAND検索
+        # 各検索語のパターンを生成し、全てを含む建物を検索
         and_conditions = []
         for term in search_terms:
             term_patterns = create_search_patterns(term)
@@ -1136,18 +1133,12 @@ async def search_buildings_for_merge(
             for pattern in term_patterns:
                 term_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
             if term_conditions:
+                # 各検索語について、いずれかのパターンにマッチ
                 and_conditions.append(or_(*term_conditions))
         
         if and_conditions:
-            all_conditions.append(and_(*and_conditions))
-        
-        # 全体文字列のパターンでも検索
-        full_patterns = create_search_patterns(query)
-        for pattern in full_patterns:
-            all_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
-        
-        if all_conditions:
-            name_query = name_query.filter(or_(*all_conditions))
+            # 全ての検索語を含む（AND条件）
+            name_query = name_query.filter(and_(*and_conditions))
     else:
         # 単一の検索語の場合
         search_patterns = create_search_patterns(query)
