@@ -44,6 +44,14 @@ def create_search_patterns(search: str) -> list[str]:
     if search != normalized:
         patterns.append(search)
     
+    # 「ザ」や「ヴ」などの後に中点を追加するパターン
+    # 例：「白金ザスカイ」→「白金ザ・スカイ」
+    import re
+    # カタカナの「ザ」「ダ」「ヴ」などの後にカタカナが続く場合、中点を挿入
+    with_nakaten = re.sub(r'([ザダヴ])([ァ-ヶー])', r'\1・\2', normalized)
+    if with_nakaten != normalized and with_nakaten not in patterns:
+        patterns.append(with_nakaten)
+    
     # 全角英字版（データベースに全角で保存されている場合に対応）
     # unicodedata.normalize('NFKC')の逆変換
     fullwidth_upper = ''
@@ -72,6 +80,11 @@ def create_search_patterns(search: str) -> list[str]:
     no_space = normalized.replace(' ', '')
     if no_space != normalized and no_space not in patterns:
         patterns.append(no_space)
+    
+    # スペースを中点に置換（「白金ザ スカイ」→「白金ザ・スカイ」）
+    space_to_nakaten = normalized.replace(' ', '・')
+    if space_to_nakaten != normalized and space_to_nakaten not in patterns:
+        patterns.append(space_to_nakaten)
     
     # 中点とスペースの両方を除去
     clean = normalized.replace('・', '').replace(' ', '')
