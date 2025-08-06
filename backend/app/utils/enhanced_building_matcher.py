@@ -103,22 +103,68 @@ class EnhancedBuildingMatcher:
             'comp2': comp2
         }
         
-        # 番地レベルまで比較
+        # 番地レベルまで比較（部分一致を考慮）
         if comp1['block'] and comp2['block']:
-            # 番地が異なる場合は明確に別住所
-            if comp1['block'] != comp2['block']:
-                # ただし、町名までが一致している場合は部分点を与える
-                if (comp1['prefecture'] == comp2['prefecture'] and
-                    comp1['city'] == comp2['city'] and
-                    comp1['area'] == comp2['area']):
-                    return 0.4  # 同じ地域だが番地が違う
+            # 番地を数値配列に分解（例：「1-9-18」→[1, 9, 18]）
+            nums1 = self.address_normalizer.extract_block_numbers(comp1['block'])
+            nums2 = self.address_normalizer.extract_block_numbers(comp2['block'])
+            
+            if nums1 and nums2:
+                # 短い方の長さで比較（部分一致の判定）
+                min_len = min(len(nums1), len(nums2))
+                
+                # 最初の要素（丁目）が異なる場合は明確に別住所
+                if nums1[0] != nums2[0]:
+                    # 町名までが一致している場合のみ部分点
+                    if (comp1['prefecture'] == comp2['prefecture'] and
+                        comp1['city'] == comp2['city'] and
+                        comp1['area'] == comp2['area']):
+                        return 0.3  # 同じ地域だが丁目が違う（別住所の可能性高）
+                    else:
+                        return 0.1  # 完全に異なる
+                
+                # 丁目が一致する場合、共通部分をチェック
+                matches = sum(1 for i in range(min_len) if nums1[i] == nums2[i])
+                
+                if matches == min_len:
+                    # 片方が他方の部分集合（例：「1-9-18」と「1-9」または「1」）
+                    if len(nums1) == len(nums2):
+                        return 0.95  # 完全一致
+                    else:
+                        # 部分一致（片方が省略形の可能性）
+                        if min_len == 1:
+                            return 0.85  # 丁目のみ一致
+                        elif min_len == 2:
+                            return 0.90  # 番地まで一致
+                        else:
+                            return 0.93  # より詳細まで一致
                 else:
-                    return 0.2  # 完全に異なる
+                    # 途中から異なる（例：「1-9-18」と「1-10-5」）
+                    if matches >= 1:
+                        # 丁目は一致するが番地以降が異なる
+                        return 0.4  # 同じ丁目だが別の番地
+                    else:
+                        return 0.2  # 異なる住所
             else:
-                # 番地まで一致
-                return 0.95
+                # 番地が文字列として一致するかチェック
+                if comp1['block'] == comp2['block']:
+                    return 0.95
+                else:
+                    return 0.4
         
-        # 番地情報がない場合は文字列類似度で判定
+        # 片方にのみ番地情報がある場合
+        if comp1['block'] or comp2['block']:
+            # 番地以外の部分が一致するかチェック
+            if (comp1['prefecture'] == comp2['prefecture'] and
+                comp1['city'] == comp2['city'] and
+                comp1['area'] == comp2['area']):
+                # 同じ地域で、片方のみ番地情報がある（省略の可能性）
+                return 0.75  # 高い類似度だが、完全一致ではない
+            else:
+                # 地域も異なる
+                return 0.3
+        
+        # 両方とも番地情報がない場合は文字列類似度で判定
         return SequenceMatcher(None, norm_addr1, norm_addr2).ratio()
     
     def _calculate_name_similarity(self, name1: str, name2: str) -> float:
@@ -229,35 +275,50 @@ class EnhancedBuildingMatcher:
         scores = []
         weights = []
         
-        # 築年月の一致（厳格な判定）
+        # 築年月の一致（厳格な判定 - 同一建物なら一致するはず）
         if building1.built_year and building2.built_year:
             # 築月情報の取得
             month1 = getattr(building1, 'built_month', None)
             month2 = getattr(building2, 'built_month', None)
             
-            if building1.built_year == building2.built_year:
-                # 年が一致する場合
+            year_diff = abs(building1.built_year - building2.built_year)
+            
+            if year_diff == 0:
+                # 年が完全一致する場合
                 if month1 and month2:
                     # 両方とも月情報がある場合
                     if month1 == month2:
                         scores.append(1.0)  # 年月とも完全一致
                     else:
-                        scores.append(0.0)  # 年は同じだが月が異なる
+                        # 月が異なる = 誤表記または別建物の可能性
+                        scores.append(0.3)  # 低い類似度
                 else:
                     # 片方または両方の月情報がない場合
-                    scores.append(0.5)  # 年のみで比較（半分の類似度）
+                    scores.append(0.7)  # 年のみで比較（月情報が不完全）
+            elif year_diff == 1:
+                # 1年差の場合（誤表記の可能性はあるが低い）
+                scores.append(0.2)  # かなり低い類似度
+            elif year_diff == 2:
+                # 2年差（誤表記の可能性は極めて低い）
+                scores.append(0.1)  # 非常に低い類似度
             else:
-                # 年が異なる場合
+                # 3年以上の差は別建物
                 scores.append(0.0)
             
             weights.append(2.0)  # 築年月は重要度高
         
-        # 総階数の一致（厳格な判定）
+        # 総階数の一致（段階的な類似度判定）
         if building1.total_floors and building2.total_floors:
-            if building1.total_floors == building2.total_floors:
-                scores.append(1.0)  # 完全一致のみ
+            floor_diff = abs(building1.total_floors - building2.total_floors)
+            
+            if floor_diff == 0:
+                scores.append(1.0)  # 完全一致
+            elif floor_diff == 1:
+                scores.append(0.5)  # 1階差は中程度の類似度（完全一致に比べて可能性が下がる）
+            elif floor_diff == 2:
+                scores.append(0.3)  # 2階差は低い類似度
             else:
-                scores.append(0.0)  # 異なる場合は0
+                scores.append(0.0)  # 3階以上の差は別建物とみなす
             
             weights.append(1.5)  # 階数も重要
         
