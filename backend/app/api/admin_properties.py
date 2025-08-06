@@ -34,9 +34,22 @@ async def get_properties(
     
     # フィルタリング
     if building_name:
+        # 統合履歴からエイリアスも検索
+        from ..models import BuildingMergeHistory
+        
+        # まず統合履歴から該当する建物IDを取得
+        alias_building_ids = db.query(BuildingMergeHistory.primary_building_id).filter(
+            or_(
+                BuildingMergeHistory.merged_building_name.ilike(f"%{building_name}%"),
+                BuildingMergeHistory.canonical_merged_name.ilike(f"%{building_name}%")
+            )
+        ).distinct().subquery()
+        
+        # 通常の建物名検索とエイリアス検索を組み合わせる
         query = query.filter(or_(
             Building.normalized_name.ilike(f"%{building_name}%"),
-            MasterProperty.display_building_name.ilike(f"%{building_name}%")
+            MasterProperty.display_building_name.ilike(f"%{building_name}%"),
+            Building.id.in_(alias_building_ids)  # エイリアス経由での検索
         ))
     
     if address:

@@ -56,31 +56,7 @@ def add_merge_details_field():
                 """))
                 conn.commit()
             
-            # reverted_at, reverted_byフィールドも確認して追加
-            result = conn.execute(text("""
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_name = 'property_merge_history'
-                AND column_name IN ('reverted_at', 'reverted_by')
-            """))
-            
-            existing_columns = [row[0] for row in result]
-            
-            if 'reverted_at' not in existing_columns:
-                print("\nreverted_atフィールドを追加...")
-                conn.execute(text("""
-                    ALTER TABLE property_merge_history 
-                    ADD COLUMN reverted_at TIMESTAMP
-                """))
-                conn.commit()
-            
-            if 'reverted_by' not in existing_columns:
-                print("\nreverted_byフィールドを追加...")
-                conn.execute(text("""
-                    ALTER TABLE property_merge_history 
-                    ADD COLUMN reverted_by VARCHAR(100)
-                """))
-                conn.commit()
+            # property_merge_historyテーブルにはreverted関連カラムは不要
             
             # 最終的なテーブル構造を確認
             result = conn.execute(text("""

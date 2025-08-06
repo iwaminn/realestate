@@ -292,11 +292,13 @@ class BuildingMergeHistory(Base):
     id = Column(Integer, primary_key=True, index=True)
     primary_building_id = Column(Integer, ForeignKey("buildings.id"), nullable=False)
     merged_building_id = Column(Integer, nullable=False)      # 統合された建物ID（削除済み）
-    merged_building_name = Column(String(200))                # 統合された建物名（記録用）
+    merged_building_name = Column(String(200))                # 統合された建物名（正規化済み）
+    canonical_merged_name = Column(Text)                      # 検索キー（照合用）
     merged_by = Column(String(100))                           # 統合実行者
     merged_at = Column(DateTime, server_default=func.now())
     reason = Column(Text)                                     # 統合理由
     property_count = Column(Integer)                          # 統合時の物件数
+    merge_details = Column(JSON)                              # 統合詳細（物件IDリスト含む）
     
     # リレーションシップ
     primary_building = relationship("Building", foreign_keys=[primary_building_id])
@@ -305,6 +307,7 @@ class BuildingMergeHistory(Base):
         Index('idx_building_merge_history_primary', 'primary_building_id'),
         Index('idx_building_merge_history_merged', 'merged_building_id'),
         Index('idx_building_merge_history_merged_at', 'merged_at'),
+        Index('idx_building_merge_history_canonical', 'canonical_merged_name'),  # 検索用インデックス追加
     )
 
 

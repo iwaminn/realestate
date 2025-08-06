@@ -57,6 +57,12 @@ interface Building {
 }
 
 interface BuildingDetail extends Building {
+  // 外部建物ID
+  external_ids?: Array<{
+    source_site: string;
+    external_id: string;
+    created_at?: string;
+  }>;
   // 物件一覧
   properties: Array<{
     id: number;
@@ -558,6 +564,45 @@ export const BuildingManagement: React.FC = () => {
                   </Grid>
                 </CardContent>
               </Card>
+
+              {/* 外部建物ID */}
+              {selectedBuilding.external_ids && selectedBuilding.external_ids.length > 0 && (
+                <Card sx={{ mb: 2 }}>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>外部建物ID</Typography>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>サイト</TableCell>
+                          <TableCell>建物ID</TableCell>
+                          <TableCell>登録日時</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {selectedBuilding.external_ids.map((extId, index) => (
+                          <TableRow key={index}>
+                            <TableCell>
+                              <Chip 
+                                label={extId.source_site} 
+                                size="small" 
+                                color={
+                                  extId.source_site === 'SUUMO' ? 'primary' :
+                                  extId.source_site === 'HOMES' ? 'secondary' :
+                                  extId.source_site === 'REHOUSE' ? 'success' :
+                                  extId.source_site === 'NOMU' ? 'warning' :
+                                  'default'
+                                }
+                              />
+                            </TableCell>
+                            <TableCell>{extId.external_id}</TableCell>
+                            <TableCell>{formatDate(extId.created_at)}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* 物件一覧 */}
               <Card>

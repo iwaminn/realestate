@@ -49,8 +49,8 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
     wards: initialValues?.wards || [],
   });
 
-  // Autocomplete用の状態
-  const [buildingOptions, setBuildingOptions] = useState<string[]>([]);
+  // Autocomplete用の状態 - エイリアス対応
+  const [buildingOptions, setBuildingOptions] = useState<Array<string | { value: string; label: string }>>([]);
   const [buildingLoading, setBuildingLoading] = useState(false);
   const [buildingInputValue, setBuildingInputValue] = useState('');
 
@@ -71,7 +71,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
     fetchAreas();
   }, []);
 
-  // 建物名サジェストAPIを呼び出す関数（デバウンス付き）
+  // 建物名サジェストAPIを呼び出す関数（デバウンス付き）- エイリアス対応
   const fetchBuildingSuggestions = useCallback(
     debounce(async (query: string) => {
       if (query.length < 1) {
@@ -82,7 +82,18 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
       setBuildingLoading(true);
       try {
         const suggestions = await propertyApi.suggestBuildings(query);
-        setBuildingOptions(suggestions);
+        // APIレスポンスの形式を判定
+        if (suggestions.length > 0) {
+          if (typeof suggestions[0] === 'object' && 'value' in suggestions[0]) {
+            // 新形式（オブジェクト配列）
+            setBuildingOptions(suggestions as Array<{ value: string; label: string }>);
+          } else {
+            // 旧形式（文字列配列）
+            setBuildingOptions(suggestions as string[]);
+          }
+        } else {
+          setBuildingOptions([]);
+        }
       } catch (error) {
         console.error('Failed to fetch building suggestions:', error);
         setBuildingOptions([]);
@@ -181,6 +192,32 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
               loading={buildingLoading}
               value={searchParams.building_name || ''}
               inputValue={buildingInputValue}
+              getOptionLabel={(option) => {
+                // オプションがオブジェクトの場合はvalueを、文字列の場合はそのまま返す
+                if (typeof option === 'object' && 'value' in option) {
+                  return option.value;
+                }
+                return typeof option === 'string' ? option : '';
+              }}
+              renderOption={(props, option) => {
+                // エイリアス情報を含む場合は特別な表示
+                if (typeof option === 'object' && 'label' in option) {
+                  return (
+                    <li {...props}>
+                      <Box>
+                        <div>{option.label}</div>
+                        {option.label !== option.value && (
+                          <Box component="span" sx={{ fontSize: '0.85em', color: 'text.secondary' }}>
+                            {option.label.includes('旧:') && '※ 統合された建物名で検索されました'}
+                            {option.label.includes('別名:') && '※ 別名でも検索可能です'}
+                          </Box>
+                        )}
+                      </Box>
+                    </li>
+                  );
+                }
+                return <li {...props}>{option}</li>;
+              }}
               onInputChange={(_, newInputValue) => {
                 setBuildingInputValue(newInputValue);
                 fetchBuildingSuggestions(newInputValue);
@@ -191,7 +228,12 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                 });
               }}
               onChange={(_, newValue) => {
-                const buildingName = typeof newValue === 'string' ? newValue : '';
+                let buildingName = '';
+                if (typeof newValue === 'object' && 'value' in newValue) {
+                  buildingName = newValue.value;
+                } else if (typeof newValue === 'string') {
+                  buildingName = newValue;
+                }
                 setSearchParams({
                   ...searchParams,
                   building_name: buildingName || undefined,

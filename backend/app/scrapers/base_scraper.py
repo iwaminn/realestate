@@ -1928,6 +1928,68 @@ class BaseScraper(ABC):
                     
                     return building
         
+        # 統合履歴を確認（削除された建物名でマッチングを試みる）
+        from ..models import BuildingMergeHistory
+        
+        # まず、元の建物名（部屋番号抽出前）で統合履歴を検索
+        original_building_name = search_key  # search_keyは既に正規化済み
+        
+        # 統合履歴から最終的な統合先を再帰的に探す
+        def find_ultimate_primary_building(building_name: str, max_depth: int = 10) -> Optional[Building]:
+            """統合チェインを辿って最終的な統合先を見つける"""
+            if max_depth <= 0:
+                self.logger.warning(f"統合チェインが深すぎます: {building_name}")
+                return None
+            
+            # この名前で統合履歴を検索（2つのカラムで検索）
+            from sqlalchemy import or_
+            merge_history = self.session.query(BuildingMergeHistory).filter(
+                or_(
+                    BuildingMergeHistory.merged_building_name == building_name,
+                    BuildingMergeHistory.canonical_merged_name == building_name
+                )
+            ).first()
+            
+            if not merge_history:
+                return None
+            
+            # 統合先の建物を取得
+            primary_building = self.session.query(Building).filter(
+                Building.id == merge_history.primary_building_id
+            ).first()
+            
+            if primary_building:
+                # 建物が存在する場合は返す
+                self.logger.info(
+                    f"統合履歴から建物を発見: '{building_name}' → '{primary_building.normalized_name}' "
+                    f"(統合履歴ID: {merge_history.id})"
+                )
+                return primary_building
+            else:
+                # 統合先も削除されている場合は、その建物名で再帰的に検索
+                # まず統合先建物の名前を統合履歴から取得
+                next_history = self.session.query(BuildingMergeHistory).filter(
+                    BuildingMergeHistory.merged_building_id == merge_history.primary_building_id
+                ).first()
+                
+                if next_history:
+                    self.logger.info(
+                        f"統合チェインを辿っています: '{building_name}' → '{next_history.merged_building_name}' → ..."
+                    )
+                    return find_ultimate_primary_building(next_history.merged_building_name, max_depth - 1)
+                
+                return None
+        
+        # 統合履歴から最終的な統合先を探す
+        primary_building = find_ultimate_primary_building(original_building_name)
+        
+        if primary_building:
+            # 住所の確認（統合先の建物の住所と一致するか）
+            if primary_building.address:
+                building_normalized_addr = normalizer.normalize_for_comparison(primary_building.address)
+                if building_normalized_addr == normalized_address:
+                    return primary_building
+        
         self.logger.debug(f"一致する建物が見つかりません: {search_key} at {address} (正規化: {normalized_address})")
         return None
     
@@ -2015,6 +2077,63 @@ class BaseScraper(ABC):
         
         # 比較用の検索キーを生成（最小限の正規化）
         search_key = self.get_search_key_for_building(clean_building_name)
+        
+        # 統合履歴を先にチェック（元の建物名で）
+        from ..models import BuildingMergeHistory
+        if address:  # 住所がある場合のみ
+            from backend.app.utils.address_normalizer import AddressNormalizer
+            addr_normalizer = AddressNormalizer()
+            normalized_address = addr_normalizer.normalize_for_comparison(address)
+            
+            # 元の建物名で統合履歴を検索
+            from sqlalchemy import or_
+            merge_history = self.session.query(BuildingMergeHistory).filter(
+                or_(
+                    BuildingMergeHistory.merged_building_name == original_building_name,
+                    BuildingMergeHistory.canonical_merged_name == search_key  # search_keyは正規化済み
+                )
+            ).first()
+            
+            if merge_history:
+                # 統合先の建物を取得
+                primary_building = self.session.query(Building).filter(
+                    Building.id == merge_history.primary_building_id
+                ).first()
+                
+                if primary_building and primary_building.address:
+                    # 住所の確認
+                    building_normalized_addr = addr_normalizer.normalize_for_comparison(primary_building.address)
+                    if building_normalized_addr == normalized_address:
+                        print(f"[INFO] 統合履歴から建物を発見（元の名前で）: '{original_building_name}' → '{primary_building.normalized_name}' (ID: {primary_building.id})")
+                        
+                        # 建物情報を更新（より詳細な情報があれば）
+                        updated = False
+                        if built_year and not primary_building.built_year:
+                            primary_building.built_year = built_year
+                            updated = True
+                        if built_month and not primary_building.built_month:
+                            primary_building.built_month = built_month
+                            updated = True
+                        if total_floors and not primary_building.total_floors:
+                            primary_building.total_floors = total_floors
+                            updated = True
+                        if basement_floors and not primary_building.basement_floors:
+                            primary_building.basement_floors = basement_floors
+                            updated = True
+                        if structure and not primary_building.construction_type:
+                            primary_building.construction_type = structure
+                            updated = True
+                        if land_rights and not primary_building.land_rights:
+                            primary_building.land_rights = land_rights
+                            updated = True
+                        if station_info and not primary_building.station_info:
+                            primary_building.station_info = station_info
+                            updated = True
+                        
+                        if updated:
+                            self.session.flush()
+                        
+                        return primary_building, extracted_room_number
         
         
         # 広告文の場合は特別な処理

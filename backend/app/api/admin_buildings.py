@@ -8,7 +8,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from ..database import get_db
-from ..models import Building, MasterProperty, PropertyListing
+from ..models import Building, MasterProperty, PropertyListing, BuildingExternalId
 from ..auth import verify_admin_credentials
 
 router = APIRouter(tags=["admin-buildings"])
@@ -133,10 +133,25 @@ async def search_buildings_for_merge(
 ):
     """建物検索（統合用）"""
     from ..utils.search_normalizer import create_search_patterns, normalize_search_text
+    from ..models import BuildingMergeHistory
     
     # 検索文字列を正規化してAND検索用に分割
     normalized_search = normalize_search_text(query)
     search_terms = normalized_search.split()
+    
+    # まず統合履歴（エイリアス）から検索
+    alias_matches = db.query(
+        BuildingMergeHistory.primary_building_id,
+        BuildingMergeHistory.merged_building_name.label('alias_name')
+    ).filter(
+        or_(
+            BuildingMergeHistory.merged_building_name.ilike(f"%{query}%"),
+            BuildingMergeHistory.canonical_merged_name.ilike(f"%{normalized_search}%")
+        )
+    ).distinct().all()
+    
+    # エイリアスにマッチした建物IDのリスト
+    alias_building_ids = [match.primary_building_id for match in alias_matches]
     
     # クエリ構築
     name_query = db.query(
@@ -163,14 +178,26 @@ async def search_buildings_for_merge(
                 and_conditions.append(or_(*term_conditions))
         
         if and_conditions:
-            # 全ての検索語を含む（AND条件）
-            name_query = name_query.filter(and_(*and_conditions))
+            # 全ての検索語を含む（AND条件）、またはエイリアスにマッチした建物
+            if alias_building_ids:
+                name_query = name_query.filter(
+                    or_(
+                        and_(*and_conditions),
+                        Building.id.in_(alias_building_ids)
+                    )
+                )
+            else:
+                name_query = name_query.filter(and_(*and_conditions))
     else:
         # 単一の検索語の場合
         search_patterns = create_search_patterns(query)
         search_conditions = []
         for pattern in search_patterns:
             search_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
+        
+        # エイリアスマッチも含める
+        if alias_building_ids:
+            search_conditions.append(Building.id.in_(alias_building_ids))
         
         if search_conditions:
             name_query = name_query.filter(or_(*search_conditions))
@@ -185,15 +212,45 @@ async def search_buildings_for_merge(
         func.count(MasterProperty.id).desc()
     ).limit(limit).all()
     
+    # 各建物のエイリアス情報を取得
+    building_ids_for_alias = [b.id for b in buildings]
+    aliases_dict = {}
+    if building_ids_for_alias:
+        aliases = db.query(
+            BuildingMergeHistory.primary_building_id,
+            func.string_agg(
+                BuildingMergeHistory.merged_building_name, 
+                ', '
+            ).label('aliases')
+        ).filter(
+            BuildingMergeHistory.primary_building_id.in_(building_ids_for_alias)
+        ).group_by(
+            BuildingMergeHistory.primary_building_id
+        ).all()
+        
+        aliases_dict = {alias.primary_building_id: alias.aliases for alias in aliases}
+    
     result = []
     for building in buildings:
-        result.append({
+        building_data = {
             "id": building.id,
             "normalized_name": building.normalized_name,
             "address": building.address,
             "total_floors": building.total_floors,
             "property_count": building.property_count
-        })
+        }
+        
+        # エイリアス情報があれば追加
+        if building.id in aliases_dict:
+            building_data["aliases"] = aliases_dict[building.id]
+        
+        # エイリアス検索でマッチした場合、どのエイリアスでマッチしたか表示
+        for match in alias_matches:
+            if match.primary_building_id == building.id:
+                building_data["matched_alias"] = match.alias_name
+                break
+        
+        result.append(building_data)
     
     return {
         "buildings": result,
@@ -240,6 +297,11 @@ async def get_building_detail(
         MasterProperty.room_number.nullslast()
     ).all()
     
+    # 外部建物IDを取得
+    external_ids = db.query(BuildingExternalId).filter(
+        BuildingExternalId.building_id == building_id
+    ).all()
+    
     # 統計情報を計算
     property_count = len(properties)
     active_listing_count = sum(1 for p in properties if p.active_listing_count > 0)
@@ -259,6 +321,14 @@ async def get_building_detail(
         'active_listing_count': active_listing_count,
         'min_price': min_price,
         'max_price': max_price,
+        'external_ids': [
+            {
+                'source_site': ext_id.source_site,
+                'external_id': ext_id.external_id,
+                'created_at': ext_id.created_at.isoformat() if ext_id.created_at else None
+            }
+            for ext_id in external_ids
+        ],
         'properties': [
             {
                 'id': p.id,

@@ -2,7 +2,7 @@
 管理画面用APIエンドポイント
 """
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from typing import List, Optional, Dict, Any
@@ -16,12 +16,30 @@ import time
 import json
 import os
 from concurrent.futures import ThreadPoolExecutor
+from time import time as time_now
+from functools import lru_cache
+
+from backend.app.database import get_db
+from backend.app.utils.enhanced_building_matcher import EnhancedBuildingMatcher
+from backend.app.utils.building_search import apply_building_search_to_query
+from backend.app.utils.search_normalizer import create_search_patterns, normalize_search_text
+from backend.app.utils.majority_vote_updater import MajorityVoteUpdater
+import re
+import logging
+
+# ロガーの設定
+logger = logging.getLogger(__name__)
+
+# 重複建物検索のキャッシュ
+_duplicate_buildings_cache = {}
+_duplicate_buildings_cache_time = 0
+CACHE_DURATION = 300  # 5分間のキャッシュ
 
 from backend.app.database import get_db
 from backend.app.utils.debug_logger import debug_log
 from backend.app.models import MasterProperty, PropertyListing, Building, ListingPriceHistory, PropertyMergeHistory, PropertyMergeExclusion, BuildingMergeHistory, BuildingExternalId, BuildingMergeExclusion
 from backend.app.models_scraping_task import ScrapingTask, ScrapingTaskProgress
-from sqlalchemy import func, or_, and_
+from sqlalchemy import func, or_, and_, distinct
 from backend.app.auth import verify_admin_credentials
 
 # 並列スクレイピングのインポート（エラー処理付き）
@@ -263,6 +281,192 @@ class MergeRequest(BaseModel):
     """物件統合リクエスト"""
     primary_property_id: int
     secondary_property_id: int
+
+
+@router.get("/duplicate-buildings")
+def get_duplicate_buildings(
+    search: Optional[str] = None,
+    min_similarity: float = 0.7,
+    limit: int = 30,
+    db: Session = Depends(get_db)
+):
+    """建物の重複候補を取得（SQL最適化版）"""
+    global _duplicate_buildings_cache, _duplicate_buildings_cache_time
+    import re
+    
+    # キャッシュキーの作成
+    cache_key = f"{search}_{min_similarity}_{limit}"
+    current_time = time_now()
+    
+    # キャッシュが有効な場合は返す（検索なしの場合のみ）
+    if (not search and 
+        cache_key in _duplicate_buildings_cache and 
+        current_time - _duplicate_buildings_cache_time < CACHE_DURATION):
+        return _duplicate_buildings_cache[cache_key]
+    
+    # EnhancedBuildingMatcherのインスタンスを作成
+    matcher = EnhancedBuildingMatcher()
+    
+    # ベースクエリ
+    base_query = db.query(
+        Building,
+        func.count(MasterProperty.id).label('property_count')
+    ).outerjoin(
+        MasterProperty, Building.id == MasterProperty.building_id
+    ).group_by(Building.id).having(
+        func.count(MasterProperty.id) > 0  # 物件がある建物のみ
+    )
+    
+    # 検索フィルタを適用
+    if search:
+        from backend.app.utils.search_normalizer import normalize_search_text
+        normalized_search = normalize_search_text(search)
+        search_terms = normalized_search.split()
+        
+        for term in search_terms:
+            base_query = base_query.filter(Building.normalized_name.ilike(f"%{term}%"))
+    
+    # 建物を取得（検索ありの場合は全て、なしの場合は最初の200件）
+    if search:
+        buildings_with_count = base_query.order_by(Building.normalized_name).all()
+    else:
+        buildings_with_count = base_query.order_by(Building.normalized_name).limit(200).all()
+    
+    # 除外ペアを取得
+    exclusions = db.query(BuildingMergeExclusion).all()
+    excluded_pairs = set()
+    for exclusion in exclusions:
+        excluded_pairs.add((exclusion.building1_id, exclusion.building2_id))
+        excluded_pairs.add((exclusion.building2_id, exclusion.building1_id))
+    
+    duplicate_groups = []
+    processed_ids = set()
+    
+    for building1, count1 in buildings_with_count:
+        if building1.id in processed_ids:
+            continue
+        
+        # SQLで類似候補を絞り込む条件を作成
+        # 住所の地名部分（丁目より前）を抽出
+        area_condition = None
+        if building1.normalized_address:
+            # 正規化された住所から地名部分（丁目より前）を抽出
+            # 例：「東京都港区六本木3-16-33」→「東京都港区六本木」
+            addr_match = re.match(r'(.*?[区市町村].*?)(?=\d|$)', building1.normalized_address)
+            if addr_match:
+                area_prefix = addr_match.group(1)
+                area_condition = Building.normalized_address.like(f"{area_prefix}%")
+        elif building1.address:
+            addr_match = re.match(r'(.*?[区市町村].*?)(?=\d|$)', building1.address)
+            if addr_match:
+                area_prefix = addr_match.group(1)
+                area_condition = Building.address.like(f"{area_prefix}%")
+        
+        # 住所条件がない場合はスキップ
+        if area_condition is None:
+            continue
+        
+        # 3つの条件パターンのいずれかに一致する建物を候補とする
+        candidate_conditions = []
+        
+        # パターン1: 住所（地名まで）+ 築年が同一
+        if building1.built_year:
+            candidate_conditions.append(
+                and_(
+                    area_condition,
+                    Building.built_year == building1.built_year
+                )
+            )
+        
+        # パターン2: 住所（地名まで）+ 総階数が同一
+        if building1.total_floors:
+            candidate_conditions.append(
+                and_(
+                    area_condition,
+                    Building.total_floors == building1.total_floors
+                )
+            )
+        
+        # パターン3: 築年月 + 総階数が同一（住所は考慮しない）
+        if building1.built_year and building1.total_floors:
+            candidate_conditions.append(
+                and_(
+                    Building.built_year == building1.built_year,
+                    Building.total_floors == building1.total_floors
+                )
+            )
+        
+        # いずれの条件も作成できない場合はスキップ
+        if not candidate_conditions:
+            continue
+        
+        # 候補を取得（OR条件で結合）
+        candidate_query = db.query(
+            Building,
+            func.count(MasterProperty.id).label('property_count')
+        ).outerjoin(
+            MasterProperty, Building.id == MasterProperty.building_id
+        ).filter(
+            and_(
+                Building.id != building1.id,
+                Building.id.notin_(processed_ids),
+                or_(*candidate_conditions)  # いずれかの条件に一致
+            )
+        ).group_by(Building.id).having(
+            func.count(MasterProperty.id) > 0
+        ).limit(20)  # 各建物に対して最大20候補
+        
+        candidate_buildings = candidate_query.all()
+        
+        # 詳細な類似度計算
+        candidates = []
+        for building2, count2 in candidate_buildings:
+            # 除外ペアはスキップ
+            if (building1.id, building2.id) in excluded_pairs:
+                continue
+            
+            # 類似度を計算
+            similarity = matcher.calculate_comprehensive_similarity(building1, building2)
+            
+            if similarity >= min_similarity:
+                candidates.append({
+                    "id": building2.id,
+                    "normalized_name": building2.normalized_name,
+                    "address": building2.address,
+                    "total_floors": building2.total_floors,
+                    "property_count": count2 or 0,
+                    "similarity": round(similarity, 3)
+                })
+                processed_ids.add(building2.id)
+        
+        if candidates:
+            duplicate_groups.append({
+                "primary": {
+                    "id": building1.id,
+                    "normalized_name": building1.normalized_name,
+                    "address": building1.address,
+                    "total_floors": building1.total_floors,
+                    "property_count": count1 or 0
+                },
+                "candidates": sorted(candidates, key=lambda x: x["similarity"], reverse=True)
+            })
+            processed_ids.add(building1.id)
+            
+            # limit に達したら終了
+            if len(duplicate_groups) >= limit:
+                break
+    
+    # 結果をキャッシュに保存
+    result = {
+        "duplicate_groups": duplicate_groups[:limit],
+        "total_groups": len(duplicate_groups)
+    }
+    
+    if not search:
+        _duplicate_buildings_cache = {cache_key: result}
+        _duplicate_buildings_cache_time = current_time
+    
+    return result
 
 
 @router.get("/duplicate-groups")
@@ -1033,13 +1237,17 @@ def merge_buildings(
         # 削除前に建物情報を保存（履歴記録用）
         building_infos = []
         for secondary_building in secondary_buildings:
-            property_count = db.query(MasterProperty).filter(
+            properties = db.query(MasterProperty).filter(
                 MasterProperty.building_id == secondary_building.id
-            ).count()
+            ).all()
+            
+            # 移動する物件のIDリストを記録
+            property_ids = [prop.id for prop in properties]
             
             building_infos.append({
                 "building": secondary_building,
-                "property_count": property_count
+                "property_count": len(properties),
+                "property_ids": property_ids  # 移動する物件のIDリスト
             })
         
         # 副建物の物件を主建物に移動
@@ -1126,13 +1334,42 @@ def merge_buildings(
         # 各副建物に対して個別に統合履歴を記録（新スキーマに合わせて）
         for info in building_infos:
             building = info["building"]
+            
+            # この建物が以前に他の建物を統合していた場合、その履歴も更新
+            # （チェイン統合の対応）
+            old_merges = db.query(BuildingMergeHistory).filter(
+                BuildingMergeHistory.primary_building_id == building.id
+            ).all()
+            
+            for old_merge in old_merges:
+                # 過去の統合履歴の統合先を今回の統合先に更新
+                old_merge.primary_building_id = primary_id
+                logger.info(f"[DEBUG] チェイン統合: {old_merge.merged_building_name} → {primary_id}に更新")
+            
+            # 新しい統合履歴を追加（merge_detailsに詳細情報を含める）
+            merge_details = {
+                "merged_buildings": [{
+                    "id": building.id,
+                    "normalized_name": building.normalized_name,
+                    "address": building.address,
+                    "total_floors": building.total_floors,
+                    "built_year": building.built_year,
+                    "construction_type": building.construction_type,  # 構造タイプも保存
+                    "properties_moved": info["property_count"],
+                    "property_ids": info["property_ids"]  # 移動した物件のIDリスト
+                }]
+            }
+            
             merge_history = BuildingMergeHistory(
                 primary_building_id=primary_id,
                 merged_building_id=building.id,
                 merged_building_name=building.normalized_name,
+                # canonical_nameがある場合は保存、なければNone
+                canonical_merged_name=building.canonical_name if hasattr(building, 'canonical_name') else None,
                 merged_by="admin",
                 reason="管理画面から手動統合",
-                property_count=info["property_count"]
+                property_count=info["property_count"],
+                merge_details=merge_details  # 詳細情報を追加
             )
             db.add(merge_history)
         
@@ -2666,9 +2903,7 @@ def get_building_merge_history(
                 "reason": history.reason,
                 "merged_by": history.merged_by
             },
-            "created_at": to_jst_string(history.merged_at),
-            "reverted_at": None,  # BuildingMergeHistoryモデルにはreverted_atフィールドがない
-            "reverted_by": None   # BuildingMergeHistoryモデルにはreverted_byフィールドがない
+            "created_at": to_jst_string(history.merged_at)
         })
     
     return {"histories": result, "total": len(result)}
@@ -3049,7 +3284,7 @@ def revert_building_merge(
     history_id: int,
     db: Session = Depends(get_db)
 ):
-    """建物統合を取り消す（個別ロールバック）"""
+    """統合を取り消す（建物を復元）"""
     history = db.query(BuildingMergeHistory).filter(
         BuildingMergeHistory.id == history_id
     ).first()
@@ -3057,14 +3292,12 @@ def revert_building_merge(
     if not history:
         raise HTTPException(status_code=404, detail="統合履歴が見つかりません")
     
-    # BuildingMergeHistoryモデルにはreverted_atフィールドがないため、
-    # 建物が既に存在するかどうかで取り消し済みかを判断
-    restored_building_exists = db.query(Building).filter(
-        Building.id == history.merged_building_id
-    ).first()
-    
-    if restored_building_exists:
-        raise HTTPException(status_code=400, detail="既に取り消し済みです（建物が既に存在します）")
+    # 建物が既に存在するかどうかで取り消し済みかを判断（履歴は削除されるため）
+    if history.merge_details:
+        for merged_building in history.merge_details.get("merged_buildings", []):
+            existing = db.query(Building).filter(Building.id == merged_building["id"]).first()
+            if existing:
+                raise HTTPException(status_code=400, detail="既に取り消し済みです（建物が既に存在します）")
     
     try:
         # 主建物の存在確認
@@ -3075,57 +3308,144 @@ def revert_building_merge(
         if not primary_building:
             raise HTTPException(status_code=404, detail="主建物が見つかりません")
         
-        # 復元する建物のIDを取得
-        building_id_to_restore = history.merged_building_id
-        
-        if not building_id_to_restore:
-            raise HTTPException(status_code=400, detail="復元する建物IDが見つかりません")
-        
-        # 建物情報を準備（現在のモデルに基づく）
-        building_data = {
-            "id": history.merged_building_id,
-            "normalized_name": history.merged_building_name,
-            "property_count": history.property_count
-        }
-        
-        # 既に存在するかチェック
-        existing = db.query(Building).filter(Building.id == building_id_to_restore).first()
-        if existing:
-            raise HTTPException(status_code=400, detail=f"建物ID {building_id_to_restore} は既に存在します")
-        
-        # 建物を復元（最小限の情報で）
-        restored_building = Building(
-            id=building_id_to_restore,
-            normalized_name=history.merged_building_name or f"復元建物{building_id_to_restore}",
-            canonical_name=history.merged_building_name or f"復元建物{building_id_to_restore}"
-        )
-        db.add(restored_building)
-        
-        # 移動された物件を元に戻す
-        if history.property_count and history.property_count > 0:
-            # この建物から移動された物件を元に戻す
-            # 主建物に現在ある物件のうち、指定された数だけを元の建物に戻す
-            properties_to_restore = db.query(MasterProperty).filter(
-                MasterProperty.building_id == history.primary_building_id
-            ).limit(history.property_count).all()
+        # 統合時の詳細情報から建物を復元
+        restored_count = 0
+        for merged_building in history.merge_details.get("merged_buildings", []):
+            building_id = merged_building["id"]
             
-            for property in properties_to_restore:
-                property.building_id = building_id_to_restore
+            # 既に存在するかチェック
+            existing = db.query(Building).filter(Building.id == building_id).first()
+            if existing:
+                print(f"[WARNING] Building {building_id} already exists, skipping restoration")
+                continue
+            
+            # 建物を復元（読み仮名も生成）
+            from ..utils.reading_generator import generate_reading
+            building = Building(
+                id=building_id,
+                normalized_name=merged_building["normalized_name"],
+                address=merged_building.get("address"),
+                reading=generate_reading(merged_building["normalized_name"]),
+                total_floors=merged_building.get("total_floors"),
+                built_year=merged_building.get("built_year"),
+                construction_type=merged_building.get("construction_type")  # structureではなくconstruction_type
+            )
+            db.add(building)
+            
+            # この建物に移動された物件を元に戻す
+            property_ids = merged_building.get("property_ids", [])
+            if property_ids:
+                # 統合時に記録した特定の物件IDリストを使用して元の建物に戻す
+                # ただし、物件統合で削除された物件は除く
+                existing_properties = db.query(MasterProperty).filter(
+                    MasterProperty.id.in_(property_ids),
+                    MasterProperty.building_id == history.primary_building_id
+                ).all()
+                
+                for prop in existing_properties:
+                    prop.building_id = building_id
+                    print(f"[INFO] Moved property {prop.id} back to building {building_id}")
+                
+                # 物件統合で削除された物件を確認
+                deleted_property_ids = set(property_ids) - set([p.id for p in existing_properties])
+                if deleted_property_ids:
+                    # 削除された物件がある場合、物件統合履歴を確認
+                    merge_histories = db.query(PropertyMergeHistory).filter(
+                        PropertyMergeHistory.merged_property_id.in_(deleted_property_ids)
+                    ).all()
+                    
+                    if merge_histories:
+                        print(f"[WARNING] {len(deleted_property_ids)} properties were merged and cannot be automatically restored:")
+                        for mh in merge_histories:
+                            print(f"  - Property {mh.merged_property_id} was merged into {mh.primary_property_id}")
+                        print("[INFO] Please manually revert property merges if needed.")
+            elif merged_building.get("properties_moved", 0) > 0:
+                # 古い形式の履歴（property_idsがない場合）のフォールバック
+                # この場合は正確な復元ができないため警告を出す
+                print(f"[WARNING] No property_ids found in merge history. Cannot accurately restore properties.")
+                print(f"[WARNING] {merged_building.get('properties_moved', 0)} properties may need manual intervention.")
+            
+            # BuildingAliasテーブルが存在する場合のみエイリアス処理
+            # （現在は使用していないが、将来の互換性のため）
+            try:
+                from ..models import BuildingAlias
+                db.query(BuildingAlias).filter(
+                    BuildingAlias.building_id == history.primary_building_id,
+                    BuildingAlias.alias_name == merged_building["normalized_name"],
+                    BuildingAlias.source == 'MERGE'
+                ).delete()
+            except Exception:
+                # BuildingAliasが存在しない場合は無視
+                pass
+            
+            restored_count += 1
         
-        # 履歴レコードを削除
+        # 統合時に作成された可能性のある除外ペアを削除
+        # 主建物と統合された建物間の除外ペアを削除
+        merged_building_ids = [b["id"] for b in history.merge_details.get("merged_buildings", [])]
+        for building_id in merged_building_ids:
+            # 両方向の除外ペアを削除
+            db.query(BuildingMergeExclusion).filter(
+                or_(
+                    and_(
+                        BuildingMergeExclusion.building1_id == history.primary_building_id,
+                        BuildingMergeExclusion.building2_id == building_id
+                    ),
+                    and_(
+                        BuildingMergeExclusion.building1_id == building_id,
+                        BuildingMergeExclusion.building2_id == history.primary_building_id
+                    )
+                )
+            ).delete()
+        
+        # 多数決による建物名更新（エイリアスが変更されたため）
+        from ..utils.majority_vote_updater import MajorityVoteUpdater
+        updater = MajorityVoteUpdater(db)
+        
+        # 主建物の名前を更新（統合時に追加されたエイリアスが削除されたため）
+        if primary_building:
+            updater.update_building_name_by_majority(primary_building.id)
+        
+        # 復元された建物の名前も更新
+        for merged_building in history.merge_details.get("merged_buildings", []):
+            building_id = merged_building["id"]
+            # 復元された建物が存在する場合
+            restored_building = db.query(Building).filter(Building.id == building_id).first()
+            if restored_building:
+                updater.update_building_name_by_majority(building_id)
+        
+        # 履歴レコードを削除（エイリアスとしても使われなくなる）
         db.delete(history)
         
         db.commit()
         
+        print(f"[INFO] Merge revert completed: restored {restored_count} buildings")
+        
+        # 警告メッセージを生成
+        warning_message = ""
+        for merged_building in history.merge_details.get("merged_buildings", []):
+            property_ids = merged_building.get("property_ids", [])
+            if property_ids:
+                existing_count = db.query(MasterProperty).filter(
+                    MasterProperty.id.in_(property_ids)
+                ).count()
+                if existing_count < len(property_ids):
+                    warning_message += f"\n※ 建物{merged_building['id']}の一部物件が物件統合で削除されているため復元できませんでした。"
+        
+        message = f"統合を取り消しました。{restored_count}件の建物を復元しました。{warning_message}"
+        
         return {
-            "success": True,
-            "message": f"建物統合を取り消しました。建物ID {building_id_to_restore} を復元し、履歴を削除しました。",
-            "restored_building_id": building_id_to_restore
+            "success": True, 
+            "message": message,
+            "restored_count": restored_count
         }
         
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        print(f"[ERROR] Merge revert failed: {str(e)}")
+        print(traceback.format_exc())
+        raise HTTPException(status_code=500, detail=f"取り消し中にエラーが発生しました: {str(e)}")
 
 
 @router.post("/revert-property-merge/{history_id}")
@@ -3154,8 +3474,10 @@ def revert_property_merge(
         
         # 副物件を復元
         secondary_data = history.merge_details.get("secondary_property", {})
+        secondary_property_id = secondary_data["id"]  # 復元する副物件のID
+        
         secondary_property = MasterProperty(
-            id=secondary_data["id"],
+            id=secondary_property_id,
             building_id=secondary_data["building_id"],
             room_number=secondary_data.get("room_number"),
             floor_number=secondary_data.get("floor_number"),
@@ -3182,8 +3504,8 @@ def revert_property_merge(
             ).first()
             
             if listing and listing.master_property_id == history.primary_property_id:
-                # merged_property_idを使用
-                listing.master_property_id = history.merged_property_id
+                # 掲載情報を復元した副物件に戻す
+                listing.master_property_id = secondary_property_id
                 restored_count += 1
         
         # 主物件の更新を元に戻す（必要に応じて）
@@ -3837,3 +4159,4 @@ def resolve_scraper_alert(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"アラート更新エラー: {str(e)}")
+

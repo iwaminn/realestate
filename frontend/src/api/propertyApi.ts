@@ -67,8 +67,8 @@ export const propertyApi = {
     return response.data;
   },
 
-  // 建物名サジェスト取得
-  suggestBuildings: async (query: string, limit: number = 10): Promise<string[]> => {
+  // 建物名サジェスト取得（エイリアス対応）
+  suggestBuildings: async (query: string, limit: number = 10): Promise<Array<string | { value: string; label: string }>> => {
     const response = await api.get('/v2/buildings/suggest', {
       params: { q: query, limit }
     });
@@ -153,8 +153,6 @@ export const propertyApi = {
       moved_properties: number;
       merge_details: any;
       created_at: string;
-      reverted_at: string | null;
-      reverted_by: string | null;
     }>;
     total: number;
   }> => {

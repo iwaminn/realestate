@@ -81,9 +81,7 @@ def migrate_building_merge_history():
                                 "original_batch": True,  # バッチ統合の一部であることを示すフラグ
                                 "batch_index": i
                             },
-                            created_at=record.created_at,
-                            reverted_at=record.reverted_at,
-                            reverted_by=record.reverted_by
+                            created_at=record.created_at
                         )
                         new_records.append(new_record)
         
