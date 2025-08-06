@@ -1401,6 +1401,12 @@ def merge_buildings(
             MasterProperty.building_id == primary_building.id
         ).count()
         
+        # キャッシュをクリア（統合により建物リストが変更されたため）
+        global _duplicate_buildings_cache, _duplicate_buildings_cache_time
+        _duplicate_buildings_cache = {}
+        _duplicate_buildings_cache_time = 0
+        logger.info("[DEBUG] Cleared duplicate buildings cache after merge")
+        
         return {
             "success": True,
             "merged_count": merged_count,
@@ -3573,6 +3579,12 @@ def revert_building_merge(
         
         db.commit()
         
+        # キャッシュをクリア（建物復元により建物リストが変更されたため）
+        global _duplicate_buildings_cache, _duplicate_buildings_cache_time
+        _duplicate_buildings_cache = {}
+        _duplicate_buildings_cache_time = 0
+        logger.info("[DEBUG] Cleared duplicate buildings cache after merge revert")
+        
         print(f"[INFO] Merge revert completed: restored {restored_count} buildings")
         
         # 警告メッセージを生成
@@ -3957,6 +3969,12 @@ def exclude_buildings(
     db.add(exclusion)
     db.commit()
     
+    # キャッシュをクリア（除外リストが変更されたため）
+    global _duplicate_buildings_cache, _duplicate_buildings_cache_time
+    _duplicate_buildings_cache = {}
+    _duplicate_buildings_cache_time = 0
+    logger.info("[DEBUG] Cleared duplicate buildings cache after building exclusion")
+    
     return {"success": True, "exclusion_id": exclusion.id}
 
 
@@ -3975,6 +3993,12 @@ def remove_building_exclusion(
     
     db.delete(exclusion)
     db.commit()
+    
+    # キャッシュをクリア（除外リストが変更されたため）
+    global _duplicate_buildings_cache, _duplicate_buildings_cache_time
+    _duplicate_buildings_cache = {}
+    _duplicate_buildings_cache_time = 0
+    logger.info("[DEBUG] Cleared duplicate buildings cache after removing building exclusion")
     
     return {"success": True}
 
