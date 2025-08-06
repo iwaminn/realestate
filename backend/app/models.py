@@ -290,7 +290,7 @@ class BuildingMergeHistory(Base):
     __tablename__ = "building_merge_history"
     
     id = Column(Integer, primary_key=True, index=True)
-    primary_building_id = Column(Integer, ForeignKey("buildings.id"), nullable=False)
+    primary_building_id = Column(Integer, ForeignKey("buildings.id"), nullable=False)  # 旧フィールド（互換性のため残す）
     merged_building_id = Column(Integer, nullable=False)      # 統合された建物ID（削除済み）
     merged_building_name = Column(String(200))                # 統合された建物名（正規化済み）
     canonical_merged_name = Column(Text)                      # 検索キー（照合用）
@@ -300,14 +300,23 @@ class BuildingMergeHistory(Base):
     property_count = Column(Integer)                          # 統合時の物件数
     merge_details = Column(JSON)                              # 統合詳細（物件IDリスト含む）
     
+    # ハイブリッド方式用の新フィールド
+    direct_primary_building_id = Column(Integer, ForeignKey("buildings.id"))  # 直接の統合先
+    final_primary_building_id = Column(Integer, ForeignKey("buildings.id"))    # 最終的な統合先（検索用キャッシュ）
+    merge_depth = Column(Integer, default=0)                  # 統合の深さ（チェーンの階層）
+    
     # リレーションシップ
     primary_building = relationship("Building", foreign_keys=[primary_building_id])
+    direct_primary_building = relationship("Building", foreign_keys=[direct_primary_building_id])
+    final_primary_building = relationship("Building", foreign_keys=[final_primary_building_id])
     
     __table_args__ = (
         Index('idx_building_merge_history_primary', 'primary_building_id'),
         Index('idx_building_merge_history_merged', 'merged_building_id'),
         Index('idx_building_merge_history_merged_at', 'merged_at'),
         Index('idx_building_merge_history_canonical', 'canonical_merged_name'),  # 検索用インデックス追加
+        Index('idx_building_merge_history_final_primary', 'final_primary_building_id'),  # 最終統合先用インデックス
+        Index('idx_building_merge_history_direct_primary', 'direct_primary_building_id'),  # 直接統合先用インデックス
     )
 
 
@@ -337,7 +346,7 @@ class PropertyMergeHistory(Base):
     __tablename__ = "property_merge_history"
     
     id = Column(Integer, primary_key=True, index=True)
-    primary_property_id = Column(Integer, ForeignKey("master_properties.id"), nullable=False)
+    primary_property_id = Column(Integer, ForeignKey("master_properties.id"), nullable=False)  # 旧フィールド（互換性のため残す）
     merged_property_id = Column(Integer, nullable=False)      # 統合された物件ID（削除済み）
     moved_listings = Column(Integer)                          # 移動した掲載情報数
     merge_details = Column(JSON)                              # 統合の詳細情報
@@ -346,12 +355,21 @@ class PropertyMergeHistory(Base):
     reason = Column(Text)                                     # 統合理由
     listing_count = Column(Integer)                           # 統合時の掲載数
     
+    # ハイブリッド方式用の新フィールド
+    direct_primary_property_id = Column(Integer, ForeignKey("master_properties.id"))  # 直接の統合先
+    final_primary_property_id = Column(Integer, ForeignKey("master_properties.id"))    # 最終的な統合先（検索用キャッシュ）
+    merge_depth = Column(Integer, default=0)                  # 統合の深さ（チェーンの階層）
+    
     # リレーションシップ
     primary_property = relationship("MasterProperty", foreign_keys=[primary_property_id])
+    direct_primary_property = relationship("MasterProperty", foreign_keys=[direct_primary_property_id])
+    final_primary_property = relationship("MasterProperty", foreign_keys=[final_primary_property_id])
     
     __table_args__ = (
         Index('idx_property_merge_history_primary', 'primary_property_id'),
         Index('idx_property_merge_history_created', 'merged_at'),
+        Index('idx_property_merge_history_final_primary', 'final_primary_property_id'),  # 最終統合先用インデックス
+        Index('idx_property_merge_history_direct_primary', 'direct_primary_property_id'),  # 直接統合先用インデックス
     )
 
 

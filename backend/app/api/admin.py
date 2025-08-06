@@ -1335,16 +1335,19 @@ def merge_buildings(
         for info in building_infos:
             building = info["building"]
             
-            # この建物が以前に他の建物を統合していた場合、その履歴も更新
-            # （チェイン統合の対応）
+            # ハイブリッド方式：この建物が以前に他の建物を統合していた場合の処理
+            # final_primary_building_idのみを更新し、direct_primary_building_idは保持
             old_merges = db.query(BuildingMergeHistory).filter(
-                BuildingMergeHistory.primary_building_id == building.id
+                BuildingMergeHistory.final_primary_building_id == building.id
             ).all()
             
             for old_merge in old_merges:
-                # 過去の統合履歴の統合先を今回の統合先に更新
+                # 最終統合先のみ更新（直接の統合先は保持）
+                old_merge.final_primary_building_id = primary_id
+                old_merge.merge_depth += 1  # 統合の深さを増やす
+                # primary_building_idも互換性のため更新
                 old_merge.primary_building_id = primary_id
-                logger.info(f"[DEBUG] チェイン統合: {old_merge.merged_building_name} → {primary_id}に更新")
+                logger.info(f"[DEBUG] ハイブリッドチェイン統合: {old_merge.merged_building_name} → final:{primary_id}, depth:{old_merge.merge_depth}")
             
             # 新しい統合履歴を追加（merge_detailsに詳細情報を含める）
             merge_details = {
@@ -1361,7 +1364,12 @@ def merge_buildings(
             }
             
             merge_history = BuildingMergeHistory(
+                # 互換性のためprimary_building_idも設定
                 primary_building_id=primary_id,
+                # ハイブリッド方式の新フィールド
+                direct_primary_building_id=primary_id,  # 直接の統合先
+                final_primary_building_id=primary_id,   # 最終的な統合先（現時点では同じ）
+                merge_depth=0,                          # 直接統合なので深さは0
                 merged_building_id=building.id,
                 merged_building_name=building.normalized_name,
                 # canonical_nameがある場合は保存、なければNone
@@ -1535,9 +1543,25 @@ def merge_properties(
             primary.property_hash = new_hash
             primary_updates["property_hash"] = new_hash
         
+        # ハイブリッド方式：副物件が以前に他の物件を統合していた場合の処理
+        # final_primary_property_idのみを更新し、direct_primary_property_idは保持
+        old_merges = db.query(PropertyMergeHistory).filter(
+            PropertyMergeHistory.final_primary_property_id == secondary.id
+        ).all()
+        
+        for old_merge in old_merges:
+            # 最終統合先のみ更新（直接の統合先は保持）
+            old_merge.final_primary_property_id = primary.id
+            old_merge.merge_depth += 1  # 統合の深さを1増やす
+        
         # 統合履歴を記録
         merge_history = PropertyMergeHistory(
+            # 互換性のためprimary_property_idも設定
             primary_property_id=merge_request.primary_property_id,
+            # ハイブリッド方式の新フィールド
+            direct_primary_property_id=merge_request.primary_property_id,  # 直接の統合先
+            final_primary_property_id=merge_request.primary_property_id,   # 最終的な統合先（現時点では同じ）
+            merge_depth=0,                          # 直接統合なので深さは0
             merged_property_id=merge_request.secondary_property_id,
             moved_listings=merged_count,
             listing_count=merged_count,
@@ -3279,6 +3303,97 @@ def delete_all_scraping_tasks(
         raise HTTPException(status_code=500, detail=f"履歴の削除に失敗しました: {str(e)}")
 
 
+def calculate_final_primary_property(
+    db: Session,
+    property_id: int,
+    excluded_property_id: int = None,
+    visited: set = None
+) -> int:
+    """物件の最終的な統合先を再帰的に計算（チェーン統合対応）"""
+    if visited is None:
+        visited = set()
+    
+    current_id = property_id
+    
+    while current_id not in visited:
+        visited.add(current_id)
+        
+        # この物件が統合されている履歴を検索（除外する統合以外）
+        merge_history = db.query(PropertyMergeHistory).filter(
+            PropertyMergeHistory.merged_property_id == current_id,
+            PropertyMergeHistory.merged_property_id != excluded_property_id
+        ).first()
+        
+        if not merge_history:
+            # これ以上統合先がない場合、現在のIDが最終統合先
+            return current_id
+        
+        # 次の統合先へ
+        current_id = merge_history.direct_primary_property_id
+    
+    # 循環参照を検出した場合、現在のIDを返す
+    return current_id
+
+
+def calculate_final_primary_building(db: Session, building_id: int) -> int:
+    """
+    ハイブリッド方式：建物の最終的な統合先を計算
+    direct_primary_building_idをたどって最終的な統合先を見つける
+    """
+    visited = set()  # 循環参照を防ぐ
+    current_id = building_id
+    
+    while True:
+        # 既に訪問済みの場合は循環参照
+        if current_id in visited:
+            return current_id
+        visited.add(current_id)
+        
+        # この建物が統合されている履歴を検索
+        merge_history = db.query(BuildingMergeHistory).filter(
+            BuildingMergeHistory.merged_building_id == current_id
+        ).first()
+        
+        if not merge_history:
+            # これ以上統合先がない場合、現在のIDが最終統合先
+            return current_id
+        
+        # 次の統合先へ
+        current_id = merge_history.direct_primary_building_id
+
+
+def calculate_final_primary_building_after_revert(
+    db: Session, 
+    building_id: int, 
+    excluded_building_id: int
+) -> int:
+    """
+    取り消し後の最終統合先を計算
+    excluded_building_idへの統合は無視する
+    """
+    visited = set()  # 循環参照を防ぐ
+    current_id = building_id
+    
+    while True:
+        # 既に訪問済みの場合は循環参照
+        if current_id in visited:
+            return current_id
+        visited.add(current_id)
+        
+        # この建物が統合されている履歴を検索（除外する統合以外）
+        merge_history = db.query(BuildingMergeHistory).filter(
+            BuildingMergeHistory.merged_building_id == current_id,
+            BuildingMergeHistory.merged_building_id != excluded_building_id
+        ).first()
+        
+        if not merge_history:
+            # これ以上統合先がない場合、現在のIDが最終統合先
+            return current_id
+        
+        # 次の統合先へ
+        current_id = merge_history.direct_primary_building_id
+
+
 @router.post("/revert-building-merge/{history_id}")
 def revert_building_merge(
     history_id: int,
@@ -3292,7 +3407,7 @@ def revert_building_merge(
     if not history:
         raise HTTPException(status_code=404, detail="統合履歴が見つかりません")
     
-    # 建物が既に存在するかどうかで取り消し済みかを判断（履歴は削除されるため）
+    # 建物が既に存在するかどうかで取り消し済みかを判断
     if history.merge_details:
         for merged_building in history.merge_details.get("merged_buildings", []):
             existing = db.query(Building).filter(Building.id == merged_building["id"]).first()
@@ -3414,7 +3529,33 @@ def revert_building_merge(
             if restored_building:
                 updater.update_building_name_by_majority(building_id)
         
-        # 履歴レコードを削除（エイリアスとしても使われなくなる）
+        # この統合に依存する履歴を再計算（削除前に実行）
+        # final_primary_building_idがこの統合の主建物を指している履歴を検索
+        dependent_histories = db.query(BuildingMergeHistory).filter(
+            BuildingMergeHistory.final_primary_building_id == history.final_primary_building_id,
+            BuildingMergeHistory.merged_building_id != history.merged_building_id  # 自分自身は除外
+        ).all()
+        
+        for dep_history in dependent_histories:
+            # この統合の取り消しにより、依存する履歴の最終統合先を再計算
+            if dep_history.direct_primary_building_id == history.merged_building_id:
+                # この履歴の直接統合先が、取り消される建物の場合
+                # 元の建物に戻す必要がある
+                dep_history.final_primary_building_id = dep_history.merged_building_id
+                dep_history.primary_building_id = dep_history.merged_building_id  # 互換性のため
+                dep_history.merge_depth = 0
+            else:
+                # 新しい最終統合先を計算
+                new_final_primary = calculate_final_primary_building_after_revert(
+                    db, 
+                    dep_history.merged_building_id,
+                    history.merged_building_id  # 削除される統合を除外
+                )
+                dep_history.final_primary_building_id = new_final_primary
+                dep_history.primary_building_id = new_final_primary  # 互換性のため
+                dep_history.merge_depth = max(0, dep_history.merge_depth - 1)  # 深さを減らす
+        
+        # 履歴レコードを削除
         db.delete(history)
         
         db.commit()
@@ -3461,12 +3602,11 @@ def revert_property_merge(
     if not history:
         raise HTTPException(status_code=404, detail="統合履歴が見つかりません")
     
-    # 取り消し時に履歴を削除する仕様のため、このチェックは不要
-    
     try:
-        # 主物件の存在確認
+        # 主物件の存在確認（ハイブリッド方式ではfinal_primary_property_idを使用）
+        primary_property_id = history.final_primary_property_id or history.primary_property_id
         primary_property = db.query(MasterProperty).filter(
-            MasterProperty.id == history.primary_property_id
+            MasterProperty.id == primary_property_id
         ).first()
         
         if not primary_property:
@@ -3503,7 +3643,8 @@ def revert_property_merge(
                 PropertyListing.id == listing_info["listing_id"]
             ).first()
             
-            if listing and listing.master_property_id == history.primary_property_id:
+            # ハイブリッド方式: final_primary_property_idを考慮
+            if listing and listing.master_property_id == primary_property_id:
                 # 掲載情報を復元した副物件に戻す
                 listing.master_property_id = secondary_property_id
                 restored_count += 1
@@ -3514,6 +3655,38 @@ def revert_property_merge(
             # 更新された項目を確認し、副物件の値で上書きされていた場合は元に戻す
             # ただし、その後別の更新があった可能性もあるため、慎重に処理
             pass
+        
+        # ハイブリッド方式：この統合に依存する履歴を再計算（削除前に実行）
+        # final_primary_property_idがこの統合の主物件を指している履歴を検索
+        dependent_histories = db.query(PropertyMergeHistory).filter(
+            PropertyMergeHistory.final_primary_property_id == history.final_primary_property_id,
+            PropertyMergeHistory.merged_property_id != history.merged_property_id  # 自分自身は除外
+        ).all()
+        
+        for dep_history in dependent_histories:
+            # 最終統合先を再計算
+            new_final_id = calculate_final_primary_property(
+                db, 
+                dep_history.merged_property_id,
+                excluded_property_id=history.merged_property_id
+            )
+            dep_history.final_primary_property_id = new_final_id
+            # 深さも再計算
+            depth = 0
+            current_id = dep_history.merged_property_id
+            visited = set()
+            while current_id != new_final_id and current_id not in visited:
+                visited.add(current_id)
+                merge = db.query(PropertyMergeHistory).filter(
+                    PropertyMergeHistory.merged_property_id == current_id,
+                    PropertyMergeHistory.merged_property_id != history.merged_property_id
+                ).first()
+                if merge:
+                    current_id = merge.direct_primary_property_id
+                    depth += 1
+                else:
+                    break
+            dep_history.merge_depth = depth
         
         # 履歴を削除（取り消し時に履歴を削除する仕様）
         db.delete(history)
