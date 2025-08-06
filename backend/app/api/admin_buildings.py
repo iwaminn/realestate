@@ -132,18 +132,11 @@ async def search_buildings_for_merge(
     credentials: Any = Depends(verify_admin_credentials)
 ):
     """建物検索（統合用）"""
-    import logging
     from ..utils.search_normalizer import create_search_patterns, normalize_search_text
-    
-    logger = logging.getLogger(__name__)
     
     # 検索文字列を正規化してAND検索用に分割
     normalized_search = normalize_search_text(query)
     search_terms = normalized_search.split()
-    
-    logger.info(f"検索クエリ: {query}")
-    logger.info(f"正規化後: {normalized_search}")
-    logger.info(f"分割後: {search_terms}")
     
     # クエリ構築
     name_query = db.query(
@@ -191,8 +184,6 @@ async def search_buildings_for_merge(
     ).order_by(
         func.count(MasterProperty.id).desc()
     ).limit(limit).all()
-    
-    logger.info(f"検索結果: {len(buildings)}件")
     
     result = []
     for building in buildings:
