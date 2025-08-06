@@ -109,6 +109,11 @@ const BuildingDuplicateManager: React.FC = () => {
       console.log('API params:', params);
       const response = await propertyApi.getDuplicateBuildings(params);
       console.log('Response:', response);
+      // デバッグ: 築年月データの確認
+      if (response.duplicate_groups && response.duplicate_groups.length > 0) {
+        console.log('First group primary built_year:', response.duplicate_groups[0].primary.built_year);
+        console.log('First group primary built_month:', response.duplicate_groups[0].primary.built_month);
+      }
       setDuplicateGroups(response.duplicate_groups);
     } catch (error) {
       console.error('Failed to fetch duplicate buildings:', error);
@@ -708,6 +713,7 @@ const BuildingDuplicateManager: React.FC = () => {
                       <TableCell>建物名</TableCell>
                       <TableCell>住所</TableCell>
                       <TableCell align="center" width={80}>階数</TableCell>
+                      <TableCell align="center" width={100}>築年月</TableCell>
                       <TableCell align="center" width={80}>物件数</TableCell>
                     </TableRow>
                   </TableHead>
@@ -756,6 +762,13 @@ const BuildingDuplicateManager: React.FC = () => {
                             </TableCell>
                             <TableCell align="center">
                               {building.total_floors || '-'}F
+                            </TableCell>
+                            <TableCell align="center">
+                              {building.built_year ? (
+                                building.built_month ? 
+                                  `${building.built_year}年${building.built_month}月` : 
+                                  `${building.built_year}年`
+                              ) : '-'}
                             </TableCell>
                             <TableCell align="center">
                               <Chip 
