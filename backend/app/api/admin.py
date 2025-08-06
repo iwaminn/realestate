@@ -434,6 +434,8 @@ def get_duplicate_buildings(
                     "normalized_name": building2.normalized_name,
                     "address": building2.address,
                     "total_floors": building2.total_floors,
+                    "built_year": building2.built_year,
+                    "built_month": building2.built_month,
                     "property_count": count2 or 0,
                     "similarity": round(similarity, 3)
                 })
@@ -446,6 +448,8 @@ def get_duplicate_buildings(
                     "normalized_name": building1.normalized_name,
                     "address": building1.address,
                     "total_floors": building1.total_floors,
+                    "built_year": building1.built_year,
+                    "built_month": building1.built_month,
                     "property_count": count1 or 0
                 },
                 "candidates": sorted(candidates, key=lambda x: x["similarity"], reverse=True)

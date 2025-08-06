@@ -534,6 +534,7 @@ const BuildingDuplicateManager: React.FC = () => {
                 <TableCell>建物名</TableCell>
                 <TableCell>住所</TableCell>
                 <TableCell align="center">階数</TableCell>
+                <TableCell align="center">築年月</TableCell>
                 <TableCell align="center">グループ内物件数</TableCell>
                 <TableCell align="center">建物数</TableCell>
                 <TableCell align="center">操作</TableCell>
@@ -559,6 +560,13 @@ const BuildingDuplicateManager: React.FC = () => {
                   <TableCell>{group.primary.address || '-'}</TableCell>
                   <TableCell align="center">{group.primary.total_floors || '-'}F</TableCell>
                   <TableCell align="center">
+                    {group.primary.built_year ? (
+                      group.primary.built_month ? 
+                        `${group.primary.built_year}年${group.primary.built_month}月` : 
+                        `${group.primary.built_year}年`
+                    ) : '-'}
+                  </TableCell>
+                  <TableCell align="center">
                     {group.primary.property_count + 
                      group.candidates.reduce((sum, candidate) => sum + (candidate.property_count || 0), 0)}
                   </TableCell>
@@ -577,7 +585,7 @@ const BuildingDuplicateManager: React.FC = () => {
                   </TableCell>
                 </TableRow>
                 <TableRow>
-                  <TableCell colSpan={7} sx={{ p: 0 }}>
+                  <TableCell colSpan={8} sx={{ p: 0 }}>
                     <Collapse in={expandedGroups.includes(index)}>
                       <Box sx={{ p: 2, bgcolor: 'grey.50' }}>
                         <Typography variant="subtitle2" gutterBottom>
