@@ -387,10 +387,11 @@ def get_duplicate_buildings(
                 )
             )
         
-        # パターン3: 築年月 + 総階数が同一（住所は考慮しない）
+        # パターン3: 住所（地名まで）+ 築年 + 総階数が同一
         if building1.built_year and building1.total_floors:
             candidate_conditions.append(
                 and_(
+                    area_condition,
                     Building.built_year == building1.built_year,
                     Building.total_floors == building1.total_floors
                 )
@@ -1208,7 +1209,8 @@ def search_properties_for_merge(
 @router.post("/merge-buildings")
 def merge_buildings(
     request: Dict[str, Any],
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks = None  # オプショナルなバックグラウンドタスク
 ):
     """複数の建物を統合"""
     import json
@@ -1245,6 +1247,10 @@ def merge_buildings(
         )
     
     try:
+        import time
+        start_time = time.time()
+        timeout_seconds = 30  # 30秒のタイムアウト
+        
         merged_count = 0
         moved_properties = 0
         # 削除前に建物情報を保存（履歴記録用）
@@ -1264,7 +1270,13 @@ def merge_buildings(
             })
         
         # 副建物の物件を主建物に移動
-        for secondary_building in secondary_buildings:
+        for building_index, secondary_building in enumerate(secondary_buildings):
+            # タイムアウトチェック
+            if time.time() - start_time > timeout_seconds:
+                logger.error(f"[DEBUG] Timeout after {timeout_seconds} seconds at building {building_index+1}/{len(secondary_buildings)}")
+                raise HTTPException(status_code=408, detail=f"処理がタイムアウトしました（{timeout_seconds}秒）")
+            
+            logger.info(f"[DEBUG] Processing building {building_index+1}/{len(secondary_buildings)}: {secondary_building.normalized_name} (ID: {secondary_building.id})")
             
             # 副建物の物件を主建物に移動
             properties_to_move = db.query(MasterProperty).filter(
@@ -1273,18 +1285,25 @@ def merge_buildings(
             
             logger.info(f"[DEBUG] Moving {len(properties_to_move)} properties from building {secondary_building.id} to {primary_id}")
             
+            # 一括で既存の物件をチェック（パフォーマンス向上）
+            existing_properties_dict = {}
+            if len(properties_to_move) > 0:
+                # 主建物の既存物件を取得してキャッシュ
+                existing_properties = db.query(MasterProperty).filter(
+                    MasterProperty.building_id == primary_id
+                ).all()
+                
+                for ep in existing_properties:
+                    key = (ep.floor_number, ep.area, ep.layout, ep.direction)
+                    existing_properties_dict[key] = ep
+                    
             for prop in properties_to_move:
-                # 移動先に同じ物件が既に存在するかチェック
-                existing_property = db.query(MasterProperty).filter(
-                    MasterProperty.building_id == primary_id,
-                    MasterProperty.floor_number == prop.floor_number,
-                    MasterProperty.area == prop.area,
-                    MasterProperty.layout == prop.layout,
-                    MasterProperty.direction == prop.direction
-                ).first()
+                # 移動先に同じ物件が既に存在するかチェック（辞書検索で高速化）
+                prop_key = (prop.floor_number, prop.area, prop.layout, prop.direction)
+                existing_property = existing_properties_dict.get(prop_key)
                 
                 if existing_property:
-                    logger.warning(f"[DEBUG] Duplicate property found: building={primary_id}, floor={prop.floor_number}, area={prop.area}, layout={prop.layout}, direction={prop.direction}")
+                    logger.info(f"[DEBUG] Duplicate property found: building={primary_id}, floor={prop.floor_number}, area={prop.area}, layout={prop.layout}, direction={prop.direction}")
                     
                     # 掲載情報を既存の物件に移動（SQLで直接更新）
                     result = db.execute(
@@ -1299,10 +1318,7 @@ def merge_buildings(
                     listings_moved = result.rowcount
                     logger.info(f"[DEBUG] Moved {listings_moved} listings from property {prop.id} to {existing_property.id} using SQL")
                     
-                    # 掲載情報の移動を確実にするため、フラッシュ
-                    db.flush()
-                    
-                    # 掲載情報が確実に移動したか確認
+                    # 掲載情報が確実に移動したか確認（フラッシュは後でまとめて行う）
                     remaining_listings = db.query(PropertyListing).filter(
                         PropertyListing.master_property_id == prop.id
                     ).count()
@@ -1329,7 +1345,7 @@ def merge_buildings(
                     prop.building_id = primary_id
                     moved_properties += 1
             
-            # 物件の移動を確実にするため、一旦フラッシュ
+            # 物件の移動を確実にするため、一旦フラッシュ（建物ごとに一度だけ）
             db.flush()
             
             # 副建物にまだ物件が残っていないか確認
