@@ -4,7 +4,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text, or_
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from backend.app.utils.exceptions import TaskPausedException, TaskCancelledException
@@ -1355,6 +1355,27 @@ def merge_buildings(
             
             if remaining_properties > 0:
                 raise ValueError(f"Building {secondary_building.id} still has {remaining_properties} properties!")
+            
+            # この建物が他の建物の統合先として参照されていないか確認
+            referencing_merges = db.query(BuildingMergeHistory).filter(
+                or_(
+                    BuildingMergeHistory.primary_building_id == secondary_building.id,
+                    BuildingMergeHistory.direct_primary_building_id == secondary_building.id,
+                    BuildingMergeHistory.final_primary_building_id == secondary_building.id
+                )
+            ).all()
+            
+            if referencing_merges:
+                # 参照している統合履歴の統合先を更新
+                for ref_merge in referencing_merges:
+                    logger.info(f"[DEBUG] 統合履歴の参照を更新: {ref_merge.merged_building_name} の統合先を {secondary_building.id} → {primary_id}")
+                    if ref_merge.primary_building_id == secondary_building.id:
+                        ref_merge.primary_building_id = primary_id
+                    if ref_merge.direct_primary_building_id == secondary_building.id:
+                        ref_merge.direct_primary_building_id = primary_id
+                    if ref_merge.final_primary_building_id == secondary_building.id:
+                        ref_merge.final_primary_building_id = primary_id
+                    ref_merge.merge_depth += 1  # 統合の深さを増やす
             
             # 副建物を削除
             db.delete(secondary_building)
