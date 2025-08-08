@@ -2248,11 +2248,11 @@ class BaseScraper(ABC):
                                     balcony_area: float = None, url: str = None) -> MasterProperty:
         """マスター物件を取得または作成"""
         # 同一物件の判定条件：建物、所在階、平米数、間取り、方角が一致
-        # 部屋番号は判定条件から除外（同じ部屋でも別々に販売される場合があるため）
+        # 部屋番号は両方に値がある場合のみ一致を要求（片方が未入力なら無視）
         
         # デバッグログ
         self.logger.info(f"Property search: building_id={building.id}, floor={floor_number}, "
-                        f"area={area}, layout={layout}, direction={direction}")
+                        f"area={area}, layout={layout}, direction={direction}, room_number={room_number}")
         
         # 既存のマスター物件を検索（絶対条件で）
         query = self.session.query(MasterProperty).filter(
@@ -2287,16 +2287,41 @@ class BaseScraper(ABC):
         else:
             query = query.filter(MasterProperty.direction.is_(None))
         
-        # 検索実行
-        master_property = query.first()
+        # ここまでの条件で候補を取得
+        candidates = query.all()
+        
+        # 部屋番号による絞り込み（特殊なロジック）
+        master_property = None
+        
+        if room_number:
+            # 新規物件に部屋番号がある場合
+            for candidate in candidates:
+                if candidate.room_number:
+                    # 両方に部屋番号がある場合は一致を要求
+                    if candidate.room_number == room_number:
+                        master_property = candidate
+                        self.logger.info(f"部屋番号が一致: {room_number}")
+                        break
+                else:
+                    # 既存物件に部屋番号がない場合は候補として保持（後で選択）
+                    if not master_property:
+                        master_property = candidate
+        else:
+            # 新規物件に部屋番号がない場合
+            # 既存物件の部屋番号は考慮せず、最初の候補を選択
+            if candidates:
+                master_property = candidates[0]
+                if master_property.room_number:
+                    self.logger.info(f"新規物件に部屋番号なし、既存物件の部屋番号={master_property.room_number}を維持")
         
         if master_property:
             # 既存物件の情報を更新（より詳細な情報があれば）
             updated = False
-            # 部屋番号は同一判定に使わないが、情報として保存
+            # 部屋番号の更新（既存が空の場合のみ）
             if room_number and not master_property.room_number:
                 master_property.room_number = room_number
                 updated = True
+                self.logger.info(f"部屋番号を追加: {room_number}")
             if floor_number and not master_property.floor_number:
                 master_property.floor_number = floor_number
                 updated = True
@@ -2315,14 +2340,6 @@ class BaseScraper(ABC):
             
             if updated:
                 self.session.flush()
-            
-            # 部屋番号が異なる場合の警告（参考情報）
-            if room_number and master_property.room_number and room_number != master_property.room_number:
-                self.logger.info(
-                    f"同一物件の部屋番号が異なります（参考）: "
-                    f"既存={master_property.room_number}, 新規={room_number}, "
-                    f"物件ID={master_property.id}"
-                )
             
             return master_property
         
