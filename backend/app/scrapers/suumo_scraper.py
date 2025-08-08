@@ -215,8 +215,8 @@ class SuumoScraper(BaseScraper):
         """物件詳細を解析"""
         try:
             # 特定物件のデバッグログ
-            if 'nc_76583217' in url:
-                self.logger.info(f"[DEBUG] nc_76583217の詳細ページ取得開始: {url}")
+            if 'nc_78113042' in url or 'nc_78146938' in url:
+                self.logger.info(f"[DEBUG] 問題のある物件の詳細ページ取得開始: {url}")
             
             # アクセス間隔を保つ
             time.sleep(self.delay)
@@ -224,6 +224,7 @@ class SuumoScraper(BaseScraper):
             # 詳細ページを取得
             soup = self.fetch_page(url)
             if not soup:
+                self.logger.error(f"[SUUMO] 詳細ページの取得に失敗（HTMLが空）: {url}")
                 return None
                 
             # HTML構造の検証
@@ -233,6 +234,26 @@ class SuumoScraper(BaseScraper):
             }
             
             if not self.validate_html_structure(soup, required_selectors):
+                # より詳細なデバッグ情報を出力
+                self.logger.error(f"[SUUMO] HTML構造検証失敗: {url}")
+                # 実際に存在する要素を確認
+                tables = soup.find_all('table')
+                h1s = soup.find_all('h1')
+                h2s = soup.find_all('h2', class_='section_h1-header-title')
+                self.logger.error(f"  - table要素数: {len(tables)}")
+                self.logger.error(f"  - h1要素数: {len(h1s)}")
+                self.logger.error(f"  - h2.section_h1-header-title要素数: {len(h2s)}")
+                
+                # ページのタイトルを確認
+                page_title = soup.find('title')
+                if page_title:
+                    self.logger.error(f"  - ページタイトル: {page_title.text[:100]}")
+                
+                # エラーメッセージや404ページの兆候を確認
+                error_msgs = soup.find_all(text=lambda text: text and ('404' in text or 'エラー' in text or '見つかりません' in text))
+                if error_msgs:
+                    self.logger.error(f"  - エラーメッセージ検出: {error_msgs[0][:100]}")
+                
                 return None
                 
             # site_property_idを取得
