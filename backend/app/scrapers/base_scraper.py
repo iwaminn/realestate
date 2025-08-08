@@ -2247,8 +2247,8 @@ class BaseScraper(ABC):
                                     layout: str = None, direction: str = None,
                                     balcony_area: float = None, url: str = None) -> MasterProperty:
         """マスター物件を取得または作成"""
-        # 同一物件の絶対条件：建物、所在階、平米数が一致
-        # 方角は揺れを許容するため、まず方角なしで検索
+        # 同一物件の判定条件：建物、所在階、平米数、間取り、方角が一致
+        # 部屋番号は判定条件から除外（同じ部屋でも別々に販売される場合があるため）
         
         # デバッグログ
         self.logger.info(f"Property search: building_id={building.id}, floor={floor_number}, "
@@ -2259,65 +2259,41 @@ class BaseScraper(ABC):
             MasterProperty.building_id == building.id
         )
         
-        # 階数と面積は必須条件
+        # 階数は必須条件
         if floor_number is not None:
             query = query.filter(MasterProperty.floor_number == floor_number)
         else:
             query = query.filter(MasterProperty.floor_number.is_(None))
             
+        # 面積は必須条件（0.5㎡の誤差を許容）
         if area is not None:
-            # 面積は0.5㎡の誤差を許容
             query = query.filter(
                 MasterProperty.area.between(area - 0.5, area + 0.5)
             )
         else:
             query = query.filter(MasterProperty.area.is_(None))
         
-        # 間取りも一致条件に含める
+        # 間取りは必須条件
         if layout:
             normalized_layout = self.fuzzy_matcher.normalize_layout(layout)
             query = query.filter(MasterProperty.layout == normalized_layout)
         else:
             query = query.filter(MasterProperty.layout.is_(None))
         
-        # master_propertyを初期化
-        master_property = None
-        
-        # 部屋番号がある場合は、部屋番号も一致条件に含める
-        if room_number:
-            query = query.filter(MasterProperty.room_number == room_number)
-            master_property = query.first()
+        # 方角は必須条件（正規化して比較）
+        if direction:
+            normalized_direction = self.fuzzy_matcher.normalize_direction(direction)
+            query = query.filter(MasterProperty.direction == normalized_direction)
         else:
-            # 部屋番号がない場合のみ、方角を考慮（ユニーク制約対象）
-            query = query.filter(MasterProperty.room_number.is_(None))
-            
-            # 方角は正規化して比較
-            if direction:
-                normalized_direction = self.fuzzy_matcher.normalize_direction(direction)
-                # 方角の揺れを許容するため、方角ありとなしの両方を検索
-                candidates = query.all()
-                
-                # 方角が一致する物件を優先
-                for candidate in candidates:
-                    if candidate.direction:
-                        candidate_dir = self.fuzzy_matcher.normalize_direction(candidate.direction)
-                        if candidate_dir == normalized_direction:
-                            master_property = candidate
-                            break
-                
-                # 方角が一致しない場合、方角なしの物件があればそれを使用
-                if not master_property:
-                    for candidate in candidates:
-                        if not candidate.direction:
-                            master_property = candidate
-                            break
-            else:
-                # 新規物件に方角がない場合
-                master_property = query.filter(MasterProperty.direction.is_(None)).first()
+            query = query.filter(MasterProperty.direction.is_(None))
+        
+        # 検索実行
+        master_property = query.first()
         
         if master_property:
             # 既存物件の情報を更新（より詳細な情報があれば）
             updated = False
+            # 部屋番号は同一判定に使わないが、情報として保存
             if room_number and not master_property.room_number:
                 master_property.room_number = room_number
                 updated = True
@@ -2339,6 +2315,14 @@ class BaseScraper(ABC):
             
             if updated:
                 self.session.flush()
+            
+            # 部屋番号が異なる場合の警告（参考情報）
+            if room_number and master_property.room_number and room_number != master_property.room_number:
+                self.logger.info(
+                    f"同一物件の部屋番号が異なります（参考）: "
+                    f"既存={master_property.room_number}, 新規={room_number}, "
+                    f"物件ID={master_property.id}"
+                )
             
             return master_property
         
