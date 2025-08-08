@@ -54,7 +54,7 @@ interface BuildingStats {
 }
 
 type ViewMode = 'card' | 'table';
-type OrderBy = 'earliest_published_at' | 'floor_number' | 'area' | 'min_price' | 'layout' | 'direction';
+type OrderBy = 'earliest_published_at' | 'floor_number' | 'area' | 'min_price' | 'layout' | 'direction' | 'price_per_tsubo';
 type Order = 'asc' | 'desc';
 
 const BuildingPropertiesPage: React.FC = () => {
@@ -321,6 +321,13 @@ const BuildingPropertiesPage: React.FC = () => {
         case 'direction':
           aValue = a.direction || '';
           bValue = b.direction || '';
+          break;
+        case 'price_per_tsubo':
+          // 坪単価を計算（価格 / (面積 / 3.30578)）
+          const aPrice = a.majority_price || a.min_price || 0;
+          const bPrice = b.majority_price || b.min_price || 0;
+          aValue = (a.area && aPrice) ? aPrice / (a.area / 3.30578) : 0;
+          bValue = (b.area && bPrice) ? bPrice / (b.area / 3.30578) : 0;
           break;
         default:
           return 0;
@@ -595,7 +602,15 @@ const BuildingPropertiesPage: React.FC = () => {
                     価格
                   </TableSortLabel>
                 </TableCell>
-                <TableCell align="right">坪単価</TableCell>
+                <TableCell align="right">
+                  <TableSortLabel
+                    active={orderBy === 'price_per_tsubo'}
+                    direction={orderBy === 'price_per_tsubo' ? order : 'asc'}
+                    onClick={() => handleRequestSort('price_per_tsubo')}
+                  >
+                    坪単価
+                  </TableSortLabel>
+                </TableCell>
                 <TableCell>掲載サイト</TableCell>
                 <TableCell align="center">操作</TableCell>
               </TableRow>
@@ -604,10 +619,10 @@ const BuildingPropertiesPage: React.FC = () => {
               {sortedProperties.map((property) => (
                 <TableRow key={property.id} hover sx={{ opacity: property.sold_at ? 0.7 : 1 }}>
                   <TableCell component="th" scope="row">
-                    {formatDate(property.last_confirmed_at || property.earliest_published_at)}
+                    {formatDate(property.earliest_published_at)}
                   </TableCell>
                   <TableCell align="right">
-                    {calculateDaysFromPublished(property.last_confirmed_at || property.earliest_published_at)}
+                    {calculateDaysFromPublished(property.earliest_published_at)}
                   </TableCell>
                   <TableCell>
                     {property.sold_at ? formatDate(property.sold_at) : '-'}
@@ -640,14 +655,12 @@ const BuildingPropertiesPage: React.FC = () => {
                   <TableCell align="right">
                     {property.sold_at && property.last_sale_price
                       ? `${formatPrice(property.last_sale_price)}（販売終了時）`
-                      : property.min_price === property.max_price
-                        ? formatPrice(property.min_price)
-                        : `${formatPrice(property.min_price)} 〜 ${formatPrice(property.max_price)}`}
+                      : formatPrice(property.majority_price || property.min_price)}
                   </TableCell>
                   <TableCell align="right">
                     {property.sold_at && property.last_sale_price
                       ? calculatePricePerTsubo(property.last_sale_price, property.area)
-                      : calculatePricePerTsubo(property.min_price, property.area)}
+                      : calculatePricePerTsubo(property.majority_price || property.min_price, property.area)}
                   </TableCell>
                   <TableCell>
                     <Box>
@@ -734,9 +747,7 @@ const BuildingPropertiesPage: React.FC = () => {
                   <Typography variant="h5" color={property.sold_at ? "text.secondary" : "primary"} sx={{ mt: 1, mb: 2 }}>
                     {property.sold_at && property.last_sale_price
                       ? `${formatPrice(property.last_sale_price)}（販売終了時）`
-                      : property.min_price === property.max_price
-                        ? formatPrice(property.min_price)
-                        : `${formatPrice(property.min_price)} 〜 ${formatPrice(property.max_price)}`}
+                      : formatPrice(property.majority_price || property.min_price)}
                   </Typography>
 
                   <Grid container spacing={2}>

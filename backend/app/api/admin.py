@@ -572,7 +572,27 @@ def get_duplicate_groups(
     
     # 重複候補を検出（グループ化用）
     query = text(f"""
-        WITH property_details AS (
+        WITH price_votes AS (
+            -- アクティブな掲載から価格を集計（多数決用）
+            SELECT 
+                mp.id as property_id,
+                pl.current_price,
+                COUNT(*) as vote_count
+            FROM master_properties mp
+            JOIN property_listings pl ON mp.id = pl.master_property_id
+            WHERE pl.is_active = true AND pl.current_price IS NOT NULL
+            GROUP BY mp.id, pl.current_price
+        ),
+        majority_prices AS (
+            -- 各物件の多数決価格を決定
+            SELECT 
+                property_id,
+                current_price,
+                vote_count,
+                ROW_NUMBER() OVER (PARTITION BY property_id ORDER BY vote_count DESC, current_price ASC) as rn
+            FROM price_votes
+        ),
+        property_details AS (
             SELECT 
                 mp.id,
                 mp.building_id,
@@ -582,7 +602,7 @@ def get_duplicate_groups(
                 mp.layout,
                 mp.direction,
                 b.normalized_name as building_name,
-                MAX(pl.current_price) as current_price,
+                COALESCE(maj.current_price, MAX(pl.current_price)) as current_price,  -- 多数決価格、なければ最大価格
                 STRING_AGG(DISTINCT pl.agency_name, ', ') as agency_names,
                 COUNT(DISTINCT pl.id) as listing_count,
                 COUNT(DISTINCT pl.source_site) as source_count,
@@ -590,7 +610,8 @@ def get_duplicate_groups(
             FROM master_properties mp
             JOIN buildings b ON mp.building_id = b.id
             LEFT JOIN property_listings pl ON mp.id = pl.master_property_id
-            GROUP BY mp.id, mp.building_id, mp.room_number, mp.floor_number, mp.area, mp.layout, mp.direction, b.normalized_name
+            LEFT JOIN majority_prices maj ON mp.id = maj.property_id AND maj.rn = 1
+            GROUP BY mp.id, mp.building_id, mp.room_number, mp.floor_number, mp.area, mp.layout, mp.direction, b.normalized_name, maj.current_price
         )
         SELECT 
             pd.id,
@@ -827,20 +848,42 @@ def get_duplicate_groups_simple(db: Session, limit: int, offset: int, building_n
     for row in result:
         # 各グループの物件詳細を取得（方角でソート）
         property_query = text("""
+            WITH price_votes AS (
+                -- アクティブな掲載から価格を集計（多数決用）
+                SELECT 
+                    pl.master_property_id as property_id,
+                    pl.current_price,
+                    COUNT(*) as vote_count
+                FROM property_listings pl
+                WHERE pl.is_active = true 
+                    AND pl.current_price IS NOT NULL
+                    AND pl.master_property_id = ANY(:ids)
+                GROUP BY pl.master_property_id, pl.current_price
+            ),
+            majority_prices AS (
+                -- 各物件の多数決価格を決定
+                SELECT 
+                    property_id,
+                    current_price,
+                    vote_count,
+                    ROW_NUMBER() OVER (PARTITION BY property_id ORDER BY vote_count DESC, current_price ASC) as rn
+                FROM price_votes
+            )
             SELECT 
                 mp.id,
                 mp.room_number,
                 mp.area,
                 mp.layout,
                 mp.direction,
-                MAX(pl.current_price) as current_price,
+                COALESCE(maj.current_price, MAX(pl.current_price)) as current_price,  -- 多数決価格、なければ最大価格
                 STRING_AGG(DISTINCT pl.agency_name, ', ') as agency_names,
                 COUNT(DISTINCT pl.id) as listing_count,
                 COUNT(DISTINCT pl.source_site) as source_count
             FROM master_properties mp
             LEFT JOIN property_listings pl ON mp.id = pl.master_property_id
+            LEFT JOIN majority_prices maj ON mp.id = maj.property_id AND maj.rn = 1
             WHERE mp.id = ANY(:ids)
-            GROUP BY mp.id, mp.room_number, mp.area, mp.layout, mp.direction
+            GROUP BY mp.id, mp.room_number, mp.area, mp.layout, mp.direction, maj.current_price
             ORDER BY 
                 mp.direction NULLS LAST,  -- 方角がある物件を優先
                 mp.area,

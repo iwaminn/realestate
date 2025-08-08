@@ -200,6 +200,7 @@ async def get_property_detail(
             'url': listing.url,
             'current_price': listing.current_price,
             'station_info': listing.station_info,
+            'listing_building_name': listing.listing_building_name,
         }
         
         if listing.is_active:

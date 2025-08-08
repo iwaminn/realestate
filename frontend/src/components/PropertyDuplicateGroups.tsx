@@ -33,6 +33,7 @@ import {
   Snackbar,
   TextField,
   InputAdornment,
+  Popover,
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -91,12 +92,14 @@ interface PropertyDetail {
     current_price: number | null;
     station_info?: string;
     last_confirmed_at?: string;
+    listing_building_name?: string | null;
   }>;
   inactive_listings: Array<{
     id: number;
     source_site: string;
     url: string;
     current_price: number | null;
+    listing_building_name?: string | null;
     delisted_at?: string;
   }>;
   price_history: Array<{
@@ -124,6 +127,7 @@ const PropertyDuplicateGroups: React.FC = () => {
   const [totalGroups, setTotalGroups] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [anchorEl, setAnchorEl] = useState<{ [key: number]: HTMLElement | null }>({});
 
   useEffect(() => {
     fetchGroups();
@@ -850,96 +854,148 @@ const PropertyDuplicateGroups: React.FC = () => {
                   </Typography>
                 </Box>
                 
-                <Grid container spacing={2}>
-                  {selectedGroup?.properties
-                    .sort((a, b) => {
-                      // 掲載数が多い順（降順）でソート
-                      return (b.listing_count || 0) - (a.listing_count || 0);
-                    })
-                    .map((prop) => (
-                    <Grid item xs={12} sm={6} lg={4} key={prop.id}>
-                      <Box sx={{ 
-                        position: 'relative',
-                        '&:hover .property-card': {
-                          transform: selectedProperties.has(prop.id) ? 'scale(1.02)' : 'scale(1)',
-                          boxShadow: selectedProperties.has(prop.id) ? 6 : 2
-                        }
-                      }}>
-                        <Box sx={{ 
-                          position: 'absolute', 
-                          top: 4, 
-                          left: 4, 
-                          zIndex: 1, 
-                          display: 'flex', 
-                          gap: 0.5,
-                          bgcolor: selectedProperties.has(prop.id) 
-                            ? 'rgba(255, 255, 255, 0.95)' 
-                            : 'rgba(255, 255, 255, 0.7)',
-                          borderRadius: 1,
-                          p: 0.5,
-                          boxShadow: selectedProperties.has(prop.id) ? 2 : 0
-                        }}>
-                          <Checkbox
-                            checked={selectedProperties.has(prop.id)}
-                            onChange={(e) => {
-                              const newSelected = new Set(selectedProperties);
-                              if (e.target.checked) {
-                                newSelected.add(prop.id);
-                              } else {
-                                newSelected.delete(prop.id);
-                                // 統合先から除外された場合は統合先をクリア
-                                if (primaryProperty === prop.id) {
-                                  setPrimaryProperty(null);
+                <TableContainer component={Paper} sx={{ maxHeight: '60vh' }}>
+                  <Table stickyHeader size="small">
+                    <TableHead>
+                      <TableRow>
+                        <TableCell padding="checkbox" width={50}>
+                          <Typography variant="caption">選択</Typography>
+                        </TableCell>
+                        <TableCell padding="checkbox" width={50}>
+                          <Typography variant="caption">統合先</Typography>
+                        </TableCell>
+                        <TableCell width={80}>物件ID</TableCell>
+                        <TableCell>物件建物名</TableCell>
+                        <TableCell width={100}>部屋番号</TableCell>
+                        <TableCell width={80}>階数</TableCell>
+                        <TableCell width={80}>面積</TableCell>
+                        <TableCell width={100}>間取り</TableCell>
+                        <TableCell width={80}>方角</TableCell>
+                        <TableCell width={100}>現在価格</TableCell>
+                        <TableCell width={120}>掲載状況</TableCell>
+                        <TableCell width={120}>最終確認</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {selectedGroup?.properties
+                        .sort((a, b) => {
+                          // 掲載数が多い順（降順）でソート
+                          return (b.listing_count || 0) - (a.listing_count || 0);
+                        })
+                        .map((prop) => {
+                          const detail = propertyDetails[prop.id];
+                          const isSelected = selectedProperties.has(prop.id);
+                          const isPrimary = primaryProperty === prop.id;
+                          
+                          return (
+                            <TableRow 
+                              key={prop.id}
+                              hover
+                              sx={{ 
+                                '& td': {
+                                  bgcolor: isPrimary ? 'rgba(33, 150, 243, 0.12)' : isSelected ? 'rgba(255, 235, 59, 0.20)' : 'inherit'
+                                },
+                                '& .MuiTypography-colorError': {
+                                  color: isPrimary || isSelected ? '#d32f2f' : 'error.main'
                                 }
-                              }
-                              setSelectedProperties(newSelected);
-                            }}
-                            size="small"
-                          />
-                          <Radio
-                            checked={primaryProperty === prop.id}
-                            onChange={() => setPrimaryProperty(prop.id)}
-                            disabled={!selectedProperties.has(prop.id)}
-                            size="small"
-                          />
-                        </Box>
-                        <Box 
-                          className="property-card"
-                          onClick={() => {
-                            if (selectedProperties.has(prop.id)) {
-                              setPrimaryProperty(prop.id);
-                            }
-                          }}
-                          sx={{ 
-                            cursor: selectedProperties.has(prop.id) ? 'pointer' : 'default',
-                            transition: 'all 0.2s'
-                          }}
-                        >
-                          {renderPropertyCard(prop.id, primaryProperty === prop.id)}
-                        </Box>
-                        {selectedProperties.has(prop.id) && (
-                          <Box
-                            sx={{
-                              position: 'absolute',
-                              top: -2,
-                              right: -2,
-                              width: 32,
-                              height: 32,
-                              bgcolor: primaryProperty === prop.id ? 'primary.main' : 'success.main',
-                              borderRadius: '0 8px 0 50%',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              boxShadow: 2
-                            }}
-                          >
-                            <CheckIcon sx={{ color: 'white', fontSize: 18, ml: 0.5, mt: -0.5 }} />
-                          </Box>
-                        )}
-                      </Box>
-                    </Grid>
-                  ))}
-                </Grid>
+                              }}
+                            >
+                              <TableCell padding="checkbox">
+                                <Checkbox
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    const newSelected = new Set(selectedProperties);
+                                    if (e.target.checked) {
+                                      newSelected.add(prop.id);
+                                    } else {
+                                      newSelected.delete(prop.id);
+                                      if (primaryProperty === prop.id) {
+                                        setPrimaryProperty(null);
+                                      }
+                                    }
+                                    setSelectedProperties(newSelected);
+                                  }}
+                                  size="small"
+                                />
+                              </TableCell>
+                              <TableCell padding="checkbox">
+                                <Radio
+                                  checked={isPrimary}
+                                  onChange={() => setPrimaryProperty(prop.id)}
+                                  disabled={!isSelected}
+                                  size="small"
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" fontWeight={isPrimary ? 'bold' : 'normal'}>
+                                  {prop.id}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2">
+                                  {detail?.display_building_name || '-'}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>{detail?.room_number || prop.room_number || '-'}</TableCell>
+                              <TableCell>{detail?.floor_number || '-'}階</TableCell>
+                              <TableCell>{prop.area ? `${prop.area}㎡` : '-'}</TableCell>
+                              <TableCell>{prop.layout || '-'}</TableCell>
+                              <TableCell>{prop.direction || '-'}</TableCell>
+                              <TableCell>
+                                {prop.current_price ? (
+                                  <Typography variant="body2" color="error.main" fontWeight="medium">
+                                    {prop.current_price.toLocaleString()}万円
+                                  </Typography>
+                                ) : '-'}
+                              </TableCell>
+                              <TableCell>
+                                <Box display="flex" gap={0.5}>
+                                  {detail?.active_listings?.length > 0 && (
+                                    <Chip 
+                                      label={`掲載中 ${detail.active_listings.length}`} 
+                                      size="small" 
+                                      color="success"
+                                      variant="outlined"
+                                      onClick={(event) => {
+                                        setAnchorEl(prev => ({ ...prev, [prop.id]: event.currentTarget }));
+                                      }}
+                                      sx={{ cursor: 'pointer' }}
+                                    />
+                                  )}
+                                  {detail?.inactive_listings?.length > 0 && (
+                                    <Chip 
+                                      label={`終了 ${detail.inactive_listings.length}`} 
+                                      size="small" 
+                                      color="default"
+                                      variant="outlined"
+                                      onClick={(event) => {
+                                        setAnchorEl(prev => ({ ...prev, [`inactive-${prop.id}`]: event.currentTarget }));
+                                      }}
+                                      sx={{ cursor: 'pointer' }}
+                                    />
+                                  )}
+                                  {!detail && (
+                                    <Chip 
+                                      label={`${prop.listing_count}件`} 
+                                      size="small" 
+                                      variant="outlined"
+                                    />
+                                  )}
+                                </Box>
+                              </TableCell>
+                              <TableCell>
+                                {detail?.active_listings?.[0]?.last_confirmed_at ? (
+                                  <Typography variant="caption">
+                                    {new Date(detail.active_listings[0].last_confirmed_at).toLocaleDateString('ja-JP')}
+                                  </Typography>
+                                ) : '-'}
+                              </TableCell>
+                            </TableRow>
+                          );
+                        })}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
               </Box>
               
               {primaryProperty && selectedProperties.has(primaryProperty) && (
@@ -1023,6 +1079,94 @@ const PropertyDuplicateGroups: React.FC = () => {
           </Tooltip>
         </DialogActions>
       </Dialog>
+
+      {/* 掲載情報のPopover */}
+      {selectedGroup?.properties.map((prop) => {
+        const detail = propertyDetails[prop.id];
+        return (
+          <React.Fragment key={prop.id}>
+            {/* 掲載中のPopover */}
+            <Popover
+              open={Boolean(anchorEl[prop.id])}
+              anchorEl={anchorEl[prop.id]}
+              onClose={() => setAnchorEl(prev => ({ ...prev, [prop.id]: null }))}
+              anchorOrigin={{
+                vertical: 'bottom',
+                horizontal: 'left',
+              }}
+              transformOrigin={{
+                vertical: 'top',
+                horizontal: 'left',
+              }}
+            >
+              <Box sx={{ p: 2, maxWidth: 400 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  掲載中の物件情報
+                </Typography>
+                {detail?.active_listings?.map(listing => (
+                  <Box key={listing.id} sx={{ mb: 1 }}>
+                    <Box display="flex" alignItems="center" gap={1}>
+                      <Chip
+                        label={listing.source_site}
+                        size="small"
+                        color="primary"
+                        onClick={() => window.open(listing.url, '_blank')}
+                        sx={{ cursor: 'pointer' }}
+                      />
+                      <Typography variant="caption">
+                        {listing.current_price ? `${listing.current_price.toLocaleString()}万円` : '価格未定'}
+                      </Typography>
+                    </Box>
+                    <Typography variant="caption" display="block" sx={{ ml: 1, mt: 0.5 }}>
+                      物件名: {listing.listing_building_name || '物件名なし'}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+            </Popover>
+            
+            {/* 終了済みのPopover */}
+            <Popover
+              open={Boolean(anchorEl[`inactive-${prop.id}`])}
+              anchorEl={anchorEl[`inactive-${prop.id}`]}
+              onClose={() => setAnchorEl(prev => ({ ...prev, [`inactive-${prop.id}`]: null }))}
+              anchorOrigin={{
+                vertical: 'bottom',
+                horizontal: 'left',
+              }}
+              transformOrigin={{
+                vertical: 'top',
+                horizontal: 'left',
+              }}
+            >
+              <Box sx={{ p: 2, maxWidth: 400 }}>
+                <Typography variant="subtitle2" gutterBottom>
+                  終了済みの物件情報
+                </Typography>
+                {detail?.inactive_listings?.map(listing => (
+                  <Box key={listing.id} sx={{ mb: 1 }}>
+                    <Box display="flex" alignItems="center" gap={1}>
+                      <Chip
+                        label={listing.source_site}
+                        size="small"
+                        color="default"
+                        onClick={() => window.open(listing.url, '_blank')}
+                        sx={{ cursor: 'pointer' }}
+                      />
+                      <Typography variant="caption">
+                        {listing.current_price ? `${listing.current_price.toLocaleString()}万円` : '価格未定'}
+                      </Typography>
+                    </Box>
+                    <Typography variant="caption" display="block" sx={{ ml: 1, mt: 0.5 }}>
+                      物件名: {listing.listing_building_name || '物件名なし'}
+                    </Typography>
+                  </Box>
+                ))}
+              </Box>
+            </Popover>
+          </React.Fragment>
+        );
+      })}
       
       <Snackbar
         open={snackbar.open}

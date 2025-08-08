@@ -390,11 +390,35 @@ async def get_properties_v2(
     """物件一覧を取得（重複排除済み）"""
     
     
-    # サブクエリ：各マスター物件の最新価格を取得
+    # サブクエリ：各マスター物件の最新価格を取得（多数決）
+    # 価格の多数決を計算するサブクエリ
+    price_vote_query = db.query(
+        PropertyListing.master_property_id,
+        PropertyListing.current_price,
+        func.count(PropertyListing.id).label('vote_count')
+    ).filter(
+        PropertyListing.is_active == True,
+        PropertyListing.current_price.isnot(None)
+    ).group_by(
+        PropertyListing.master_property_id,
+        PropertyListing.current_price
+    ).subquery()
+    
+    # 多数決で最も多い価格を選択
+    majority_price_query = db.query(
+        price_vote_query.c.master_property_id,
+        price_vote_query.c.current_price.label('majority_price'),
+        func.row_number().over(
+            partition_by=price_vote_query.c.master_property_id,
+            order_by=[price_vote_query.c.vote_count.desc(), price_vote_query.c.current_price.asc()]
+        ).label('rn')
+    ).subquery()
+    
     price_query = db.query(
         PropertyListing.master_property_id,
         func.min(PropertyListing.current_price).label('min_price'),
         func.max(PropertyListing.current_price).label('max_price'),
+        func.max(majority_price_query.c.majority_price).label('majority_price'),  # 多数決価格
         func.count(distinct(PropertyListing.id)).label('listing_count'),
         func.string_agg(distinct(func.cast(PropertyListing.source_site, String)), ',').label('source_sites'),
         func.bool_or(PropertyListing.is_active).label('has_active_listing'),
@@ -414,6 +438,12 @@ async def get_properties_v2(
             .filter(ListingPriceHistory.property_listing_id == PropertyListing.id)
             .scalar_subquery() > 1
         ).label('has_price_change')
+    ).outerjoin(
+        majority_price_query,
+        and_(
+            PropertyListing.master_property_id == majority_price_query.c.master_property_id,
+            majority_price_query.c.rn == 1
+        )
     )
     
     # include_inactiveがFalseの場合はアクティブな物件のみ
@@ -421,7 +451,8 @@ async def get_properties_v2(
         price_query = price_query.filter(PropertyListing.is_active == True)
     
     price_subquery = price_query.group_by(
-        PropertyListing.master_property_id
+        PropertyListing.master_property_id,
+        majority_price_query.c.majority_price
     ).subquery()
     
     # メインクエリ
@@ -430,6 +461,7 @@ async def get_properties_v2(
         Building,
         price_subquery.c.min_price,
         price_subquery.c.max_price,
+        price_subquery.c.majority_price,  # 多数決価格を追加
         price_subquery.c.listing_count,
         price_subquery.c.source_sites,
         price_subquery.c.has_active_listing,
@@ -554,7 +586,7 @@ async def get_properties_v2(
     
     # 結果を整形
     properties = []
-    for mp, building, min_price, max_price, listing_count, source_sites, has_active, last_confirmed, delisted, station_info, earliest_published_at, latest_price_update, has_price_change in results:
+    for mp, building, min_price, max_price, majority_price, listing_count, source_sites, has_active, last_confirmed, delisted, station_info, earliest_published_at, latest_price_update, has_price_change in results:
         properties.append({
             "id": mp.id,
             "building": {
@@ -574,6 +606,8 @@ async def get_properties_v2(
             "direction": mp.direction,
             "min_price": min_price if not mp.sold_at else mp.final_price,
             "max_price": max_price if not mp.sold_at else mp.final_price,
+            "majority_price": majority_price if not mp.sold_at else mp.final_price,
+            "majority_price": majority_price if not mp.sold_at else mp.final_price,  # 多数決価格を追加
             "listing_count": listing_count,
             "source_sites": source_sites.split(',') if source_sites else [],
             "has_active_listing": has_active,
@@ -627,20 +661,23 @@ async def get_property_detail_v2(
     include_inactive = master_property.sold_at is not None
     info = updater.collect_property_info_from_listings(master_property, include_inactive)
     
-    # 価格の集計（価格は範囲表示）
-    if info['prices']:
-        price_range = updater.get_price_range(info['prices'])
-        if price_range:
-            min_price, max_price = price_range
-        else:
-            min_price = max_price = None
-    else:
-        min_price = max_price = None
+    # 価格の集計（多数決で決定）
+    majority_price = None
+    if active_listings:
+        # アクティブな掲載から価格を集計
+        price_votes = {}
+        for listing in active_listings:
+            if listing.current_price:
+                price_votes[listing.current_price] = price_votes.get(listing.current_price, 0) + 1
+        
+        # 最も多い価格を選択（同票の場合は安い方）
+        if price_votes:
+            sorted_prices = sorted(price_votes.items(), key=lambda x: (-x[1], x[0]))
+            majority_price = sorted_prices[0][0]
     
-    # 販売終了物件の場合はlast_sale_priceを使用
-    if master_property.sold_at and master_property.last_sale_price:
-        min_price = master_property.last_sale_price
-        max_price = master_property.last_sale_price
+    # 販売終了物件の場合はfinal_priceを使用
+    if master_property.sold_at and master_property.final_price:
+        majority_price = master_property.final_price
     
     # ソースサイトのリスト（アクティブな掲載のみ）
     source_sites = list(set(l.source_site for l in active_listings))
@@ -714,8 +751,9 @@ async def get_property_detail_v2(
         "balcony_area": master_property.balcony_area,
         "layout": master_property.layout,
         "direction": master_property.direction,
-        "min_price": min_price,
-        "max_price": max_price,
+        "majority_price": majority_price,  # 多数決価格に変更
+        "min_price": majority_price,  # 互換性のため維持
+        "max_price": majority_price,  # 互換性のため維持
         "listing_count": len(active_listings),
         "source_sites": source_sites,
         "station_info": station_info,
@@ -1021,14 +1059,44 @@ async def get_building_properties_by_name(
     if not building:
         raise HTTPException(status_code=404, detail="建物が見つかりません")
     
-    # 建物内の物件を取得（価格情報付き）
+    # 建物内の物件を取得（価格情報付き - 多数決）
+    # 価格の多数決を計算
+    price_vote_query = db.query(
+        PropertyListing.master_property_id,
+        PropertyListing.current_price,
+        func.count(PropertyListing.id).label('vote_count')
+    ).filter(
+        PropertyListing.is_active == True if not include_inactive else True,
+        PropertyListing.current_price.isnot(None)
+    ).group_by(
+        PropertyListing.master_property_id,
+        PropertyListing.current_price
+    ).subquery()
+    
+    # 多数決で最も多い価格を選択
+    majority_price_query = db.query(
+        price_vote_query.c.master_property_id,
+        price_vote_query.c.current_price.label('majority_price'),
+        func.row_number().over(
+            partition_by=price_vote_query.c.master_property_id,
+            order_by=[price_vote_query.c.vote_count.desc(), price_vote_query.c.current_price.asc()]
+        ).label('rn')
+    ).subquery()
+    
     price_query = db.query(
         PropertyListing.master_property_id,
         func.min(PropertyListing.current_price).label('min_price'),
         func.max(PropertyListing.current_price).label('max_price'),
+        func.max(majority_price_query.c.majority_price).label('majority_price'),  # 多数決価格
         func.count(distinct(PropertyListing.id)).label('listing_count'),
         func.string_agg(distinct(func.cast(PropertyListing.source_site, String)), ',').label('source_sites'),
         func.min(func.coalesce(PropertyListing.first_published_at, PropertyListing.published_at, PropertyListing.first_seen_at)).label('earliest_published_at')
+    ).outerjoin(
+        majority_price_query,
+        and_(
+            PropertyListing.master_property_id == majority_price_query.c.master_property_id,
+            majority_price_query.c.rn == 1
+        )
     )
     
     # include_inactiveがFalseの場合はアクティブな掲載のみ
@@ -1036,13 +1104,15 @@ async def get_building_properties_by_name(
         price_query = price_query.filter(PropertyListing.is_active == True)
     
     price_subquery = price_query.group_by(
-        PropertyListing.master_property_id
+        PropertyListing.master_property_id,
+        majority_price_query.c.majority_price
     ).subquery()
     
     properties_query = db.query(
         MasterProperty,
         price_subquery.c.min_price,
         price_subquery.c.max_price,
+        price_subquery.c.majority_price,  # 多数決価格を追加
         price_subquery.c.listing_count,
         price_subquery.c.source_sites,
         price_subquery.c.earliest_published_at
@@ -1074,7 +1144,7 @@ async def get_building_properties_by_name(
     
     # 結果を整形
     property_list = []
-    for mp, min_price, max_price, listing_count, source_sites, earliest_published_at in properties:
+    for mp, min_price, max_price, majority_price, listing_count, source_sites, earliest_published_at in properties:
         property_list.append({
             "id": mp.id,
             "room_number": mp.room_number,
@@ -1085,6 +1155,7 @@ async def get_building_properties_by_name(
             "direction": mp.direction,
             "min_price": min_price if not mp.sold_at else mp.final_price,
             "max_price": max_price if not mp.sold_at else mp.final_price,
+            "majority_price": majority_price if not mp.sold_at else mp.final_price,
             "listing_count": listing_count or 0,
             "source_sites": source_sites.split(',') if source_sites else [],
             "earliest_published_at": earliest_published_at.isoformat() if earliest_published_at else None,
@@ -1110,17 +1181,49 @@ async def get_building_properties_v2(
     if not building:
         raise HTTPException(status_code=404, detail="建物が見つかりません")
     
-    # 建物内の物件を取得（価格情報付き）
+    # 建物内の物件を取得（価格情報付き - 多数決）
+    # 価格の多数決を計算
+    price_vote_query = db.query(
+        PropertyListing.master_property_id,
+        PropertyListing.current_price,
+        func.count(PropertyListing.id).label('vote_count')
+    ).filter(
+        PropertyListing.is_active == True,
+        PropertyListing.current_price.isnot(None)
+    ).group_by(
+        PropertyListing.master_property_id,
+        PropertyListing.current_price
+    ).subquery()
+    
+    # 多数決で最も多い価格を選択
+    majority_price_query = db.query(
+        price_vote_query.c.master_property_id,
+        price_vote_query.c.current_price.label('majority_price'),
+        func.row_number().over(
+            partition_by=price_vote_query.c.master_property_id,
+            order_by=[price_vote_query.c.vote_count.desc(), price_vote_query.c.current_price.asc()]
+        ).label('rn')
+    ).subquery()
+    
     price_subquery = db.query(
         PropertyListing.master_property_id,
         func.min(PropertyListing.current_price).label('min_price'),
         func.max(PropertyListing.current_price).label('max_price'),
+        func.max(majority_price_query.c.majority_price).label('majority_price'),  # 多数決価格
         func.count(distinct(PropertyListing.id)).label('listing_count'),
-        func.max(PropertyListing.last_confirmed_at).label('last_confirmed_at')
+        func.max(PropertyListing.last_confirmed_at).label('last_confirmed_at'),
+        func.min(func.coalesce(PropertyListing.first_published_at, PropertyListing.published_at, PropertyListing.first_seen_at)).label('earliest_published_at')
+    ).outerjoin(
+        majority_price_query,
+        and_(
+            PropertyListing.master_property_id == majority_price_query.c.master_property_id,
+            majority_price_query.c.rn == 1
+        )
     ).filter(
         PropertyListing.is_active == True
     ).group_by(
-        PropertyListing.master_property_id
+        PropertyListing.master_property_id,
+        majority_price_query.c.majority_price
     ).subquery()
     
     # ソースサイト情報を含むサブクエリ
@@ -1137,8 +1240,10 @@ async def get_building_properties_v2(
         MasterProperty,
         price_subquery.c.min_price,
         price_subquery.c.max_price,
+        price_subquery.c.majority_price,  # 多数決価格を追加
         price_subquery.c.listing_count,
         price_subquery.c.last_confirmed_at,
+        price_subquery.c.earliest_published_at,  # 最も古い売出確認日
         source_sites_subquery.c.source_sites
     ).join(
         price_subquery, MasterProperty.id == price_subquery.c.master_property_id
@@ -1153,7 +1258,7 @@ async def get_building_properties_v2(
     
     # 結果を整形
     property_list = []
-    for mp, min_price, max_price, listing_count, last_confirmed_at, source_sites in properties:
+    for mp, min_price, max_price, majority_price, listing_count, last_confirmed_at, earliest_published_at, source_sites in properties:
         property_list.append({
             "id": mp.id,
             "room_number": mp.room_number,
@@ -1162,11 +1267,13 @@ async def get_building_properties_v2(
             "balcony_area": mp.balcony_area,
             "layout": mp.layout,
             "direction": mp.direction,
-            "min_price": min_price,
-            "max_price": max_price,
+            "majority_price": majority_price,  # 多数決価格
+            "min_price": majority_price or min_price,  # 互換性のため
+            "max_price": majority_price or max_price,  # 互換性のため
             "listing_count": listing_count,
             "source_sites": source_sites.split(',') if source_sites else [],
-            "last_confirmed_at": last_confirmed_at.isoformat() if last_confirmed_at else None
+            "last_confirmed_at": last_confirmed_at.isoformat() if last_confirmed_at else None,
+            "earliest_published_at": earliest_published_at.isoformat() if earliest_published_at else None
         })
     
     return {

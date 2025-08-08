@@ -27,6 +27,7 @@ export interface Property {
   resale_property_id?: number;
   min_price?: number;
   max_price?: number;
+  majority_price?: number;
   listing_count: number;
   source_sites: string[];
   station_info?: string;

@@ -255,9 +255,7 @@ const PropertyDetailPage: React.FC = () => {
                   </Box>
                 </>
               ) : (
-                property.min_price === property.max_price
-                  ? formatPrice(property.min_price)
-                  : `${formatPrice(property.min_price)} 〜 ${formatPrice(property.max_price)}`
+                formatPrice(property.majority_price || property.min_price)
               )}
             </Typography>
             

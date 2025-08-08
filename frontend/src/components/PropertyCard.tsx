@@ -63,10 +63,8 @@ const PropertyCard: React.FC<PropertyCardProps> = ({ property }) => {
     navigate(`/properties/${property.id}`);
   };
 
-  // 価格表示を決定（最小価格〜最大価格、または単一価格）
-  const priceDisplay = property.min_price === property.max_price
-    ? formatPrice(property.min_price)
-    : `${formatPrice(property.min_price)} 〜 ${formatPrice(property.max_price)}`;
+  // 価格表示を決定（多数決価格を優先）
+  const priceDisplay = formatPrice(property.majority_price || property.min_price);
 
   return (
     <Card
