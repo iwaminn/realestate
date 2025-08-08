@@ -78,8 +78,16 @@ const BuildingPropertiesPage: React.FC = () => {
   const [order, setOrder] = useState<Order>('desc');
   const [maxFloorFromProperties, setMaxFloorFromProperties] = useState<number | null>(null);
   
-  // URLパラメータからincludeInactiveを取得
+  // URLパラメータまたはstateからincludeInactiveを取得
   const getIncludeInactiveFromUrl = () => {
+    // まずlocation.stateから取得を試みる
+    const stateIncludeInactive = (location.state as any)?.includeInactive;
+    if (stateIncludeInactive !== undefined) {
+      console.log('[BuildingPropertiesPage] Using includeInactive from state:', stateIncludeInactive);
+      return stateIncludeInactive;
+    }
+    
+    // 次にURLパラメータから取得
     const urlParams = new URLSearchParams(location.search);
     const result = urlParams.get('includeInactive') === 'true';
     console.log('[BuildingPropertiesPage] getIncludeInactiveFromUrl:', {

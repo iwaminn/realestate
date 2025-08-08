@@ -49,6 +49,46 @@ export const propertyApi = {
     return response.data;
   },
 
+  // 建物一覧取得
+  searchBuildings: async (params: {
+    wards?: string[];
+    search?: string;
+    min_price?: number;
+    max_price?: number;
+    max_building_age?: number;
+    min_total_floors?: number;
+    page?: number;
+    per_page?: number;
+    sort_by?: string;
+    sort_order?: string;
+  }): Promise<{
+    buildings: Array<{
+      id: number;
+      normalized_name: string;
+      address: string | null;
+      total_floors: number | null;
+      built_year: number | null;
+      built_month: number | null;
+      construction_type: string | null;
+      station_info: string | null;
+      property_count: number;
+      active_listings: number;
+      price_range: {
+        min: number | null;
+        max: number | null;
+        avg: number | null;
+      };
+      building_age: number | null;
+    }>;
+    total: number;
+    page: number;
+    per_page: number;
+    total_pages: number;
+  }> => {
+    const response = await api.get('/v2/buildings', { params });
+    return response.data;
+  },
+
   // 建物別物件一覧取得
   getBuildingProperties: async (buildingId: number, includeInactive: boolean = false): Promise<{
     building: any;

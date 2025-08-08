@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, or_, and_, distinct, String, case
+from sqlalchemy import func, or_, and_, distinct, String, case, select
 from difflib import SequenceMatcher
 import os
 import re
@@ -234,6 +234,141 @@ async def get_areas(db: Session = Depends(get_db)):
     area_list.sort(key=lambda x: x["name"])
     
     return area_list
+
+@app.get("/api/v2/buildings", response_model=Dict[str, Any])
+async def get_buildings_v2(
+    wards: Optional[List[str]] = Query(None, description="区名リスト（例: 港区、中央区）"),
+    search: Optional[str] = Query(None, description="建物名検索"),
+    min_price: Optional[int] = Query(None, description="最低価格（万円）"),
+    max_price: Optional[int] = Query(None, description="最高価格（万円）"),
+    max_building_age: Optional[int] = Query(None, description="築年数以内"),
+    min_total_floors: Optional[int] = Query(None, description="最低階数"),
+    page: int = Query(1, ge=1, description="ページ番号"),
+    per_page: int = Query(20, ge=1, le=100, description="1ページあたりの件数"),
+    sort_by: str = Query("property_count", description="ソート項目"),
+    sort_order: str = Query("desc", description="ソート順序"),
+    db: Session = Depends(get_db)
+):
+    """建物一覧を取得（物件集計情報付き）"""
+    
+    # 各建物の物件統計を取得するサブクエリ
+    property_stats = db.query(
+        MasterProperty.building_id,
+        func.count(distinct(MasterProperty.id)).label('property_count'),
+        func.min(PropertyListing.current_price).label('min_price'),
+        func.max(PropertyListing.current_price).label('max_price'),
+        func.avg(PropertyListing.current_price).label('avg_price'),
+        func.count(distinct(PropertyListing.id)).label('total_listings'),
+        func.sum(case((PropertyListing.is_active == True, 1), else_=0)).label('active_listings')
+    ).join(
+        PropertyListing, MasterProperty.id == PropertyListing.master_property_id
+    ).filter(
+        PropertyListing.is_active == True  # アクティブな掲載のみ
+    ).group_by(
+        MasterProperty.building_id
+    ).subquery()
+    
+    # メインクエリ
+    query = db.query(
+        Building,
+        property_stats.c.property_count,
+        property_stats.c.min_price,
+        property_stats.c.max_price,
+        property_stats.c.avg_price,
+        property_stats.c.total_listings,
+        property_stats.c.active_listings
+    ).outerjoin(
+        property_stats, Building.id == property_stats.c.building_id
+    )
+    
+    # アクティブな物件がある建物のみ表示
+    query = query.filter(property_stats.c.property_count > 0)
+    
+    # フィルター条件
+    if wards:
+        ward_conditions = []
+        for ward in wards:
+            ward_conditions.append(Building.address.like(f'%{ward}%'))
+        query = query.filter(or_(*ward_conditions))
+    
+    if search:
+        # 建物名で検索（部分一致）
+        search_pattern = f'%{search}%'
+        query = query.filter(
+            or_(
+                Building.normalized_name.ilike(search_pattern),
+                Building.canonical_name.ilike(search_pattern) if hasattr(Building, 'canonical_name') else False
+            )
+        )
+    
+    if min_price:
+        query = query.filter(property_stats.c.min_price >= min_price)
+    
+    if max_price:
+        query = query.filter(property_stats.c.max_price <= max_price)
+    
+    if max_building_age:
+        min_year = datetime.now().year - max_building_age
+        query = query.filter(Building.built_year >= min_year)
+    
+    if min_total_floors:
+        query = query.filter(Building.total_floors >= min_total_floors)
+    
+    # ソート
+    if sort_by == "property_count":
+        order_column = property_stats.c.property_count
+    elif sort_by == "min_price":
+        order_column = property_stats.c.min_price
+    elif sort_by == "max_price":
+        order_column = property_stats.c.max_price
+    elif sort_by == "built_year":
+        order_column = Building.built_year
+    elif sort_by == "total_floors":
+        order_column = Building.total_floors
+    elif sort_by == "name":
+        order_column = Building.normalized_name
+    else:
+        order_column = property_stats.c.property_count
+    
+    if sort_order == "asc":
+        query = query.order_by(asc(order_column))
+    else:
+        query = query.order_by(desc(order_column))
+    
+    # ページネーション
+    total = query.count()
+    offset = (page - 1) * per_page
+    buildings = query.offset(offset).limit(per_page).all()
+    
+    # レスポンス形式に変換
+    result = []
+    for building, property_count, min_price, max_price, avg_price, total_listings, active_listings in buildings:
+        result.append({
+            "id": building.id,
+            "normalized_name": building.normalized_name,
+            "address": building.address,
+            "total_floors": building.total_floors,
+            "built_year": building.built_year,
+            "built_month": building.built_month,
+            "construction_type": building.construction_type,
+            "station_info": building.station_info,
+            "property_count": property_count or 0,
+            "active_listings": active_listings or 0,
+            "price_range": {
+                "min": min_price,
+                "max": max_price,
+                "avg": int(avg_price) if avg_price else None
+            },
+            "building_age": datetime.now().year - building.built_year if building.built_year else None
+        })
+    
+    return {
+        "buildings": result,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": (total + per_page - 1) // per_page
+    }
 
 @app.get("/api/v2/properties", response_model=Dict[str, Any])
 async def get_properties_v2(
@@ -617,6 +752,236 @@ async def get_property_detail_v2(
         "price_consistency": price_consistency,
         "unified_price_history": all_price_records,
         "price_discrepancies": price_discrepancies
+    }
+
+@app.get("/api/v2/properties-grouped-by-buildings", response_model=Dict[str, Any])
+async def get_properties_grouped_by_buildings(
+    min_price: Optional[int] = Query(None),
+    max_price: Optional[int] = Query(None),
+    min_area: Optional[float] = Query(None),
+    max_area: Optional[float] = Query(None),
+    layouts: Optional[List[str]] = Query(None),
+    building_name: Optional[str] = Query(None),
+    max_building_age: Optional[int] = Query(None),
+    wards: Optional[List[str]] = Query(None),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(20, ge=1, le=100),
+    include_inactive: bool = Query(False),
+    db: Session = Depends(get_db)
+):
+    """物件検索結果を建物ごとにグループ化して返す（最適化版）"""
+    
+    # 建物ごとの物件数と条件に合う物件の集計クエリ
+    base_query = db.query(
+        Building.id,
+        Building.normalized_name,
+        Building.address,
+        Building.total_floors,
+        Building.built_year,
+        Building.built_month,
+        Building.construction_type,
+        func.count(distinct(MasterProperty.id)).label('property_count')
+    ).join(MasterProperty)
+    
+    # フィルタ条件の適用
+    if min_area:
+        base_query = base_query.filter(MasterProperty.area >= min_area)
+    if max_area:
+        base_query = base_query.filter(MasterProperty.area <= max_area)
+    if layouts:
+        base_query = base_query.filter(MasterProperty.layout.in_(layouts))
+    if building_name:
+        terms = building_name.split()
+        for term in terms:
+            base_query = base_query.filter(Building.normalized_name.ilike(f"%{term}%"))
+    if max_building_age:
+        min_year = datetime.now().year - max_building_age
+        base_query = base_query.filter(Building.built_year >= min_year)
+    if wards:
+        ward_conditions = []
+        for ward in wards:
+            ward_conditions.append(Building.address.ilike(f"%{ward}%"))
+        base_query = base_query.filter(or_(*ward_conditions))
+    
+    # 価格フィルタを適用（存在する場合）
+    if min_price or max_price:
+        # 最新価格のサブクエリ
+        price_subq = db.query(
+            PropertyListing.master_property_id,
+            func.max(PropertyListing.current_price).label('latest_price')
+        ).filter(
+            PropertyListing.is_active == True
+        ).group_by(PropertyListing.master_property_id).subquery()
+        
+        base_query = base_query.outerjoin(
+            price_subq, MasterProperty.id == price_subq.c.master_property_id
+        )
+        
+        if min_price:
+            base_query = base_query.filter(
+                or_(
+                    price_subq.c.latest_price >= min_price,
+                    and_(price_subq.c.latest_price.is_(None), MasterProperty.final_price >= min_price)
+                )
+            )
+        if max_price:
+            base_query = base_query.filter(
+                or_(
+                    price_subq.c.latest_price <= max_price,
+                    and_(price_subq.c.latest_price.is_(None), MasterProperty.final_price <= max_price)
+                )
+            )
+    
+    # アクティブフィルタ
+    if not include_inactive:
+        active_subq = db.query(PropertyListing.master_property_id).filter(
+            PropertyListing.is_active == True
+        ).subquery()
+        base_query = base_query.filter(MasterProperty.id.in_(select(active_subq)))
+    
+    # グループ化して建物ごとの物件数を取得
+    base_query = base_query.group_by(
+        Building.id,
+        Building.normalized_name,
+        Building.address,
+        Building.total_floors,
+        Building.built_year,
+        Building.built_month,
+        Building.construction_type
+    ).order_by(func.count(distinct(MasterProperty.id)).desc())
+    
+    # 全件数を取得
+    total_query = base_query.subquery()
+    total = db.query(func.count()).select_from(total_query).scalar()
+    
+    # ページネーション
+    buildings = base_query.offset((page - 1) * per_page).limit(per_page).all()
+    
+    # 建物IDリストを取得
+    building_ids = [b.id for b in buildings]
+    
+    if building_ids:
+        # 各建物の物件を一括取得（最大6件ずつ）
+        properties_query = db.query(
+            MasterProperty.id,
+            MasterProperty.building_id,
+            MasterProperty.room_number,
+            MasterProperty.floor_number,
+            MasterProperty.area,
+            MasterProperty.layout,
+            MasterProperty.direction,
+            MasterProperty.sold_at,
+            MasterProperty.final_price,
+            func.max(PropertyListing.current_price).label('current_price')
+        ).outerjoin(
+            PropertyListing,
+            and_(
+                PropertyListing.master_property_id == MasterProperty.id,
+                PropertyListing.is_active == True
+            )
+        ).filter(
+            MasterProperty.building_id.in_(building_ids)
+        )
+        
+        # 同じフィルタ条件を適用
+        if min_area:
+            properties_query = properties_query.filter(MasterProperty.area >= min_area)
+        if max_area:
+            properties_query = properties_query.filter(MasterProperty.area <= max_area)
+        if layouts:
+            properties_query = properties_query.filter(MasterProperty.layout.in_(layouts))
+        
+        # 価格フィルタ
+        if min_price or max_price:
+            price_having = []
+            if min_price:
+                price_having.append(
+                    or_(
+                        func.max(PropertyListing.current_price) >= min_price,
+                        and_(
+                            func.max(PropertyListing.current_price).is_(None),
+                            MasterProperty.final_price >= min_price
+                        )
+                    )
+                )
+            if max_price:
+                price_having.append(
+                    or_(
+                        func.max(PropertyListing.current_price) <= max_price,
+                        and_(
+                            func.max(PropertyListing.current_price).is_(None),
+                            MasterProperty.final_price <= max_price
+                        )
+                    )
+                )
+            if price_having:
+                properties_query = properties_query.having(and_(*price_having))
+        
+        if not include_inactive:
+            active_props = db.query(PropertyListing.master_property_id).filter(
+                PropertyListing.is_active == True
+            ).subquery()
+            properties_query = properties_query.filter(MasterProperty.id.in_(select(active_props)))
+        
+        properties_query = properties_query.group_by(
+            MasterProperty.id,
+            MasterProperty.building_id,
+            MasterProperty.room_number,
+            MasterProperty.floor_number,
+            MasterProperty.area,
+            MasterProperty.layout,
+            MasterProperty.direction,
+            MasterProperty.sold_at,
+            MasterProperty.final_price
+        ).order_by(MasterProperty.floor_number.asc())
+        
+        all_properties = properties_query.all()
+        
+        # 建物ごとに物件をグループ化
+        properties_by_building = {}
+        for prop in all_properties:
+            if prop.building_id not in properties_by_building:
+                properties_by_building[prop.building_id] = []
+            
+            # 最大6件まで
+            if len(properties_by_building[prop.building_id]) < 6:
+                properties_by_building[prop.building_id].append({
+                    "id": prop.id,
+                    "room_number": prop.room_number,
+                    "floor_number": prop.floor_number,
+                    "area": prop.area,
+                    "layout": prop.layout,
+                    "direction": prop.direction,
+                    "current_price": prop.current_price or prop.final_price,
+                    "sold_at": prop.sold_at
+                })
+    else:
+        properties_by_building = {}
+    
+    # 結果を構築
+    result_buildings = []
+    for building in buildings:
+        result_buildings.append({
+            "building": {
+                "id": building.id,
+                "normalized_name": building.normalized_name,
+                "address": building.address,
+                "total_floors": building.total_floors,
+                "built_year": building.built_year,
+                "built_month": building.built_month,
+                "construction_type": building.construction_type,
+                "building_age": datetime.now().year - building.built_year if building.built_year else None
+            },
+            "properties": properties_by_building.get(building.id, []),
+            "total_properties": building.property_count
+        })
+    
+    return {
+        "buildings": result_buildings,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "total_pages": (total + per_page - 1) // per_page if total > 0 else 0
     }
 
 @app.get("/api/v2/buildings/by-name/{building_name}/properties", response_model=Dict[str, Any])

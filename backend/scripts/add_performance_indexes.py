@@ -1,66 +1,69 @@
 #!/usr/bin/env python3
 """
-建物重複検出のパフォーマンス改善用インデックスを追加
+パフォーマンス向上のためのインデックスを追加
 """
 
 import os
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pathlib import Path
 
-from sqlalchemy import create_engine, text
+# プロジェクトルートへのパスを追加
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
 
-# 環境変数から設定を読み込む
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://realestate:realestate_pass@localhost:5432/realestate")
+from sqlalchemy import text
+from backend.app.database import engine
 
-def main():
-    """インデックスを追加"""
-    print("建物重複検出用のインデックスを追加します...")
-    
-    # データベース接続
-    engine = create_engine(DATABASE_URL)
+def add_indexes():
+    """パフォーマンス向上のためのインデックスを追加"""
     
     indexes = [
-        # 建物名の前方一致検索用
-        "CREATE INDEX IF NOT EXISTS idx_buildings_normalized_name_prefix ON buildings (LEFT(normalized_name, 3))",
+        # 建物検索用インデックス
+        "CREATE INDEX IF NOT EXISTS idx_buildings_normalized_name_gin ON buildings USING gin(normalized_name gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS idx_buildings_address_gin ON buildings USING gin(address gin_trgm_ops)",
+        "CREATE INDEX IF NOT EXISTS idx_buildings_built_year ON buildings(built_year)",
         
-        # 住所の前方一致検索用
-        "CREATE INDEX IF NOT EXISTS idx_buildings_address_prefix ON buildings (LEFT(address, 10))",
+        # 物件検索用インデックス
+        "CREATE INDEX IF NOT EXISTS idx_master_properties_building_id ON master_properties(building_id)",
+        "CREATE INDEX IF NOT EXISTS idx_master_properties_area ON master_properties(area)",
+        "CREATE INDEX IF NOT EXISTS idx_master_properties_layout ON master_properties(layout)",
+        "CREATE INDEX IF NOT EXISTS idx_master_properties_floor_number ON master_properties(floor_number)",
         
-        # 築年でのフィルタリング用
-        "CREATE INDEX IF NOT EXISTS idx_buildings_built_year ON buildings (built_year)",
+        # 掲載情報検索用インデックス
+        "CREATE INDEX IF NOT EXISTS idx_property_listings_master_property_id_active ON property_listings(master_property_id, is_active)",
+        "CREATE INDEX IF NOT EXISTS idx_property_listings_current_price ON property_listings(current_price) WHERE is_active = true",
+        "CREATE INDEX IF NOT EXISTS idx_property_listings_updated_at ON property_listings(updated_at DESC)",
         
-        # 総階数でのフィルタリング用
-        "CREATE INDEX IF NOT EXISTS idx_buildings_total_floors ON buildings (total_floors)",
-        
-        # 複合インデックス：築年と総階数
-        "CREATE INDEX IF NOT EXISTS idx_buildings_built_year_floors ON buildings (built_year, total_floors)",
-        
-        # 物件数カウント用（既に存在するはず）
-        "CREATE INDEX IF NOT EXISTS idx_master_properties_building_id ON master_properties (building_id)"
+        # 複合インデックス（よく使われる組み合わせ）
+        "CREATE INDEX IF NOT EXISTS idx_master_properties_building_area_layout ON master_properties(building_id, area, layout)",
+        "CREATE INDEX IF NOT EXISTS idx_buildings_address_year ON buildings(address, built_year)",
     ]
     
     with engine.connect() as conn:
+        # pg_trgm拡張を有効化（テキスト検索用）
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+        conn.commit()
+        
+        # インデックスを作成
         for index_sql in indexes:
             try:
-                print(f"実行中: {index_sql[:50]}...")
+                print(f"Creating index: {index_sql[:60]}...")
                 conn.execute(text(index_sql))
                 conn.commit()
-                print("  ✓ 成功")
+                print("  ✓ Created")
             except Exception as e:
-                print(f"  ✗ エラー: {e}")
+                print(f"  ✗ Error: {e}")
     
-    print("\nインデックスの追加が完了しました。")
+    print("\nインデックスの作成が完了しました。")
     
     # 統計情報を更新
-    print("\n統計情報を更新しています...")
     with engine.connect() as conn:
-        try:
-            conn.execute(text("ANALYZE buildings"))
-            conn.execute(text("ANALYZE master_properties"))
-            conn.commit()
-            print("✓ 統計情報の更新が完了しました")
-        except Exception as e:
-            print(f"✗ 統計情報の更新エラー: {e}")
+        print("\n統計情報を更新中...")
+        conn.execute(text("ANALYZE buildings"))
+        conn.execute(text("ANALYZE master_properties"))
+        conn.execute(text("ANALYZE property_listings"))
+        conn.commit()
+        print("統計情報の更新が完了しました。")
 
 if __name__ == "__main__":
-    main()
+    add_indexes()

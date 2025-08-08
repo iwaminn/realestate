@@ -2389,6 +2389,18 @@ class BaseScraper(ABC):
                 PropertyListing.source_site == self.source_site,
                 PropertyListing.site_property_id == site_property_id
             ).first()
+            
+            # 既存掲載が見つかり、かつmaster_property_idが異なる場合の処理
+            # これは通常、save_property_commonで既に同じmaster_propertyが渡されているはずなので、
+            # 発生しないはずだが、念のためチェック
+            if listing and listing.master_property_id != master_property.id:
+                self.logger.warning(
+                    f"掲載情報のmaster_property_idが異なります: "
+                    f"既存={listing.master_property_id}, 新規={master_property.id}, "
+                    f"site_property_id={site_property_id}"
+                )
+                # 既存の関係を優先（save_property_commonで処理済みのはず）
+                master_property = listing.master_property
         else:
             # site_property_idがない場合は、URLとmaster_property_idで検索
             listing = self.session.query(PropertyListing).filter(
@@ -3286,17 +3298,7 @@ class BaseScraper(ABC):
                         )
                     
                     # デバッグ情報を出力
-                    self.logger.warning(
-                        f"物件データ検証失敗 - URL: {url}, "
-                        f"price: {property_data.get('price')}, "
-                        f"building_name: {property_data.get('building_name')}, "
-                        f"area: {property_data.get('area')}, "
-                        f"layout: {property_data.get('layout')}, "
-                        f"site_property_id: {property_data.get('site_property_id', 'なし')}"
-                    )
                 
-                # エラーログを記録
-                self.logger.error(f"物件保存失敗 - {failure_reason}: URL={url}")
                 print(f"  → 保存失敗: {failure_reason} (URL: {url})")
                 
                 # 検証エラーの場合、再取得制御用に記録
@@ -3330,8 +3332,72 @@ class BaseScraper(ABC):
                     self._scraping_stats['save_failed'] = self._scraping_stats.get('save_failed', 0) + 1
                 return False
             
-            # 建物を取得または作成
-            building, extracted_room_number = self.get_or_create_building(
+            # site_property_idで既存の掲載情報が見つかっている場合、その物件・建物情報を優先的に使用
+            if existing_listing and existing_listing.master_property:
+                # 既存の物件と建物を使用
+                master_property = existing_listing.master_property
+                building = master_property.building
+                extracted_room_number = master_property.room_number
+                
+                # 建物情報の更新（より詳細な情報があれば）
+                if building:
+                    updated = False
+                    if property_data.get('address') and not building.address:
+                        building.address = property_data.get('address')
+                        updated = True
+                    if property_data.get('built_year') and not building.built_year:
+                        building.built_year = property_data.get('built_year')
+                        updated = True
+                    if property_data.get('built_month') and not building.built_month:
+                        building.built_month = property_data.get('built_month')
+                        updated = True
+                    if property_data.get('total_floors') and not building.total_floors:
+                        building.total_floors = property_data.get('total_floors')
+                        updated = True
+                    if property_data.get('basement_floors') and not building.basement_floors:
+                        building.basement_floors = property_data.get('basement_floors')
+                        updated = True
+                    if property_data.get('structure') and not building.construction_type:
+                        building.construction_type = property_data.get('structure')
+                        updated = True
+                    if property_data.get('land_rights') and not building.land_rights:
+                        building.land_rights = property_data.get('land_rights')
+                        updated = True
+                    if property_data.get('station_info') and not building.station_info:
+                        building.station_info = property_data.get('station_info')
+                        updated = True
+                    if updated:
+                        self.session.flush()
+                
+                # マスター物件の情報更新（より詳細な情報があれば）
+                updated = False
+                if property_data.get('room_number') and not master_property.room_number:
+                    master_property.room_number = property_data.get('room_number')
+                    updated = True
+                if property_data.get('floor_number') and not master_property.floor_number:
+                    master_property.floor_number = property_data.get('floor_number')
+                    updated = True
+                if property_data.get('area') and not master_property.area:
+                    master_property.area = property_data.get('area')
+                    updated = True
+                if property_data.get('layout') and not master_property.layout:
+                    master_property.layout = self.fuzzy_matcher.normalize_layout(property_data.get('layout'))
+                    updated = True
+                if property_data.get('direction') and not master_property.direction:
+                    master_property.direction = self.fuzzy_matcher.normalize_direction(property_data.get('direction'))
+                    updated = True
+                if property_data.get('balcony_area') and not master_property.balcony_area:
+                    master_property.balcony_area = property_data.get('balcony_area')
+                    updated = True
+                if updated:
+                    self.session.flush()
+                    
+                self.logger.info(f"既存掲載情報の物件・建物を使用: 建物ID={building.id if building else 'なし'}, 物件ID={master_property.id}")
+            else:
+                # 既存の掲載情報がない、または物件情報がない場合は従来通りの処理
+                
+                # 建物を取得または作成
+                building, extracted_room_number = self.get_or_create_building(
                 building_name=property_data.get('building_name'),
                 address=property_data.get('address'),
                 external_property_id=property_data.get('site_property_id'),
