@@ -481,6 +481,12 @@ class HomesScraper(BaseScraper):
             direction = normalize_direction(value)
             if direction:
                 details['direction'] = direction
+        elif '総戸数' in label or '総区画数' in label:
+            # 総戸数を抽出（例：「150戸」→ 150）
+            units_match = re.search(r'(\d+)戸', value)
+            if units_match:
+                details['total_units'] = int(units_match.group(1))
+                self.logger.info(f"[HOMES] 総戸数: {details['total_units']}戸")
         elif '管理費' in label:
             # "管理費等"も含めて処理する
             management_fee = extract_monthly_fee(value)

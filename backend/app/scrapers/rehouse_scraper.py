@@ -459,6 +459,13 @@ class RehouseScraper(BaseScraper):
             if repair_fund:
                 property_data['repair_fund'] = repair_fund
         
+        # 総戸数
+        elif '総戸数' in label or '総区画数' in label:
+            units_match = re.search(r'(\d+)戸', value)
+            if units_match:
+                property_data['total_units'] = int(units_match.group(1))
+                self.logger.info(f"[REHOUSE] 総戸数: {property_data['total_units']}戸")
+        
         # 所在地/住所
         elif '所在地' in label or '住所' in label:
             # GoogleMapsなどの不要な文字を削除

@@ -63,6 +63,7 @@ const PropertyListPage: React.FC = () => {
     if (urlParams.get('layouts')) params.layouts = urlParams.get('layouts')?.split(',') || undefined;
     if (urlParams.get('building_name')) params.building_name = urlParams.get('building_name') || undefined;
     if (urlParams.get('max_building_age')) params.max_building_age = Number(urlParams.get('max_building_age'));
+    if (urlParams.get('wards')) params.wards = urlParams.get('wards')?.split(',') || undefined;
     
     return params;
   };
@@ -85,6 +86,11 @@ const PropertyListPage: React.FC = () => {
   const updateUrlParams = (params: SearchParams, page: number, includeInactiveValue?: boolean) => {
     const urlParams = new URLSearchParams();
     
+    // viewモードを保持
+    if (viewMode === 'buildings') {
+      urlParams.set('view', 'buildings');
+    }
+    
     // 検索条件をURLパラメータに追加
     if (params.sort_by && params.sort_by !== 'updated_at') urlParams.set('sort_by', params.sort_by);
     if (params.sort_order && params.sort_order !== 'desc') urlParams.set('sort_order', params.sort_order);
@@ -95,6 +101,7 @@ const PropertyListPage: React.FC = () => {
     if (params.layouts && params.layouts.length > 0) urlParams.set('layouts', params.layouts.join(','));
     if (params.building_name) urlParams.set('building_name', params.building_name);
     if (params.max_building_age) urlParams.set('max_building_age', params.max_building_age.toString());
+    if (params.wards && params.wards.length > 0) urlParams.set('wards', params.wards.join(','));
     if (page > 1) urlParams.set('page', page.toString());
     
     // include_inactiveパラメータを追加

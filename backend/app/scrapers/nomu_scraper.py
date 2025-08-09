@@ -591,6 +591,13 @@ class NomuScraper(BaseScraper):
             if balcony_area:
                 detail_data['balcony_area'] = balcony_area
         
+        elif label == "総戸数":
+            # 総戸数を抽出（例："250戸"）
+            units_match = re.search(r'(\d+)戸', value)
+            if units_match:
+                detail_data['total_units'] = int(units_match.group(1))
+                self.logger.info(f"[NOMU] 総戸数: {detail_data['total_units']}戸")
+        
         elif label == "備　考":
             if value and value != "―":
                 detail_data['remarks'] = value

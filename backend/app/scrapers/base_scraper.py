@@ -3592,6 +3592,7 @@ class BaseScraper(ABC):
                 listing_layout=property_data.get('layout'),
                 listing_direction=property_data.get('direction'),
                 listing_total_floors=property_data.get('total_floors'),
+                listing_total_units=property_data.get('total_units'),
                 listing_built_year=property_data.get('built_year'),
                 listing_built_month=property_data.get('built_month'),
                 listing_balcony_area=property_data.get('balcony_area'),

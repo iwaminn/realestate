@@ -425,7 +425,7 @@ const BuildingPropertiesPage: React.FC = () => {
         <Paper elevation={2} sx={{ p: 3, mb: 4 }}>
           <Typography variant="h6" gutterBottom>建物情報</Typography>
           <Grid container spacing={3}>
-            <Grid item xs={6} sm={3}>
+            <Grid item xs={6} sm={2.4}>
               <Box textAlign="center">
                 <Typography variant="h4" color="primary">
                   {stats.total_units}
@@ -435,7 +435,17 @@ const BuildingPropertiesPage: React.FC = () => {
                 </Typography>
               </Box>
             </Grid>
-            <Grid item xs={6} sm={3}>
+            <Grid item xs={6} sm={2.4}>
+              <Box textAlign="center">
+                <Typography variant="h4" color="primary">
+                  {building?.total_units ? `${building.total_units}` : '-'}
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  総戸数
+                </Typography>
+              </Box>
+            </Grid>
+            <Grid item xs={6} sm={2.4}>
               <Box textAlign="center">
                 <Typography variant="h4" color="primary">
                   {stats.total_floors ? `${stats.total_floors}` : maxFloorFromProperties ? `${maxFloorFromProperties}+` : '-'}
@@ -445,48 +455,48 @@ const BuildingPropertiesPage: React.FC = () => {
                 </Typography>
               </Box>
             </Grid>
-            <Grid item xs={6} sm={3}>
+            <Grid item xs={6} sm={2.4}>
               <Box textAlign="center">
                 {stats.price_range.min === stats.price_range.max ? (
                   <Typography variant="h4" color="primary">
                     {formatPrice(stats.price_range.min)}
                   </Typography>
                 ) : (
-                  <>
-                    <Typography variant="body1">
+                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <Typography variant="h6" color="primary" sx={{ fontWeight: 'medium' }}>
                       {formatPrice(stats.price_range.min)}
                     </Typography>
-                    <Typography variant="body1">
+                    <Typography variant="h6" color="primary">
                       〜
                     </Typography>
-                    <Typography variant="body1">
+                    <Typography variant="h6" color="primary" sx={{ fontWeight: 'medium' }}>
                       {formatPrice(stats.price_range.max)}
                     </Typography>
-                  </>
+                  </Box>
                 )}
                 <Typography variant="body2" color="text.secondary">
                   価格{stats.price_range.min === stats.price_range.max ? '' : '帯'}
                 </Typography>
               </Box>
             </Grid>
-            <Grid item xs={6} sm={3}>
+            <Grid item xs={6} sm={2.4}>
               <Box textAlign="center">
                 {stats.area_range.min === stats.area_range.max ? (
                   <Typography variant="h4" color="primary">
                     {stats.area_range.min.toFixed(1)}㎡
                   </Typography>
                 ) : (
-                  <>
-                    <Typography variant="body1">
+                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                    <Typography variant="h6" color="primary" sx={{ fontWeight: 'medium' }}>
                       {stats.area_range.min.toFixed(1)}㎡
                     </Typography>
-                    <Typography variant="body1">
+                    <Typography variant="h6" color="primary">
                       〜
                     </Typography>
-                    <Typography variant="body1">
+                    <Typography variant="h6" color="primary" sx={{ fontWeight: 'medium' }}>
                       {stats.area_range.max.toFixed(1)}㎡
                     </Typography>
-                  </>
+                  </Box>
                 )}
                 <Typography variant="body2" color="text.secondary">
                   専有面積{stats.area_range.min === stats.area_range.max ? '' : '範囲'}

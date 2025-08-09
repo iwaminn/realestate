@@ -400,6 +400,15 @@ class MajorityVoteUpdater:
                 building.station_info = majority_station_info
                 updated = True
         
+        # 総戸数の多数決
+        if building_info.get('total_units'):
+            majority_total_units = self.get_majority_value(building_info['total_units'], building.total_units)
+            if majority_total_units != building.total_units:
+                logger.info(f"建物 '{building.normalized_name}' の総戸数を "
+                          f"{building.total_units} → {majority_total_units} に更新")
+                building.total_units = majority_total_units
+                updated = True
+        
         return updated
     
     def collect_building_info_from_listings(self, building_id: int) -> Dict[str, List[Any]]:
@@ -445,7 +454,8 @@ class MajorityVoteUpdater:
             'structures': [],
             'basement_floors': [],
             'land_rights': [],
-            'station_infos': []
+            'station_infos': [],
+            'total_units': []
         }
         
         for listing in listings:
@@ -466,6 +476,8 @@ class MajorityVoteUpdater:
                 info['land_rights'].append((listing.listing_land_rights, listing.source_site))
             if hasattr(listing, 'listing_station_info') and listing.listing_station_info:
                 info['station_infos'].append((listing.listing_station_info, listing.source_site))
+            if hasattr(listing, 'listing_total_units') and listing.listing_total_units:
+                info['total_units'].append((listing.listing_total_units, listing.source_site))
         
         return info
     

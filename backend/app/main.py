@@ -87,6 +87,7 @@ class BuildingSchema(BaseModel):
     address: Optional[str]
     total_floors: Optional[int]
     basement_floors: Optional[int]
+    total_units: Optional[int]  # 総戸数を追加
     built_year: Optional[int]
     built_month: Optional[int]
     construction_type: Optional[str]
@@ -219,6 +220,9 @@ async def get_areas(db: Session = Depends(get_db)):
     # area_config.pyの定義も含めて返す
     from .scrapers.area_config import TOKYO_AREA_CODES
     
+    # 地価順の並び（辞書の順序を保持するため、Python 3.7+で有効）
+    area_order = list(TOKYO_AREA_CODES.keys())
+    
     area_list = []
     for ward, property_count in results:
         if ward:
@@ -230,8 +234,8 @@ async def get_areas(db: Session = Depends(get_db)):
                 "property_count": property_count
             })
     
-    # 区名順でソート
-    area_list.sort(key=lambda x: x["name"])
+    # 地価順でソート（TOKYO_AREA_CODESの定義順）
+    area_list.sort(key=lambda x: area_order.index(x["name"]) if x["name"] in area_order else 999)
     
     return area_list
 

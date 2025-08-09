@@ -23,6 +23,7 @@ class Building(Base):
     normalized_address = Column(String(500))                   # 正規化された住所（比較用）
     total_floors = Column(Integer)                             # 総階数
     basement_floors = Column(Integer)                          # 地下階数
+    total_units = Column(Integer)                              # 総戸数
     built_year = Column(Integer)                               # 築年
     built_month = Column(Integer)                              # 築月
     construction_type = Column(String(100))                    # 構造（RC造など）
@@ -160,6 +161,7 @@ class PropertyListing(Base):
     listing_layout = Column(String(20))                       # 掲載上の間取り
     listing_direction = Column(String(20))                    # 掲載上の方角
     listing_total_floors = Column(Integer)                    # 掲載上の総階数
+    listing_total_units = Column(Integer)                     # 掲載上の総戸数
     listing_building_structure = Column(String(100))          # 掲載上の建物構造
     listing_built_year = Column(Integer)                      # 掲載上の築年
     listing_built_month = Column(Integer)                     # 掲載上の築月
