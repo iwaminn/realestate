@@ -347,25 +347,35 @@ class DataNormalizer:
         if 'スタジオ' in text or 'STUDIO' in text:
             return 'STUDIO'
         
-        # 特殊な間取りパターン（LDK+S、SLDK+S、LDK+納戸など）
-        # まず「LDK＋納戸」「1LDK＋納戸」のようなパターンを処理
-        nando_match = re.search(r'(\d*)([SLDK]+)[＋+]納戸', text)
-        if nando_match:
-            num = nando_match.group(1)
-            main_rooms = nando_match.group(2)
-            # 納戸はSとして扱う
+        # 特殊な間取りパターン（LDK+S、SLDK+S、LDK+納戸、LDK+サービスルームなど）
+        # 「LDK＋サービスルーム（納戸）」「LDK＋納戸」「1LDK＋納戸」のようなパターンを処理
+        # サービスルーム、納戸、WICなどはすべてSとして扱う
+        service_room_pattern = r'(\d*)([SLDK]+)[＋+](?:サービスルーム|SERVICE\s*ROOM|S\.R\.|SR|納戸|N|WIC|ウォークインクローゼット)'
+        service_match = re.search(service_room_pattern, text, re.IGNORECASE)
+        if service_match:
+            num = service_match.group(1)
+            main_rooms = service_match.group(2)
+            # サービスルーム系はSとして扱う
             if num:
                 return f"{num}{main_rooms}+S"
             else:
-                return f"{main_rooms}+S"
+                # 数字がない場合（LDK＋サービスルームなど）
+                # LDKの前に数字を探す
+                prefix_match = re.search(r'(\d+)\s*' + re.escape(main_rooms), text)
+                if prefix_match:
+                    return f"{prefix_match.group(1)}{main_rooms}+S"
+                else:
+                    # それでも数字が見つからない場合は1を仮定
+                    return f"1{main_rooms}+S"
         
-        # 通常の+パターン（LDK+S、SLDK+Sなど）
-        special_layout_match = re.search(r'([SLDK]+)[＋+]([SLDK]+)', text)
+        # 通常の+パターン（1LDK+S、2SLDK+Sなど）
+        special_layout_match = re.search(r'(\d+)([SLDK]+)[＋+]([SLDK]+)', text)
         if special_layout_match:
-            main_rooms = special_layout_match.group(1)
-            additional_rooms = special_layout_match.group(2)
-            # LDK+S形式をそのまま返す（一般的な表記方法）
-            return f"{main_rooms}+{additional_rooms}"
+            num = special_layout_match.group(1)
+            main_rooms = special_layout_match.group(2)
+            additional_rooms = special_layout_match.group(3)
+            # 1LDK+S形式で返す
+            return f"{num}{main_rooms}+{additional_rooms}"
         
         # 一般的な間取りパターン
         layout_match = re.search(r'([1-9]\d*)\s*([SLDK]+)', text)

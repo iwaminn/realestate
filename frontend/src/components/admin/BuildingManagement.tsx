@@ -36,6 +36,8 @@ import {
   Edit as EditIcon,
   Clear as ClearIcon,
   Home as HomeIcon,
+  Undo as UndoIcon,
+  CallSplit as CallSplitIcon,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import axios, { isAxiosError } from 'axios';
@@ -46,6 +48,7 @@ interface Building {
   normalized_name: string;
   address?: string;
   total_floors?: number;
+  total_units?: number;  // 総戸数を追加
   built_year?: number;
   created_at: string;
   updated_at: string;
@@ -63,6 +66,14 @@ interface BuildingDetail extends Building {
     external_id: string;
     created_at?: string;
   }>;
+  // エイリアス（統合された建物名）
+  aliases?: Array<{
+    id: number;  // 統合履歴IDを追加
+    name: string;
+    merged_at?: string;
+    merged_by?: string;
+    property_count?: number;  // 統合時の物件数を追加
+  }>;
   // 物件一覧
   properties: Array<{
     id: number;
@@ -71,6 +82,7 @@ interface BuildingDetail extends Building {
     area?: number;
     layout?: string;
     direction?: string;
+    display_building_name?: string;  // 物件毎の建物名を追加
     active_listing_count: number;
     min_price?: number;
     max_price?: number;
@@ -123,8 +135,11 @@ export const BuildingManagement: React.FC = () => {
     normalized_name: '',
     address: '',
     total_floors: '',
+    total_units: '',
     built_year: '',
   });
+  const [revertingMergeId, setRevertingMergeId] = useState<number | null>(null);
+  const [detachingPropertyId, setDetachingPropertyId] = useState<number | null>(null);
 
   // 建物一覧を取得
   const fetchBuildings = async () => {
@@ -181,6 +196,9 @@ export const BuildingManagement: React.FC = () => {
       if (editForm.total_floors !== String(selectedBuilding.total_floors || '')) {
         data.total_floors = editForm.total_floors ? Number(editForm.total_floors) : null;
       }
+      if (editForm.total_units !== String(selectedBuilding.total_units || '')) {
+        data.total_units = editForm.total_units ? Number(editForm.total_units) : null;
+      }
       if (editForm.built_year !== String(selectedBuilding.built_year || '')) {
         data.built_year = editForm.built_year ? Number(editForm.built_year) : null;
       }
@@ -222,9 +240,63 @@ export const BuildingManagement: React.FC = () => {
       normalized_name: selectedBuilding.normalized_name,
       address: selectedBuilding.address || '',
       total_floors: String(selectedBuilding.total_floors || ''),
+      total_units: String(selectedBuilding.total_units || ''),
       built_year: String(selectedBuilding.built_year || ''),
     });
     setEditDialogOpen(true);
+  };
+
+  // 建物統合を復元
+  const revertBuildingMerge = async (mergeHistoryId: number) => {
+    if (window.confirm('この統合を取り消しますか？元の建物が復元されます。')) {
+      setRevertingMergeId(mergeHistoryId);
+      try {
+        await axios.post(`/api/admin/revert-building-merge/${mergeHistoryId}`);
+        
+        // 詳細を再取得
+        if (selectedBuilding) {
+          await fetchBuildingDetail(selectedBuilding.id);
+        }
+        // 一覧も更新
+        await fetchBuildings();
+        
+        alert('統合を取り消しました');
+      } catch (error) {
+        console.error('統合の取り消しに失敗しました:', error);
+        alert('統合の取り消しに失敗しました');
+      } finally {
+        setRevertingMergeId(null);
+      }
+    }
+  };
+
+  // 物件を建物から分離
+  const detachPropertyFromBuilding = async (propertyId: number) => {
+    const confirmMessage = `この物件を建物から分離しますか？\n\n物件の掲載情報に基づいて、以下のいずれかの処理が行われます：\n1. 適切な既存建物に紐付け直す\n2. 新しい建物を作成して紐付ける\n\n※分離後も同じ建物に紐付く場合はエラーとなります`;
+    
+    if (window.confirm(confirmMessage)) {
+      setDetachingPropertyId(propertyId);
+      try {
+        const response = await axios.post(`/api/admin/properties/${propertyId}/detach-from-building`);
+        
+        // 成功メッセージを表示
+        alert(response.data.message);
+        
+        // 詳細を再取得
+        if (selectedBuilding) {
+          await fetchBuildingDetail(selectedBuilding.id);
+        }
+        // 一覧も更新
+        await fetchBuildings();
+        
+      } catch (error: any) {
+        console.error('物件の分離に失敗しました:', error);
+        const errorMessage = error.response?.data?.detail || '物件の分離に失敗しました';
+        alert(errorMessage);
+      } finally {
+        setDetachingPropertyId(null);
+      }
+    }
   };
 
   const formatPrice = (price?: number) => {
@@ -406,6 +478,7 @@ export const BuildingManagement: React.FC = () => {
                   <TableCell>建物名</TableCell>
                   <TableCell>住所</TableCell>
                   <TableCell align="center">総階数</TableCell>
+                  <TableCell align="center">総戸数</TableCell>
                   <TableCell align="center">築年数</TableCell>
                   <TableCell align="center">物件数</TableCell>
                   <TableCell align="center">掲載中</TableCell>
@@ -421,6 +494,9 @@ export const BuildingManagement: React.FC = () => {
                     <TableCell>{building.address || '-'}</TableCell>
                     <TableCell align="center">
                       {building.total_floors ? `${building.total_floors}階` : '-'}
+                    </TableCell>
+                    <TableCell align="center">
+                      {building.total_units ? `${building.total_units}戸` : '-'}
                     </TableCell>
                     <TableCell align="center">
                       {building.built_year ? (
@@ -538,11 +614,15 @@ export const BuildingManagement: React.FC = () => {
                       <Typography variant="caption" color="text.secondary">住所</Typography>
                       <Typography>{selectedBuilding.address || '-'}</Typography>
                     </Grid>
-                    <Grid item xs={3}>
+                    <Grid item xs={12} sm={4} md={2.4}>
                       <Typography variant="caption" color="text.secondary">総階数</Typography>
                       <Typography>{selectedBuilding.total_floors ? `${selectedBuilding.total_floors}階` : '-'}</Typography>
                     </Grid>
-                    <Grid item xs={3}>
+                    <Grid item xs={12} sm={4} md={2.4}>
+                      <Typography variant="caption" color="text.secondary">総戸数</Typography>
+                      <Typography>{selectedBuilding.total_units ? `${selectedBuilding.total_units}戸` : '-'}</Typography>
+                    </Grid>
+                    <Grid item xs={12} sm={4} md={2.4}>
                       <Typography variant="caption" color="text.secondary">築年数</Typography>
                       <Typography>
                         {selectedBuilding.built_year ? (
@@ -553,17 +633,97 @@ export const BuildingManagement: React.FC = () => {
                         ) : '-'}
                       </Typography>
                     </Grid>
-                    <Grid item xs={3}>
+                    <Grid item xs={12} sm={6} md={2.4}>
                       <Typography variant="caption" color="text.secondary">物件数</Typography>
                       <Typography>{selectedBuilding.property_count}</Typography>
                     </Grid>
-                    <Grid item xs={3}>
+                    <Grid item xs={12} sm={6} md={2.4}>
                       <Typography variant="caption" color="text.secondary">掲載中の物件数</Typography>
                       <Typography>{selectedBuilding.active_listing_count}</Typography>
                     </Grid>
                   </Grid>
                 </CardContent>
               </Card>
+
+              {/* エイリアス（統合された建物名） */}
+              {selectedBuilding.aliases && selectedBuilding.aliases.length > 0 && (
+                <Card sx={{ mb: 2 }}>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>統合された建物名（エイリアス）</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      この建物に統合されている別名の一覧です
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                      {selectedBuilding.aliases.map((alias, index) => (
+                        <Chip
+                          key={index}
+                          label={`${alias.name}${alias.property_count ? ` (${alias.property_count}件)` : ''}`}
+                          variant="outlined"
+                          color="primary"
+                          sx={{ 
+                            fontSize: '0.9rem',
+                            '& .MuiChip-label': { px: 2, py: 1 }
+                          }}
+                        />
+                      ))}
+                    </Box>
+                    {selectedBuilding.aliases.some(alias => alias.merged_at) && (
+                      <Box sx={{ mt: 2 }}>
+                        <Typography variant="caption" color="text.secondary">
+                          統合履歴:
+                        </Typography>
+                        <Table size="small" sx={{ mt: 1 }}>
+                          <TableHead>
+                            <TableRow>
+                              <TableCell>建物名</TableCell>
+                              <TableCell align="right">物件数</TableCell>
+                              <TableCell>統合日時</TableCell>
+                              <TableCell>統合者</TableCell>
+                              <TableCell align="center">操作</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {selectedBuilding.aliases.map((alias, index) => (
+                              <TableRow key={index}>
+                                <TableCell>{alias.name}</TableCell>
+                                <TableCell align="right">
+                                  {alias.property_count ? (
+                                    <Chip
+                                      label={`${alias.property_count}件`}
+                                      size="small"
+                                      color={alias.property_count > 0 ? "primary" : "default"}
+                                    />
+                                  ) : (
+                                    '-'
+                                  )}
+                                </TableCell>
+                                <TableCell>{alias.merged_at ? formatDate(alias.merged_at) : '-'}</TableCell>
+                                <TableCell>{alias.merged_by || 'システム'}</TableCell>
+                                <TableCell align="center">
+                                  <Tooltip title="統合を取り消す">
+                                    <IconButton
+                                      size="small"
+                                      color="warning"
+                                      onClick={() => revertBuildingMerge(alias.id)}
+                                      disabled={revertingMergeId === alias.id}
+                                    >
+                                      {revertingMergeId === alias.id ? (
+                                        <CircularProgress size={20} />
+                                      ) : (
+                                        <UndoIcon />
+                                      )}
+                                    </IconButton>
+                                  </Tooltip>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </Box>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
 
               {/* 外部建物ID */}
               {selectedBuilding.external_ids && selectedBuilding.external_ids.length > 0 && (
@@ -609,59 +769,99 @@ export const BuildingManagement: React.FC = () => {
                 <CardContent>
                   <Typography variant="h6" gutterBottom>物件一覧</Typography>
                   {selectedBuilding.properties.length > 0 ? (
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>部屋番号</TableCell>
-                          <TableCell align="right">階数</TableCell>
-                          <TableCell align="right">面積</TableCell>
-                          <TableCell>間取り</TableCell>
-                          <TableCell>方角</TableCell>
-                          <TableCell align="center">掲載数</TableCell>
-                          <TableCell>価格帯</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {selectedBuilding.properties.map((property) => (
-                          <TableRow key={property.id}>
-                            <TableCell>{property.room_number || '-'}</TableCell>
-                            <TableCell align="right">
-                              {property.floor_number ? `${property.floor_number}階` : '-'}
-                            </TableCell>
-                            <TableCell align="right">
-                              {property.area ? `${property.area.toFixed(2)}㎡` : '-'}
-                            </TableCell>
-                            <TableCell>{property.layout || '-'}</TableCell>
-                            <TableCell>{property.direction || '-'}</TableCell>
-                            <TableCell align="center">
-                              {property.active_listing_count > 0 ? (
-                                <Chip
-                                  label={property.active_listing_count}
-                                  color="primary"
-                                  size="small"
-                                />
-                              ) : (
-                                <Chip
-                                  label="0"
-                                  size="small"
-                                />
-                              )}
-                            </TableCell>
-                            <TableCell>
-                              {property.min_price && property.max_price ? (
-                                property.min_price === property.max_price ? (
-                                  formatPrice(property.min_price)
-                                ) : (
-                                  `${formatPrice(property.min_price)} - ${formatPrice(property.max_price)}`
-                                )
-                              ) : (
-                                '-'
-                              )}
-                            </TableCell>
+                    <TableContainer sx={{ maxHeight: 600 }}>
+                      <Table size="small" stickyHeader>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>部屋番号</TableCell>
+                            <TableCell align="right">階数</TableCell>
+                            <TableCell align="right">面積</TableCell>
+                            <TableCell>間取り</TableCell>
+                            <TableCell>方角</TableCell>
+                            <TableCell>物件表示名</TableCell>
+                            <TableCell align="center">掲載数</TableCell>
+                            <TableCell>価格帯</TableCell>
+                            <TableCell align="center">操作</TableCell>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                        </TableHead>
+                        <TableBody>
+                          {selectedBuilding.properties.map((property) => (
+                            <TableRow key={property.id}>
+                              <TableCell>{property.room_number || '-'}</TableCell>
+                              <TableCell align="right">
+                                {property.floor_number ? `${property.floor_number}階` : '-'}
+                              </TableCell>
+                              <TableCell align="right">
+                                {property.area ? `${property.area.toFixed(2)}㎡` : '-'}
+                              </TableCell>
+                              <TableCell>{property.layout || '-'}</TableCell>
+                              <TableCell>{property.direction || '-'}</TableCell>
+                              <TableCell>
+                                {property.display_building_name ? (
+                                  property.display_building_name !== selectedBuilding.normalized_name ? (
+                                    <Tooltip title="建物名とは異なる表示名が設定されています">
+                                      <Chip
+                                        label={property.display_building_name}
+                                        size="small"
+                                        color="warning"
+                                        variant="outlined"
+                                      />
+                                    </Tooltip>
+                                  ) : (
+                                    <Typography variant="body2" color="text.secondary">
+                                      {property.display_building_name}
+                                    </Typography>
+                                  )
+                                ) : (
+                                  '-'
+                                )}
+                              </TableCell>
+                              <TableCell align="center">
+                                {property.active_listing_count > 0 ? (
+                                  <Chip
+                                    label={property.active_listing_count}
+                                    color="primary"
+                                    size="small"
+                                  />
+                                ) : (
+                                  <Chip
+                                    label="0"
+                                    size="small"
+                                  />
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {property.min_price && property.max_price ? (
+                                  property.min_price === property.max_price ? (
+                                    formatPrice(property.min_price)
+                                  ) : (
+                                    `${formatPrice(property.min_price)} - ${formatPrice(property.max_price)}`
+                                  )
+                                ) : (
+                                  '-'
+                                )}
+                              </TableCell>
+                              <TableCell align="center">
+                                <Tooltip title="この物件を建物から分離">
+                                  <IconButton
+                                    size="small"
+                                    color="warning"
+                                    onClick={() => detachPropertyFromBuilding(property.id)}
+                                    disabled={detachingPropertyId === property.id}
+                                  >
+                                    {detachingPropertyId === property.id ? (
+                                      <CircularProgress size={20} />
+                                    ) : (
+                                      <CallSplitIcon />
+                                    )}
+                                  </IconButton>
+                                </Tooltip>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
                   ) : (
                     <Typography color="text.secondary">物件がありません</Typography>
                   )}
@@ -708,6 +908,15 @@ export const BuildingManagement: React.FC = () => {
                 type="number"
                 value={editForm.total_floors}
                 onChange={(e) => setEditForm({ ...editForm, total_floors: e.target.value })}
+              />
+            </Grid>
+            <Grid item xs={6}>
+              <TextField
+                fullWidth
+                label="総戸数"
+                type="number"
+                value={editForm.total_units}
+                onChange={(e) => setEditForm({ ...editForm, total_units: e.target.value })}
               />
             </Grid>
             <Grid item xs={6}>
