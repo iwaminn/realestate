@@ -1420,6 +1420,19 @@ def merge_buildings(
                         ref_merge.final_primary_building_id = primary_id
                     ref_merge.merge_depth += 1  # 統合の深さを増やす
             
+            # 副建物に関連する除外設定を削除
+            # building_merge_exclusionsテーブルから、この建物が関わっている除外設定を削除
+            exclusions_to_delete = db.query(BuildingMergeExclusion).filter(
+                or_(
+                    BuildingMergeExclusion.building1_id == secondary_building.id,
+                    BuildingMergeExclusion.building2_id == secondary_building.id
+                )
+            ).all()
+            
+            for exclusion in exclusions_to_delete:
+                logger.info(f"[DEBUG] 建物統合による除外設定削除: building1_id={exclusion.building1_id}, building2_id={exclusion.building2_id}")
+                db.delete(exclusion)
+            
             # 副建物を削除
             db.delete(secondary_building)
             merged_count += 1

@@ -1181,7 +1181,34 @@ class BaseScraper(ABC):
                     
                     if existing_listing.current_price != property_data['price']:
                         price_changed = True
-                        print(f"  → 価格変更検出: {existing_listing.current_price}万円 → {property_data['price']}万円")
+                        # 建物名と物件情報を含む詳細ログ
+                        building_name = existing_listing.listing_building_name or ''
+                        if existing_listing.master_property and existing_listing.master_property.building:
+                            building_name = existing_listing.master_property.building.normalized_name or building_name
+                        
+                        detail_info = []
+                        if existing_listing.master_property:
+                            mp = existing_listing.master_property
+                            if mp.floor_number:
+                                detail_info.append(f"{mp.floor_number}階")
+                            if mp.area:
+                                detail_info.append(f"{mp.area}㎡")
+                            if mp.layout:
+                                detail_info.append(f"{mp.layout}")
+                        
+                        detail_str = ' / '.join(detail_info) if detail_info else ''
+                        
+                        # 建物名を含む自然なメッセージ
+                        if building_name:
+                            if detail_str:
+                                print(f"  → 価格変更検出: {building_name} {detail_str} - {existing_listing.current_price}万円 → {property_data['price']}万円")
+                            else:
+                                print(f"  → 価格変更検出: {building_name} - {existing_listing.current_price}万円 → {property_data['price']}万円")
+                        else:
+                            if detail_str:
+                                print(f"  → 価格変更検出: {detail_str} - {existing_listing.current_price}万円 → {property_data['price']}万円")
+                            else:
+                                print(f"  → 価格変更検出: {existing_listing.current_price}万円 → {property_data['price']}万円")
                         if site_id in ['C13252J13', 'C13249B30']:
                             self.logger.info(f"DEBUG: {site_id} - 価格変更検出！")
                 else:
@@ -1621,10 +1648,15 @@ class BaseScraper(ABC):
         if not building_name:
             return ""
             
-        # 1. 全角英数字を半角に変換（ローマ数字も含む）
+        # 1. 全角英数字と記号を半角に変換
         normalized = jaconv.z2h(building_name, kana=False, ascii=True, digit=True)
         
-        # 2. ローマ数字の正規化（全角ローマ数字を半角に変換）
+        # 2. 記号類（半角・全角両方）を半角スペースに変換
+        # 半角: ・-~  全角で残っているもの: ・―〜 など
+        # \u30fb: 全角中点・, \u2010-\u2015: 各種ダッシュ, \u301c: 波ダッシュ〜
+        normalized = re.sub(r'[・\-~\u30fb\u2010-\u2015\u301c]', ' ', normalized)
+        
+        # 3. ローマ数字の正規化（全角ローマ数字を半角に変換）
         roman_map = {
             'Ⅰ': 'I', 'Ⅱ': 'II', 'Ⅲ': 'III', 'Ⅳ': 'IV', 'Ⅴ': 'V',
             'Ⅵ': 'VI', 'Ⅶ': 'VII', 'Ⅷ': 'VIII', 'Ⅸ': 'IX', 'Ⅹ': 'X',
@@ -1633,11 +1665,16 @@ class BaseScraper(ABC):
         for full_width, half_width in roman_map.items():
             normalized = normalized.replace(full_width, half_width)
         
-        # 3. 単位の正規化（㎡とm2を統一）
+        # 4. 単位の正規化（㎡とm2を統一）
         normalized = normalized.replace('㎡', 'm2').replace('m²', 'm2')
         
-        # 4. スペース、記号を除去
-        normalized = re.sub(r'[\s　・－―～〜]+', '', normalized)
+        # 5. スペースの正規化
+        # 全角スペースも半角スペースに変換
+        normalized = normalized.replace('　', ' ')
+        # 連続するスペースを1つの半角スペースに統一
+        normalized = re.sub(r'\s+', ' ', normalized)
+        # 前後の空白を除去
+        normalized = normalized.strip()
         
         return normalized
     
@@ -2599,7 +2636,33 @@ class BaseScraper(ABC):
             update_details = None
             if price_changed:
                 update_type = 'price_updated'
-                self.logger.info(f"価格更新: {old_price}万円 → {price}万円 - {url}")
+                # 物件と建物の詳細情報を含むログメッセージ
+                building_name = kwargs.get('listing_building_name', listing.listing_building_name or '')
+                if master_property and master_property.building:
+                    building_name = master_property.building.normalized_name or building_name
+                
+                detail_info = []
+                if master_property:
+                    if master_property.floor_number:
+                        detail_info.append(f"{master_property.floor_number}階")
+                    if master_property.area:
+                        detail_info.append(f"{master_property.area}㎡")
+                    if master_property.layout:
+                        detail_info.append(f"{master_property.layout}")
+                
+                detail_str = ' / '.join(detail_info) if detail_info else ''
+                
+                # 建物名を含む自然なログメッセージ
+                if building_name:
+                    if detail_str:
+                        self.logger.info(f"価格更新: {building_name} {detail_str} - {old_price}万円 → {price}万円 - {url}")
+                    else:
+                        self.logger.info(f"価格更新: {building_name} - {old_price}万円 → {price}万円 - {url}")
+                else:
+                    if detail_str:
+                        self.logger.info(f"価格更新: {detail_str} - {old_price}万円 → {price}万円 - {url}")
+                    else:
+                        self.logger.info(f"価格更新: {old_price}万円 → {price}万円 - {url}")
             elif other_changed:
                 update_type = 'other_updates'
                 update_details = ', '.join(changed_fields)  # 変更内容を記録
@@ -2763,7 +2826,35 @@ class BaseScraper(ABC):
             
             # 新規作成の場合、update_typeを'new'に設定
             update_type = 'new'
-            self.logger.info(f"新規登録: {price}万円 - {url}")
+            # 物件と建物の詳細情報を含むログメッセージ
+            building_name = kwargs.get('listing_building_name', '')
+            if master_property and master_property.building:
+                building_name = master_property.building.normalized_name or building_name
+            
+            detail_info = []
+            if master_property:
+                if master_property.floor_number:
+                    detail_info.append(f"{master_property.floor_number}階")
+                if master_property.area:
+                    detail_info.append(f"{master_property.area}㎡")
+                if master_property.layout:
+                    detail_info.append(f"{master_property.layout}")
+                if master_property.direction:
+                    detail_info.append(f"{master_property.direction}向き")
+            
+            detail_str = ' / '.join(detail_info) if detail_info else ''
+            
+            # 建物名と価格を含む自然なログメッセージ
+            if building_name:
+                if detail_str:
+                    self.logger.info(f"新規登録: {building_name} {detail_str} - {price}万円 - {url}")
+                else:
+                    self.logger.info(f"新規登録: {building_name} - {price}万円 - {url}")
+            else:
+                if detail_str:
+                    self.logger.info(f"新規登録: {detail_str} - {price}万円 - {url}")
+                else:
+                    self.logger.info(f"新規登録: {price}万円 - {url}")
         
         # 掲載情報の登録・更新後、建物名と物件情報を多数決で更新
         if master_property:
