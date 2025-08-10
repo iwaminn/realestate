@@ -28,6 +28,8 @@ import {
   CircularProgress,
   Tooltip,
   Autocomplete,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -140,6 +142,18 @@ export const BuildingManagement: React.FC = () => {
   });
   const [revertingMergeId, setRevertingMergeId] = useState<number | null>(null);
   const [detachingPropertyId, setDetachingPropertyId] = useState<number | null>(null);
+  const [detachTargetPropertyId, setDetachTargetPropertyId] = useState<number | null>(null);  // 分離対象の物件ID
+  const [detachDialogOpen, setDetachDialogOpen] = useState(false);
+  const [detachCandidates, setDetachCandidates] = useState<any>(null);
+  const [selectedBuildingId, setSelectedBuildingId] = useState<number | null>(null);
+  const [createNewBuilding, setCreateNewBuilding] = useState(false);
+  const [newBuildingForm, setNewBuildingForm] = useState({
+    name: '',
+    address: '',
+    built_year: '',
+    built_month: '',
+    total_floors: '',
+  });
 
   // 建物一覧を取得
   const fetchBuildings = async () => {
@@ -271,31 +285,111 @@ export const BuildingManagement: React.FC = () => {
   };
 
   // 物件を建物から分離
-  const detachPropertyFromBuilding = async (propertyId: number) => {
-    const confirmMessage = `この物件を建物から分離しますか？\n\n物件の掲載情報に基づいて、以下のいずれかの処理が行われます：\n1. 適切な既存建物に紐付け直す\n2. 新しい建物を作成して紐付ける\n\n※分離後も同じ建物に紐付く場合はエラーとなります`;
-    
-    if (window.confirm(confirmMessage)) {
-      setDetachingPropertyId(propertyId);
-      try {
-        const response = await axios.post(`/api/admin/properties/${propertyId}/detach-from-building`);
-        
-        // 成功メッセージを表示
-        alert(response.data.message);
-        
-        // 詳細を再取得
-        if (selectedBuilding) {
-          await fetchBuildingDetail(selectedBuilding.id);
-        }
-        // 一覧も更新
-        await fetchBuildings();
-        
-      } catch (error: any) {
-        console.error('物件の分離に失敗しました:', error);
-        const errorMessage = error.response?.data?.detail || '物件の分離に失敗しました';
-        alert(errorMessage);
-      } finally {
-        setDetachingPropertyId(null);
+  // 物件分離候補を取得
+  const fetchDetachCandidates = async (propertyId: number) => {
+    setDetachingPropertyId(propertyId);
+    setDetachTargetPropertyId(propertyId);  // 分離対象の物件IDを保存
+    try {
+      const response = await axios.post(`/api/admin/properties/${propertyId}/detach-candidates`);
+      setDetachCandidates(response.data);
+      setDetachDialogOpen(true);
+      
+      // デフォルト値を設定
+      if (response.data.property_attributes) {
+        setNewBuildingForm({
+          name: response.data.property_building_name || '',
+          address: response.data.property_attributes.address || '',
+          built_year: response.data.property_attributes.built_year ? String(response.data.property_attributes.built_year) : '',
+          built_month: response.data.property_attributes.built_month ? String(response.data.property_attributes.built_month) : '',
+          total_floors: response.data.property_attributes.total_floors ? String(response.data.property_attributes.total_floors) : '',
+        });
       }
+      
+      // 最高スコアの候補をデフォルト選択
+      if (response.data.candidates && response.data.candidates.length > 0) {
+        setSelectedBuildingId(response.data.candidates[0].id);
+        setCreateNewBuilding(false);
+      } else {
+        setCreateNewBuilding(true);
+      }
+    } catch (error: any) {
+      console.error('候補取得に失敗しました:', error);
+      const errorMessage = error.response?.data?.detail || '候補取得に失敗しました';
+      alert(errorMessage);
+      setDetachingPropertyId(null);  // エラー時のみクリア
+    }
+  };
+
+  // 物件を建物に紐付け
+  const attachPropertyToBuilding = async () => {
+    console.log('attachPropertyToBuilding called');
+    console.log('detachCandidates:', detachCandidates);
+    console.log('detachTargetPropertyId:', detachTargetPropertyId);
+    
+    if (!detachCandidates || !detachTargetPropertyId) {
+      alert(`物件情報が不足しています\ndetachCandidates: ${!!detachCandidates}\ndetachTargetPropertyId: ${detachTargetPropertyId}`);
+      return;
+    }
+    
+    const propertyId = detachTargetPropertyId;
+    
+    try {
+      const requestData: any = {
+        create_new: createNewBuilding
+      };
+      
+      if (createNewBuilding) {
+        // 新規建物作成
+        requestData.new_building_name = newBuildingForm.name;
+        requestData.new_building_address = newBuildingForm.address || null;
+        requestData.new_building_built_year = newBuildingForm.built_year ? Number(newBuildingForm.built_year) : null;
+        requestData.new_building_built_month = newBuildingForm.built_month ? Number(newBuildingForm.built_month) : null;
+        requestData.new_building_total_floors = newBuildingForm.total_floors ? Number(newBuildingForm.total_floors) : null;
+      } else {
+        // 既存建物に紐付け
+        if (!selectedBuildingId) {
+          alert('紐付け先の建物を選択してください');
+          return;
+        }
+        requestData.building_id = selectedBuildingId;
+      }
+      
+      const response = await axios.post(
+        `/api/admin/properties/${propertyId}/attach-to-building`,
+        requestData
+      );
+      
+      console.log('紐付けAPIレスポンス:', response.data);
+      
+      // 成功メッセージを表示
+      const successMessage = response.data?.message || '物件を建物に紐付けました';
+      alert(successMessage);
+      
+      // ダイアログを閉じる
+      setDetachDialogOpen(false);
+      setDetachCandidates(null);
+      setDetachingPropertyId(null);
+      setDetachTargetPropertyId(null);
+      
+      // 詳細を再取得
+      if (selectedBuilding) {
+        await fetchBuildingDetail(selectedBuilding.id);
+      }
+      // 一覧も更新
+      await fetchBuildings();
+      
+    } catch (error: any) {
+      console.error('紐付けに失敗しました:', error);
+      // エラーメッセージの取得を改善
+      let errorMessage = '紐付けに失敗しました';
+      if (error.response?.data?.detail) {
+        errorMessage = error.response.data.detail;
+      } else if (error.response?.data?.message) {
+        errorMessage = error.response.data.message;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      alert(errorMessage);
     }
   };
 
@@ -773,6 +867,7 @@ export const BuildingManagement: React.FC = () => {
                       <Table size="small" stickyHeader>
                         <TableHead>
                           <TableRow>
+                            <TableCell>物件ID</TableCell>
                             <TableCell>部屋番号</TableCell>
                             <TableCell align="right">階数</TableCell>
                             <TableCell align="right">面積</TableCell>
@@ -787,6 +882,7 @@ export const BuildingManagement: React.FC = () => {
                         <TableBody>
                           {selectedBuilding.properties.map((property) => (
                             <TableRow key={property.id}>
+                              <TableCell>{property.id}</TableCell>
                               <TableCell>{property.room_number || '-'}</TableCell>
                               <TableCell align="right">
                                 {property.floor_number ? `${property.floor_number}階` : '-'}
@@ -846,7 +942,7 @@ export const BuildingManagement: React.FC = () => {
                                   <IconButton
                                     size="small"
                                     color="warning"
-                                    onClick={() => detachPropertyFromBuilding(property.id)}
+                                    onClick={() => fetchDetachCandidates(property.id)}
                                     disabled={detachingPropertyId === property.id}
                                   >
                                     {detachingPropertyId === property.id ? (
@@ -934,6 +1030,218 @@ export const BuildingManagement: React.FC = () => {
         <DialogActions>
           <Button onClick={() => setEditDialogOpen(false)}>キャンセル</Button>
           <Button variant="contained" onClick={updateBuilding}>保存</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 物件分離・建物選択ダイアログ */}
+      <Dialog
+        open={detachDialogOpen}
+        onClose={() => {
+          setDetachDialogOpen(false);
+          setDetachingPropertyId(null);  // ローディング状態をクリア
+          setDetachCandidates(null);
+        }}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          物件の分離と再紐付け先の選択
+        </DialogTitle>
+        <DialogContent>
+          {detachCandidates && (
+            <Box>
+              {/* 現在の状況 */}
+              <Card sx={{ mb: 2, bgcolor: 'grey.50' }}>
+                <CardContent>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    現在の建物
+                  </Typography>
+                  <Typography variant="body1">
+                    {detachCandidates.current_building.normalized_name} (ID: {detachCandidates.current_building.id})
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {detachCandidates.current_building.address || '住所未設定'}
+                  </Typography>
+                </CardContent>
+              </Card>
+
+              {/* 物件情報 */}
+              <Card sx={{ mb: 2 }}>
+                <CardContent>
+                  <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                    物件の掲載情報
+                  </Typography>
+                  <Typography variant="body1" gutterBottom>
+                    建物名: <strong>{detachCandidates.property_building_name}</strong>
+                  </Typography>
+                  <Grid container spacing={2}>
+                    <Grid item xs={6}>
+                      <Typography variant="body2">
+                        住所: {detachCandidates.property_attributes.address || '-'}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={3}>
+                      <Typography variant="body2">
+                        築年月: {detachCandidates.property_attributes.built_year ? 
+                          `${detachCandidates.property_attributes.built_year}年${detachCandidates.property_attributes.built_month ? detachCandidates.property_attributes.built_month + '月' : ''}` 
+                          : '-'}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={3}>
+                      <Typography variant="body2">
+                        総階数: {detachCandidates.property_attributes.total_floors || '-'}階
+                      </Typography>
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+
+              {/* 紐付け先の選択 */}
+              <Typography variant="h6" gutterBottom>
+                紐付け先を選択
+              </Typography>
+
+              <FormControl component="fieldset" sx={{ mb: 2, width: '100%' }}>
+                <Tabs
+                  value={createNewBuilding ? 1 : 0}
+                  onChange={(_, value) => setCreateNewBuilding(value === 1)}
+                  sx={{ mb: 2 }}
+                >
+                  <Tab label="既存の建物から選択" />
+                  <Tab label="新規建物を作成" />
+                </Tabs>
+
+                {!createNewBuilding ? (
+                  // 既存建物の選択
+                  <Box>
+                    {detachCandidates.candidates.length > 0 ? (
+                      <TableContainer sx={{ maxHeight: 300 }}>
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell padding="checkbox"></TableCell>
+                              <TableCell>建物名</TableCell>
+                              <TableCell>住所</TableCell>
+                              <TableCell align="center">築年</TableCell>
+                              <TableCell align="center">階数</TableCell>
+                              <TableCell align="center">スコア</TableCell>
+                              <TableCell>一致項目</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {detachCandidates.candidates.map((candidate: any) => (
+                              <TableRow 
+                                key={candidate.id}
+                                selected={selectedBuildingId === candidate.id}
+                                onClick={() => setSelectedBuildingId(candidate.id)}
+                                sx={{ cursor: 'pointer' }}
+                              >
+                                <TableCell padding="checkbox">
+                                  <input
+                                    type="radio"
+                                    checked={selectedBuildingId === candidate.id}
+                                    onChange={() => setSelectedBuildingId(candidate.id)}
+                                  />
+                                </TableCell>
+                                <TableCell>
+                                  {candidate.normalized_name}
+                                  {candidate.match_type === 'alias' && (
+                                    <Chip
+                                      label={`エイリアス: ${candidate.alias_name}`}
+                                      size="small"
+                                      color="info"
+                                      sx={{ ml: 1 }}
+                                    />
+                                  )}
+                                </TableCell>
+                                <TableCell>{candidate.address || '-'}</TableCell>
+                                <TableCell align="center">{candidate.built_year || '-'}</TableCell>
+                                <TableCell align="center">{candidate.total_floors || '-'}</TableCell>
+                                <TableCell align="center">
+                                  <Chip
+                                    label={candidate.score}
+                                    size="small"
+                                    color={candidate.score >= 20 ? 'success' : candidate.score >= 15 ? 'warning' : 'default'}
+                                  />
+                                </TableCell>
+                                <TableCell>
+                                  {candidate.match_details.join(', ')}
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    ) : (
+                      <Typography color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
+                        候補となる建物が見つかりません。新規建物を作成してください。
+                      </Typography>
+                    )}
+                  </Box>
+                ) : (
+                  // 新規建物作成フォーム
+                  <Box>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      以下の情報で新規建物が作成されます（掲載情報の多数決から自動決定）
+                    </Typography>
+                    
+                    <Box sx={{ bgcolor: 'grey.50', p: 2, borderRadius: 1 }}>
+                      <Grid container spacing={2}>
+                        <Grid item xs={12}>
+                          <Typography variant="caption" color="text.secondary">建物名</Typography>
+                          <Typography variant="body1" sx={{ fontWeight: 'medium' }}>
+                            {newBuildingForm.name || '（未設定）'}
+                          </Typography>
+                        </Grid>
+                        <Grid item xs={12}>
+                          <Typography variant="caption" color="text.secondary">住所</Typography>
+                          <Typography variant="body1">
+                            {newBuildingForm.address || '（未設定）'}
+                          </Typography>
+                        </Grid>
+                        <Grid item xs={6}>
+                          <Typography variant="caption" color="text.secondary">築年月</Typography>
+                          <Typography variant="body1">
+                            {newBuildingForm.built_year ? 
+                              `${newBuildingForm.built_year}年${newBuildingForm.built_month ? newBuildingForm.built_month + '月' : ''}` 
+                              : '（未設定）'}
+                          </Typography>
+                        </Grid>
+                        <Grid item xs={6}>
+                          <Typography variant="caption" color="text.secondary">総階数</Typography>
+                          <Typography variant="body1">
+                            {newBuildingForm.total_floors ? `${newBuildingForm.total_floors}階` : '（未設定）'}
+                          </Typography>
+                        </Grid>
+                      </Grid>
+                    </Box>
+                  </Box>
+                )}
+              </FormControl>
+
+              {/* 推奨事項の表示 */}
+              {detachCandidates.can_create_new && !createNewBuilding && (
+                <Typography variant="body2" color="warning.main" sx={{ mt: 1 }}>
+                  ※ 一致度が低いため、新規建物の作成も検討してください
+                </Typography>
+              )}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => {
+            setDetachDialogOpen(false);
+            setDetachingPropertyId(null);  // ローディング状態をクリア
+            setDetachTargetPropertyId(null);  // 分離対象IDもクリア
+            setDetachCandidates(null);
+          }}>キャンセル</Button>
+          <Button
+            variant="contained"
+            onClick={attachPropertyToBuilding}
+            disabled={!createNewBuilding && !selectedBuildingId}
+          >
+            実行
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

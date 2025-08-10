@@ -2,11 +2,17 @@
 
 from typing import List, Dict, Optional, Tuple
 from sqlalchemy import or_, and_
-from sqlalchemy.sql import text
-from backend.app.utils.search_normalizer import create_search_patterns, normalize_search_text
+from sqlalchemy.orm import Query
+from backend.app.utils.search_normalizer import (
+    create_search_patterns, normalize_search_text
+)
 
 
-def create_building_search_filter(building_name: str, column_name: str = "normalized_name", table_alias: str = "") -> Tuple[List, Dict]:
+def create_building_search_filter(
+    building_name: str,
+    column_name: str = "normalized_name",
+    table_alias: str = ""
+) -> Tuple[List, Dict]:
     """
     建物名検索用のSQLAlchemyフィルター条件とパラメータを生成
     
@@ -154,5 +160,85 @@ def apply_building_search_to_query(query, building_name: str, building_table):
         
         if search_conditions:
             query = query.filter(or_(*search_conditions))
+    
+    return query
+
+
+def apply_building_name_filter_with_alias(
+    query: Query,
+    search_text: str,
+    db_session,
+    building_table,
+    property_table=None,
+    merge_history_table=None,
+    search_building_name: bool = True,
+    search_property_display_name: bool = False,
+    search_aliases: bool = True,
+    exclude_building_id: Optional[int] = None
+) -> Query:
+    """
+    建物名検索のフィルターを適用する共通関数（エイリアス検索対応）
+    
+    Args:
+        query: 既存のクエリオブジェクト
+        search_text: 検索文字列（スペース区切りでAND検索）
+        db_session: データベースセッション
+        building_table: Buildingモデルクラス
+        property_table: MasterPropertyモデルクラス（オプション）
+        merge_history_table: BuildingMergeHistoryモデルクラス（オプション）
+        search_building_name: Building.normalized_nameを検索対象に含めるか
+        search_property_display_name: MasterProperty.display_building_nameを検索対象に含めるか
+        search_aliases: 建物統合履歴（エイリアス）を検索対象に含めるか
+        exclude_building_id: 除外する建物ID
+    
+    Returns:
+        フィルターが適用されたクエリ
+    """
+    if not search_text:
+        return query
+    
+    # スペース区切りでAND検索
+    search_terms = search_text.strip().split()
+    
+    if not search_terms:
+        return query
+    
+    for term in search_terms:
+        if not term:  # 空文字列をスキップ
+            continue
+        
+        conditions = []
+        
+        # Building.normalized_nameでの検索
+        if search_building_name:
+            conditions.append(building_table.normalized_name.ilike(f"%{term}%"))
+        
+        # MasterProperty.display_building_nameでの検索
+        if search_property_display_name and property_table:
+            conditions.append(property_table.display_building_name.ilike(f"%{term}%"))
+        
+        # エイリアス（統合履歴）での検索
+        if search_aliases and merge_history_table:
+            alias_building_ids = db_session.query(
+                merge_history_table.primary_building_id
+            ).filter(
+                or_(
+                    merge_history_table.merged_building_name.ilike(f"%{term}%"),
+                    merge_history_table.canonical_merged_name.ilike(f"%{term}%")
+                )
+            )
+            
+            # 現在の建物を除外
+            if exclude_building_id:
+                alias_building_ids = alias_building_ids.filter(
+                    merge_history_table.primary_building_id != exclude_building_id
+                )
+            
+            alias_building_ids = alias_building_ids.distinct()
+            conditions.append(building_table.id.in_(alias_building_ids.subquery()))
+        
+        # 各検索語に対してOR条件を適用（AND条件でつなげる）
+        if conditions:
+            query = query.filter(or_(*conditions))
     
     return query

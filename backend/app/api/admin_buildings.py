@@ -33,7 +33,19 @@ async def get_buildings(
     
     # フィルタリング
     if name:
-        query = query.filter(Building.normalized_name.ilike(f"%{name}%"))
+        # 共通の建物名検索関数を使用
+        from ..utils.building_search import apply_building_name_filter_with_alias
+        from ..models import BuildingMergeHistory
+        query = apply_building_name_filter_with_alias(
+            query,
+            name,
+            db,
+            Building,
+            merge_history_table=BuildingMergeHistory,
+            search_building_name=True,
+            search_property_display_name=False,
+            search_aliases=False  # 建物管理ではエイリアスは含めない
+        )
     
     if address:
         query = query.filter(Building.address.ilike(f"%{address}%"))
@@ -427,13 +439,13 @@ async def update_building(
         raise HTTPException(status_code=500, detail=f"更新に失敗しました: {str(e)}")
 
 
-@router.post("/properties/{property_id}/detach-from-building")
-async def detach_property_from_building(
+@router.post("/properties/{property_id}/detach-candidates")
+async def get_detach_candidates(
     property_id: int,
     db: Session = Depends(get_db),
     _: Any = Depends(verify_admin_credentials)
 ):
-    """物件を建物から分離して、適切な建物に再紐付け（管理者用）"""
+    """物件分離時の建物候補を取得（管理者用）"""
     from ..utils.search_normalizer import normalize_search_text
     import logging
     
@@ -449,27 +461,26 @@ async def detach_property_from_building(
     
     current_building_id = property.building_id
     
-    # 物件に紐付く掲載情報から建物名を取得（多数決）
-    listings = db.query(
-        PropertyListing.listing_building_name,
-        func.count(PropertyListing.id).label('count')
-    ).filter(
-        PropertyListing.master_property_id == property_id,
-        PropertyListing.listing_building_name.isnot(None)
-    ).group_by(
-        PropertyListing.listing_building_name
-    ).order_by(
-        func.count(PropertyListing.id).desc()
-    ).all()
+    # 物件のdisplay_building_nameを使用（重み付き多数決済みの値）
+    most_common_building_name = property.display_building_name
     
-    if not listings:
-        raise HTTPException(
-            status_code=400, 
-            detail="この物件には掲載情報がないため、分離できません"
-        )
-    
-    # 最も多く掲載されている建物名を取得
-    most_common_building_name = listings[0].listing_building_name
+    if not most_common_building_name:
+        # display_building_nameが設定されていない場合は、掲載情報の有無を確認
+        listings_count = db.query(PropertyListing).filter(
+            PropertyListing.master_property_id == property_id
+        ).count()
+        
+        if listings_count == 0:
+            raise HTTPException(
+                status_code=400, 
+                detail="この物件には掲載情報がないため、分離できません"
+            )
+        else:
+            # display_building_nameが未設定の場合はエラー
+            raise HTTPException(
+                status_code=400,
+                detail="この物件の建物名が設定されていません。データの整合性を確認してください"
+            )
     normalized_name = normalize_search_text(most_common_building_name)
     
     logger.info(f"物件 {property_id} の最頻出建物名: {most_common_building_name} (正規化: {normalized_name})")
@@ -477,14 +488,6 @@ async def detach_property_from_building(
     # 現在の建物を取得して比較
     current_building = db.query(Building).filter(Building.id == current_building_id).first()
     logger.info(f"現在の建物: ID={current_building_id}, 名前={current_building.normalized_name}")
-    
-    # 正規化した名前が同じかチェック
-    if current_building.normalized_name == normalized_name:
-        logger.warning(f"分離しようとしている建物名 '{normalized_name}' は現在の建物名と同じです")
-        raise HTTPException(
-            status_code=400,
-            detail=f"分離後も同じ建物名「{normalized_name}」になるため、分離できません"
-        )
     
     # 物件の詳細情報を取得（住所、築年、総階数）
     property_listings = db.query(PropertyListing).filter(
@@ -494,6 +497,7 @@ async def detach_property_from_building(
     # 物件情報から建物の属性を集計（最頻値を使用）
     property_address = None
     property_built_year = None
+    property_built_month = None
     property_total_floors = None
     
     # 住所の集計
@@ -504,8 +508,9 @@ async def detach_property_from_building(
             address_counts[addr] = address_counts.get(addr, 0) + 1
     if address_counts:
         property_address = max(address_counts, key=address_counts.get)
-        # 住所を正規化
-        property_address = normalize_search_text(property_address)
+        property_address_normalized = normalize_search_text(property_address)
+    else:
+        property_address_normalized = None
     
     # 築年の集計
     built_year_counts = {}
@@ -515,6 +520,15 @@ async def detach_property_from_building(
             built_year_counts[year] = built_year_counts.get(year, 0) + 1
     if built_year_counts:
         property_built_year = max(built_year_counts, key=built_year_counts.get)
+    
+    # 築月の集計
+    built_month_counts = {}
+    for listing in property_listings:
+        if listing.listing_built_month:
+            month = listing.listing_built_month
+            built_month_counts[month] = built_month_counts.get(month, 0) + 1
+    if built_month_counts:
+        property_built_month = max(built_month_counts, key=built_month_counts.get)
     
     # 総階数の集計
     total_floors_counts = {}
@@ -527,30 +541,60 @@ async def detach_property_from_building(
     
     logger.info(f"物件属性: 住所={property_address}, 築年={property_built_year}, 総階数={property_total_floors}")
     
-    # 既存の建物を検索（建物名＋住所＋築年＋総階数で判定）
+    # 建物候補を収集
     building_candidates = []
     
-    # 1. 正規化名で直接検索
-    query = db.query(Building).filter(
+    # 1. 正規化名で検索（完全一致と部分一致の両方）
+    # まず完全一致を検索
+    exact_match_query = db.query(Building).filter(
         Building.normalized_name == normalized_name,
         Building.id != current_building_id  # 現在の建物は除外
     )
     
-    for building in query.all():
+    # 部分一致も検索（建物名の主要部分を含む）
+    # 例：「白金ザ・スカイ 東棟」から「白金ザ・スカイ」を抽出
+    base_name = normalized_name.split()[0] if ' ' in normalized_name else normalized_name
+    partial_match_query = db.query(Building).filter(
+        Building.normalized_name.like(f"%{base_name}%"),
+        Building.id != current_building_id
+    )
+    
+    # 両方の結果を統合
+    all_buildings = []
+    seen_ids = set()
+    
+    # 完全一致を優先
+    for building in exact_match_query.all():
+        if building.id not in seen_ids:
+            all_buildings.append(building)
+            seen_ids.add(building.id)
+    
+    # 部分一致を追加（上位20件まで）
+    for building in partial_match_query.limit(20).all():
+        if building.id not in seen_ids:
+            all_buildings.append(building)
+            seen_ids.add(building.id)
+    
+    # 各建物をスコアリング
+    for building in all_buildings:
         score = 0
         match_details = []
         
-        # 建物名の一致（必須）
-        score += 10
-        match_details.append("建物名一致")
+        # 建物名の一致度を評価
+        if building.normalized_name == normalized_name:
+            score += 10
+            match_details.append("建物名完全一致")
+        elif base_name in building.normalized_name:
+            score += 5
+            match_details.append("建物名部分一致")
         
         # 住所の比較（前方一致も含む）
-        if property_address and building.address:
+        if property_address_normalized and building.address:
             normalized_building_address = normalize_search_text(building.address)
-            if normalized_building_address == property_address:
+            if normalized_building_address == property_address_normalized:
                 score += 5
                 match_details.append("住所完全一致")
-            elif normalized_building_address.startswith(property_address) or property_address.startswith(normalized_building_address):
+            elif normalized_building_address.startswith(property_address_normalized) or property_address_normalized.startswith(normalized_building_address):
                 score += 3
                 match_details.append("住所部分一致")
         
@@ -567,136 +611,205 @@ async def detach_property_from_building(
                 match_details.append("総階数一致")
         
         building_candidates.append({
-            'building': building,
+            'id': building.id,
+            'normalized_name': building.normalized_name,
+            'address': building.address,
+            'built_year': building.built_year,
+            'total_floors': building.total_floors,
+            'total_units': building.total_units,
             'score': score,
-            'match_details': match_details
+            'match_details': match_details,
+            'match_type': 'direct'
         })
     
-    # 最高スコアの建物を選択
-    if building_candidates:
-        best_candidate = max(building_candidates, key=lambda x: x['score'])
-        existing_building = best_candidate['building']
-        logger.info(f"建物候補発見: ID={existing_building.id}, スコア={best_candidate['score']}, 詳細={best_candidate['match_details']}")
-    else:
-        existing_building = None
+    # 2. エイリアスから検索
+    from ..models import BuildingMergeHistory
     
-    # 見つからない場合は、統合履歴（エイリアス）から検索
-    if not existing_building:
-        from ..models import BuildingMergeHistory
+    merge_histories = db.query(BuildingMergeHistory).filter(
+        or_(
+            BuildingMergeHistory.merged_building_name == most_common_building_name,
+            BuildingMergeHistory.merged_building_name == most_common_building_name.replace(' ', '　'),
+            BuildingMergeHistory.canonical_merged_name == normalized_name,
+            func.replace(BuildingMergeHistory.merged_building_name, '　', ' ') == most_common_building_name
+        )
+    ).all()
+    
+    for merge_history in merge_histories:
+        building = db.query(Building).filter(
+            Building.id == merge_history.primary_building_id,
+            Building.id != current_building_id
+        ).first()
         
-        # エイリアスから検索（正規化して比較）
-        merge_histories = db.query(BuildingMergeHistory).filter(
-            or_(
-                BuildingMergeHistory.merged_building_name == most_common_building_name,
-                BuildingMergeHistory.merged_building_name == most_common_building_name.replace(' ', '　'),  # 全角スペース版も試す
-                BuildingMergeHistory.canonical_merged_name == normalized_name,
-                func.replace(BuildingMergeHistory.merged_building_name, '　', ' ') == most_common_building_name  # DBの全角スペースを半角に変換して比較
-            )
-        ).all()
-        
-        # エイリアスの統合先建物も同様にスコアリング
-        for merge_history in merge_histories:
-            # 統合先の建物を取得
-            building = db.query(Building).filter(
-                Building.id == merge_history.primary_building_id,
-                Building.id != current_building_id  # 現在の建物は除外
-            ).first()
+        if building:
+            score = 0
+            match_details = []
             
-            if building:
-                score = 0
-                match_details = []
-                
-                # エイリアス名の一致（必須）
-                score += 10
-                match_details.append(f"エイリアス名一致({merge_history.merged_building_name})")
-                
-                # 住所の比較（前方一致も含む）
-                if property_address and building.address:
-                    normalized_building_address = normalize_search_text(building.address)
-                    if normalized_building_address == property_address:
-                        score += 5
-                        match_details.append("住所完全一致")
-                    elif normalized_building_address.startswith(property_address) or property_address.startswith(normalized_building_address):
-                        score += 3
-                        match_details.append("住所部分一致")
-                
-                # 築年の比較
-                if property_built_year and building.built_year:
-                    if building.built_year == property_built_year:
-                        score += 5
-                        match_details.append("築年一致")
-                
-                # 総階数の比較
-                if property_total_floors and building.total_floors:
-                    if building.total_floors == property_total_floors:
-                        score += 5
-                        match_details.append("総階数一致")
-                
+            # エイリアス名の一致
+            score += 10
+            match_details.append(f"エイリアス名一致({merge_history.merged_building_name})")
+            
+            # 住所の比較
+            if property_address_normalized and building.address:
+                normalized_building_address = normalize_search_text(building.address)
+                if normalized_building_address == property_address_normalized:
+                    score += 5
+                    match_details.append("住所完全一致")
+                elif normalized_building_address.startswith(property_address_normalized) or property_address_normalized.startswith(normalized_building_address):
+                    score += 3
+                    match_details.append("住所部分一致")
+            
+            # 築年の比較
+            if property_built_year and building.built_year:
+                if building.built_year == property_built_year:
+                    score += 5
+                    match_details.append("築年一致")
+            
+            # 総階数の比較
+            if property_total_floors and building.total_floors:
+                if building.total_floors == property_total_floors:
+                    score += 5
+                    match_details.append("総階数一致")
+            
+            # 重複チェック
+            if not any(c['id'] == building.id for c in building_candidates):
                 building_candidates.append({
-                    'building': building,
+                    'id': building.id,
+                    'normalized_name': building.normalized_name,
+                    'address': building.address,
+                    'built_year': building.built_year,
+                    'total_floors': building.total_floors,
+                    'total_units': building.total_units,
                     'score': score,
                     'match_details': match_details,
-                    'is_alias': True,
+                    'match_type': 'alias',
                     'alias_name': merge_history.merged_building_name
                 })
-        
-        # 全候補（直接一致＋エイリアス）から最高スコアの建物を選択
-        if building_candidates:
-            best_candidate = max(building_candidates, key=lambda x: x['score'])
-            existing_building = best_candidate['building']
-            
-            if best_candidate.get('is_alias'):
-                logger.info(f"エイリアス '{best_candidate['alias_name']}' から統合先建物を発見: ID={existing_building.id}, 名前={existing_building.normalized_name}, スコア={best_candidate['score']}, 詳細={best_candidate['match_details']}")
-            else:
-                logger.info(f"建物候補発見: ID={existing_building.id}, スコア={best_candidate['score']}, 詳細={best_candidate['match_details']}")
     
-    if existing_building:
-        # 既存の建物が見つかった場合
-        logger.info(f"既存の建物が見つかりました: ID={existing_building.id}, 名前={existing_building.normalized_name}")
+    # スコア順にソート
+    building_candidates.sort(key=lambda x: x['score'], reverse=True)
+    
+    return {
+        'current_building': {
+            'id': current_building.id,
+            'normalized_name': current_building.normalized_name,
+            'address': current_building.address
+        },
+        'property_building_name': most_common_building_name,
+        'property_attributes': {
+            'address': property_address,
+            'built_year': property_built_year,
+            'built_month': property_built_month,
+            'total_floors': property_total_floors
+        },
+        'candidates': building_candidates[:10],  # 上位10件まで
+        'can_create_new': len(building_candidates) == 0 or building_candidates[0]['score'] < 15  # スコアが低い場合は新規作成も推奨
+    }
+
+
+@router.post("/properties/{property_id}/attach-to-building")
+async def attach_property_to_building(
+    property_id: int,
+    request: Dict[str, Any],
+    db: Session = Depends(get_db),
+    _: Any = Depends(verify_admin_credentials)
+):
+    """物件を指定された建物に紐付け（管理者用）"""
+    from ..utils.search_normalizer import normalize_search_text
+    import logging
+    
+    logger = logging.getLogger(__name__)
+    
+    # リクエストパラメータを取得
+    target_building_id = request.get('building_id')
+    create_new = request.get('create_new', False)
+    new_building_name = request.get('new_building_name')
+    new_building_address = request.get('new_building_address')
+    new_building_built_year = request.get('new_building_built_year')
+    new_building_built_month = request.get('new_building_built_month')
+    new_building_total_floors = request.get('new_building_total_floors')
+    
+    # 対象物件を取得
+    property = db.query(MasterProperty).filter(
+        MasterProperty.id == property_id
+    ).first()
+    
+    if not property:
+        raise HTTPException(status_code=404, detail="物件が見つかりません")
+    
+    current_building_id = property.building_id
+    
+    # 物件のdisplay_building_nameを使用（重み付き多数決済みの値）
+    most_common_building_name = property.display_building_name
+    
+    if create_new:
+        # 新しい建物を作成
+        if not new_building_name:
+            new_building_name = most_common_building_name
         
-        # この建物に紐付けた場合、再度同じ建物に戻るかチェック
-        # （同じ正規化名を持つ建物が統合されている可能性がある）
-        if existing_building.id == current_building_id:
+        if not new_building_name:
+            raise HTTPException(status_code=400, detail="新規建物の名前が必要です")
+        
+        normalized_name = normalize_search_text(new_building_name)
+        
+        # 同名の建物が既に存在しないかチェック
+        existing = db.query(Building).filter(
+            Building.normalized_name == normalized_name
+        ).first()
+        
+        if existing:
             raise HTTPException(
                 status_code=400,
-                detail="分離後も同じ建物に紐付くため、分離できません"
+                detail=f"同じ名前の建物が既に存在します（ID: {existing.id}）"
             )
         
-        # 物件を既存の建物に紐付け
-        property.building_id = existing_building.id
-        property.display_building_name = most_common_building_name
-        
-        message = f"物件を既存の建物「{existing_building.normalized_name}」に紐付けました"
-        new_building_id = existing_building.id
-        
-    else:
-        # 新しい建物を作成
-        logger.info(f"新しい建物を作成します: {normalized_name}")
-        
-        # 物件情報から取得した属性を使用
         new_building = Building(
             normalized_name=normalized_name,
-            address=property_address if property_address else None,  # 集計した住所を使用
-            built_year=property_built_year,  # 集計した築年を使用
-            total_floors=property_total_floors,  # 集計した総階数を使用
+            address=new_building_address,
+            built_year=new_building_built_year,
+            built_month=new_building_built_month,
+            total_floors=new_building_total_floors,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()
         )
-        
-        logger.info(f"新建物の属性: 住所={new_building.address}, 築年={new_building.built_year}, 総階数={new_building.total_floors}")
         
         db.add(new_building)
         db.flush()  # IDを取得するため
         
         # 物件を新しい建物に紐付け
         property.building_id = new_building.id
-        property.display_building_name = most_common_building_name
+        property.display_building_name = new_building_name
+        property.updated_at = datetime.utcnow()
         
         message = f"新しい建物「{normalized_name}」を作成し、物件を紐付けました"
         new_building_id = new_building.id
-    
-    # 更新日時を設定
-    property.updated_at = datetime.utcnow()
+        
+    else:
+        # 既存の建物に紐付け
+        if not target_building_id:
+            raise HTTPException(status_code=400, detail="紐付け先の建物IDが必要です")
+        
+        # 指定された建物が存在するか確認
+        target_building = db.query(Building).filter(
+            Building.id == target_building_id
+        ).first()
+        
+        if not target_building:
+            raise HTTPException(status_code=404, detail="指定された建物が見つかりません")
+        
+        # 現在の建物と同じ場合はエラー
+        if target_building_id == current_building_id:
+            raise HTTPException(
+                status_code=400,
+                detail="現在と同じ建物には紐付けできません"
+            )
+        
+        # 物件を既存の建物に紐付け
+        property.building_id = target_building_id
+        property.display_building_name = most_common_building_name
+        property.updated_at = datetime.utcnow()
+        
+        message = f"物件を建物「{target_building.normalized_name}」に紐付けました"
+        new_building_id = target_building_id
     
     try:
         db.commit()
@@ -704,11 +817,10 @@ async def detach_property_from_building(
             "success": True,
             "message": message,
             "original_building_id": current_building_id,
-            "new_building_id": new_building_id,
-            "new_building_name": normalized_name
+            "new_building_id": new_building_id
         }
     except Exception as e:
         db.rollback()
-        logger.error(f"物件分離エラー: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"分離処理に失敗しました: {str(e)}")
+        logger.error(f"物件紐付けエラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"紐付け処理に失敗しました: {str(e)}")
 
