@@ -44,7 +44,7 @@ async def get_buildings(
             merge_history_table=BuildingMergeHistory,
             search_building_name=True,
             search_property_display_name=False,
-            search_aliases=False  # 建物管理ではエイリアスは含めない
+            search_aliases=True  # エイリアスも検索対象に含める
         )
     
     if address:

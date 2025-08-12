@@ -33,6 +33,7 @@ import {
   Tab,
   Autocomplete,
   CircularProgress,
+  Pagination,
 } from '@mui/material';
 import {
   PlayArrow as PlayIcon,
@@ -187,6 +188,7 @@ const AdminScraping: React.FC = () => {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleteDialogMessage, setDeleteDialogMessage] = useState('');
   const [alerts, setAlerts] = useState<ScraperAlert[]>([]);
+  const [logPages, setLogPages] = useState<{ [taskId: string]: number }>({});  // 各タスクのログページ番号
 
   const scraperOptions = [
     { value: 'suumo', label: 'SUUMO' },
@@ -1538,9 +1540,35 @@ const AdminScraping: React.FC = () => {
                             )}
                             
                             {(logTabValues[task.task_id] || 0) === 1 && task.logs && (
-                              <Box sx={{ maxHeight: 400, overflow: 'auto', bgcolor: 'grey.50', p: 1, borderRadius: 1 }}>
-                                <List dense>
-                                  {task.logs.slice().reverse().map((log, index) => (
+                              <Box sx={{ bgcolor: 'grey.50', p: 1, borderRadius: 1 }}>
+                                {/* ページネーション */}
+                                {task.logs.length > 30 && (
+                                  <Box sx={{ mb: 1 }}>
+                                    <Typography variant="caption" color="text.secondary" align="center" display="block" sx={{ mb: 0.5 }}>
+                                      全{task.logs.length}件 (1ページ = 最新、{Math.ceil(task.logs.length / 30)}ページ = 最古)
+                                    </Typography>
+                                    <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+                                      <Pagination
+                                        count={Math.ceil(task.logs.length / 30)}
+                                        page={logPages[task.task_id] || 1}
+                                        onChange={(_, page) => setLogPages({ ...logPages, [task.task_id]: page })}
+                                        size="small"
+                                        color="primary"
+                                      />
+                                    </Box>
+                                  </Box>
+                                )}
+                                <Box sx={{ maxHeight: 400, overflow: 'auto' }}>
+                                  <List dense>
+                                    {(() => {
+                                      const currentPage = logPages[task.task_id] || 1;
+                                      const itemsPerPage = 30;
+                                      const reversedLogs = task.logs.slice().reverse();
+                                      const startIndex = (currentPage - 1) * itemsPerPage;
+                                      const endIndex = startIndex + itemsPerPage;
+                                      const paginatedLogs = reversedLogs.slice(startIndex, endIndex);
+                                      
+                                      return paginatedLogs.map((log, index) => (
                                     <ListItem key={index} sx={{ 
                                       py: 0.5,
                                       borderBottom: '1px solid',
@@ -1582,14 +1610,28 @@ const AdminScraping: React.FC = () => {
                                         }
                                       />
                                     </ListItem>
-                                  ))}
-                                </List>
-                                {task.logs.length === 0 && (
-                                  <Typography variant="body2" color="text.secondary" align="center" py={2}>
-                                    物件更新履歴がありません
-                                  </Typography>
-                                )}
+                                  ));
+                                })()}
+                              </List>
+                            </Box>
+                            {task.logs.length === 0 && (
+                              <Typography variant="body2" color="text.secondary" align="center" py={2}>
+                                物件更新履歴がありません
+                              </Typography>
+                            )}
+                            {/* 下部にもページネーション */}
+                            {task.logs.length > 30 && (
+                              <Box sx={{ display: 'flex', justifyContent: 'center', mt: 1 }}>
+                                <Pagination
+                                  count={Math.ceil(task.logs.length / 30)}
+                                  page={logPages[task.task_id] || 1}
+                                  onChange={(_, page) => setLogPages({ ...logPages, [task.task_id]: page })}
+                                  size="small"
+                                  color="primary"
+                                />
                               </Box>
+                            )}
+                          </Box>
                             )}
                             
                             {(logTabValues[task.task_id] || 0) === 2 && (
