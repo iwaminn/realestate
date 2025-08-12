@@ -70,7 +70,6 @@ interface Listing {
 }
 
 interface ListingDetail extends Listing {
-  previous_price?: number;
   price_updated_at?: string;
   master_property: any;
   building: any;
@@ -91,7 +90,8 @@ interface ListingDetail extends Listing {
     id: number;
     price: number;
     recorded_at: string;
-    is_initial: boolean;
+    management_fee?: number;
+    repair_fund?: number;
   }>;
 }
 
@@ -195,11 +195,18 @@ export const ListingManagement: React.FC = () => {
       if (response.success) {
         setError(null);
         // 成功メッセージを表示
-        const message = `${response.message}\nタスクID: ${response.task_id}`;
-        alert(message);
-      } else {
-        // 既存タスクがある場合
         alert(response.message);
+        
+        // 3秒後に掲載情報を再取得
+        setTimeout(() => {
+          // 現在の掲載情報を再取得
+          if (selectedListing && selectedListing.id === listingId) {
+            fetchListingDetail(listingId);
+          }
+        }, 3000);
+      } else {
+        // エラーの場合
+        alert(response.message || '詳細再取得に失敗しました');
       }
     } catch (err) {
       console.error('Failed to refresh listing detail:', err);
@@ -779,11 +786,6 @@ export const ListingManagement: React.FC = () => {
                               <Typography variant="h5" fontWeight="bold">
                                 {formatPrice(selectedListing.current_price)}
                               </Typography>
-                              {selectedListing.previous_price && selectedListing.previous_price !== selectedListing.current_price && (
-                                <Typography variant="caption">
-                                  前回: {formatPrice(selectedListing.previous_price)}
-                                </Typography>
-                              )}
                             </Paper>
                           </Grid>
                           <Grid item xs={12} sm={3}>
@@ -1032,8 +1034,7 @@ export const ListingManagement: React.FC = () => {
                                     {(!prevPrice || priceChange === 0) && '-'}
                                   </TableCell>
                                   <TableCell align="center">
-                                    {history.is_initial && <Chip label="初回" size="small" color="info" />}
-                                    {index === 0 && !history.is_initial && <Chip label="最新" size="small" color="primary" />}
+                                    {index === 0 && <Chip label="最新" size="small" color="primary" />}
                                   </TableCell>
                                 </TableRow>
                               );

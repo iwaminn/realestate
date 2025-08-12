@@ -253,40 +253,6 @@ class BuildingExternalId(Base):
     )
 
 
-class ScrapingTask(Base):
-    """スクレイピングタスク管理テーブル"""
-    __tablename__ = "scraping_tasks"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    task_type = Column(String(50), nullable=False)           # 'scrape', 'detail_fetch' など
-    source_site = Column(String(50), nullable=False)         # SUUMO, LIFULL HOME'S など
-    area = Column(String(100))                                # スクレイピング対象エリア
-    status = Column(String(20), nullable=False, default='pending')  # pending, running, completed, failed
-    progress = Column(Integer, default=0)                     # 進捗率（0-100）
-    current_page = Column(Integer, default=0)                 # 現在のページ番号
-    total_pages = Column(Integer, default=0)                  # 総ページ数
-    total_items = Column(Integer, default=0)                  # 総アイテム数
-    processed_items = Column(Integer, default=0)              # 処理済みアイテム数
-    new_items = Column(Integer, default=0)                    # 新規登録数
-    updated_items = Column(Integer, default=0)                # 更新数
-    failed_items = Column(Integer, default=0)                 # 失敗数
-    is_paused = Column(Boolean, default=False)               # 一時停止フラグ
-    is_cancelled = Column(Boolean, default=False)            # キャンセルフラグ
-    priority = Column(Integer, default=0)                     # 優先度
-    error_message = Column(Text)                              # エラーメッセージ
-    result_summary = Column(JSON)                             # 結果サマリー
-    started_at = Column(DateTime)                             # 開始時刻
-    completed_at = Column(DateTime)                           # 完了時刻
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
-    
-    __table_args__ = (
-        Index('idx_scraping_tasks_status', 'status'),
-        Index('idx_scraping_tasks_source_site', 'source_site'),
-        Index('idx_scraping_tasks_created_at', 'created_at'),
-    )
-
-
 class BuildingMergeHistory(Base):
     """建物統合履歴テーブル"""
     __tablename__ = "building_merge_history"

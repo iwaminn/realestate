@@ -614,6 +614,10 @@ const AdminScraping: React.FC = () => {
   };
 
   const getAreaName = (areaCode: string) => {
+    // 詳細再取得タスクの特別な識別子
+    if (areaCode === 'single_url') {
+      return '詳細再取得';
+    }
     const area = areas.find(a => a.code === areaCode);
     return area ? area.name : areaCode;
   };
