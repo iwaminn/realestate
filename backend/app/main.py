@@ -187,7 +187,7 @@ async def startup_event():
 
 # 管理画面用ルーターを追加
 app.include_router(admin.router)
-app.include_router(admin_listings.router)
+app.include_router(admin_listings.router, prefix="/api/admin")
 app.include_router(admin_properties.router)
 app.include_router(admin_buildings.router, prefix="/api/admin")
 

@@ -30,6 +30,8 @@ import {
   Autocomplete,
   Checkbox,
   ListItemText,
+  Tabs,
+  Tab,
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -39,6 +41,8 @@ import {
   Clear as ClearIcon,
   Home as HomeIcon,
   OpenInNew as OpenInNewIcon,
+  CallSplit as CallSplitIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import axios, { isAxiosError } from 'axios';
@@ -171,6 +175,21 @@ export const PropertyManagement: React.FC = () => {
     layout: '',
     direction: '',
   });
+  
+  // 掲載情報分離用の状態
+  const [detachListingDialogOpen, setDetachListingDialogOpen] = useState(false);
+  const [detachingListingId, setDetachingListingId] = useState<number | null>(null);
+  const [detachCandidates, setDetachCandidates] = useState<any>(null);
+  const [selectedDetachPropertyId, setSelectedDetachPropertyId] = useState<number | null>(null);
+  const [detachTabValue, setDetachTabValue] = useState(0);
+  const [newPropertyForm, setNewPropertyForm] = useState({
+    room_number: '',
+    floor_number: '',
+    area: '',
+    layout: '',
+    direction: '',
+    display_building_name: '',
+  });
 
   // 物件一覧を取得
   const fetchProperties = async () => {
@@ -287,6 +306,107 @@ export const PropertyManagement: React.FC = () => {
       direction: selectedProperty.direction || '',
     });
     setEditDialogOpen(true);
+  };
+
+  // 掲載情報分離の候補を取得
+  const fetchDetachCandidates = async (listingId: number) => {
+    try {
+      const response = await axios.post(`/api/admin/listings/${listingId}/detach-candidates`);
+      setDetachCandidates(response.data);
+      setDetachingListingId(listingId);
+      setDetachListingDialogOpen(true);
+      setDetachTabValue(0);
+      setSelectedDetachPropertyId(null);
+      
+      // 新規物件フォームにデフォルト値を設定
+      const defaults = response.data.new_property_defaults;
+      setNewPropertyForm({
+        room_number: defaults.room_number || '',
+        floor_number: String(defaults.floor_number || ''),
+        area: String(defaults.area || ''),
+        layout: defaults.layout || '',
+        direction: defaults.direction || '',
+        display_building_name: defaults.display_building_name || '',
+      });
+    } catch (error: any) {
+      console.error('分離候補の取得に失敗しました:', error);
+      const errorMessage = error.response?.data?.detail || '分離候補の取得に失敗しました';
+      alert(errorMessage);
+    }
+  };
+
+  // 掲載情報を分離実行
+  const executeDetachListing = async () => {
+    if (!detachingListingId) return;
+
+    try {
+      let requestData: any = {};
+      
+      if (detachTabValue === 0) {
+        // 既存の物件から選択
+        if (!selectedDetachPropertyId) {
+          alert('紐付け先の物件を選択してください');
+          return;
+        }
+        requestData = {
+          property_id: selectedDetachPropertyId,
+          create_new: false,
+        };
+      } else {
+        // 新規物件を作成
+        requestData = {
+          create_new: true,
+          room_number: newPropertyForm.room_number || null,
+          floor_number: newPropertyForm.floor_number ? Number(newPropertyForm.floor_number) : null,
+          area: newPropertyForm.area ? Number(newPropertyForm.area) : null,
+          layout: newPropertyForm.layout || null,
+          direction: newPropertyForm.direction || null,
+          display_building_name: newPropertyForm.display_building_name || null,
+        };
+      }
+
+      const response = await axios.post(
+        `/api/admin/listings/${detachingListingId}/attach-to-property`,
+        requestData
+      );
+      
+      alert(response.data.message);
+      setDetachListingDialogOpen(false);
+      
+      // 詳細を再取得
+      if (selectedProperty) {
+        await fetchPropertyDetail(selectedProperty.id);
+      }
+      // 一覧も更新
+      await fetchProperties();
+    } catch (error: any) {
+      console.error('掲載情報の分離に失敗しました:', error);
+      const errorMessage = error.response?.data?.detail || '掲載情報の分離に失敗しました';
+      alert(errorMessage);
+    }
+  };
+
+  // 掲載情報を削除
+  const handleDeleteListing = async (listingId: number) => {
+    if (!window.confirm('この掲載情報を削除しますか？\n\n削除後は復元できません。')) {
+      return;
+    }
+
+    try {
+      const response = await axios.delete(`/api/admin/listings/${listingId}`);
+      alert(response.data.message);
+      
+      // 詳細を再取得
+      if (selectedProperty) {
+        await fetchPropertyDetail(selectedProperty.id);
+      }
+      // 一覧も更新
+      await fetchProperties();
+    } catch (error: any) {
+      console.error('掲載情報の削除に失敗しました:', error);
+      const errorMessage = error.response?.data?.detail || '掲載情報の削除に失敗しました';
+      alert(errorMessage);
+    }
   };
 
   const formatPrice = (price?: number) => {
@@ -633,6 +753,7 @@ export const PropertyManagement: React.FC = () => {
                           <TableCell align="right">価格</TableCell>
                           <TableCell>最終確認</TableCell>
                           <TableCell align="center">リンク</TableCell>
+                          <TableCell align="center">操作</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
@@ -650,6 +771,26 @@ export const PropertyManagement: React.FC = () => {
                               >
                                 <OpenInNewIcon fontSize="small" />
                               </IconButton>
+                            </TableCell>
+                            <TableCell align="center">
+                              <Tooltip title="この掲載情報を別物件として分離">
+                                <IconButton
+                                  size="small"
+                                  color="warning"
+                                  onClick={() => fetchDetachCandidates(listing.id)}
+                                >
+                                  <CallSplitIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="この掲載情報を削除">
+                                <IconButton
+                                  size="small"
+                                  color="error"
+                                  onClick={() => handleDeleteListing(listing.id)}
+                                >
+                                  <DeleteIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -671,6 +812,7 @@ export const PropertyManagement: React.FC = () => {
                           <TableCell align="right">最終価格</TableCell>
                           <TableCell>掲載終了日</TableCell>
                           <TableCell align="center">リンク</TableCell>
+                          <TableCell align="center">操作</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
@@ -688,6 +830,26 @@ export const PropertyManagement: React.FC = () => {
                               >
                                 <OpenInNewIcon fontSize="small" />
                               </IconButton>
+                            </TableCell>
+                            <TableCell align="center">
+                              <Tooltip title="この掲載情報を別物件として分離">
+                                <IconButton
+                                  size="small"
+                                  color="warning"
+                                  onClick={() => fetchDetachCandidates(listing.id)}
+                                >
+                                  <CallSplitIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="この掲載情報を削除">
+                                <IconButton
+                                  size="small"
+                                  color="error"
+                                  onClick={() => handleDeleteListing(listing.id)}
+                                >
+                                  <DeleteIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
                             </TableCell>
                           </TableRow>
                         ))}
@@ -782,6 +944,432 @@ export const PropertyManagement: React.FC = () => {
         <DialogActions>
           <Button onClick={() => setEditDialogOpen(false)}>キャンセル</Button>
           <Button variant="contained" onClick={updateProperty}>保存</Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 掲載情報分離ダイアログ */}
+      <Dialog
+        open={detachListingDialogOpen}
+        onClose={() => setDetachListingDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>掲載情報の分離と再紐付け先の選択</DialogTitle>
+        <DialogContent>
+          {detachCandidates && (
+            <Box>
+              {/* 現在の掲載情報 */}
+              <Card sx={{ mb: 2, bgcolor: 'grey.100' }}>
+                <CardContent>
+                  <Typography variant="subtitle2" gutterBottom>掲載情報</Typography>
+                  <Grid container spacing={1}>
+                    <Grid item xs={6}>
+                      <Typography variant="caption" color="text.secondary">サイト</Typography>
+                      <Typography variant="body2">{detachCandidates.listing_info.source_site}</Typography>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Typography variant="caption" color="text.secondary">価格</Typography>
+                      <Typography variant="body2">{formatPrice(detachCandidates.listing_info.current_price)}</Typography>
+                    </Grid>
+                    <Grid item xs={12}>
+                      <Typography variant="caption" color="text.secondary">建物名</Typography>
+                      <Typography variant="body2">{detachCandidates.listing_info.building_name || '-'}</Typography>
+                    </Grid>
+                    <Grid item xs={3}>
+                      <Typography variant="caption" color="text.secondary">階数</Typography>
+                      <Typography variant="body2">
+                        {detachCandidates.listing_info.floor_number ? `${detachCandidates.listing_info.floor_number}階` : '-'}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={3}>
+                      <Typography variant="caption" color="text.secondary">面積</Typography>
+                      <Typography variant="body2">
+                        {detachCandidates.listing_info.area ? `${detachCandidates.listing_info.area.toFixed(2)}㎡` : '-'}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={3}>
+                      <Typography variant="caption" color="text.secondary">間取り</Typography>
+                      <Typography variant="body2">{detachCandidates.listing_info.layout || '-'}</Typography>
+                    </Grid>
+                    <Grid item xs={3}>
+                      <Typography variant="caption" color="text.secondary">方角</Typography>
+                      <Typography variant="body2">{detachCandidates.listing_info.direction || '-'}</Typography>
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+
+              {/* タブ選択 */}
+              <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+                <Tabs value={detachTabValue} onChange={(_, newValue) => setDetachTabValue(newValue)}>
+                  <Tab label="既存の物件から選択" />
+                  <Tab label="新規物件を作成" />
+                </Tabs>
+              </Box>
+
+              {/* 既存物件から選択 */}
+              {detachTabValue === 0 && (
+                <Box sx={{ mt: 2 }}>
+                  {detachCandidates.candidates.length > 0 ? (
+                    <>
+                      <Typography variant="body2" color="text.secondary" gutterBottom>
+                        以下の候補から選択してください（スコアが高い順）
+                      </Typography>
+                      <TableContainer>
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell padding="checkbox"></TableCell>
+                              <TableCell>物件ID</TableCell>
+                              <TableCell>階数</TableCell>
+                              <TableCell>面積</TableCell>
+                              <TableCell>間取り</TableCell>
+                              <TableCell>方角</TableCell>
+                              <TableCell>スコア</TableCell>
+                              <TableCell>一致項目</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {detachCandidates.candidates.map((candidate: any) => (
+                              <TableRow
+                                key={candidate.id}
+                                selected={selectedDetachPropertyId === candidate.id}
+                                onClick={() => setSelectedDetachPropertyId(candidate.id)}
+                                sx={{ cursor: 'pointer' }}
+                              >
+                                <TableCell padding="checkbox">
+                                  <Checkbox checked={selectedDetachPropertyId === candidate.id} />
+                                </TableCell>
+                                <TableCell>{candidate.id}</TableCell>
+                                <TableCell>
+                                  {candidate.floor_number ? `${candidate.floor_number}階` : '-'}
+                                </TableCell>
+                                <TableCell>
+                                  {candidate.area ? `${candidate.area.toFixed(2)}㎡` : '-'}
+                                </TableCell>
+                                <TableCell>{candidate.layout || '-'}</TableCell>
+                                <TableCell>{candidate.direction || '-'}</TableCell>
+                                <TableCell>
+                                  <Chip label={candidate.score} size="small" color="primary" />
+                                </TableCell>
+                                <TableCell>
+                                  <Typography variant="caption">
+                                    {candidate.match_details.join(', ')}
+                                  </Typography>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </>
+                  ) : (
+                    <Typography color="text.secondary">
+                      候補となる物件が見つかりませんでした。新規物件を作成してください。
+                    </Typography>
+                  )}
+                </Box>
+              )}
+
+              {/* 新規物件作成 */}
+              {detachTabValue === 1 && (
+                <Box sx={{ mt: 2 }}>
+                  <Typography variant="body2" color="text.secondary" gutterBottom>
+                    新しい物件を作成して掲載情報を紐付けます
+                  </Typography>
+                  <Grid container spacing={2} sx={{ mt: 1 }}>
+                    <Grid item xs={12}>
+                      <TextField
+                        fullWidth
+                        label="建物名（表示用）"
+                        value={newPropertyForm.display_building_name}
+                        onChange={(e) => setNewPropertyForm({ ...newPropertyForm, display_building_name: e.target.value })}
+                      />
+                    </Grid>
+                    <Grid item xs={6}>
+                      <TextField
+                        fullWidth
+                        label="部屋番号"
+                        value={newPropertyForm.room_number}
+                        onChange={(e) => setNewPropertyForm({ ...newPropertyForm, room_number: e.target.value })}
+                      />
+                    </Grid>
+                    <Grid item xs={6}>
+                      <TextField
+                        fullWidth
+                        label="階数"
+                        type="number"
+                        value={newPropertyForm.floor_number}
+                        onChange={(e) => setNewPropertyForm({ ...newPropertyForm, floor_number: e.target.value })}
+                      />
+                    </Grid>
+                    <Grid item xs={6}>
+                      <TextField
+                        fullWidth
+                        label="面積（㎡）"
+                        type="number"
+                        value={newPropertyForm.area}
+                        onChange={(e) => setNewPropertyForm({ ...newPropertyForm, area: e.target.value })}
+                      />
+                    </Grid>
+                    <Grid item xs={6}>
+                      <FormControl fullWidth>
+                        <InputLabel>間取り</InputLabel>
+                        <Select
+                          value={newPropertyForm.layout}
+                          onChange={(e) => setNewPropertyForm({ ...newPropertyForm, layout: e.target.value })}
+                          label="間取り"
+                        >
+                          <MenuItem value="">未設定</MenuItem>
+                          {layoutOptions.map((layout) => (
+                            <MenuItem key={layout} value={layout}>{layout}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <FormControl fullWidth>
+                        <InputLabel>方角</InputLabel>
+                        <Select
+                          value={newPropertyForm.direction}
+                          onChange={(e) => setNewPropertyForm({ ...newPropertyForm, direction: e.target.value })}
+                          label="方角"
+                        >
+                          <MenuItem value="">未設定</MenuItem>
+                          {directionOptions.map((direction) => (
+                            <MenuItem key={direction} value={direction}>{direction}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                  </Grid>
+                </Box>
+              )}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDetachListingDialogOpen(false)}>キャンセル</Button>
+          <Button
+            variant="contained"
+            onClick={executeDetachListing}
+            disabled={detachTabValue === 0 && !selectedDetachPropertyId}
+          >
+            実行
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 掲載情報分離ダイアログ */}
+      <Dialog
+        open={detachListingDialogOpen}
+        onClose={() => setDetachListingDialogOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>掲載情報の分離と再紐付け先の選択</DialogTitle>
+        <DialogContent>
+          {detachCandidates && (
+            <Box>
+              {/* 現在の掲載情報 */}
+              <Card sx={{ mb: 2, bgcolor: 'grey.100' }}>
+                <CardContent>
+                  <Typography variant="subtitle2" gutterBottom>掲載情報</Typography>
+                  <Grid container spacing={1}>
+                    <Grid item xs={6}>
+                      <Typography variant="caption" color="text.secondary">サイト</Typography>
+                      <Typography variant="body2">{detachCandidates.listing_info.source_site}</Typography>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <Typography variant="caption" color="text.secondary">価格</Typography>
+                      <Typography variant="body2">{formatPrice(detachCandidates.listing_info.current_price)}</Typography>
+                    </Grid>
+                    <Grid item xs={12}>
+                      <Typography variant="caption" color="text.secondary">建物名</Typography>
+                      <Typography variant="body2">{detachCandidates.listing_info.building_name || '-'}</Typography>
+                    </Grid>
+                    <Grid item xs={3}>
+                      <Typography variant="caption" color="text.secondary">階数</Typography>
+                      <Typography variant="body2">
+                        {detachCandidates.listing_info.floor_number ? `${detachCandidates.listing_info.floor_number}階` : '-'}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={3}>
+                      <Typography variant="caption" color="text.secondary">面積</Typography>
+                      <Typography variant="body2">
+                        {detachCandidates.listing_info.area ? `${detachCandidates.listing_info.area.toFixed(2)}㎡` : '-'}
+                      </Typography>
+                    </Grid>
+                    <Grid item xs={3}>
+                      <Typography variant="caption" color="text.secondary">間取り</Typography>
+                      <Typography variant="body2">{detachCandidates.listing_info.layout || '-'}</Typography>
+                    </Grid>
+                    <Grid item xs={3}>
+                      <Typography variant="caption" color="text.secondary">方角</Typography>
+                      <Typography variant="body2">{detachCandidates.listing_info.direction || '-'}</Typography>
+                    </Grid>
+                  </Grid>
+                </CardContent>
+              </Card>
+
+              {/* タブ選択 */}
+              <Box sx={{ borderBottom: 1, borderColor: 'divider' }}>
+                <Tabs value={detachTabValue} onChange={(_, newValue) => setDetachTabValue(newValue)}>
+                  <Tab label="既存の物件から選択" />
+                  <Tab label="新規物件を作成" />
+                </Tabs>
+              </Box>
+
+              {/* 既存物件から選択 */}
+              {detachTabValue === 0 && (
+                <Box sx={{ mt: 2 }}>
+                  {detachCandidates.candidates.length > 0 ? (
+                    <>
+                      <Typography variant="body2" color="text.secondary" gutterBottom>
+                        以下の候補から選択してください（スコアが高い順）
+                      </Typography>
+                      <TableContainer>
+                        <Table size="small">
+                          <TableHead>
+                            <TableRow>
+                              <TableCell padding="checkbox"></TableCell>
+                              <TableCell>物件ID</TableCell>
+                              <TableCell>階数</TableCell>
+                              <TableCell>面積</TableCell>
+                              <TableCell>間取り</TableCell>
+                              <TableCell>方角</TableCell>
+                              <TableCell>スコア</TableCell>
+                              <TableCell>一致項目</TableCell>
+                            </TableRow>
+                          </TableHead>
+                          <TableBody>
+                            {detachCandidates.candidates.map((candidate: any) => (
+                              <TableRow
+                                key={candidate.id}
+                                selected={selectedDetachPropertyId === candidate.id}
+                                onClick={() => setSelectedDetachPropertyId(candidate.id)}
+                                sx={{ cursor: 'pointer' }}
+                              >
+                                <TableCell padding="checkbox">
+                                  <Checkbox checked={selectedDetachPropertyId === candidate.id} />
+                                </TableCell>
+                                <TableCell>{candidate.id}</TableCell>
+                                <TableCell>
+                                  {candidate.floor_number ? `${candidate.floor_number}階` : '-'}
+                                </TableCell>
+                                <TableCell>
+                                  {candidate.area ? `${candidate.area.toFixed(2)}㎡` : '-'}
+                                </TableCell>
+                                <TableCell>{candidate.layout || '-'}</TableCell>
+                                <TableCell>{candidate.direction || '-'}</TableCell>
+                                <TableCell>
+                                  <Chip label={candidate.score} size="small" color="primary" />
+                                </TableCell>
+                                <TableCell>
+                                  <Typography variant="caption">
+                                    {candidate.match_details.join(', ')}
+                                  </Typography>
+                                </TableCell>
+                              </TableRow>
+                            ))}
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </>
+                  ) : (
+                    <Typography color="text.secondary">
+                      候補となる物件が見つかりませんでした。新規物件を作成してください。
+                    </Typography>
+                  )}
+                </Box>
+              )}
+
+              {/* 新規物件作成 */}
+              {detachTabValue === 1 && (
+                <Box sx={{ mt: 2 }}>
+                  <Typography variant="body2" color="text.secondary" gutterBottom>
+                    新しい物件を作成して掲載情報を紐付けます
+                  </Typography>
+                  <Grid container spacing={2} sx={{ mt: 1 }}>
+                    <Grid item xs={12}>
+                      <TextField
+                        fullWidth
+                        label="建物名（表示用）"
+                        value={newPropertyForm.display_building_name}
+                        onChange={(e) => setNewPropertyForm({ ...newPropertyForm, display_building_name: e.target.value })}
+                      />
+                    </Grid>
+                    <Grid item xs={6}>
+                      <TextField
+                        fullWidth
+                        label="部屋番号"
+                        value={newPropertyForm.room_number}
+                        onChange={(e) => setNewPropertyForm({ ...newPropertyForm, room_number: e.target.value })}
+                      />
+                    </Grid>
+                    <Grid item xs={6}>
+                      <TextField
+                        fullWidth
+                        label="階数"
+                        type="number"
+                        value={newPropertyForm.floor_number}
+                        onChange={(e) => setNewPropertyForm({ ...newPropertyForm, floor_number: e.target.value })}
+                      />
+                    </Grid>
+                    <Grid item xs={6}>
+                      <TextField
+                        fullWidth
+                        label="面積（㎡）"
+                        type="number"
+                        value={newPropertyForm.area}
+                        onChange={(e) => setNewPropertyForm({ ...newPropertyForm, area: e.target.value })}
+                      />
+                    </Grid>
+                    <Grid item xs={6}>
+                      <FormControl fullWidth>
+                        <InputLabel>間取り</InputLabel>
+                        <Select
+                          value={newPropertyForm.layout}
+                          onChange={(e) => setNewPropertyForm({ ...newPropertyForm, layout: e.target.value })}
+                          label="間取り"
+                        >
+                          <MenuItem value="">未設定</MenuItem>
+                          {layoutOptions.map((layout) => (
+                            <MenuItem key={layout} value={layout}>{layout}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                    <Grid item xs={6}>
+                      <FormControl fullWidth>
+                        <InputLabel>方角</InputLabel>
+                        <Select
+                          value={newPropertyForm.direction}
+                          onChange={(e) => setNewPropertyForm({ ...newPropertyForm, direction: e.target.value })}
+                          label="方角"
+                        >
+                          <MenuItem value="">未設定</MenuItem>
+                          {directionOptions.map((direction) => (
+                            <MenuItem key={direction} value={direction}>{direction}</MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                    </Grid>
+                  </Grid>
+                </Box>
+              )}
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setDetachListingDialogOpen(false)}>キャンセル</Button>
+          <Button
+            variant="contained"
+            onClick={executeDetachListing}
+            disabled={detachTabValue === 0 && !selectedDetachPropertyId}
+          >
+            実行
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>
