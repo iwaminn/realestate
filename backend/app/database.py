@@ -46,3 +46,7 @@ def get_db():
 def init_db():
     """データベースの初期化"""
     Base.metadata.create_all(bind=engine)
+
+def get_db_for_scraping():
+    """スクレイピングタスク用のデータベースセッション（手動管理）"""
+    return SessionLocal()
