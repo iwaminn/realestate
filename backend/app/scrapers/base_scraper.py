@@ -4416,16 +4416,26 @@ class BaseScraper(ABC):
                 missing_fields_jp.append(field_names_jp.get(field, field))
         
         # エラー情報を保存（process_property_with_detail_checkで使用）
+        # missing_fields_jpが空の場合のチェックを追加
+        if missing_fields_jp:
+            reason_detail = f"必須フィールド（{', '.join(missing_fields_jp)}）が取得できませんでした"
+        else:
+            # すべてのフィールドが存在する場合（このメソッドが呼ばれるべきではないが念のため）
+            reason_detail = "検証エラーが発生しました"
+        
         self._last_detail_error = {
             'type': 'validation',
-            'reason': f"{error_type}: 必須フィールド（{', '.join(missing_fields_jp)}）が取得できませんでした",
+            'reason': f"{error_type}: {reason_detail}",
             'building_name': property_data.get('building_name', ''),
             'price': property_data.get('price', ''),
             'site_property_id': property_data.get('site_property_id', ''),
         }
         
         # ログにも出力（開発者向けは英語フィールド名も含める）
-        self.logger.error(f"{error_type}: {url} - 必須フィールドが取得できませんでした: {', '.join(missing_fields)} ({', '.join(missing_fields_jp)})")
+        if missing_fields:
+            self.logger.error(f"{error_type}: {url} - 必須フィールドが取得できませんでした: {', '.join(missing_fields)} ({', '.join(missing_fields_jp)})")
+        else:
+            self.logger.error(f"{error_type}: {url} - 検証エラーが発生しました")
         
         return None
     
@@ -4470,7 +4480,7 @@ class BaseScraper(ABC):
             if not validate_built_year(built_year):
                 url = url or property_data.get('url', '不明')
                 self.record_field_extraction_error('built_year', url)
-                self.logger.error(f"築年が不正な値です: {built_year}年 (許容範囲: 1900年〜現在年) - URL: {url}")
+                self.logger.error(f"築年が不正な値です: {built_year}年 (許容範囲: 1900年〜現在年+5年) - URL: {url}")
                 return False
         
         return True

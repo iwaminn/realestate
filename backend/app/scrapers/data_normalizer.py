@@ -658,11 +658,12 @@ class DataNormalizer:
         return True
 
     def validate_built_year(self, year: Optional[int]) -> bool:
-        """築年の妥当性を検証"""
+        """築年の妥当性を検証（新築物件対応で現在年+5年まで許可）"""
         if year is None:
             return False
         current_year = datetime.now().year
-        return 1900 <= year <= current_year
+        # 新築物件対応で現在年+5年まで許可
+        return 1900 <= year <= current_year + 5
 
     # ========== 型変換ヘルパー ==========
     
@@ -928,13 +929,13 @@ def validate_floor_number(floor: Optional[int], total_floors: Optional[int] = No
     return _normalizer.validate_floor_number(floor, total_floors)
 
 def validate_built_year(year: Optional[int]) -> bool:
-    """築年の妥当性を検証（1900年以降、現在年以下）"""
+    """築年の妥当性を検証（1900年以降、現在年+5年以内）"""
     if year is None:
         return False
     from datetime import datetime
     current_year = datetime.now().year
-    # 1900年から現在年までの範囲を許可
-    return 1900 <= year <= current_year
+    # 1900年から現在年+5年までの範囲を許可（新築物件対応）
+    return 1900 <= year <= current_year + 5
 
 
 # 使用例
