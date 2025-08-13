@@ -30,6 +30,7 @@ from backend.app.api import admin
 from backend.app.api import admin_listings
 from backend.app.api import admin_properties
 from backend.app.api import admin_buildings
+from backend.app.api import admin_matching
 
 app = FastAPI(title="不動産横断検索API v2", version="2.0.0")
 
@@ -190,6 +191,7 @@ app.include_router(admin.router)
 app.include_router(admin_listings.router, prefix="/api/admin")
 app.include_router(admin_properties.router)
 app.include_router(admin_buildings.router, prefix="/api/admin")
+app.include_router(admin_matching.router, prefix="/api/admin")
 
 @app.get("/")
 async def root():

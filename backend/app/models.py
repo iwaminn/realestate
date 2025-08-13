@@ -421,3 +421,7 @@ class PriceMismatchHistory(Base):
         Index('idx_price_mismatch_history_listing', 'property_listing_id'),
         Index('idx_price_mismatch_history_detected', 'detected_at'),
     )
+
+
+# 他のモデルをインポート（循環参照を避けるため最後にインポート）
+from .models_property_matching import AmbiguousPropertyMatch
