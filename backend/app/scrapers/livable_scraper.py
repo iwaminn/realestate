@@ -693,10 +693,16 @@ class LivableScraper(BaseScraper):
         
         # 間取り
         elif '間取り' in label or '間取' in label:
-            layout = normalize_layout(value)
+            # 連続する空白を1つのスペースに変換してから正規化
+            import re
+            cleaned_value = re.sub(r'\s+', ' ', value.strip())
+            layout = normalize_layout(cleaned_value)
             if layout:
                 property_data['layout'] = layout
-                self.logger.info(f"間取りを取得: {value} → {layout}")
+                if cleaned_value != value:
+                    self.logger.info(f"間取りを取得（空白を正規化）: {value} → {layout}")
+                else:
+                    self.logger.info(f"間取りを取得: {value} → {layout}")
             else:
                 self.logger.warning(f"間取りの正規化に失敗: {value}")
         
