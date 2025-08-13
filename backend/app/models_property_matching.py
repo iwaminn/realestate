@@ -5,7 +5,7 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, JSON, ForeignKey, Text
 from sqlalchemy.orm import relationship
 from datetime import datetime
-from .database import Base
+from .models import Base
 
 
 class AmbiguousPropertyMatch(Base):

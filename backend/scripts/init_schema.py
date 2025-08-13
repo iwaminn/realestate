@@ -14,6 +14,24 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 from backend.app.database import DATABASE_URL
 from backend.app.models import Base
 
+# すべてのモデルを明示的にインポート（テーブル作成を保証）
+from backend.app.models import (
+    Building, BuildingAlias, BuildingExternalId,
+    BuildingMergeHistory, BuildingMergeExclusion,
+    MasterProperty, PropertyListing, ListingPriceHistory,
+    PropertyMergeHistory, PropertyMergeExclusion,
+    Url404Retry, ScraperAlert, PriceMismatchHistory
+)
+from backend.app.models_property_matching import AmbiguousPropertyMatch
+from backend.app.models_scraping_task import ScrapingTask, ScrapingTaskProgress
+
+# UrlValidationErrorRetryモデルを確認
+try:
+    from backend.app.models import UrlValidationErrorRetry
+except ImportError:
+    # モデルが存在しない場合は無視
+    pass
+
 
 def init_schema():
     """v2スキーマのテーブルを作成"""
@@ -26,15 +44,15 @@ def init_schema():
         # 全てのテーブルを作成
         Base.metadata.create_all(bind=engine)
         
-        print("✅ 以下のテーブルが作成されました:")
-        print("  - buildings (建物マスター)")
-        print("  - building_aliases (建物名エイリアス)")
-        print("  - master_properties (物件マスター)")
-        print("  - property_listings (物件掲載情報)")
-        print("  - listing_price_history (掲載価格履歴)")
-        print("  - property_images (物件画像)")
-        print("  - properties (旧テーブル - 互換性用)")
-        print("  - price_history (旧テーブル - 互換性用)")
+        # 実際に作成されたテーブルを動的に取得
+        from sqlalchemy import inspect
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        
+        print(f"✅ {len(tables)}個のテーブルが作成されました:")
+        for table in sorted(tables):
+            columns = inspector.get_columns(table)
+            print(f"  - {table} ({len(columns)} columns)")
         
         print("\n初期化が完了しました！")
         
@@ -55,15 +73,16 @@ def drop_tables():
     engine = create_engine(DATABASE_URL)
     
     # 外部キー制約を一時的に無効化（PostgreSQL）
+    from sqlalchemy import text
     with engine.begin() as conn:
-        conn.execute("SET session_replication_role = 'replica';")
+        conn.execute(text("SET session_replication_role = 'replica';"))
     
     # テーブルを削除
     Base.metadata.drop_all(bind=engine)
     
     # 外部キー制約を再度有効化
     with engine.begin() as conn:
-        conn.execute("SET session_replication_role = 'origin';")
+        conn.execute(text("SET session_replication_role = 'origin';"))
     
     print("v2スキーマのテーブルが削除されました")
 

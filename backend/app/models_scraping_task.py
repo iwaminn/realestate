@@ -3,10 +3,8 @@
 """
 
 from sqlalchemy import Column, String, Integer, DateTime, Text, Float, JSON, Boolean
-from sqlalchemy.ext.declarative import declarative_base
 from datetime import datetime
-
-Base = declarative_base()
+from .models import Base
 
 
 class ScrapingTask(Base):

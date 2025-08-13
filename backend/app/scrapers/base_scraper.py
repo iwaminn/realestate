@@ -1971,13 +1971,20 @@ class BaseScraper(ABC):
             
             # 部分一致を試す（SQLAlchemyのstartswithを使用）
             from sqlalchemy import or_
+            # 注意: 2番目の条件は文字列メソッドではなくSQLで評価する必要がある
+            # そのため、Pythonレベルでフィルタリングする
             partial_match_buildings = self.session.query(Building).filter(
-                Building.canonical_name == search_key,
-                or_(
-                    Building.normalized_address.startswith(normalized_address),
-                    normalized_address.startswith(Building.normalized_address)
-                )
+                Building.canonical_name == search_key
             ).all()
+            
+            # Pythonレベルで部分一致をチェック
+            partial_match_buildings = [
+                b for b in partial_match_buildings
+                if b.normalized_address and (
+                    b.normalized_address.startswith(normalized_address) or
+                    normalized_address.startswith(b.normalized_address)
+                )
+            ]
             
             # 部分一致の場合も属性確認
             for building in partial_match_buildings:
