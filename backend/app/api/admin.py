@@ -1986,6 +1986,53 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
                     if scraper.pause_flag:
                         print(f"[{task_id}] Pause flag is_set: {scraper.pause_flag.is_set()}")
                     
+                    # カスタムログハンドラーを設定（警告ログをキャプチャ）
+                    import logging
+                    
+                    class TaskLogHandler(logging.Handler):
+                        """タスクのログに警告を追加するハンドラー"""
+                        def emit(self, record):
+                            if record.levelno >= logging.WARNING:  # WARNING以上のログをキャプチャ
+                                log_entry = {
+                                    "timestamp": datetime.now().isoformat(),
+                                    "type": "warning",
+                                    "level": record.levelname,
+                                    "scraper": scraper_name,
+                                    "area": area_name,
+                                    "message": record.getMessage()
+                                }
+                                
+                                # ⚠️ マークが含まれる曖昧なマッチングログを特別扱い
+                                if "⚠️" in record.getMessage() and "曖昧なマッチング" in record.getMessage():
+                                    log_entry["type"] = "ambiguous_match"
+                                    # メッセージから詳細を抽出
+                                    import re
+                                    match = re.search(r"選択ID=(\d+).*候補数=(\d+).*信頼度=([\d.]+%)", record.getMessage())
+                                    if match:
+                                        log_entry["property_id"] = int(match.group(1))
+                                        log_entry["candidates"] = int(match.group(2))
+                                        log_entry["confidence"] = match.group(3)
+                                
+                                # タスクのログに追加
+                                if "logs" not in scraping_tasks[task_id]:
+                                    scraping_tasks[task_id]["logs"] = []
+                                scraping_tasks[task_id]["logs"].append(log_entry)
+                                if len(scraping_tasks[task_id]["logs"]) > 100:  # 最大100件まで保持
+                                    scraping_tasks[task_id]["logs"] = scraping_tasks[task_id]["logs"][-100:]
+                                
+                                # warning_logsにも追加（フロントエンド用）
+                                if "warning_logs" not in scraping_tasks[task_id]:
+                                    scraping_tasks[task_id]["warning_logs"] = []
+                                scraping_tasks[task_id]["warning_logs"].append(log_entry)
+                                if len(scraping_tasks[task_id]["warning_logs"]) > 50:  # 最大50件まで保持
+                                    scraping_tasks[task_id]["warning_logs"] = scraping_tasks[task_id]["warning_logs"][-50:]
+                    
+                    # scraperのloggerにハンドラーを追加
+                    task_log_handler = TaskLogHandler()
+                    task_log_handler.setLevel(logging.WARNING)
+                    if hasattr(scraper, 'logger'):
+                        scraper.logger.addHandler(task_log_handler)
+                    
                     # ステータス更新用のコールバック関数を設定
                     def update_status(status):
                         print(f"[CALLBACK] Updating status for task {task_id}, progress_key={progress_key}: {status}")
@@ -2381,6 +2428,10 @@ def run_scraping_task(task_id: str, scrapers: List[str], area_codes: List[str], 
                         completed_combinations += 1
                         
                     finally:
+                        # ログハンドラーを削除（メモリリーク防止）
+                        if hasattr(scraper, 'logger') and 'task_log_handler' in locals():
+                            scraper.logger.removeHandler(task_log_handler)
+                        
                         # スクレイパーのセッションをクリーンアップ
                         # 一時停止の場合はセッションとインスタンスを保持（再利用のため）
                         # タスク全体のステータスもチェック
@@ -2502,7 +2553,8 @@ def start_scraping(
             "progress": {},
             "errors": [],
             "logs": [],  # 詳細ログを初期化
-            "error_logs": []  # エラーログを初期化
+            "error_logs": [],  # エラーログを初期化
+            "warning_logs": []  # 警告ログを初期化（曖昧なマッチング等）
         }
     
     # 制御フラグを作成（ロックで保護）
