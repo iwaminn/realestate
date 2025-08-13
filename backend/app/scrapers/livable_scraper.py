@@ -693,12 +693,12 @@ class LivableScraper(BaseScraper):
         
         # 間取り
         elif '間取り' in label or '間取' in label:
-            # 全角文字を半角に変換してから正規化
-            value_normalized = value.replace('ＬＤＫ', 'LDK').replace('Ｓ', 'S').replace('＋', '+').replace('Ｋ', 'K').replace('Ｄ', 'D').replace('Ｒ', 'R')
-            layout = normalize_layout(value_normalized)
+            layout = normalize_layout(value)
             if layout:
                 property_data['layout'] = layout
                 self.logger.info(f"間取りを取得: {value} → {layout}")
+            else:
+                self.logger.warning(f"間取りの正規化に失敗: {value}")
         
         # 向き/方角
         elif '向き' in label or '方角' in label or '採光' in label:
@@ -712,9 +712,15 @@ class LivableScraper(BaseScraper):
             if built_year:
                 property_data['built_year'] = built_year
                 # 月情報も取得
-                month_match = re.search(r'(\d{1,2})月', value)
-                if month_match:
-                    property_data['built_month'] = int(month_match.group(1))
+                # スラッシュ形式（「1971/04」）に対応
+                slash_match = re.search(r'(\d{4})/(\d{1,2})', value)
+                if slash_match:
+                    property_data['built_month'] = int(slash_match.group(2))
+                else:
+                    # 通常の月パターン（「3月」）
+                    month_match = re.search(r'(\d{1,2})月', value)
+                    if month_match:
+                        property_data['built_month'] = int(month_match.group(1))
         
         # 総戸数
         elif '総戸数' in label:
@@ -999,9 +1005,15 @@ class LivableScraper(BaseScraper):
             if built_year:
                 property_data['built_year'] = built_year
                 # 月情報も取得
-                month_match = re.search(r'(\d{1,2})月', value)
-                if month_match:
-                    property_data['built_month'] = int(month_match.group(1))
+                # スラッシュ形式（「1971/04」）に対応
+                slash_match = re.search(r'(\d{4})/(\d{1,2})', value)
+                if slash_match:
+                    property_data['built_month'] = int(slash_match.group(2))
+                else:
+                    # 通常の月パターン（「3月」）
+                    month_match = re.search(r'(\d{1,2})月', value)
+                    if month_match:
+                        property_data['built_month'] = int(month_match.group(1))
         
         # 管理費
         elif '管理費' in label and '修繕' not in label:

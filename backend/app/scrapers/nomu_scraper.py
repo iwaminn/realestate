@@ -491,10 +491,11 @@ class NomuScraper(BaseScraper):
     
     def _extract_mansion_table_info(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
         """物件詳細情報を抽出（両フォーマット対応）"""
-        # 新フォーマット: item_tableクラス（4番目のテーブル）
+        # 新フォーマット: item_tableクラス（3番目または4番目のテーブル）
         item_tables = soup.find_all("table", {"class": "item_table"})
-        if len(item_tables) >= 4:
-            main_table = item_tables[3]  # 4番目のテーブル（0ベースなので3）
+        if len(item_tables) >= 3:
+            # 4番目のテーブルがある場合はそれを使用、なければ3番目を使用
+            main_table = item_tables[3] if len(item_tables) >= 4 else item_tables[2]
             rows = main_table.find_all("tr")
             
             for row in rows:
@@ -701,8 +702,6 @@ class NomuScraper(BaseScraper):
         layout_match = re.search(r'(\d+[LDK]+(?:\+[SW]IC)*)', page_text)
         if layout_match:
             layout = layout_match.group(1)
-            # 全角文字を半角に変換
-            layout = layout.replace('ＬＤＫ', 'LDK').replace('＋', '+')
             detail_data['layout'] = normalize_layout(layout)
         
         # 管理費を抽出

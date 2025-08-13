@@ -278,7 +278,7 @@ class DataNormalizer:
         文字列から築年を抽出
         
         Args:
-            text: 築年情報を含む文字列（例: "2020年築", "築年月：2015年3月", "平成27年築"）
+            text: 築年情報を含む文字列（例: "2020年築", "築年月：2015年3月", "平成27年築", "1971/04"）
             
         Returns:
             西暦年（int）またはNone
@@ -288,14 +288,26 @@ class DataNormalizer:
             2020
             >>> normalizer.extract_built_year("築年月：2015年3月")
             2015
+            >>> normalizer.extract_built_year("1971/04")
+            1971
         """
         if not text:
             return None
             
-        # 西暦年パターン
+        # 西暦年パターン（「2020年」形式）
         year_match = re.search(r'(19\d{2}|20\d{2})年', text)
         if year_match:
             return int(year_match.group(1))
+        
+        # スラッシュ形式（「1971/04」「2020/12」形式）
+        slash_match = re.search(r'(19\d{2}|20\d{2})/\d{1,2}', text)
+        if slash_match:
+            return int(slash_match.group(1))
+        
+        # 年がないパターン（「1971」「2020」のみ）
+        year_only_match = re.search(r'^(19\d{2}|20\d{2})$', text.strip())
+        if year_only_match:
+            return int(year_only_match.group(1))
         
         # 和暦変換（必要に応じて実装）
         # TODO: 和暦対応
@@ -327,7 +339,14 @@ class DataNormalizer:
         """
         if not text:
             return None
-            
+        
+        # Unicode正規化（NFKC）で全角文字を半角に変換
+        # これにより、全角数字・英字・記号がすべて半角に変換される
+        import unicodedata
+        text = unicodedata.normalize('NFKC', text)
+        
+        # 念のため、Unicode正規化で変換されなかった文字があれば手動変換
+        # （通常はNFKCで十分だが、一部の特殊文字に対応）
         # 全角数字を半角に変換
         text = text.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
         # 全角英字を半角に変換
@@ -377,6 +396,15 @@ class DataNormalizer:
             # 1LDK+S形式で返す
             return f"{num}{main_rooms}+{additional_rooms}"
         
+        # 数字なしの+パターン（LDK+S、DK+Sなど）
+        # ワンルームマンションの特殊な間取りとして1を付ける
+        no_num_layout_match = re.search(r'^([SLDK]+)[＋+]([SLDK]+)$', text)
+        if no_num_layout_match:
+            main_rooms = no_num_layout_match.group(1)
+            additional_rooms = no_num_layout_match.group(2)
+            # 数字がない場合は1を仮定
+            return f"1{main_rooms}+{additional_rooms}"
+        
         # 一般的な間取りパターン
         layout_match = re.search(r'([1-9]\d*)\s*([SLDK]+)', text)
         if layout_match:
@@ -393,6 +421,24 @@ class DataNormalizer:
             if 'K' in rooms:
                 normalized_rooms += 'K'
             return f"{num}{normalized_rooms}"
+        
+        # 数字なしのLDKパターン（LDK、DKなど）
+        # ワンルームマンションの特殊な間取りとして1を付ける
+        no_num_simple_match = re.search(r'^([SLDK]+)$', text)
+        if no_num_simple_match:
+            rooms = no_num_simple_match.group(1)
+            # S/L/D/Kの順序を正規化
+            normalized_rooms = ''
+            if 'S' in rooms:
+                normalized_rooms += 'S'
+            if 'L' in rooms:
+                normalized_rooms += 'L'
+            if 'D' in rooms:
+                normalized_rooms += 'D'
+            if 'K' in rooms:
+                normalized_rooms += 'K'
+            # 数字がない場合は1を仮定
+            return f"1{normalized_rooms}"
         
         # Rタイプ（例: "1R", "2R"）
         r_match = re.search(r'([1-9]\d*)\s*R', text)
@@ -880,6 +926,15 @@ def validate_area(area: Optional[float]) -> bool:
 def validate_floor_number(floor: Optional[int], total_floors: Optional[int] = None) -> bool:
     """階数の妥当性を検証"""
     return _normalizer.validate_floor_number(floor, total_floors)
+
+def validate_built_year(year: Optional[int]) -> bool:
+    """築年の妥当性を検証（1900年以降、現在年以下）"""
+    if year is None:
+        return False
+    from datetime import datetime
+    current_year = datetime.now().year
+    # 1900年から現在年までの範囲を許可
+    return 1900 <= year <= current_year
 
 
 # 使用例

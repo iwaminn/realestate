@@ -1531,7 +1531,7 @@ class BaseScraper(ABC):
     
     def validate_property_data(self, property_data: Dict[str, Any]) -> bool:
         """物件データの妥当性をチェック"""
-        from .data_normalizer import validate_price, validate_area, validate_floor_number
+        from .data_normalizer import validate_price, validate_area, validate_floor_number, validate_built_year
         
         url = property_data.get('url', '不明')
         building_name = property_data.get('building_name', '不明')
@@ -2158,9 +2158,13 @@ class BaseScraper(ABC):
                             addr_normalizer = AddressNormalizer()
                             building.normalized_address = addr_normalizer.normalize_for_comparison(address)
                         updated = True
-                    if built_year and not building.built_year:
+                    # 築年月の更新（既存の値がないか、異なる値の場合は更新）
+                    if built_year and building.built_year != built_year:
+                        old_built_year = building.built_year
                         building.built_year = built_year
                         updated = True
+                        if old_built_year:
+                            self.logger.info(f"築年月を更新: {old_built_year} → {built_year}, 建物ID: {building.id}")
                     if built_month and not building.built_month:
                         building.built_month = built_month
                         updated = True
@@ -2238,9 +2242,13 @@ class BaseScraper(ABC):
                         
                         # 建物情報を更新（より詳細な情報があれば）
                         updated = False
-                        if built_year and not primary_building.built_year:
+                        # 築年月の更新（既存の値がないか、異なる値の場合は更新）
+                        if built_year and primary_building.built_year != built_year:
+                            old_built_year = primary_building.built_year
                             primary_building.built_year = built_year
                             updated = True
+                            if old_built_year:
+                                self.logger.info(f"築年月を更新: {old_built_year} → {built_year}, 建物ID: {primary_building.id}")
                         if built_month and not primary_building.built_month:
                             primary_building.built_month = built_month
                             updated = True
@@ -2296,9 +2304,13 @@ class BaseScraper(ABC):
                 
                 # 建物情報を更新（より詳細な情報があれば）
                 updated = False
-                if built_year and not building.built_year:
+                # 築年月の更新（既存の値がないか、異なる値の場合は更新）
+                if built_year and building.built_year != built_year:
+                    old_built_year = building.built_year
                     building.built_year = built_year
                     updated = True
+                    if old_built_year:
+                        self.logger.info(f"築年月を更新: {old_built_year} → {built_year}, 建物ID: {building.id}")
                 if built_month and not building.built_month:
                     building.built_month = built_month
                     updated = True
@@ -2952,6 +2964,21 @@ class BaseScraper(ABC):
                         elif key == 'listing_balcony_area' and old_value is not None:
                             other_changed = True
                             changed_fields.append(f'バルコニー面積({old_value}㎡→{value}㎡)')
+                        elif key == 'listing_built_year' and old_value != value:
+                            # 築年月の変更は重要
+                            other_changed = True
+                            if old_value is not None:
+                                changed_fields.append(f'築年({old_value}年→{value}年)')
+                            else:
+                                changed_fields.append(f'築年(新規設定: {value}年)')
+                            self.logger.info(f"築年月を更新: {old_value} → {value}, URL: {url}")
+                        elif key == 'listing_built_month' and old_value != value:
+                            other_changed = True
+                            if old_value is not None:
+                                changed_fields.append(f'築月({old_value}月→{value}月)')
+                                self.logger.info(f"築月を更新: {old_value}月 → {value}月, URL: {url}")
+                            else:
+                                changed_fields.append(f'築月(新規設定: {value}月)')
                         else:
                             # その他のフィールドも変更を記録
                             # 除外するフィールド（これらは更新として扱わない）
@@ -3684,29 +3711,17 @@ class BaseScraper(ABC):
                 building = master_property.building
                 extracted_room_number = master_property.room_number
                 
-                # 建物情報の更新（より詳細な情報があれば）
+                # 建物情報の更新（多数決で決定するため、ここでは直接更新しない）
+                # ただし、完全に空のフィールドは初期値として設定可能
                 if building:
                     updated = False
                     if property_data.get('address') and not building.address:
                         building.address = property_data.get('address')
-                        updated = True
-                    if property_data.get('built_year') and not building.built_year:
-                        building.built_year = property_data.get('built_year')
-                        updated = True
-                    if property_data.get('built_month') and not building.built_month:
-                        building.built_month = property_data.get('built_month')
-                        updated = True
-                    if property_data.get('total_floors') and not building.total_floors:
-                        building.total_floors = property_data.get('total_floors')
-                        updated = True
-                    if property_data.get('basement_floors') and not building.basement_floors:
-                        building.basement_floors = property_data.get('basement_floors')
-                        updated = True
-                    if property_data.get('structure') and not building.construction_type:
-                        building.construction_type = property_data.get('structure')
-                        updated = True
-                    if property_data.get('land_rights') and not building.land_rights:
-                        building.land_rights = property_data.get('land_rights')
+                        # 正規化住所も更新
+                        if hasattr(building, 'normalized_address'):
+                            from backend.app.utils.address_normalizer import AddressNormalizer
+                            addr_normalizer = AddressNormalizer()
+                            building.normalized_address = addr_normalizer.normalize_for_comparison(property_data.get('address'))
                         updated = True
                     if property_data.get('station_info') and not building.station_info:
                         building.station_info = property_data.get('station_info')
@@ -4423,6 +4438,7 @@ class BaseScraper(ABC):
         - address: 住所
         - area: 専有面積
         - layout: 間取り
+        - built_year: 築年
         
         Args:
             property_data: 物件データ
@@ -4431,7 +4447,7 @@ class BaseScraper(ABC):
         Returns:
             bool: 必須フィールドがすべて存在する場合True
         """
-        required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'layout']
+        required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'layout', 'built_year']
         missing_fields = []
         
         for field in required_fields:
@@ -4445,6 +4461,16 @@ class BaseScraper(ABC):
             
             self.logger.error(f"詳細ページで必須フィールドが取得できませんでした: {', '.join(missing_fields)} - URL: {url}")
             return False
+        
+        # 築年の値の妥当性をチェック
+        built_year = property_data.get('built_year')
+        if built_year is not None:
+            from .data_normalizer import validate_built_year
+            if not validate_built_year(built_year):
+                url = url or property_data.get('url', '不明')
+                self.record_field_extraction_error('built_year', url)
+                self.logger.error(f"築年が不正な値です: {built_year}年 (許容範囲: 1900年〜現在年) - URL: {url}")
+                return False
         
         return True
     
