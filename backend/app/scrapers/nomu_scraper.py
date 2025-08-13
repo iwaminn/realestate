@@ -534,21 +534,7 @@ class NomuScraper(BaseScraper):
                             detail_data['built_month'] = int(month_match.group(1))
                         self.logger.info(f"[NOMU] 築年月をitem_statusから取得: {value}")
                         return
-        
-        # 方法3: ページテキストから直接探す（最終手段）
-        page_text = soup.get_text()
-        year_month_pattern = r'築年月[：:\s]*(\d{4}年\d{1,2}月)'
-        match = re.search(year_month_pattern, page_text)
-        if match:
-            value = match.group(1)
-            built_year = extract_built_year(value)
-            if built_year:
-                detail_data['built_year'] = built_year
-                # 月情報も取得
-                month_match = re.search(r'(\d{1,2})月', value)
-                if month_match:
-                    detail_data['built_month'] = int(month_match.group(1))
-                self.logger.info(f"[NOMU] 築年月をテキストから取得: {value}")
+
     
     def _extract_mansion_table_info(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
         """物件詳細情報を抽出（両フォーマット対応）"""
