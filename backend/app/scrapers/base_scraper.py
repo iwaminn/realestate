@@ -1923,7 +1923,25 @@ class BaseScraper(ABC):
         key = re.sub(r'(EAST|WEST|NORTH|SOUTH|E|W|N|S|東|西|南|北)?棟$', '', key)
         return key
     
-    def find_existing_building_by_key(self, search_key: str, address: str = None) -> Optional[Building]:
+    def _verify_building_attributes(self, building: Building, total_floors: int = None, built_year: int = None) -> bool:
+        """建物の属性（総階数、築年）が一致するか確認"""
+        # 両方の属性がNoneの場合は確認不要（True）
+        if total_floors is None and built_year is None:
+            return True
+        
+        # 総階数の確認
+        if total_floors is not None and building.total_floors is not None:
+            if building.total_floors != total_floors:
+                return False
+        
+        # 築年の確認
+        if built_year is not None and building.built_year is not None:
+            if building.built_year != built_year:
+                return False
+        
+        return True
+    
+    def find_existing_building_by_key(self, search_key: str, address: str = None, total_floors: int = None, built_year: int = None) -> Optional[Building]:
         """検索キーで既存の建物を探す（canonical_nameと住所の両方が一致する必要がある）"""
         # 住所が指定されていない場合は、建物名だけでの判断は危険なのでNoneを返す
         if not address:
@@ -1937,26 +1955,74 @@ class BaseScraper(ABC):
         
         # まず、normalized_addressカラムがあれば高速検索を試みる
         if hasattr(Building, 'normalized_address'):
+            # 完全一致を先に試す
             building = self.session.query(Building).filter(
                 Building.canonical_name == search_key,
                 Building.normalized_address == normalized_address
             ).first()
             
             if building:
-                self.logger.info(f"既存建物を発見（名前と正規化住所が一致・高速検索）: {building.normalized_name} at {building.address}")
-                return building
+                # 完全一致でも建物属性を確認
+                if self._verify_building_attributes(building, total_floors, built_year):
+                    self.logger.info(f"既存建物を発見（名前と正規化住所が完全一致、属性も確認・高速検索）: {building.normalized_name} at {building.address}")
+                    return building
+                else:
+                    self.logger.debug(f"住所は完全一致するが、総階数または築年が一致しない: {building.normalized_name}")
+            
+            # 部分一致を試す（SQLAlchemyのstartswithを使用）
+            from sqlalchemy import or_
+            partial_match_buildings = self.session.query(Building).filter(
+                Building.canonical_name == search_key,
+                or_(
+                    Building.normalized_address.startswith(normalized_address),
+                    normalized_address.startswith(Building.normalized_address)
+                )
+            ).all()
+            
+            # 部分一致の場合も属性確認
+            for building in partial_match_buildings:
+                if self._verify_building_attributes(building, total_floors, built_year):
+                    self.logger.info(f"既存建物を発見（部分一致かつ属性一致・高速検索）: {building.normalized_name} at {building.address}")
+                    return building
+                else:
+                    self.logger.debug(f"住所は部分一致するが、総階数または築年が一致しない: {building.normalized_name}")
         
         # normalized_addressカラムがない、または見つからない場合は従来の方法
         candidate_buildings = self.session.query(Building).filter(
             Building.canonical_name == search_key
         ).all()
         
-        # 住所を正規化して比較
+        # 住所を正規化して比較（部分一致も許可）
         for building in candidate_buildings:
             if building.address:
                 building_normalized_addr = normalizer.normalize_for_comparison(building.address)
+                
+                # 完全一致または部分一致をチェック
+                is_match = False
+                match_type = ""
+                
+                # まず住所の一致を確認
                 if building_normalized_addr == normalized_address:
-                    self.logger.info(f"既存建物を発見（名前と正規化住所が一致）: {building.normalized_name} at {building.address}")
+                    # 完全一致
+                    match_type = "完全一致"
+                elif building_normalized_addr.startswith(normalized_address) or normalized_address.startswith(building_normalized_addr):
+                    # 部分一致（どちらかがもう一方を含む）
+                    match_type = "部分一致"
+                else:
+                    # 住所が一致しない
+                    continue
+                
+                # 住所が一致した場合（完全一致・部分一致問わず）、建物属性も確認
+                if self._verify_building_attributes(building, total_floors, built_year):
+                    is_match = True
+                    if total_floors is not None or built_year is not None:
+                        match_type += "（総階数・築年も確認）"
+                else:
+                    self.logger.debug(f"住所は{match_type}するが、総階数または築年が一致しない: {building.normalized_name}")
+                    continue
+                
+                if is_match:
+                    self.logger.info(f"既存建物を発見（{match_type}）: {building.normalized_name} at {building.address}")
                     
                     # normalized_addressカラムがあれば更新
                     if hasattr(building, 'normalized_address') and not building.normalized_address:
@@ -2021,11 +2087,20 @@ class BaseScraper(ABC):
         primary_building = find_ultimate_primary_building(original_building_name)
         
         if primary_building:
-            # 住所の確認（統合先の建物の住所と一致するか）
+            # 住所の確認（統合先の建物の住所と一致するか - 部分一致も許可）
             if primary_building.address:
                 building_normalized_addr = normalizer.normalize_for_comparison(primary_building.address)
-                if building_normalized_addr == normalized_address:
-                    return primary_building
+                # 完全一致または部分一致をチェック
+                if (building_normalized_addr == normalized_address or 
+                    building_normalized_addr.startswith(normalized_address) or 
+                    normalized_address.startswith(building_normalized_addr)):
+                    # 完全一致・部分一致問わず建物属性を確認
+                    if self._verify_building_attributes(primary_building, total_floors, built_year):
+                        return primary_building
+                    else:
+                        match_type = "完全一致" if building_normalized_addr == normalized_address else "部分一致"
+                        self.logger.debug(f"統合履歴の建物は住所が{match_type}するが、属性が一致しない")
+                        return None
         
         self.logger.debug(f"一致する建物が見つかりません: {search_key} at {address} (正規化: {normalized_address})")
         return None
@@ -2138,9 +2213,20 @@ class BaseScraper(ABC):
                 ).first()
                 
                 if primary_building and primary_building.address:
-                    # 住所の確認
+                    # 住所の確認（部分一致も許可）
                     building_normalized_addr = addr_normalizer.normalize_for_comparison(primary_building.address)
-                    if building_normalized_addr == normalized_address:
+                    is_address_match = (building_normalized_addr == normalized_address or 
+                                       building_normalized_addr.startswith(normalized_address) or 
+                                       normalized_address.startswith(building_normalized_addr))
+                    
+                    # 住所が一致した場合（完全一致・部分一致問わず）、建物属性も確認
+                    if is_address_match:
+                        if not self._verify_building_attributes(primary_building, total_floors, built_year):
+                            match_type = "完全一致" if building_normalized_addr == normalized_address else "部分一致"
+                            self.logger.debug(f"統合履歴の建物は住所が{match_type}するが、属性が一致しない: {primary_building.normalized_name}")
+                            is_address_match = False
+                    
+                    if is_address_match:
                         print(f"[INFO] 統合履歴から建物を発見（元の名前で）: '{original_building_name}' → '{primary_building.normalized_name}' (ID: {primary_building.id})")
                         
                         # 建物情報を更新（より詳細な情報があれば）
@@ -2196,7 +2282,7 @@ class BaseScraper(ABC):
         else:
             # 通常の建物名の場合
             # 既存の建物を検索
-            building = self.find_existing_building_by_key(search_key, address)
+            building = self.find_existing_building_by_key(search_key, address, total_floors, built_year)
             
             if building:
                 print(f"[INFO] 既存建物を発見: {building.normalized_name} (ID: {building.id})")
@@ -2282,8 +2368,9 @@ class BaseScraper(ABC):
     def get_or_create_master_property(self, building: Building, room_number: str = None,
                                     floor_number: int = None, area: float = None,
                                     layout: str = None, direction: str = None,
-                                    balcony_area: float = None, url: str = None) -> MasterProperty:
-        """マスター物件を取得または作成"""
+                                    balcony_area: float = None, url: str = None,
+                                    use_learning: bool = True) -> MasterProperty:
+        """マスター物件を取得または作成（学習機能付き）"""
         # 同一物件の判定条件：建物、所在階、平米数、間取り、方角が一致
         # 部屋番号は両方に値がある場合のみ一致を要求（片方が未入力なら無視）
         
@@ -2330,26 +2417,185 @@ class BaseScraper(ABC):
         # 部屋番号による絞り込み（特殊なロジック）
         master_property = None
         
+        # 完全一致する候補が見つからない場合、学習機能を使用
+        if not candidates and use_learning:
+            try:
+                from ..utils.property_learning import PropertyLearningService
+                learning_service = PropertyLearningService(self.session)
+                
+                # 学習結果を使った柔軟な検索
+                flexible_candidates = learning_service.find_property_with_learning(
+                    building_id=building.id,
+                    floor_number=floor_number,
+                    area=area,
+                    layout=layout,
+                    direction=direction,
+                    room_number=room_number
+                )
+                
+                if flexible_candidates:
+                    self.logger.info(f"学習機能により{len(flexible_candidates)}件の候補物件を発見")
+                    candidates = flexible_candidates
+                    
+                    # 学習により見つかった物件の場合、向きのバリエーションをログに記録
+                    if direction:
+                        variations = learning_service.get_direction_variations(building.id, floor_number)
+                        if variations and len(variations) > 1:
+                            self.logger.info(f"この階の方角バリエーション: {variations}")
+            except ImportError:
+                self.logger.debug("PropertyLearningServiceが利用できません")
+            except Exception as e:
+                self.logger.warning(f"学習機能の実行中にエラー: {e}")
+        
+        # 複数候補がある場合の処理と記録
+        if len(candidates) > 1:
+            self.logger.warning(
+                f"⚠️ 複数の物件候補が見つかりました（{len(candidates)}件）: "
+                f"building_id={building.id}, floor={floor_number}, area={area}, "
+                f"layout={layout}, direction={direction}, room_number={room_number}"
+            )
+            
+            # 候補の詳細をログに記録
+            candidate_details = []
+            for i, cand in enumerate(candidates):
+                self.logger.info(
+                    f"  候補{i+1}: ID={cand.id}, "
+                    f"部屋番号={cand.room_number}, "
+                    f"階={cand.floor_number}, "
+                    f"面積={cand.area}㎡, "
+                    f"間取り={cand.layout}, "
+                    f"方角={cand.direction}"
+                )
+                candidate_details.append({
+                    'id': cand.id,
+                    'room_number': cand.room_number,
+                    'floor_number': cand.floor_number,
+                    'area': cand.area,
+                    'layout': cand.layout,
+                    'direction': cand.direction
+                })
+        
         if room_number:
             # 新規物件に部屋番号がある場合
+            # 優先順位: 1. 部屋番号完全一致、2. 部屋番号なし、3. 最初の候補
+            exact_match = None
+            no_room_match = None
+            
             for candidate in candidates:
                 if candidate.room_number:
                     # 両方に部屋番号がある場合は一致を要求
                     if candidate.room_number == room_number:
-                        master_property = candidate
-                        self.logger.info(f"部屋番号が一致: {room_number}")
+                        exact_match = candidate
                         break
                 else:
-                    # 既存物件に部屋番号がない場合は候補として保持（後で選択）
-                    if not master_property:
-                        master_property = candidate
+                    # 既存物件に部屋番号がない場合は候補として保持
+                    if not no_room_match:
+                        no_room_match = candidate
+            
+            # 優先順位に従って選択
+            if exact_match:
+                master_property = exact_match
+                self.logger.info(f"部屋番号が完全一致: {room_number}")
+            elif no_room_match:
+                master_property = no_room_match
+                self.logger.info(f"部屋番号なしの物件を選択（部屋番号を追加予定: {room_number}）")
+            elif candidates:
+                master_property = candidates[0]
+                self.logger.warning(
+                    f"部屋番号が一致する物件がないため、最初の候補を選択: "
+                    f"ID={candidates[0].id}, 既存部屋番号={candidates[0].room_number}"
+                )
         else:
             # 新規物件に部屋番号がない場合
-            # 既存物件の部屋番号は考慮せず、最初の候補を選択
             if candidates:
-                master_property = candidates[0]
-                if master_property.room_number:
-                    self.logger.info(f"新規物件に部屋番号なし、既存物件の部屋番号={master_property.room_number}を維持")
+                # 優先順位: 部屋番号がない物件を優先
+                no_room_candidates = [c for c in candidates if not c.room_number]
+                
+                if no_room_candidates:
+                    master_property = no_room_candidates[0]
+                    self.logger.info("部屋番号なし同士でマッチング")
+                else:
+                    # すべての候補に部屋番号がある場合は最初の候補を選択
+                    master_property = candidates[0]
+                    if len(candidates) > 1:
+                        self.logger.warning(
+                            f"複数候補から最初の物件を選択: "
+                            f"ID={candidates[0].id}, 部屋番号={candidates[0].room_number}"
+                        )
+                    if master_property.room_number:
+                        self.logger.info(f"新規物件に部屋番号なし、既存物件の部屋番号={master_property.room_number}を維持")
+        
+        # 複数候補から選択した場合、曖昧なマッチングとして記録
+        if master_property and len(candidates) > 1:
+            try:
+                # 信頼度スコアを計算（部屋番号の一致度に基づく）
+                confidence_score = 0.5  # デフォルト
+                selection_reason = "複数候補から選択"
+                
+                if room_number and master_property.room_number == room_number:
+                    confidence_score = 0.9
+                    selection_reason = "部屋番号が完全一致"
+                elif room_number and not master_property.room_number:
+                    confidence_score = 0.7
+                    selection_reason = "既存物件に部屋番号なし（追加予定）"
+                elif not room_number and not master_property.room_number:
+                    confidence_score = 0.6
+                    selection_reason = "両方とも部屋番号なし"
+                else:
+                    confidence_score = 0.3
+                    selection_reason = "部屋番号不一致のため最初の候補を選択"
+                
+                # AmbiguousPropertyMatchに記録（モデルが存在する場合）
+                try:
+                    from ..models_property_matching import AmbiguousPropertyMatch
+                    
+                    ambiguous_match = AmbiguousPropertyMatch(
+                        source_site=str(self.source_site),
+                        scraping_url=url,
+                        scraping_data={
+                            'floor_number': floor_number,
+                            'area': area,
+                            'layout': layout,
+                            'direction': direction,
+                            'room_number': room_number
+                        },
+                        selected_property_id=master_property.id,
+                        selection_reason=selection_reason,
+                        candidate_property_ids=[c.id for c in candidates],
+                        candidate_details=candidate_details,
+                        candidate_count=len(candidates),
+                        building_id=building.id,
+                        floor_number=floor_number,
+                        area=area,
+                        layout=layout,
+                        direction=direction,
+                        room_number=room_number,
+                        confidence_score=confidence_score,
+                        used_learning=use_learning and not candidates  # 学習機能を使った場合
+                    )
+                    self.session.add(ambiguous_match)
+                    # 信頼度に応じてログレベルを変更
+                    if confidence_score >= 0.7:
+                        self.logger.info(
+                            f"曖昧なマッチングを記録（高信頼度）: "
+                            f"選択ID={master_property.id}, "
+                            f"候補数={len(candidates)}, "
+                            f"信頼度={confidence_score:.1%}, "
+                            f"理由={selection_reason}"
+                        )
+                    else:
+                        self.logger.warning(
+                            f"⚠️ 曖昧なマッチングを記録（低信頼度）: "
+                            f"選択ID={master_property.id}, "
+                            f"候補数={len(candidates)}, "
+                            f"信頼度={confidence_score:.1%}, "
+                            f"理由={selection_reason}"
+                        )
+                except ImportError:
+                    # モデルが存在しない場合はスキップ
+                    pass
+            except Exception as e:
+                self.logger.debug(f"曖昧なマッチングの記録に失敗: {e}")
         
         if master_property:
             # 既存物件の情報を更新（より詳細な情報があれば）
