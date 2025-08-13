@@ -489,8 +489,73 @@ class NomuScraper(BaseScraper):
         else:
             self.logger.error("住所が取得できません（URLなし）")
     
+    def _extract_built_year_from_various_sources(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
+        """築年月を様々な場所から探す（新築物件などで特殊な配置の場合がある）"""
+        import re
+        from .data_normalizer import extract_built_year
+        
+        # すでに築年が取得済みの場合はスキップ
+        if detail_data.get('built_year'):
+            return
+        
+        # 方法1: テーブル内のth/tdペアから探す
+        for table in soup.find_all("table"):
+            for row in table.find_all("tr"):
+                cells = row.find_all(["th", "td"])
+                if len(cells) >= 2:
+                    label = cells[0].get_text(strip=True)
+                    if "築年月" in label:
+                        value = cells[1].get_text(strip=True)
+                        built_year = extract_built_year(value)
+                        if built_year:
+                            detail_data['built_year'] = built_year
+                            # 月情報も取得
+                            month_match = re.search(r'(\d{1,2})月', value)
+                            if month_match:
+                                detail_data['built_month'] = int(month_match.group(1))
+                            self.logger.info(f"[NOMU] 築年月をテーブルから取得: {value}")
+                            return
+        
+        # 方法2: span.item_status_content から探す
+        status_items = soup.find_all("li", {"class": "item_status"})
+        for item in status_items:
+            label_elem = item.find("span", {"class": "item_status_label"})
+            content_elem = item.find("span", {"class": "item_status_content"})
+            if label_elem and content_elem:
+                label = label_elem.get_text(strip=True)
+                if "築年月" in label:
+                    value = content_elem.get_text(strip=True)
+                    built_year = extract_built_year(value)
+                    if built_year:
+                        detail_data['built_year'] = built_year
+                        # 月情報も取得
+                        month_match = re.search(r'(\d{1,2})月', value)
+                        if month_match:
+                            detail_data['built_month'] = int(month_match.group(1))
+                        self.logger.info(f"[NOMU] 築年月をitem_statusから取得: {value}")
+                        return
+        
+        # 方法3: ページテキストから直接探す（最終手段）
+        page_text = soup.get_text()
+        year_month_pattern = r'築年月[：:\s]*(\d{4}年\d{1,2}月)'
+        match = re.search(year_month_pattern, page_text)
+        if match:
+            value = match.group(1)
+            built_year = extract_built_year(value)
+            if built_year:
+                detail_data['built_year'] = built_year
+                # 月情報も取得
+                month_match = re.search(r'(\d{1,2})月', value)
+                if month_match:
+                    detail_data['built_month'] = int(month_match.group(1))
+                self.logger.info(f"[NOMU] 築年月をテキストから取得: {value}")
+    
     def _extract_mansion_table_info(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
         """物件詳細情報を抽出（両フォーマット対応）"""
+        
+        # まず、築年月を個別に探す（新築物件などで別の場所にある場合がある）
+        self._extract_built_year_from_various_sources(soup, detail_data)
+        
         # 新フォーマット: item_tableクラス（3番目または4番目のテーブル）
         item_tables = soup.find_all("table", {"class": "item_table"})
         if len(item_tables) >= 3:

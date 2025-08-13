@@ -4403,12 +4403,13 @@ class BaseScraper(ABC):
             'building_name': '建物名',
             'address': '住所',
             'area': '面積',
-            'layout': '間取り'
+            'layout': '間取り',
+            'built_year': '築年'
         }
         
         missing_fields = []
         missing_fields_jp = []
-        required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'layout']
+        required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'layout', 'built_year']
         for field in required_fields:
             if field not in property_data or property_data.get(field) is None:
                 missing_fields.append(field)
