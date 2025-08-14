@@ -870,8 +870,24 @@ async def attach_property_to_building(
         message = f"物件を建物「{target_building.normalized_name}」に紐付けました"
         new_building_id = target_building_id
     
+    # 多数決処理を実行（元の建物と移動先の建物の両方）
+    from ..utils.majority_vote_updater import MajorityVoteUpdater
+    updater = MajorityVoteUpdater(db)
+    
     try:
+        # 元の建物の情報を更新（物件が減った場合）
+        if current_building_id:
+            logger.info(f"[DEBUG] Updating original building {current_building_id} with majority vote after property removal")
+            updater.update_building_name_by_majority(current_building_id)
+        
+        # 移動先の建物の情報を更新（物件が増えた場合）
+        logger.info(f"[DEBUG] Updating target building {new_building_id} with majority vote after property addition")
+        updater.update_building_name_by_majority(new_building_id)
+        
         db.commit()
+        
+        logger.info(f"物件 {property_id} を建物 {current_building_id} から {new_building_id} に移動し、両建物の多数決処理を完了しました")
+        
         return {
             "success": True,
             "message": message,

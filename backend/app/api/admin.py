@@ -290,7 +290,7 @@ def get_duplicate_buildings(
     limit: int = 30,
     db: Session = Depends(get_db)
 ):
-    """建物の重複候補を取得（SQL最適化版）"""
+    """建物の重複候補を取得（改善版）"""
     global _duplicate_buildings_cache, _duplicate_buildings_cache_time
     import re
     
@@ -307,30 +307,118 @@ def get_duplicate_buildings(
     # EnhancedBuildingMatcherのインスタンスを作成
     matcher = EnhancedBuildingMatcher()
     
-    # ベースクエリ
-    base_query = db.query(
-        Building,
-        func.count(MasterProperty.id).label('property_count')
-    ).outerjoin(
-        MasterProperty, Building.id == MasterProperty.building_id
-    ).group_by(Building.id).having(
-        func.count(MasterProperty.id) > 0  # 物件がある建物のみ
-    )
-    
-    # 検索フィルタを適用
+    # 検索条件がある場合は通常通り処理
     if search:
+        # ベースクエリ
+        base_query = db.query(
+            Building,
+            func.count(MasterProperty.id).label('property_count')
+        ).outerjoin(
+            MasterProperty, Building.id == MasterProperty.building_id
+        ).group_by(Building.id).having(
+            func.count(MasterProperty.id) > 0  # 物件がある建物のみ
+        )
+        
         from backend.app.utils.search_normalizer import normalize_search_text
         normalized_search = normalize_search_text(search)
         search_terms = normalized_search.split()
         
         for term in search_terms:
             base_query = base_query.filter(Building.normalized_name.ilike(f"%{term}%"))
-    
-    # 建物を取得（検索ありの場合は全て、なしの場合は最初の200件）
-    if search:
+        
         buildings_with_count = base_query.order_by(Building.normalized_name).all()
     else:
-        buildings_with_count = base_query.order_by(Building.normalized_name).limit(200).all()
+        # 検索条件がない場合：重複の可能性が高い建物群を効率的に見つける
+        
+        # 優先度1: 同じ建物名を持つ建物（最も重複の可能性が高い）
+        subquery = db.query(
+            Building.normalized_name,
+            func.count(Building.id).label('name_count')
+        ).filter(
+            Building.id.in_(
+                db.query(MasterProperty.building_id).distinct()
+            )
+        ).group_by(Building.normalized_name).having(
+            func.count(Building.id) > 1  # 同じ名前の建物が2つ以上
+        ).subquery()
+        
+        # 同名建物をすべて取得
+        buildings_with_count = db.query(
+            Building,
+            func.count(MasterProperty.id).label('property_count')
+        ).outerjoin(
+            MasterProperty, Building.id == MasterProperty.building_id
+        ).filter(
+            Building.normalized_name.in_(
+                db.query(subquery.c.normalized_name)
+            )
+        ).group_by(Building.id).order_by(
+            Building.normalized_name,
+            Building.id  # 同じ名前内でもID順で安定したソート
+        ).all()
+        
+        # 優先度2: 同じ住所・築年・階数の組み合わせを持つ建物を追加
+        if len(buildings_with_count) < limit * 3:
+            # 同じ住所前半部分、同じ築年、同じ階数を持つ建物のグループを検索
+            # これらは表記ゆれや入力ミスによる重複の可能性が高い
+            duplicate_candidates = db.query(
+                Building,
+                func.count(MasterProperty.id).label('property_count')
+            ).outerjoin(
+                MasterProperty, Building.id == MasterProperty.building_id
+            ).filter(
+                Building.id.notin_([b[0].id for b in buildings_with_count])
+            ).group_by(Building.id).having(
+                func.count(MasterProperty.id) > 0
+            )
+            
+            # サブクエリで重複の可能性が高い組み合わせを特定
+            attribute_groups = db.query(
+                func.substring(Building.address, 1, 15).label('address_prefix'),  # 住所の前半部分
+                Building.built_year,
+                Building.total_floors,
+                func.count(Building.id).label('group_count')
+            ).filter(
+                Building.id.in_(
+                    db.query(MasterProperty.building_id).distinct()
+                ),
+                Building.built_year.isnot(None),
+                Building.total_floors.isnot(None)
+            ).group_by(
+                func.substring(Building.address, 1, 15),
+                Building.built_year,
+                Building.total_floors
+            ).having(
+                func.count(Building.id) > 1  # 同じ属性の組み合わせが2つ以上
+            ).limit(50).all()
+            
+            # 見つかった組み合わせに一致する建物を取得
+            for group in attribute_groups:
+                if len(buildings_with_count) >= limit * 3:
+                    break
+                matching_buildings = duplicate_candidates.filter(
+                    Building.address.like(f"{group.address_prefix}%"),
+                    Building.built_year == group.built_year,
+                    Building.total_floors == group.total_floors
+                ).limit(10).all()
+                buildings_with_count.extend(matching_buildings)
+        
+        # 優先度3: まだ枠がある場合は、通常の建物を追加（フォールバック）
+        if len(buildings_with_count) < 500:
+            remaining_buildings = db.query(
+                Building,
+                func.count(MasterProperty.id).label('property_count')
+            ).outerjoin(
+                MasterProperty, Building.id == MasterProperty.building_id
+            ).filter(
+                Building.id.notin_([b[0].id for b in buildings_with_count])
+            ).group_by(Building.id).having(
+                func.count(MasterProperty.id) > 0
+            ).order_by(
+                Building.normalized_name
+            ).limit(500 - len(buildings_with_count)).all()
+            
+            buildings_with_count.extend(remaining_buildings)
     
     # 除外ペアを取得
     exclusions = db.query(BuildingMergeExclusion).all()
@@ -352,19 +440,23 @@ def get_duplicate_buildings(
         if building1.normalized_address:
             # 正規化された住所から地名部分（丁目より前）を抽出
             # 例：「東京都港区六本木3-16-33」→「東京都港区六本木」
-            addr_match = re.match(r'(.*?[区市町村].*?)(?=\d|$)', building1.normalized_address)
+            # 「東京都港区六本木1」や「東京都港区六本木１」のような形式にも対応
+            addr_match = re.match(r'(.*?[区市町村][^0-9０-９]*)', building1.normalized_address)
             if addr_match:
                 area_prefix = addr_match.group(1)
                 area_condition = Building.normalized_address.like(f"{area_prefix}%")
-        elif building1.address:
-            addr_match = re.match(r'(.*?[区市町村].*?)(?=\d|$)', building1.address)
+        
+        if area_condition is None and building1.address:
+            addr_match = re.match(r'(.*?[区市町村][^0-9０-９]*)', building1.address)
             if addr_match:
                 area_prefix = addr_match.group(1)
                 area_condition = Building.address.like(f"{area_prefix}%")
         
-        # 住所条件がない場合はスキップ
+        # 住所条件がない場合でも、建物名が完全一致する場合は候補として扱う
         if area_condition is None:
-            continue
+            # 建物名が完全一致する場合のみ続行
+            same_name_condition = Building.normalized_name == building1.normalized_name
+            area_condition = same_name_condition
         
         # 3つの条件パターンのいずれかに一致する建物を候補とする
         candidate_conditions = []
@@ -482,11 +574,21 @@ def get_duplicate_groups(
     building_name: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    """重複候補の物件グループを取得"""
+    """重複候補の物件グループを取得（改善版）"""
     
-    # min_similarityが0.85以上の場合は簡易的なグループ化を使用
-    if min_similarity >= 0.85:
-        return get_duplicate_groups_simple(db, limit, offset, building_name)
+    # 新しい効率的な実装を使用
+    return get_duplicate_groups_v2(min_similarity, limit, offset, building_name, db)
+
+
+@router.get("/duplicate-groups-v2")
+def get_duplicate_groups_v2(
+    min_similarity: float = 0.8,
+    limit: int = 50,
+    offset: int = 0,
+    building_name: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """重複候補の物件グループを取得（効率化版）"""
     
     # 除外リストを取得
     exclusions = db.query(PropertyMergeExclusion).all()
@@ -495,231 +597,177 @@ def get_duplicate_groups(
         excluded_pairs.add((exclusion.property1_id, exclusion.property2_id))
         excluded_pairs.add((exclusion.property2_id, exclusion.property1_id))
     
-    # 建物名フィルタリング用の条件
-    building_filter_cte = ""
-    building_filter_where = ""
-    params = {}
-    
+    # 建物名フィルタの準備
+    building_filter = None
     if building_name:
-        from backend.app.utils.search_normalizer import normalize_search_text, create_search_patterns
-        
-        # 検索文字列を正規化してAND検索用に分割
+        from backend.app.utils.search_normalizer import normalize_search_text
         normalized_search = normalize_search_text(building_name)
         search_terms = normalized_search.split()
         
-        # 検索条件を生成
-        param_count = 0
-        
-        if len(search_terms) > 1:
-            # 複数の検索語がある場合：AND条件と完全一致の両方
-            and_cte_conditions = []
-            and_where_conditions = []
-            
-            # 各単語のAND条件
-            for term in search_terms:
-                term_cte_conditions = []
-                term_where_conditions = []
-                term_patterns = create_search_patterns(term)
-                for pattern in term_patterns:
-                    param_name = f"building_name_{param_count}"
-                    term_cte_conditions.append(f"b.normalized_name ILIKE :{param_name}")
-                    term_where_conditions.append(f"pd.building_name ILIKE :{param_name}")
-                    params[param_name] = f"%{pattern}%"
-                    param_count += 1
-                if term_cte_conditions:
-                    and_cte_conditions.append(f"({' OR '.join(term_cte_conditions)})")
-                    and_where_conditions.append(f"({' OR '.join(term_where_conditions)})")
-            
-            # 完全な文字列でも検索
-            full_patterns = create_search_patterns(building_name)
-            full_cte_conditions = []
-            full_where_conditions = []
-            for pattern in full_patterns:
-                param_name = f"building_name_{param_count}"
-                full_cte_conditions.append(f"b.normalized_name ILIKE :{param_name}")
-                full_where_conditions.append(f"pd.building_name ILIKE :{param_name}")
-                params[param_name] = f"%{pattern}%"
-                param_count += 1
-            
-            # AND条件と完全一致をORで結合
-            all_cte_conditions = []
-            all_where_conditions = []
-            if and_cte_conditions:
-                all_cte_conditions.append(f"({' AND '.join(and_cte_conditions)})")
-                all_where_conditions.append(f"({' AND '.join(and_where_conditions)})")
-            if full_cte_conditions:
-                all_cte_conditions.extend(full_cte_conditions)
-                all_where_conditions.extend(full_where_conditions)
-            
-            if all_cte_conditions:
-                building_filter_cte = f"AND ({' OR '.join(all_cte_conditions)})"
-                building_filter_where = f"AND ({' OR '.join(all_where_conditions)})"
-        else:
-            # 単一の検索語の場合
-            search_patterns = create_search_patterns(building_name)
-            cte_conditions = []
-            where_conditions = []
-            for pattern in search_patterns:
-                param_name = f"building_name_{param_count}"
-                cte_conditions.append(f"b.normalized_name ILIKE :{param_name}")
-                where_conditions.append(f"pd.building_name ILIKE :{param_name}")
-                params[param_name] = f"%{pattern}%"
-                param_count += 1
-            
-            if cte_conditions:
-                building_filter_cte = f"AND ({' OR '.join(cte_conditions)})"
-                building_filter_where = f"AND ({' OR '.join(where_conditions)})"
-    
-    # 重複候補を検出（グループ化用）
-    query = text(f"""
-        WITH price_votes AS (
-            -- アクティブな掲載から価格を集計（多数決用）
-            SELECT 
-                mp.id as property_id,
-                pl.current_price,
-                COUNT(*) as vote_count
-            FROM master_properties mp
-            JOIN property_listings pl ON mp.id = pl.master_property_id
-            WHERE pl.is_active = true AND pl.current_price IS NOT NULL
-            GROUP BY mp.id, pl.current_price
-        ),
-        majority_prices AS (
-            -- 各物件の多数決価格を決定
-            SELECT 
-                property_id,
-                current_price,
-                vote_count,
-                ROW_NUMBER() OVER (PARTITION BY property_id ORDER BY vote_count DESC, current_price ASC) as rn
-            FROM price_votes
-        ),
-        property_details AS (
-            SELECT 
-                mp.id,
-                mp.building_id,
-                mp.room_number,
-                mp.floor_number,
-                mp.area,
-                mp.layout,
-                mp.direction,
-                b.normalized_name as building_name,
-                COALESCE(maj.current_price, MAX(pl.current_price)) as current_price,  -- 多数決価格、なければ最大価格
-                STRING_AGG(DISTINCT pl.agency_name, ', ') as agency_names,
-                COUNT(DISTINCT pl.id) as listing_count,
-                COUNT(DISTINCT pl.source_site) as source_count,
-                bool_or(pl.is_active) as has_active_listing
-            FROM master_properties mp
-            JOIN buildings b ON mp.building_id = b.id
-            LEFT JOIN property_listings pl ON mp.id = pl.master_property_id
-            LEFT JOIN majority_prices maj ON mp.id = maj.property_id AND maj.rn = 1
-            GROUP BY mp.id, mp.building_id, mp.room_number, mp.floor_number, mp.area, mp.layout, mp.direction, b.normalized_name, maj.current_price
+        building_filter = Building.id.in_(
+            db.query(Building.id).filter(
+                and_(*[Building.normalized_name.ilike(f"%{term}%") for term in search_terms])
+            )
         )
-        SELECT 
-            pd.id,
-            pd.building_id,
-            pd.building_name,
-            pd.room_number,
-            pd.floor_number,
-            pd.area,
-            pd.layout,
-            pd.direction,
-            pd.current_price,
-            pd.agency_names,
-            pd.listing_count,
-            pd.source_count,
-            pd.has_active_listing,
-            -- グループ識別用のキー
-            pd.building_id || '-' || pd.floor_number || '-' || COALESCE(pd.layout, '') as group_key
-        FROM property_details pd
-        WHERE 
-            -- 部屋番号がない物件のみ
-            (pd.room_number IS NULL OR pd.room_number = '')
-            -- アクティブな掲載がある
-            AND pd.has_active_listing = true
-        ORDER BY pd.building_name, pd.floor_number, pd.area
-    """)
     
-    result = db.execute(query)
-    all_properties = list(result)
+    # 優先度1: 同じ建物・同じ階・同じ面積の物件（最も重複の可能性が高い）
+    # 部屋番号なしの物件で、同じ建物・階・面積の組み合わせを持つグループを検索
+    base_query = db.query(
+        MasterProperty.building_id,
+        MasterProperty.floor_number,
+        MasterProperty.area,
+        MasterProperty.layout,
+        func.count(MasterProperty.id).label('count')
+    ).filter(
+        or_(MasterProperty.room_number.is_(None), MasterProperty.room_number == ''),
+        MasterProperty.id.in_(
+            db.query(PropertyListing.master_property_id).filter(
+                PropertyListing.is_active == True
+            ).distinct()
+        )
+    )
     
-    # グループ化処理（処理済みの物件を追跡）
-    groups = {}
-    processed_properties = set()
+    if building_filter:
+        base_query = base_query.filter(MasterProperty.building_id.in_(
+            db.query(Building.id).filter(building_filter)
+        ))
     
-    for i, prop in enumerate(all_properties):
-        if prop.id in processed_properties:
-            continue
-            
-        # 新しいグループを作成
-        group_id = f"group_{len(groups) + 1}"
-        group = [prop]
-        processed_properties.add(prop.id)
-        
-        # 残りの物件から類似物件を探す
-        for j in range(i + 1, len(all_properties)):
-            other_prop = all_properties[j]
-            if other_prop.id in processed_properties:
-                continue
-                
-            # 類似度を計算
-            similarity = calculate_similarity(prop, other_prop)
-            if similarity >= min_similarity:
-                # 除外ペアチェック
-                if (prop.id, other_prop.id) not in excluded_pairs and (other_prop.id, prop.id) not in excluded_pairs:
-                    # グループ内の他の物件とも類似度をチェック
-                    can_add = True
-                    for group_prop in group:
-                        if (other_prop.id, group_prop.id) in excluded_pairs or (group_prop.id, other_prop.id) in excluded_pairs:
-                            can_add = False
-                            break
-                        if calculate_similarity(other_prop, group_prop) < min_similarity:
-                            can_add = False
-                            break
-                    
-                    if can_add:
-                        group.append(other_prop)
-                        processed_properties.add(other_prop.id)
-        
-        groups[group_id] = group
+    # 同じ属性の組み合わせが2つ以上ある物件グループ
+    potential_groups = base_query.group_by(
+        MasterProperty.building_id,
+        MasterProperty.floor_number,
+        MasterProperty.area,
+        MasterProperty.layout
+    ).having(
+        func.count(MasterProperty.id) > 1
+    ).limit(100).all()  # 最大100グループ
     
-    # 2件以上の物件を持つグループのみ返す
+    # 各グループの物件を取得
     duplicate_groups = []
-    for group_id, properties in groups.items():
-        if len(properties) >= 2:
+    for group in potential_groups:
+        # グループ内の物件を取得
+        properties_query = db.query(
+            MasterProperty,
+            Building.normalized_name.label('building_name'),
+            func.count(PropertyListing.id).label('listing_count'),
+            func.max(PropertyListing.current_price).label('current_price')
+        ).join(
+            Building, MasterProperty.building_id == Building.id
+        ).outerjoin(
+            PropertyListing, MasterProperty.id == PropertyListing.master_property_id
+        ).filter(
+            MasterProperty.building_id == group.building_id,
+            MasterProperty.floor_number == group.floor_number,
+            MasterProperty.area == group.area,
+            or_(MasterProperty.room_number.is_(None), MasterProperty.room_number == ''),
+            PropertyListing.is_active == True
+        ).group_by(
+            MasterProperty.id,
+            Building.normalized_name
+        ).all()
+        
+        # 除外ペアのチェック
+        property_ids = [p[0].id for p in properties_query]
+        
+        # 除外ペアがあるかチェック
+        has_exclusion = False
+        for i, id1 in enumerate(property_ids):
+            for id2 in property_ids[i+1:]:
+                if (id1, id2) in excluded_pairs:
+                    has_exclusion = True
+                    break
+            if has_exclusion:
+                break
+        
+        # 除外ペアがない場合のみグループに追加
+        if not has_exclusion and len(properties_query) >= 2:
             duplicate_groups.append({
-                "group_id": group_id,
-                "property_count": len(properties),
-                "building_name": properties[0].building_name,
-                "floor_number": properties[0].floor_number,
-                "layout": properties[0].layout,
+                "group_id": f"group_{len(duplicate_groups) + 1}",
+                "property_count": len(properties_query),
+                "building_name": properties_query[0].building_name,
+                "floor_number": group.floor_number,
+                "layout": group.layout,
+                "area": group.area,
                 "properties": sorted([
                     {
-                        "id": p.id,
-                        "room_number": p.room_number,
-                        "area": p.area,
-                        "layout": p.layout,
-                        "direction": p.direction,
-                        "current_price": p.current_price,
-                        "agency_names": p.agency_names,
-                        "listing_count": p.listing_count,
-                        "source_count": p.source_count
+                        "id": prop[0].id,
+                        "room_number": prop[0].room_number,
+                        "area": prop[0].area,
+                        "layout": prop[0].layout,
+                        "direction": prop[0].direction,
+                        "current_price": prop.current_price,
+                        "listing_count": prop.listing_count or 0
                     }
-                    for p in properties
-                ], key=lambda x: (
-                    # 1. 掲載数が多い順（重要な物件を優先）
-                    -(x["listing_count"] or 0),
-                    # 2. 価格がある物件を優先
-                    0 if x["current_price"] else 1,
-                    # 3. 価格順（安い順）
-                    x["current_price"] or float('inf'),
-                    # 4. 物件ID順（一定の順序を保証）
-                    x["id"]
-                ))
+                    for prop in properties_query
+                ], key=lambda x: (-x["listing_count"], x["id"]))
             })
+    
+    # 優先度2: より緩い条件で追加のグループを検索（必要に応じて）
+    if len(duplicate_groups) < limit and min_similarity < 0.85:
+        # 同じ建物・同じ階の物件（面積は異なってもOK）
+        additional_groups = base_query.group_by(
+            MasterProperty.building_id,
+            MasterProperty.floor_number,
+            MasterProperty.layout
+        ).having(
+            func.count(MasterProperty.id) > 1
+        ).limit(50).all()
+        
+        for group in additional_groups:
+            if len(duplicate_groups) >= limit:
+                break
+                
+            # 既存のグループと重複しないかチェック
+            existing_key = f"{group.building_id}_{group.floor_number}_{group.layout}"
+            if any(f"{g['floor_number']}_{g['layout']}" in existing_key for g in duplicate_groups):
+                continue
+            
+            properties_query = db.query(
+                MasterProperty,
+                Building.normalized_name.label('building_name'),
+                func.count(PropertyListing.id).label('listing_count'),
+                func.max(PropertyListing.current_price).label('current_price')
+            ).join(
+                Building, MasterProperty.building_id == Building.id
+            ).outerjoin(
+                PropertyListing, MasterProperty.id == PropertyListing.master_property_id
+            ).filter(
+                MasterProperty.building_id == group.building_id,
+                MasterProperty.floor_number == group.floor_number,
+                MasterProperty.layout == group.layout,
+                or_(MasterProperty.room_number.is_(None), MasterProperty.room_number == ''),
+                PropertyListing.is_active == True
+            ).group_by(
+                MasterProperty.id,
+                Building.normalized_name
+            ).all()
+            
+            if len(properties_query) >= 2:
+                duplicate_groups.append({
+                    "group_id": f"group_{len(duplicate_groups) + 1}",
+                    "property_count": len(properties_query),
+                    "building_name": properties_query[0].building_name,
+                    "floor_number": group.floor_number,
+                    "layout": group.layout,
+                    "area": None,  # 面積は統一されていない
+                    "properties": sorted([
+                        {
+                            "id": prop[0].id,
+                            "room_number": prop[0].room_number,
+                            "area": prop[0].area,
+                            "layout": prop[0].layout,
+                            "direction": prop[0].direction,
+                            "current_price": prop.current_price,
+                            "listing_count": prop.listing_count or 0
+                        }
+                        for prop in properties_query
+                    ], key=lambda x: (-x["listing_count"], x["id"]))
+                })
     
     # 物件数の多い順にソート
     duplicate_groups.sort(key=lambda x: x["property_count"], reverse=True)
     
-    # offsetとlimitを適用
+    # offset と limit を適用
     start_idx = offset
     end_idx = offset + limit
     result = duplicate_groups[start_idx:end_idx]
@@ -1489,6 +1537,12 @@ def merge_buildings(
         
         db.commit()
         
+        # 統合後に主建物の情報を多数決で更新
+        from ..utils.majority_vote_updater import MajorityVoteUpdater
+        updater = MajorityVoteUpdater(db)
+        logger.info(f"[DEBUG] Updating primary building {primary_id} with majority vote after merge")
+        updater.update_building_name_by_majority(primary_id)
+        
         # 統合結果の詳細を取得
         final_property_count = db.query(MasterProperty).filter(
             MasterProperty.building_id == primary_building.id
@@ -1521,6 +1575,109 @@ def merge_buildings(
         logger.error(f"[DEBUG] secondary_ids at error: {secondary_ids}")
         import traceback
         logger.error(f"[DEBUG] Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/move-property-to-building")
+def move_property_to_building(
+    request: Dict[str, Any],
+    db: Session = Depends(get_db)
+):
+    """物件を別の建物に移動"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    property_id = request.get("property_id")
+    target_building_id = request.get("target_building_id")
+    
+    if not property_id or not target_building_id:
+        raise HTTPException(status_code=400, detail="property_id and target_building_id are required")
+    
+    # 物件を取得
+    property_obj = db.query(MasterProperty).filter(MasterProperty.id == property_id).first()
+    if not property_obj:
+        raise HTTPException(status_code=404, detail="Property not found")
+    
+    # 移動先の建物を取得
+    target_building = db.query(Building).filter(Building.id == target_building_id).first()
+    if not target_building:
+        raise HTTPException(status_code=404, detail="Target building not found")
+    
+    # 元の建物IDを記録
+    original_building_id = property_obj.building_id
+    
+    if original_building_id == target_building_id:
+        raise HTTPException(status_code=400, detail="Property is already in the target building")
+    
+    try:
+        # 移動先に同じ物件が既に存在するかチェック
+        existing_property = db.query(MasterProperty).filter(
+            MasterProperty.building_id == target_building_id,
+            MasterProperty.floor_number == property_obj.floor_number,
+            MasterProperty.area == property_obj.area,
+            MasterProperty.layout == property_obj.layout,
+            MasterProperty.direction == property_obj.direction,
+            MasterProperty.id != property_id
+        ).first()
+        
+        if existing_property:
+            # 重複物件が存在する場合の処理
+            logger.warning(
+                f"Duplicate property found in target building: "
+                f"building={target_building_id}, floor={property_obj.floor_number}, "
+                f"area={property_obj.area}, layout={property_obj.layout}"
+            )
+            
+            # 掲載情報を既存の物件に移動
+            db.execute(
+                text("""
+                    UPDATE property_listings 
+                    SET master_property_id = :existing_id 
+                    WHERE master_property_id = :old_id
+                """),
+                {"existing_id": existing_property.id, "old_id": property_id}
+            )
+            
+            # 移動元の物件を削除
+            db.delete(property_obj)
+            moved_property_id = existing_property.id
+            message = f"物件を移動し、重複物件と統合しました（物件ID: {property_id} → {existing_property.id}）"
+        else:
+            # 重複がない場合は通常の移動
+            property_obj.building_id = target_building_id
+            moved_property_id = property_id
+            message = f"物件を建物ID {original_building_id} から {target_building_id} に移動しました"
+        
+        db.flush()
+        
+        # 多数決による建物情報の更新
+        from ..utils.majority_vote_updater import MajorityVoteUpdater
+        updater = MajorityVoteUpdater(db)
+        
+        # 元の建物の情報を更新（物件が減ったため）
+        if original_building_id:
+            logger.info(f"Updating original building {original_building_id} with majority vote")
+            updater.update_building_name_by_majority(original_building_id)
+        
+        # 移動先の建物の情報を更新（物件が増えたため）
+        logger.info(f"Updating target building {target_building_id} with majority vote")
+        updater.update_building_name_by_majority(target_building_id)
+        
+        db.commit()
+        
+        # 結果を返す
+        return {
+            "success": True,
+            "message": message,
+            "moved_property_id": moved_property_id,
+            "original_building_id": original_building_id,
+            "target_building_id": target_building_id
+        }
+        
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error moving property: {str(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -1718,6 +1875,36 @@ def merge_properties(
         db.execute(text(
             "DELETE FROM property_listings WHERE master_property_id = :property_id"
         ), {"property_id": merge_request.secondary_property_id})
+        
+        # 3. ambiguous_property_matchesテーブルの参照を更新
+        # 副物件が選択物件として参照されている場合、主物件に更新
+        db.execute(text("""
+            UPDATE ambiguous_property_matches 
+            SET selected_property_id = :primary_id 
+            WHERE selected_property_id = :secondary_id
+        """), {
+            "primary_id": merge_request.primary_property_id,
+            "secondary_id": merge_request.secondary_property_id
+        })
+        
+        # 4. candidate_property_idsに副物件IDが含まれている場合も更新
+        # JSON配列内のIDを置換する必要があるため、より複雑な処理が必要
+        db.execute(text("""
+            UPDATE ambiguous_property_matches 
+            SET candidate_property_ids = (
+                SELECT json_agg(
+                    CASE 
+                        WHEN elem::text::int = :secondary_id THEN :primary_id 
+                        ELSE elem::text::int 
+                    END
+                )
+                FROM json_array_elements(candidate_property_ids) AS elem
+            )
+            WHERE candidate_property_ids::text LIKE '%' || :secondary_id || '%'
+        """), {
+            "primary_id": merge_request.primary_property_id,
+            "secondary_id": merge_request.secondary_property_id
+        })
         
         # 変更を再度フラッシュ
         db.flush()
