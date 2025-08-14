@@ -91,7 +91,7 @@ async def get_properties_v2(
     
     # ソート
     if sort_by == "price":
-        order_column = func.coalesce(price_subquery.c.min_price, MasterProperty.last_sale_price)
+        order_column = func.coalesce(price_subquery.c.min_price, MasterProperty.final_price)
     elif sort_by == "area":
         order_column = MasterProperty.area
     elif sort_by == "built_year":

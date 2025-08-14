@@ -4460,7 +4460,7 @@ def update_listing_status(db: Session = Depends(get_db)):
                 ).order_by(PropertyListing.last_scraped_at.desc()).first()
                 
                 if last_listing and last_listing.current_price:
-                    property.last_sale_price = last_listing.current_price
+                    property.final_price = last_listing.current_price
                 
                 sold_count += 1
         
