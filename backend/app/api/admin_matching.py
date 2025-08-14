@@ -13,7 +13,7 @@ from ..models_property_matching import AmbiguousPropertyMatch
 from ..models import MasterProperty, Building
 from ..auth import verify_admin_credentials
 
-router = APIRouter(tags=["admin-matching"])
+router = APIRouter(prefix="/api/admin", tags=["admin-matching"])
 
 
 @router.get("/ambiguous-matches")

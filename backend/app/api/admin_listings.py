@@ -12,7 +12,7 @@ from ..database import get_db
 from ..models import PropertyListing, MasterProperty, Building, ListingPriceHistory
 from ..auth import verify_admin_credentials
 
-router = APIRouter(tags=["admin-listings"])
+router = APIRouter(prefix="/api/admin", tags=["admin-listings"])
 
 
 @router.get("/listings")
