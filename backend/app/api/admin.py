@@ -1690,16 +1690,7 @@ def merge_properties(
         # すべての変更をフラッシュしてから副物件を削除
         db.flush()
         
-        # 副物件を参照している再販物件の参照を更新
-        # 副物件が他の物件から再販物件として参照されている場合、主物件を参照するように更新
-        db.execute(text("""
-            UPDATE master_properties 
-            SET resale_property_id = :primary_id 
-            WHERE resale_property_id = :secondary_id
-        """), {
-            "primary_id": merge_request.primary_property_id,
-            "secondary_id": merge_request.secondary_property_id
-        })
+        # 再販物件の参照更新は削除（resale_property_idカラムは現在のスキーマに存在しない）
         
         # 統合履歴の更新
         # 副物件が以前の統合でprimary_property_idとして記録されている場合、主物件に更新

@@ -482,8 +482,11 @@ async def get_detach_candidates(
                 detail="この物件の建物名が設定されていません。データの整合性を確認してください"
             )
     normalized_name = normalize_search_text(most_common_building_name)
+    # canonical_name用のキーも生成
+    from ..utils.search_normalizer import get_search_key_for_comparison
+    search_key = get_search_key_for_comparison(most_common_building_name)
     
-    logger.info(f"物件 {property_id} の最頻出建物名: {most_common_building_name} (正規化: {normalized_name})")
+    logger.info(f"物件 {property_id} の最頻出建物名: {most_common_building_name} (正規化: {normalized_name}, 検索キー: {search_key})")
     
     # 現在の建物を取得して比較
     current_building = db.query(Building).filter(Building.id == current_building_id).first()
@@ -544,11 +547,17 @@ async def get_detach_candidates(
     # 建物候補を収集
     building_candidates = []
     
-    # 1. 正規化名で検索（完全一致と部分一致の両方）
-    # まず完全一致を検索
-    exact_match_query = db.query(Building).filter(
+    # 1. 建物名で検索（段階的なマッチング）
+    # まずnormalized_name（棟表記含む）での完全一致を最優先
+    normalized_match_query = db.query(Building).filter(
         Building.normalized_name == normalized_name,
         Building.id != current_building_id  # 現在の建物は除外
+    )
+    
+    # canonical_name（棟表記除去）での一致も検索
+    canonical_match_query = db.query(Building).filter(
+        Building.canonical_name == search_key,
+        Building.id != current_building_id
     )
     
     # 部分一致も検索（建物名の主要部分を含む）
@@ -563,8 +572,14 @@ async def get_detach_candidates(
     all_buildings = []
     seen_ids = set()
     
-    # 完全一致を優先
-    for building in exact_match_query.all():
+    # normalized_name（棟表記含む）での完全一致を最優先
+    for building in normalized_match_query.all():
+        if building.id not in seen_ids:
+            all_buildings.append(building)
+            seen_ids.add(building.id)
+    
+    # canonical_name（棟表記除去）での一致を次に優先
+    for building in canonical_match_query.all():
         if building.id not in seen_ids:
             all_buildings.append(building)
             seen_ids.add(building.id)
@@ -581,9 +596,15 @@ async def get_detach_candidates(
         match_details = []
         
         # 建物名の一致度を評価
+        # normalized_name（棟表記含む）の完全一致を最優先
         if building.normalized_name == normalized_name:
-            score += 10
-            match_details.append("建物名完全一致")
+            score += 15
+            match_details.append("建物名完全一致（棟含む）")
+        # canonical_name（棟表記除去）の一致は中優先
+        elif building.canonical_name == search_key:
+            score += 8
+            match_details.append("建物群一致（棟違いの可能性）")
+        # 部分一致は低優先
         elif base_name in building.normalized_name:
             score += 5
             match_details.append("建物名部分一致")
@@ -627,6 +648,7 @@ async def get_detach_candidates(
     
     merge_histories = db.query(BuildingMergeHistory).filter(
         or_(
+            BuildingMergeHistory.canonical_merged_name == search_key,  # canonical_nameでの検索を追加
             BuildingMergeHistory.merged_building_name == most_common_building_name,
             BuildingMergeHistory.merged_building_name == most_common_building_name.replace(' ', '　'),
             BuildingMergeHistory.canonical_merged_name == normalized_name,
@@ -751,15 +773,52 @@ async def attach_property_to_building(
         
         normalized_name = normalize_search_text(new_building_name)
         
-        # 同名の建物が既に存在しないかチェック
-        existing = db.query(Building).filter(
+        # 同名の建物が既に存在するかチェック
+        existing_buildings = db.query(Building).filter(
             Building.normalized_name == normalized_name
-        ).first()
+        ).all()
         
-        if existing:
-            raise HTTPException(
-                status_code=400,
-                detail=f"同じ名前の建物が既に存在します（ID: {existing.id}）"
+        if existing_buildings:
+            # 完全に重複する建物があるかチェック（名前、住所、総階数、築年月がすべて同じ）
+            for existing in existing_buildings:
+                is_duplicate = True
+                
+                # 住所の比較（両方とも設定されている場合のみ比較）
+                if new_building_address and existing.address:
+                    if existing.address != new_building_address:
+                        is_duplicate = False
+                
+                # 総階数の比較
+                if new_building_total_floors and existing.total_floors != new_building_total_floors:
+                    is_duplicate = False
+                elif not new_building_total_floors and existing.total_floors:
+                    is_duplicate = False
+                
+                # 築年月の比較
+                if new_building_built_year and existing.built_year != new_building_built_year:
+                    is_duplicate = False
+                elif not new_building_built_year and existing.built_year:
+                    is_duplicate = False
+                elif new_building_built_month and existing.built_month != new_building_built_month:
+                    is_duplicate = False
+                elif not new_building_built_month and existing.built_month:
+                    is_duplicate = False
+                
+                if is_duplicate:
+                    # 完全に同じ建物が存在する
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"同じ建物が既に存在します（ID: {existing.id}）。"
+                               f"名前: {existing.normalized_name}, "
+                               f"住所: {existing.address or '未設定'}, "
+                               f"総階数: {existing.total_floors or '未設定'}階, "
+                               f"築年: {existing.built_year or '未設定'}年"
+                    )
+            
+            # 同名だが別の建物として登録可能
+            logger.info(
+                f"同名の建物が{len(existing_buildings)}件存在しますが、"
+                f"住所・総階数・築年月のいずれかが異なるため新規建物として登録します: {normalized_name}"
             )
         
         new_building = Building(

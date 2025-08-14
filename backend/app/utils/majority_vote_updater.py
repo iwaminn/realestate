@@ -32,6 +32,112 @@ class MajorityVoteUpdater:
         except ValueError:
             return len(MajorityVoteUpdater.SITE_PRIORITY)  # 未知のサイトは最低優先度
     
+    def get_majority_value_with_normalization(self, values_with_source: List[tuple], current_value: Any = None, 
+                                             value_type: str = None) -> Optional[Any]:
+        """
+        正規化してから最頻値を取得する。同数の場合はサイト優先順位で決定
+        
+        Args:
+            values_with_source: (値, ソースサイト名)のタプルのリスト
+            current_value: 現在の値
+            value_type: 値のタイプ（'address', 'layout', 'direction', 'station_info'など）
+            
+        Returns:
+            最頻値（Noneの場合もある）
+        """
+        # Noneや空文字を除外
+        valid_items = [(v, s) for v, s in values_with_source if v is not None and v != '']
+        if not valid_items:
+            return current_value
+        
+        # 値のタイプに応じて正規化
+        normalized_groups = {}  # {正規化値: [(元の値, ソース)]}
+        
+        if value_type == 'address':
+            # 住所の正規化
+            from backend.app.utils.address_normalizer import AddressNormalizer
+            normalizer = AddressNormalizer()
+            for value, source in valid_items:
+                normalized = normalizer.normalize_for_comparison(value)
+                if normalized not in normalized_groups:
+                    normalized_groups[normalized] = []
+                normalized_groups[normalized].append((value, source))
+                
+        elif value_type == 'layout':
+            # 間取りの正規化
+            from backend.app.scrapers import normalize_layout
+            for value, source in valid_items:
+                normalized = normalize_layout(value) or value  # 正規化失敗時は元の値
+                if normalized not in normalized_groups:
+                    normalized_groups[normalized] = []
+                normalized_groups[normalized].append((value, source))
+                
+        elif value_type == 'direction':
+            # 方角の正規化
+            from backend.app.scrapers import normalize_direction
+            for value, source in valid_items:
+                normalized = normalize_direction(value) or value  # 正規化失敗時は元の値
+                if normalized not in normalized_groups:
+                    normalized_groups[normalized] = []
+                normalized_groups[normalized].append((value, source))
+                
+        elif value_type == 'station_info':
+            # 駅情報の正規化（スペースや改行を統一）
+            import re
+            for value, source in valid_items:
+                # 複数の空白文字を1つに統一、改行を統一
+                normalized = re.sub(r'\s+', ' ', value.strip())
+                normalized = normalized.replace('\r\n', '\n').replace('\r', '\n')
+                if normalized not in normalized_groups:
+                    normalized_groups[normalized] = []
+                normalized_groups[normalized].append((value, source))
+                
+        else:
+            # その他の値は正規化なし（数値など）
+            for value, source in valid_items:
+                if value not in normalized_groups:
+                    normalized_groups[value] = []
+                normalized_groups[value].append((value, source))
+        
+        # 各正規化グループの出現回数をカウント
+        group_counts = {}
+        for normalized, items in normalized_groups.items():
+            group_counts[normalized] = len(items)
+        
+        # 最も多いグループを選択
+        max_count = max(group_counts.values())
+        most_common_groups = [normalized for normalized, count in group_counts.items() if count == max_count]
+        
+        if len(most_common_groups) == 1:
+            # 最頻グループが1つの場合、そのグループ内で最もサイト優先度の高い値を返す
+            best_group = most_common_groups[0]
+            return self._select_best_from_group(normalized_groups[best_group])
+        
+        # 最頻グループが複数ある場合、サイト優先順位で決定
+        candidates = []
+        for normalized in most_common_groups:
+            best_value = self._select_best_from_group(normalized_groups[normalized])
+            # このグループの最高優先度を取得
+            sources = [s for v, s in normalized_groups[normalized]]
+            best_priority = min(self.get_site_priority(s) for s in sources)
+            candidates.append((best_value, best_priority))
+        
+        # 優先度順にソート
+        candidates.sort(key=lambda x: x[1])
+        return candidates[0][0]
+    
+    def _select_best_from_group(self, items: List[tuple]) -> Any:
+        """
+        同じ正規化グループ内で最も適切な値を選択
+        サイト優先度が最も高いものを選択
+        """
+        if not items:
+            return None
+        
+        # サイト優先度でソート
+        sorted_items = sorted(items, key=lambda x: self.get_site_priority(x[1]))
+        return sorted_items[0][0]
+    
     def get_majority_value(self, values_with_source: List[tuple], current_value: Any = None) -> Optional[Any]:
         """
         最頻値を取得する。同数の場合はサイト優先順位で決定
@@ -203,15 +309,19 @@ class MajorityVoteUpdater:
             if majority_area != master_property.area:
                 new_area = majority_area
         
-        # 間取りの多数決
+        # 間取りの多数決（正規化あり）
         if info['layouts']:
-            majority_layout = self.get_majority_value(info['layouts'], master_property.layout)
+            majority_layout = self.get_majority_value_with_normalization(
+                info['layouts'], master_property.layout, value_type='layout'
+            )
             if majority_layout != master_property.layout:
                 new_layout = majority_layout
         
-        # 方角の多数決
+        # 方角の多数決（正規化あり）
         if info['directions']:
-            majority_direction = self.get_majority_value(info['directions'], master_property.direction)
+            majority_direction = self.get_majority_value_with_normalization(
+                info['directions'], master_property.direction, value_type='direction'
+            )
             if majority_direction != master_property.direction:
                 new_direction = majority_direction
         
@@ -296,9 +406,11 @@ class MajorityVoteUpdater:
                 master_property.repair_fund = majority_repair_fund
                 updated = True
         
-        # 交通情報の多数決（ユニーク制約に含まれない）
+        # 交通情報の多数決（ユニーク制約に含まれない、正規化あり）
         if info['station_infos']:
-            majority_station = self.get_majority_value(info['station_infos'], master_property.station_info)
+            majority_station = self.get_majority_value_with_normalization(
+                info['station_infos'], master_property.station_info, value_type='station_info'
+            )
             if majority_station != master_property.station_info:
                 logger.info(f"物件ID {master_property.id} の交通情報を更新")
                 master_property.station_info = majority_station
@@ -325,9 +437,11 @@ class MajorityVoteUpdater:
         building_info = self.collect_building_info_from_listings(building.id)
         updated = False
         
-        # 住所の多数決
+        # 住所の多数決（正規化あり）
         if building_info['addresses']:
-            majority_address = self.get_majority_value(building_info['addresses'], building.address)
+            majority_address = self.get_majority_value_with_normalization(
+                building_info['addresses'], building.address, value_type='address'
+            )
             if majority_address != building.address:
                 logger.info(f"建物 '{building.normalized_name}' の住所を更新")
                 building.address = majority_address
@@ -392,9 +506,11 @@ class MajorityVoteUpdater:
                 building.land_rights = majority_land_rights
                 updated = True
         
-        # 交通情報の多数決（建物レベル）
+        # 交通情報の多数決（建物レベル、正規化あり）
         if building_info['station_infos']:
-            majority_station_info = self.get_majority_value(building_info['station_infos'], building.station_info)
+            majority_station_info = self.get_majority_value_with_normalization(
+                building_info['station_infos'], building.station_info, value_type='station_info'
+            )
             if majority_station_info != building.station_info:
                 logger.info(f"建物 '{building.normalized_name}' の交通情報を更新")
                 building.station_info = majority_station_info
@@ -561,7 +677,13 @@ class MajorityVoteUpdater:
             return False
         
         # 重み付け投票の準備
-        weighted_votes = {}
+        # 正規化してグループ化するための辞書
+        normalized_groups = {}  # {正規化名: {元の名前: 重み}}
+        
+        # 建物名を正規化してグループ化
+        # SUUMOスクレイパーを使用（正規化関数のため）
+        from backend.app.scrapers.suumo_scraper import SuumoScraper
+        scraper = SuumoScraper()
         
         for building_name, source_site, count in building_name_votes:
             # 基本的な重み（出現回数）
@@ -577,21 +699,49 @@ class MajorityVoteUpdater:
             if self._is_advertising_text(building_name):
                 weight *= 0.1
             
-            # 集計
-            if building_name in weighted_votes:
-                weighted_votes[building_name] += weight
+            # 建物名を正規化
+            normalized_name = scraper.normalize_building_name(building_name)
+            
+            # グループ化して集計
+            if normalized_name not in normalized_groups:
+                normalized_groups[normalized_name] = {}
+            
+            if building_name in normalized_groups[normalized_name]:
+                normalized_groups[normalized_name][building_name] += weight
             else:
-                weighted_votes[building_name] = weight
+                normalized_groups[normalized_name][building_name] = weight
         
-        # 最も重みの高い名前を選択
-        if weighted_votes:
-            best_name = max(weighted_votes.items(), key=lambda x: x[1])[0]
+        # 最も重みの高い正規化グループを選択
+        if normalized_groups:
+            # 各グループの合計重みを計算
+            group_weights = {}
+            for normalized_name, original_names in normalized_groups.items():
+                group_weights[normalized_name] = sum(original_names.values())
+            
+            # 最も重みの高いグループを選択
+            best_normalized = max(group_weights.items(), key=lambda x: x[1])[0]
+            
+            # そのグループ内で最も使用頻度の高い元の表記を選択
+            best_name = max(normalized_groups[best_normalized].items(), key=lambda x: x[1])[0]
+            
+            # デバッグ用：正規化による集約効果をログ出力
+            if len(normalized_groups[best_normalized]) > 1:
+                logger.debug(
+                    f"建物名の正規化により表記ゆれを集約: {list(normalized_groups[best_normalized].keys())} → '{best_name}'"
+                )
             
             # 現在の名前と異なる場合は更新
             if best_name != building.normalized_name:
+                # ログ出力用に投票結果を整形
+                vote_summary = {}
+                for orig_names in normalized_groups.values():
+                    for name, weight in orig_names.items():
+                        vote_summary[name] = vote_summary.get(name, 0) + weight
+                
                 logger.info(
                     f"建物名更新: '{building.normalized_name}' → '{best_name}' "
-                    f"(ID: {building_id}, votes: {dict(sorted(weighted_votes.items(), key=lambda x: x[1], reverse=True)[:5])})"
+                    f"(ID: {building_id}, 正規化グループ数: {len(normalized_groups)}, "
+                    f"votes: {dict(sorted(vote_summary.items(), key=lambda x: x[1], reverse=True)[:5])})"
                 )
                 building.normalized_name = best_name
                 return True
@@ -612,6 +762,12 @@ class MajorityVoteUpdater:
         if not property_obj:
             return False
         
+        # 正規化してグループ化するための辞書
+        normalized_groups = {}  # {正規化名: {元の名前: 重み}}
+        
+        # 共通の建物名正規化関数を使用
+        from backend.app.utils.building_name_normalizer import normalize_building_name
+        
         # アクティブな掲載情報があるかチェック
         active_listings = self.session.query(PropertyListing).filter(
             PropertyListing.master_property_id == property_id,
@@ -620,8 +776,6 @@ class MajorityVoteUpdater:
         
         if active_listings:
             # アクティブな掲載情報から建物名を取得
-            building_name_votes = {}
-            
             for listing in active_listings:
                 if listing.listing_building_name:
                     # ソースによる重み付け
@@ -631,18 +785,23 @@ class MajorityVoteUpdater:
                     if self._is_advertising_text(listing.listing_building_name):
                         weight *= 0.1
                     
-                    if listing.listing_building_name in building_name_votes:
-                        building_name_votes[listing.listing_building_name] += weight
+                    # 建物名を正規化
+                    normalized_name = normalize_building_name(listing.listing_building_name)
+                    
+                    # グループ化して集計
+                    if normalized_name not in normalized_groups:
+                        normalized_groups[normalized_name] = {}
+                    
+                    if listing.listing_building_name in normalized_groups[normalized_name]:
+                        normalized_groups[normalized_name][listing.listing_building_name] += weight
                     else:
-                        building_name_votes[listing.listing_building_name] = weight
+                        normalized_groups[normalized_name][listing.listing_building_name] = weight
         else:
             # すべて非アクティブの場合、最近の掲載情報を使用
             recent_listings = self.session.query(PropertyListing).filter(
                 PropertyListing.master_property_id == property_id,
                 PropertyListing.listing_building_name.isnot(None)
             ).order_by(PropertyListing.last_scraped_at.desc()).limit(10).all()
-            
-            building_name_votes = {}
             
             for listing in recent_listings:
                 if listing.listing_building_name:
@@ -653,22 +812,63 @@ class MajorityVoteUpdater:
                     if self._is_advertising_text(listing.listing_building_name):
                         weight *= 0.1
                     
-                    if listing.listing_building_name in building_name_votes:
-                        building_name_votes[listing.listing_building_name] += weight
+                    # 建物名を正規化
+                    normalized_name = normalize_building_name(listing.listing_building_name)
+                    
+                    # グループ化して集計
+                    if normalized_name not in normalized_groups:
+                        normalized_groups[normalized_name] = {}
+                    
+                    if listing.listing_building_name in normalized_groups[normalized_name]:
+                        normalized_groups[normalized_name][listing.listing_building_name] += weight
                     else:
-                        building_name_votes[listing.listing_building_name] = weight
+                        normalized_groups[normalized_name][listing.listing_building_name] = weight
         
-        # 最も重みの高い名前を選択
-        if building_name_votes:
-            best_name = max(building_name_votes.items(), key=lambda x: x[1])[0]
+        # 最も重みの高い正規化グループを選択
+        if normalized_groups:
+            # 各グループの合計重みを計算
+            group_weights = {}
+            for normalized_name, original_names in normalized_groups.items():
+                group_weights[normalized_name] = sum(original_names.values())
             
-            # 現在の名前と異なる場合は更新
-            if best_name != property_obj.display_building_name:
+            # 最も重みの高いグループを選択
+            best_normalized = max(group_weights.items(), key=lambda x: x[1])[0]
+            
+            # そのグループ内で最も使用頻度の高い元の表記を選択
+            best_name = max(normalized_groups[best_normalized].items(), key=lambda x: x[1])[0]
+            
+            # デバッグ用：正規化による集約効果をログ出力
+            if len(normalized_groups[best_normalized]) > 1:
+                logger.debug(
+                    f"物件建物名の正規化により表記ゆれを集約: {list(normalized_groups[best_normalized].keys())} → '{best_name}'"
+                )
+            
+            # 現在の名前と異なる場合、またはNoneの場合は更新
+            if property_obj.display_building_name != best_name:
+                # ログ出力用に投票結果を整形
+                vote_summary = {}
+                for orig_names in normalized_groups.values():
+                    for name, weight in orig_names.items():
+                        vote_summary[name] = vote_summary.get(name, 0) + weight
+                
                 logger.info(
                     f"物件建物名更新: '{property_obj.display_building_name}' → '{best_name}' "
-                    f"(物件ID: {property_id}, votes: {dict(sorted(building_name_votes.items(), key=lambda x: x[1], reverse=True)[:3])})"
+                    f"(物件ID: {property_id}, 正規化グループ数: {len(normalized_groups)}, "
+                    f"votes: {dict(sorted(vote_summary.items(), key=lambda x: x[1], reverse=True)[:3])})"
                 )
                 property_obj.display_building_name = best_name
+                self.session.flush()  # 変更を即座に反映
+                return True
+        elif property_obj.display_building_name is None:
+            # 掲載情報がない場合でも、建物の正規化名を使用
+            building = self.session.query(Building).filter_by(id=property_obj.building_id).first()
+            if building and building.normalized_name:
+                logger.info(
+                    f"物件建物名を建物マスターから設定: '{building.normalized_name}' "
+                    f"(物件ID: {property_id}, 建物ID: {building.id})"
+                )
+                property_obj.display_building_name = building.normalized_name
+                self.session.flush()
                 return True
         
         return False
@@ -698,6 +898,18 @@ class MajorityVoteUpdater:
             r'\d+LDK',
             r'\d+階建',
             r'築\d+年',
+            # 階数を含む建物名も広告文として扱う
+            r'\d+階$',  # 末尾に「○階」（スペースは不要）
+            r'\d+階部分',  # 「○階部分」
+            r'\d+階角部屋',  # 「○階角部屋」
+            r'地下\d+階',  # 「地下○階」
+            r'×\d+階',  # 「×14階」のようなパターン
+            r'〜.*〜$',  # 「〜ブランズ赤坂〜」のような広告的な表現
+            # 駅名のみの場合
+            r'^[^\s]+駅\s+徒歩',
+            r'^東京メトロ',
+            r'^JR[^\s]+線',
+            r'^都営[^\s]+線',
         ]
         
         # いずれかのパターンにマッチしたら広告文と判定
