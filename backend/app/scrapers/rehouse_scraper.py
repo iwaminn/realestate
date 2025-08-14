@@ -230,7 +230,13 @@ class RehouseScraper(BaseScraper):
         info_pattern = r'([1-9][LDKS]+|ワンルーム)\s*/\s*(\d+(?:\.\d+)?)㎡\s*/\s*(\d{4})年(\d{2})月築\s*/\s*(\d+)階'
         info_match = re.search(info_pattern, desc_text)
         if info_match:
-            property_data['layout'] = info_match.group(1)
+            # 間取りを正規化してから設定
+            layout = normalize_layout(info_match.group(1))
+            if layout:
+                property_data['layout'] = layout
+            else:
+                # 正規化に失敗した場合は元の値を20文字に制限
+                property_data['layout'] = info_match.group(1)[:20]
             property_data['area'] = float(info_match.group(2))
             property_data['built_year'] = int(info_match.group(3))
             property_data['floor_number'] = int(info_match.group(5))

@@ -23,6 +23,11 @@ from ..models import (
     ListingPriceHistory, BuildingExternalId, Url404Retry
 )
 from ..utils.building_normalizer import BuildingNameNormalizer
+from ..utils.building_name_normalizer import (
+    normalize_building_name as normalize_building_name_common,
+    get_search_key_for_building as get_search_key_for_building_common,
+    extract_room_number as extract_room_number_common
+)
 from ..utils.fuzzy_property_matcher import FuzzyPropertyMatcher
 from ..utils.majority_vote_updater import MajorityVoteUpdater
 from ..utils.exceptions import TaskPausedException, TaskCancelledException, MaintenanceException
@@ -1637,46 +1642,11 @@ class BaseScraper(ABC):
         return best_name
     
     def normalize_building_name(self, building_name: str) -> str:
-        """建物名を正規化する共通メソッド
-        
-        Args:
-            building_name: 正規化する建物名
-            
-        Returns:
-            正規化された建物名
         """
-        if not building_name:
-            return ""
-            
-        # 1. 全角英数字と記号を半角に変換
-        normalized = jaconv.z2h(building_name, kana=False, ascii=True, digit=True)
-        
-        # 2. 記号類（半角・全角両方）を半角スペースに変換
-        # 半角: ・-~  全角で残っているもの: ・―〜 など
-        # \u30fb: 全角中点・, \u2010-\u2015: 各種ダッシュ, \u301c: 波ダッシュ〜
-        normalized = re.sub(r'[・\-~\u30fb\u2010-\u2015\u301c]', ' ', normalized)
-        
-        # 3. ローマ数字の正規化（全角ローマ数字を半角に変換）
-        roman_map = {
-            'Ⅰ': 'I', 'Ⅱ': 'II', 'Ⅲ': 'III', 'Ⅳ': 'IV', 'Ⅴ': 'V',
-            'Ⅵ': 'VI', 'Ⅶ': 'VII', 'Ⅷ': 'VIII', 'Ⅸ': 'IX', 'Ⅹ': 'X',
-            'Ⅺ': 'XI', 'Ⅻ': 'XII'
-        }
-        for full_width, half_width in roman_map.items():
-            normalized = normalized.replace(full_width, half_width)
-        
-        # 4. 単位の正規化（㎡とm2を統一）
-        normalized = normalized.replace('㎡', 'm2').replace('m²', 'm2')
-        
-        # 5. スペースの正規化
-        # 全角スペースも半角スペースに変換
-        normalized = normalized.replace('　', ' ')
-        # 連続するスペースを1つの半角スペースに統一
-        normalized = re.sub(r'\s+', ' ', normalized)
-        # 前後の空白を除去
-        normalized = normalized.strip()
-        
-        return normalized
+        建物名を正規化する
+        共通モジュールの関数を使用
+        """
+        return normalize_building_name_common(building_name)
     
     def validate_building_name_from_detail(self, property_data: Dict[str, Any], detail_data: Dict[str, Any]) -> bool:
         """詳細ページから取得した建物名を検証
@@ -1912,16 +1882,11 @@ class BaseScraper(ABC):
         return False, None
     
     def get_search_key_for_building(self, building_name: str) -> str:
-        """建物検索用のキーを生成（最小限の正規化）"""
-        # 全角英数字→半角
-        key = jaconv.z2h(building_name, kana=False, ascii=True, digit=True)
-        # スペースと記号の正規化
-        key = re.sub(r'[\s　・－―～〜]+', '', key)
-        # 大文字統一
-        key = key.upper()
-        # 末尾の棟表記を除去（検索時のみ）
-        key = re.sub(r'(EAST|WEST|NORTH|SOUTH|E|W|N|S|東|西|南|北)?棟$', '', key)
-        return key
+        """
+        建物検索用のキーを生成
+        共通モジュールの関数を使用
+        """
+        return get_search_key_for_building_common(building_name)
     
     def _verify_building_attributes(self, building: Building, total_floors: int = None, built_year: int = None) -> bool:
         """建物の属性（総階数、築年）が一致するか確認"""
@@ -3008,6 +2973,10 @@ class BaseScraper(ABC):
                                         other_changed = True
                                         changed_fields.append(f'{field_display_name}(新規設定: {value})')
                                         self.logger.debug(f"フィールド新規設定: {key} = {value}")
+                    # varchar(20)制限があるフィールドの値を切り詰める
+                    if key in ['listing_layout', 'listing_direction'] and isinstance(value, str) and len(value) > 20:
+                        self.logger.warning(f"{key}の値が20文字を超えているため切り詰めます: '{value[:20]}...'")
+                        value = value[:20]
                     setattr(listing, key, value)
             
             # 更新タイプを再判定（kwargsでの変更も含める）
@@ -3036,7 +3005,12 @@ class BaseScraper(ABC):
                     price_updated_at=first_published_at or published_at or get_utc_now(),
                     last_confirmed_at=get_utc_now(),
                     detail_fetched_at=get_utc_now(),  # 詳細取得時刻を設定
-                    scraped_from_area=getattr(self, 'current_area_code', None),  # 現在のエリアコードを設定
+                    # varchar(20)制限のため、20文字に切り詰める
+                    scraped_from_area=(
+                        getattr(self, 'current_area_code', '')[:20] 
+                        if getattr(self, 'current_area_code', None) 
+                        else None
+                    ),  # 現在のエリアコードを設定
                     **kwargs
                 )
                 self.session.add(listing)
@@ -3857,8 +3831,9 @@ class BaseScraper(ABC):
                 # 掲載サイトごとの物件属性
                 listing_floor_number=property_data.get('floor_number'),
                 listing_area=property_data.get('area'),
-                listing_layout=property_data.get('layout'),
-                listing_direction=property_data.get('direction'),
+                # varchar(20)制限があるため、20文字に切り詰める
+                listing_layout=property_data.get('layout')[:20] if property_data.get('layout') else None,
+                listing_direction=property_data.get('direction')[:20] if property_data.get('direction') else None,
                 listing_total_floors=property_data.get('total_floors'),
                 listing_total_units=property_data.get('total_units'),
                 listing_built_year=property_data.get('built_year'),

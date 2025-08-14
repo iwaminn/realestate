@@ -2,32 +2,19 @@
 
 import re
 import unicodedata
+from .building_name_normalizer import normalize_building_name, get_search_key_for_building
 
 
 def normalize_search_text(text: str) -> str:
     """
     検索文字列を正規化する
-    - 全角英数字を半角に変換
-    - カタカナを全角に統一
-    - 大文字を小文字に変換
-    - 不要な空白を削除
+    building_name_normalizerの共通関数を使用
     """
     if not text:
         return ""
     
-    # NFKCで正規化（全角英数字を半角に、半角カナを全角に）
-    text = unicodedata.normalize('NFKC', text)
-    
-    # 英字を小文字に統一
-    text = text.lower()
-    
-    # 連続する空白を単一の空白に
-    text = re.sub(r'\s+', ' ', text)
-    
-    # 前後の空白を削除
-    text = text.strip()
-    
-    return text
+    # 共通の正規化関数を使用
+    return normalize_building_name(text)
 
 
 def create_search_patterns(search: str) -> list[str]:
@@ -119,3 +106,15 @@ def normalize_for_comparison(text: str) -> str:
     text = re.sub(r'[^\w\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FAF]', '', text)
     
     return text
+
+
+def get_search_key_for_comparison(text: str) -> str:
+    """
+    建物検索用のキーを生成
+    building_name_normalizerの共通関数を使用
+    """
+    if not text:
+        return ""
+    
+    # 共通の検索キー生成関数を使用
+    return get_search_key_for_building(text)

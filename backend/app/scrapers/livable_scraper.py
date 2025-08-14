@@ -658,6 +658,7 @@ class LivableScraper(BaseScraper):
     
     def _extract_property_info(self, label: str, value: str, property_data: Dict[str, Any], detail_info: Dict[str, Any]):
         """ラベルと値から物件情報を抽出"""
+        import re  # メソッドの最初でインポート
         # 建物名/物件名
         if '物件名' in label or '建物名' in label:
             property_data['building_name'] = value
@@ -694,7 +695,6 @@ class LivableScraper(BaseScraper):
         # 間取り
         elif '間取り' in label or '間取' in label:
             # 連続する空白を1つのスペースに変換してから正規化
-            import re
             cleaned_value = re.sub(r'\s+', ' ', value.strip())
             layout = normalize_layout(cleaned_value)
             if layout:
@@ -946,7 +946,20 @@ class LivableScraper(BaseScraper):
         
         # 間取り
         elif label == '間取':
-            property_data['layout'] = value
+            # 連続する空白を1つのスペースに変換してから正規化
+            import re
+            cleaned_value = re.sub(r'\s+', ' ', value.strip())
+            layout = normalize_layout(cleaned_value)
+            if layout:
+                property_data['layout'] = layout
+                if cleaned_value != value:
+                    self.logger.info(f"[grantact] 間取りを取得（空白を正規化）: {value} → {layout}")
+                else:
+                    self.logger.info(f"[grantact] 間取りを取得: {value} → {layout}")
+            else:
+                self.logger.warning(f"[grantact] 間取りの正規化に失敗: {value}")
+                # 正規化に失敗した場合は、少なくとも空白を正規化した値を使用
+                property_data['layout'] = cleaned_value[:20]  # varchar(20)制限のため
         
         # 専有面積
         elif '専有面積' in label:
