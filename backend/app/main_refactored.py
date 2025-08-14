@@ -133,7 +133,7 @@ if __name__ == "__main__":
     print(f"対話的APIドキュメント: http://localhost:{port}/docs")
     
     uvicorn.run(
-        "backend.app.main:app",
+        "backend.app.main_refactored:app",
         host="0.0.0.0",
         port=port,
         reload=True,

@@ -198,7 +198,13 @@ const PropertyDuplicateGroups: React.FC = () => {
   const handleShowDetail = async (group: DuplicateGroup) => {
     setSelectedGroup(group);
     setDetailLoading(true);
-    setPrimaryProperty(null);
+    
+    // 掲載数が多い順でソートして、最初の物件を統合先として設定
+    const sortedProperties = [...group.properties].sort((a, b) => {
+      return (b.listing_count || 0) - (a.listing_count || 0);
+    });
+    
+    setPrimaryProperty(sortedProperties[0]?.id || null); // 一番上の物件を統合先に設定
     setSelectedProperties(new Set(group.properties.map(p => p.id))); // デフォルトで全選択
     setPropertyDetails({});
 
@@ -731,15 +737,14 @@ const PropertyDuplicateGroups: React.FC = () => {
                         />
                       </TableCell>
                       <TableCell align="center">
-                        <Tooltip title="詳細を表示">
-                          <IconButton 
-                            size="small" 
-                            onClick={() => handleShowDetail(group)}
-                            color="primary"
-                          >
-                            <InfoIcon />
-                          </IconButton>
-                        </Tooltip>
+                        <Button
+                          size="small"
+                          variant="contained"
+                          startIcon={<MergeIcon />}
+                          onClick={() => handleShowDetail(group)}
+                        >
+                          統合
+                        </Button>
                       </TableCell>
                     </TableRow>
                     <TableRow>
