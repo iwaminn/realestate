@@ -330,8 +330,9 @@ def get_duplicate_buildings(
     else:
         # 検索条件がない場合：重複の可能性が高い建物群を効率的に見つける
         
-        # 優先度1: 同じ建物名を持つ建物（最も重複の可能性が高い）
-        subquery = db.query(
+        # 優先度1: 同じ建物名または類似した建物名を持つ建物（最も重複の可能性が高い）
+        # まず完全一致する建物名のグループを取得
+        exact_match_subquery = db.query(
             Building.normalized_name,
             func.count(Building.id).label('name_count')
         ).filter(
@@ -350,7 +351,7 @@ def get_duplicate_buildings(
             MasterProperty, Building.id == MasterProperty.building_id
         ).filter(
             Building.normalized_name.in_(
-                db.query(subquery.c.normalized_name)
+                db.query(exact_match_subquery.c.normalized_name)
             )
         ).group_by(Building.id).order_by(
             Building.normalized_name,
@@ -373,8 +374,9 @@ def get_duplicate_buildings(
             )
             
             # サブクエリで重複の可能性が高い組み合わせを特定
+            # normalized_addressの前半部分を使用（番地より前の部分）
             attribute_groups = db.query(
-                func.substring(Building.address, 1, 15).label('address_prefix'),  # 住所の前半部分
+                func.substring(Building.normalized_address, 1, 10).label('address_prefix'),  # 正規化済み住所の前半部分
                 Building.built_year,
                 Building.total_floors,
                 func.count(Building.id).label('group_count')
@@ -385,7 +387,7 @@ def get_duplicate_buildings(
                 Building.built_year.isnot(None),
                 Building.total_floors.isnot(None)
             ).group_by(
-                func.substring(Building.address, 1, 15),
+                func.substring(Building.normalized_address, 1, 10),
                 Building.built_year,
                 Building.total_floors
             ).having(
@@ -397,7 +399,7 @@ def get_duplicate_buildings(
                 if len(buildings_with_count) >= limit * 3:
                     break
                 matching_buildings = duplicate_candidates.filter(
-                    Building.address.like(f"{group.address_prefix}%"),
+                    Building.normalized_address.like(f"{group.address_prefix}%"),
                     Building.built_year == group.built_year,
                     Building.total_floors == group.total_floors
                 ).limit(10).all()
@@ -1417,6 +1419,34 @@ def merge_buildings(
                     if remaining_listings > 0:
                         logger.error(f"[DEBUG] Property {prop.id} still has {remaining_listings} listings!")
                         raise ValueError(f"Property {prop.id} still has {remaining_listings} listings after moving!")
+                    
+                    # property_merge_historyの参照を更新（削除する物件への参照を既存物件に変更）
+                    db.execute(
+                        text("""
+                            UPDATE property_merge_history 
+                            SET primary_property_id = :existing_id 
+                            WHERE primary_property_id = :old_id
+                        """),
+                        {"existing_id": existing_property.id, "old_id": prop.id}
+                    )
+                    
+                    db.execute(
+                        text("""
+                            UPDATE property_merge_history 
+                            SET direct_primary_property_id = :existing_id 
+                            WHERE direct_primary_property_id = :old_id
+                        """),
+                        {"existing_id": existing_property.id, "old_id": prop.id}
+                    )
+                    
+                    db.execute(
+                        text("""
+                            UPDATE property_merge_history 
+                            SET final_primary_property_id = :existing_id 
+                            WHERE final_primary_property_id = :old_id
+                        """),
+                        {"existing_id": existing_property.id, "old_id": prop.id}
+                    )
                     
                     # 重複する物件を削除（SQLで直接削除）
                     db.execute(
