@@ -261,10 +261,14 @@ def setup_logging_handlers(scraper, task_id: str, scraper_name: str, area_name: 
             should_log = False
             update_type = result[1] if isinstance(result, tuple) and len(result) > 1 else 'unknown'
             
+            # デバッグ：update_typeの値を確認
+            if update_type == 'price_updated':
+                print(f"[DEBUG] 価格更新検出: update_type={update_type}, title={title}, price={price}, old_price={old_price}")
+            
             if update_type == 'new':
                 log_entry["message"] = f"新規物件登録: {title} ({price}万円)"
                 should_log = True
-            elif update_type == 'price_changed' or update_type == 'price_updated':
+            elif update_type == 'price_updated':
                 if existing and old_price is not None:
                     log_entry["message"] = f"価格更新: {title} ({old_price}万円 → {price}万円)"
                     log_entry["price_change"] = {"old": old_price, "new": price}
@@ -284,6 +288,8 @@ def setup_logging_handlers(scraper, task_id: str, scraper_name: str, area_name: 
             
             # ログを追加（価格変更または新規物件のみ、最新50件のみ保持）
             if should_log:
+                # デバッグ：ログ記録を確認
+                print(f"[DEBUG] ログ記録: task_id={task_id}, update_type={update_type}, message={log_entry.get('message', '')}")
                 with tasks_lock:
                     if "logs" not in scraping_tasks[task_id]:
                         scraping_tasks[task_id]["logs"] = []

@@ -3903,7 +3903,6 @@ class BaseScraper(ABC):
             # 保存成功フラグを設定
             property_data['property_saved'] = True
             
-            
             # サブクラス固有の処理のためのフック
             self._post_listing_creation_hook(listing, property_data)
             
