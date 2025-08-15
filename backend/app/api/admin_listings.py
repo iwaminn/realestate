@@ -36,23 +36,31 @@ async def get_listings(
     if source_site:
         query = query.filter(PropertyListing.source_site == source_site)
     
+    # 建物名または区でフィルタする場合はJOINを追加
+    if building_name or ward:
+        query = query.join(MasterProperty).join(Building)
+    
     if building_name:
-        # 建物名で検索（部分一致）
-        query = query.join(MasterProperty).join(Building).filter(
-            or_(
-                Building.normalized_name.ilike(f"%{building_name}%"),
-                PropertyListing.listing_building_name.ilike(f"%{building_name}%")
-            )
-        )
+        # 建物名で検索（スペース区切りでAND検索）
+        building_terms = building_name.strip().split()
+        for term in building_terms:
+            if term:  # 空文字列をスキップ
+                query = query.filter(
+                    or_(
+                        Building.normalized_name.ilike(f"%{term}%"),
+                        PropertyListing.listing_building_name.ilike(f"%{term}%")
+                    )
+                )
     
     if is_active is not None:
         query = query.filter(PropertyListing.is_active == is_active)
     
     if ward:
-        # 区で検索（住所に含まれるかチェック）
-        query = query.join(MasterProperty).join(Building).filter(
-            Building.address.ilike(f"%{ward}%")
-        )
+        # 区で検索（スペース区切りでAND検索）
+        ward_terms = ward.strip().split()
+        for term in ward_terms:
+            if term:  # 空文字列をスキップ
+                query = query.filter(Building.address.ilike(f"%{term}%"))
     
     # ソート
     if sort_by == "current_price":

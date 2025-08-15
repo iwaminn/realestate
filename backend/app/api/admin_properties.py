@@ -50,7 +50,11 @@ async def get_properties(
         )
     
     if address:
-        query = query.filter(Building.address.ilike(f"%{address}%"))
+        # スペース区切りでAND検索
+        address_terms = address.strip().split()
+        for term in address_terms:
+            if term:  # 空文字列をスキップ
+                query = query.filter(Building.address.ilike(f"%{term}%"))
     
     if room_number:
         query = query.filter(MasterProperty.room_number.ilike(f"%{room_number}%"))

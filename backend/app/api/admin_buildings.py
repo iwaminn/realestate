@@ -48,7 +48,11 @@ async def get_buildings(
         )
     
     if address:
-        query = query.filter(Building.address.ilike(f"%{address}%"))
+        # スペース区切りでAND検索
+        address_terms = address.strip().split()
+        for term in address_terms:
+            if term:  # 空文字列をスキップ
+                query = query.filter(Building.address.ilike(f"%{term}%"))
     
     if min_built_year is not None:
         query = query.filter(Building.built_year >= min_built_year)

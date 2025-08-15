@@ -311,6 +311,7 @@ export const ListingManagement: React.FC = () => {
               value={filters.building_name}
               onChange={(e) => setFilters({ ...filters, building_name: e.target.value })}
               onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              helperText="スペース区切りでAND検索"
               InputProps={{
                 startAdornment: (
                   <Box sx={{ mr: 1, display: 'flex', alignItems: 'center' }}>

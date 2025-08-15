@@ -483,6 +483,7 @@ export const PropertyManagement: React.FC = () => {
               value={searchParams.buildingName}
               onChange={(e) => setSearchParams({ ...searchParams, buildingName: e.target.value })}
               onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              helperText="スペース区切りでAND検索"
             />
           </Grid>
           <Grid item xs={12} sm={6} md={4}>
@@ -492,6 +493,7 @@ export const PropertyManagement: React.FC = () => {
               value={searchParams.address}
               onChange={(e) => setSearchParams({ ...searchParams, address: e.target.value })}
               onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              helperText="スペース区切りでAND検索"
             />
           </Grid>
           <Grid item xs={12} sm={6} md={2}>
