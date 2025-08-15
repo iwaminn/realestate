@@ -131,6 +131,15 @@ def save_tasks_to_file():
                 task_copy['started_at'] = task_copy['started_at'].isoformat()
             if task_copy.get('completed_at'):
                 task_copy['completed_at'] = task_copy['completed_at'].isoformat()
+            
+            # ログは最新100件のみファイルに保存（ファイルサイズを抑える）
+            if 'logs' in task_copy and task_copy['logs']:
+                task_copy['logs'] = task_copy['logs'][-100:]
+            if 'error_logs' in task_copy and task_copy['error_logs']:
+                task_copy['error_logs'] = task_copy['error_logs'][-50:]
+            if 'warning_logs' in task_copy and task_copy['warning_logs']:
+                task_copy['warning_logs'] = task_copy['warning_logs'][-50:]
+            
             data[task_id] = task_copy
         
         os.makedirs(os.path.dirname(TASKS_FILE), exist_ok=True)
@@ -286,7 +295,7 @@ def setup_logging_handlers(scraper, task_id: str, scraper_name: str, area_name: 
                 # 変更なしの場合、詳細をスキップした場合はログに記録しない
                 pass
             
-            # ログを追加（価格変更または新規物件のみ、最新50件のみ保持）
+            # ログを追加（価格変更または新規物件のみ、最新500件を保持）
             if should_log:
                 # デバッグ：ログ記録を確認
                 print(f"[DEBUG] ログ記録: task_id={task_id}, update_type={update_type}, message={log_entry.get('message', '')}")
@@ -294,8 +303,9 @@ def setup_logging_handlers(scraper, task_id: str, scraper_name: str, area_name: 
                     if "logs" not in scraping_tasks[task_id]:
                         scraping_tasks[task_id]["logs"] = []
                     scraping_tasks[task_id]["logs"].append(log_entry)
-                    if len(scraping_tasks[task_id]["logs"]) > 50:
-                        scraping_tasks[task_id]["logs"] = scraping_tasks[task_id]["logs"][-50:]
+                    # 最新500件を保持（より多くの履歴を表示可能に）
+                    if len(scraping_tasks[task_id]["logs"]) > 500:
+                        scraping_tasks[task_id]["logs"] = scraping_tasks[task_id]["logs"][-500:]
             
             return result
         
@@ -321,9 +331,9 @@ def setup_logging_handlers(scraper, task_id: str, scraper_name: str, area_name: 
                 }
                 
                 scraping_tasks[task_id]["error_logs"].append(error_log)
-                # 最新30件のみ保持
-                if len(scraping_tasks[task_id]["error_logs"]) > 30:
-                    scraping_tasks[task_id]["error_logs"] = scraping_tasks[task_id]["error_logs"][-30:]
+                # 最新100件を保持（エラーログも多めに保持）
+                if len(scraping_tasks[task_id]["error_logs"]) > 100:
+                    scraping_tasks[task_id]["error_logs"] = scraping_tasks[task_id]["error_logs"][-100:]
         
         scraper._save_error_log = save_error_log
     
@@ -346,9 +356,9 @@ def setup_logging_handlers(scraper, task_id: str, scraper_name: str, area_name: 
                 }
                 
                 scraping_tasks[task_id]["warning_logs"].append(warning_log)
-                # 最新30件のみ保持
-                if len(scraping_tasks[task_id]["warning_logs"]) > 30:
-                    scraping_tasks[task_id]["warning_logs"] = scraping_tasks[task_id]["warning_logs"][-30:]
+                # 最新100件を保持（警告ログも多めに保持）
+                if len(scraping_tasks[task_id]["warning_logs"]) > 100:
+                    scraping_tasks[task_id]["warning_logs"] = scraping_tasks[task_id]["warning_logs"][-100:]
         
         scraper._save_warning_log = save_warning_log
 
