@@ -246,6 +246,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                   fullWidth
                   label="建物名"
                   placeholder="建物名で検索"
+                  helperText="スペース区切りでAND検索できます"
                   InputProps={{
                     ...params.InputProps,
                     startAdornment: (

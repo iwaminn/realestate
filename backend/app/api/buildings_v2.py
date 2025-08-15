@@ -299,10 +299,15 @@ async def suggest_buildings(
     # 結果を格納する辞書（building_id -> 情報）
     building_info: Dict[int, Dict[str, Union[str, List[str]]]] = {}
     
-    # 1. 建物名で直接検索
-    direct_matches = db.query(Building).filter(
-        Building.normalized_name.ilike(f"%{q}%")
-    ).all()
+    # スペース区切りでAND検索対応
+    search_terms = q.strip().split()
+    
+    # 1. 建物名で直接検索（AND条件）
+    query = db.query(Building)
+    for term in search_terms:
+        if term:  # 空文字列をスキップ
+            query = query.filter(Building.normalized_name.ilike(f"%{term}%"))
+    direct_matches = query.all()
     
     for building in direct_matches:
         building_info[building.id] = {
@@ -310,10 +315,12 @@ async def suggest_buildings(
             "matched_by": "name"
         }
     
-    # 2. 読み仮名で検索
-    reading_matches = db.query(Building).filter(
-        Building.reading.ilike(f"%{q}%")
-    ).all()
+    # 2. 読み仮名で検索（AND条件）
+    query = db.query(Building)
+    for term in search_terms:
+        if term:  # 空文字列をスキップ
+            query = query.filter(Building.reading.ilike(f"%{term}%"))
+    reading_matches = query.all()
     
     for building in reading_matches:
         if building.id not in building_info:
@@ -322,16 +329,22 @@ async def suggest_buildings(
                 "matched_by": "reading"
             }
     
-    # 3. 統合履歴（エイリアス）から検索
-    alias_matches = db.query(
+    # 3. 統合履歴（エイリアス）から検索（AND条件）
+    query = db.query(
         BuildingMergeHistory.primary_building_id,
         BuildingMergeHistory.merged_building_name
-    ).filter(
-        or_(
-            BuildingMergeHistory.merged_building_name.ilike(f"%{q}%"),
-            BuildingMergeHistory.canonical_merged_name.ilike(f"%{q}%")
-        )
-    ).distinct().all()
+    ).distinct()
+    
+    for term in search_terms:
+        if term:  # 空文字列をスキップ
+            query = query.filter(
+                or_(
+                    BuildingMergeHistory.merged_building_name.ilike(f"%{term}%"),
+                    BuildingMergeHistory.canonical_merged_name.ilike(f"%{term}%")
+                )
+            )
+    
+    alias_matches = query.all()
     
     # エイリアスでマッチした建物の情報を取得
     for alias_match in alias_matches:
