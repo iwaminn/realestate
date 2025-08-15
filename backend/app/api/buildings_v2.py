@@ -363,26 +363,92 @@ async def suggest_buildings(
                 # 既に他の方法でマッチしていて、かつ名前マッチではない場合はエイリアス情報を追加
                 building_info[building.id]["alias"] = alias_match.merged_building_name
     
-    # 結果をリスト形式に変換
-    results = []
+    # 同じ建物名を持つ建物の住所情報を取得
+    building_ids = list(building_info.keys())
+    buildings_with_address = {}
+    if building_ids:
+        buildings = db.query(Building).filter(Building.id.in_(building_ids)).all()
+        for building in buildings:
+            buildings_with_address[building.id] = {
+                "name": building.normalized_name,
+                "address": building.address
+            }
+    
+    # 建物名でグループ化して重複をチェック
+    name_groups = {}
     for building_id, info in building_info.items():
-        result_item = {
-            "value": info["name"],
-            "label": info["name"]
-        }
-        
-        # エイリアスでマッチした場合はラベルに表示
-        if info.get("matched_by") == "alias" and info.get("alias"):
-            result_item["label"] = f"{info['name']} (旧: {info['alias']})"
-        elif info.get("alias"):
-            result_item["label"] = f"{info['name']} (別名: {info['alias']})"
-        
-        results.append(result_item)
+        name = info["name"]
+        if name not in name_groups:
+            name_groups[name] = []
+        name_groups[name].append((building_id, info))
+    
+    # 結果をリスト形式に変換（重複する建物名には住所を付与）
+    results = []
+    seen_names = set()  # 既に追加した建物名を記録
+    
+    for name, buildings_list in name_groups.items():
+        if len(buildings_list) == 1:
+            # 重複なしの場合
+            building_id, info = buildings_list[0]
+            if name not in seen_names:
+                result_item = {
+                    "value": info["name"],
+                    "label": info["name"]
+                }
+                
+                # エイリアスでマッチした場合はラベルに表示
+                if info.get("matched_by") == "alias" and info.get("alias"):
+                    result_item["label"] = f"{info['name']} (旧: {info['alias']})"
+                elif info.get("alias"):
+                    result_item["label"] = f"{info['name']} (別名: {info['alias']})"
+                
+                results.append(result_item)
+                seen_names.add(name)
+        else:
+            # 同名の建物が複数ある場合は、住所情報を追加して区別
+            for building_id, info in buildings_list:
+                address_info = buildings_with_address.get(building_id, {})
+                address = address_info.get("address", "")
+                
+                # 住所から区名を抽出（例：「東京都港区赤坂1-2-3」→「港区」）
+                ward = ""
+                if address:
+                    import re
+                    match = re.search(r'([^都道府県市]+[区市町村])', address)
+                    if match:
+                        ward = match.group(1)
+                
+                # 建物名に住所情報を付与した一意な値を作成
+                unique_value = f"{info['name']}_{building_id}"  # 内部的には一意にする
+                display_label = info["name"]
+                if ward:
+                    display_label = f"{info['name']} ({ward})"
+                elif address:
+                    # 住所の一部を表示（最初の20文字）
+                    display_label = f"{info['name']} ({address[:20]}...)"
+                
+                # 既に同じ表示名が追加されていない場合のみ追加
+                if unique_value not in seen_names:
+                    result_item = {
+                        "value": info["name"],  # 検索値は建物名のみ
+                        "label": display_label
+                    }
+                    
+                    # エイリアスでマッチした場合はさらに情報を追加
+                    if info.get("matched_by") == "alias" and info.get("alias"):
+                        result_item["label"] = f"{display_label} (旧: {info['alias']})"
+                    elif info.get("alias"):
+                        result_item["label"] = f"{display_label} (別名: {info['alias']})"
+                    
+                    results.append(result_item)
+                    seen_names.add(unique_value)
     
     # 前方一致を優先的に並べる
     def sort_key(item):
         name = item["value"]
-        if name.lower().startswith(q.lower()):
+        # 最初の検索語での前方一致を優先
+        first_term = search_terms[0] if search_terms else q
+        if name.lower().startswith(first_term.lower()):
             return (0, name)  # 前方一致は優先
         return (1, name)  # その他
     
