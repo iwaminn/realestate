@@ -834,16 +834,61 @@ async def merge_buildings(
         # 主建物を取得
         primary = db.query(Building).filter(Building.id == primary_id).first()
         if not primary:
-            raise HTTPException(status_code=404, detail="Primary building not found")
+            # 統合履歴を確認
+            merge_history = db.query(BuildingMergeHistory).filter(
+                BuildingMergeHistory.merged_building_id == primary_id
+            ).order_by(BuildingMergeHistory.merged_at.desc()).first()
+            
+            if merge_history:
+                primary_building = db.query(Building).filter(
+                    Building.id == merge_history.primary_building_id
+                ).first()
+                if primary_building:
+                    error_message = f"統合先として指定された建物ID {primary_id} は既に建物「{primary_building.normalized_name}」(ID: {primary_building.id})に統合済みです。\n画面を更新して最新の状態を確認してください。"
+                else:
+                    error_message = f"統合先として指定された建物ID {primary_id} は既に他の建物に統合済みです。\n画面を更新して最新の状態を確認してください。"
+            else:
+                error_message = f"統合先として指定された建物ID {primary_id} が見つかりません。\n画面を更新して最新の状態を確認してください。"
+            
+            raise HTTPException(status_code=404, detail=error_message)
         
         # 副建物を取得
         secondary_buildings = db.query(Building).filter(Building.id.in_(secondary_ids)).all()
         if len(secondary_buildings) != len(secondary_ids):
             found_ids = [b.id for b in secondary_buildings]
             missing_ids = [sid for sid in secondary_ids if sid not in found_ids]
+            
+            # より詳細なエラーメッセージを生成
+            error_details = []
+            for missing_id in missing_ids:
+                # 統合履歴を確認
+                merge_history = db.query(BuildingMergeHistory).filter(
+                    BuildingMergeHistory.merged_building_id == missing_id
+                ).order_by(BuildingMergeHistory.merged_at.desc()).first()
+                
+                if merge_history:
+                    primary_building = db.query(Building).filter(
+                        Building.id == merge_history.primary_building_id
+                    ).first()
+                    if primary_building:
+                        error_details.append(
+                            f"建物ID {missing_id} は既に建物「{primary_building.normalized_name}」(ID: {primary_building.id})に統合済みです"
+                        )
+                    else:
+                        error_details.append(
+                            f"建物ID {missing_id} は既に他の建物に統合済みです"
+                        )
+                else:
+                    error_details.append(
+                        f"建物ID {missing_id} が見つかりません（削除された可能性があります）"
+                    )
+            
+            error_message = "以下の建物は統合できません：\n" + "\n".join(error_details)
+            error_message += "\n\n画面を更新して最新の状態を確認してください。"
+            
             raise HTTPException(
                 status_code=404, 
-                detail=f"One or more secondary buildings not found. Missing IDs: {missing_ids}"
+                detail=error_message
             )
     elif "primary_building_id" in request and "secondary_building_id" in request:
         # 単一建物の統合（新形式）
@@ -955,6 +1000,17 @@ async def merge_buildings(
                 "primary_building_id": primary_id
             })
             
+            # 建物除外テーブルの参照を削除または更新
+            # building1_idとして参照されている場合
+            db.query(BuildingMergeExclusion).filter(
+                BuildingMergeExclusion.building1_id == secondary_building.id
+            ).delete()
+            
+            # building2_idとして参照されている場合
+            db.query(BuildingMergeExclusion).filter(
+                BuildingMergeExclusion.building2_id == secondary_building.id
+            ).delete()
+            
             # 建物を削除
             db.delete(secondary_building)
             merged_count += 1
@@ -964,6 +1020,9 @@ async def merge_buildings(
         updater.update_building_name_by_majority(primary_id)
         
         db.commit()
+        
+        # キャッシュをクリア（統合によりデータが変更されたため）
+        clear_duplicate_buildings_cache()
         
         return {
             "merged_count": merged_count,

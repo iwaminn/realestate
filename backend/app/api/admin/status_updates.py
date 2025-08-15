@@ -43,7 +43,32 @@ async def update_listing_status(
         # 24時間前
         threshold = now - timedelta(hours=24)
         
-        # 24時間以上確認されていないアクティブな掲載を非アクティブに
+        # 1. 24時間以内に確認された非アクティブな掲載を再アクティブ化
+        reactivate_listings = db.query(PropertyListing).filter(
+            PropertyListing.is_active == False,
+            PropertyListing.last_confirmed_at >= threshold
+        ).all()
+        
+        reactivate_count = len(reactivate_listings)
+        reopened_properties = set()
+        
+        # 各掲載を再アクティブ化
+        for listing in reactivate_listings:
+            listing.is_active = True
+            listing.updated_at = now
+            
+            # その物件が販売終了となっていた場合、販売再開とする
+            master_property = db.query(MasterProperty).filter(
+                MasterProperty.id == listing.master_property_id
+            ).first()
+            
+            if master_property and master_property.sold_at:
+                master_property.sold_at = None
+                master_property.final_price = None
+                master_property.final_price_updated_at = None
+                reopened_properties.add(master_property.id)
+        
+        # 2. 24時間以上確認されていないアクティブな掲載を非アクティブに
         inactive_listings = db.query(PropertyListing).filter(
             PropertyListing.is_active == True,
             PropertyListing.last_confirmed_at < threshold
@@ -83,9 +108,25 @@ async def update_listing_status(
         
         db.commit()
         
+        # メッセージを構築
+        messages = []
+        if reactivate_count > 0:
+            messages.append(f"{reactivate_count}件の掲載を再開")
+            if len(reopened_properties) > 0:
+                messages.append(f"{len(reopened_properties)}件の物件が販売再開")
+        if inactive_count > 0:
+            messages.append(f"{inactive_count}件の掲載を終了")
+            if len(sold_properties) > 0:
+                messages.append(f"{len(sold_properties)}件の物件が販売終了")
+        
+        if not messages:
+            messages.append("更新対象の掲載はありませんでした")
+        
         return {
             "success": True,
-            "message": f"{inactive_count}件の掲載を終了しました。{len(sold_properties)}件の物件が販売終了となりました。",
+            "message": "、".join(messages) + "。",
+            "reactivated_listings": reactivate_count,
+            "reopened_properties": len(reopened_properties),
             "inactive_listings": inactive_count,
             "sold_properties": len(sold_properties)
         }

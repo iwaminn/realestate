@@ -274,6 +274,7 @@ async def get_building_properties(
             "normalized_name": building.normalized_name,
             "address": building.address,
             "total_floors": building.total_floors,
+            "total_units": building.total_units,  # 総戸数を追加
             "built_year": building.built_year,
             "built_month": building.built_month,
             "construction_type": building.construction_type,
@@ -363,17 +364,6 @@ async def suggest_buildings(
                 # 既に他の方法でマッチしていて、かつ名前マッチではない場合はエイリアス情報を追加
                 building_info[building.id]["alias"] = alias_match.merged_building_name
     
-    # 同じ建物名を持つ建物の住所情報を取得
-    building_ids = list(building_info.keys())
-    buildings_with_address = {}
-    if building_ids:
-        buildings = db.query(Building).filter(Building.id.in_(building_ids)).all()
-        for building in buildings:
-            buildings_with_address[building.id] = {
-                "name": building.normalized_name,
-                "address": building.address
-            }
-    
     # 建物名でグループ化して重複をチェック
     name_groups = {}
     for building_id, info in building_info.items():
@@ -382,77 +372,80 @@ async def suggest_buildings(
             name_groups[name] = []
         name_groups[name].append((building_id, info))
     
-    # 結果をリスト形式に変換（重複する建物名には住所を付与）
+    # 結果をリスト形式に変換（同名の建物は1つだけ表示）
     results = []
     seen_names = set()  # 既に追加した建物名を記録
     
     for name, buildings_list in name_groups.items():
-        if len(buildings_list) == 1:
-            # 重複なしの場合
-            building_id, info = buildings_list[0]
-            if name not in seen_names:
-                result_item = {
-                    "value": info["name"],
-                    "label": info["name"]
-                }
-                
-                # エイリアスでマッチした場合はラベルに表示
-                if info.get("matched_by") == "alias" and info.get("alias"):
-                    result_item["label"] = f"{info['name']} (旧: {info['alias']})"
-                elif info.get("alias"):
-                    result_item["label"] = f"{info['name']} (別名: {info['alias']})"
-                
-                results.append(result_item)
-                seen_names.add(name)
-        else:
-            # 同名の建物が複数ある場合は、住所情報を追加して区別
-            for building_id, info in buildings_list:
-                address_info = buildings_with_address.get(building_id, {})
-                address = address_info.get("address", "")
-                
-                # 住所から区名を抽出（例：「東京都港区赤坂1-2-3」→「港区」）
-                ward = ""
-                if address:
-                    import re
-                    match = re.search(r'([^都道府県市]+[区市町村])', address)
-                    if match:
-                        ward = match.group(1)
-                
-                # 建物名に住所情報を付与した一意な値を作成
-                unique_value = f"{info['name']}_{building_id}"  # 内部的には一意にする
-                display_label = info["name"]
-                if ward:
-                    display_label = f"{info['name']} ({ward})"
-                elif address:
-                    # 住所の一部を表示（最初の20文字）
-                    display_label = f"{info['name']} ({address[:20]}...)"
-                
-                # 既に同じ表示名が追加されていない場合のみ追加
-                if unique_value not in seen_names:
-                    result_item = {
-                        "value": info["name"],  # 検索値は建物名のみ
-                        "label": display_label
-                    }
-                    
-                    # エイリアスでマッチした場合はさらに情報を追加
-                    if info.get("matched_by") == "alias" and info.get("alias"):
-                        result_item["label"] = f"{display_label} (旧: {info['alias']})"
-                    elif info.get("alias"):
-                        result_item["label"] = f"{display_label} (別名: {info['alias']})"
-                    
-                    results.append(result_item)
-                    seen_names.add(unique_value)
+        # 同名の建物がある場合も、最初の1つだけを採用
+        building_id, info = buildings_list[0]
+        if name not in seen_names:
+            result_item = {
+                "value": info["name"],
+                "label": info["name"]
+            }
+            
+            # エイリアスでマッチした場合はラベルに表示
+            if info.get("matched_by") == "alias" and info.get("alias"):
+                result_item["label"] = f"{info['name']} (旧: {info['alias']})"
+            elif info.get("alias"):
+                result_item["label"] = f"{info['name']} (別名: {info['alias']})"
+            
+            results.append(result_item)
+            seen_names.add(name)
     
-    # 前方一致を優先的に並べる
-    def sort_key(item):
-        name = item["value"]
-        # 最初の検索語での前方一致を優先
+    # スコアリング関数：検索語の連結との一致度を計算
+    def calculate_score(item):
+        name = item["value"].lower()
+        score = 0
+        
+        # 1. 検索語を連結した文字列との一致度をチェック
+        # 例：「パーク タワー」→「パークタワー」
+        if len(search_terms) > 1:
+            # スペースを除去した検索語
+            concatenated = ''.join(search_terms).lower()
+            # 建物名からもスペースを除去
+            name_no_space = name.replace(' ', '').replace('　', '')
+            
+            # 完全一致（最高スコア）
+            if concatenated == name_no_space:
+                score += 1000
+            # 連結語での前方一致
+            elif name_no_space.startswith(concatenated):
+                score += 800
+            # 連結語が含まれる
+            elif concatenated in name_no_space:
+                score += 600
+                
+        # 2. 元の検索文字列での前方一致
+        if name.startswith(q.lower()):
+            score += 500
+            
+        # 3. 最初の検索語での前方一致
         first_term = search_terms[0] if search_terms else q
-        if name.lower().startswith(first_term.lower()):
-            return (0, name)  # 前方一致は優先
-        return (1, name)  # その他
+        if name.startswith(first_term.lower()):
+            score += 400
+            
+        # 4. すべての検索語が順番通りに出現するかチェック
+        if len(search_terms) > 1:
+            last_pos = -1
+            all_in_order = True
+            for term in search_terms:
+                pos = name.find(term.lower())
+                if pos == -1 or pos < last_pos:
+                    all_in_order = False
+                    break
+                last_pos = pos
+            if all_in_order:
+                score += 300
+                
+        # 5. 文字列の長さによるペナルティ（短い方が優先）
+        score -= len(name) * 0.1
+        
+        return score
     
-    results.sort(key=sort_key)
+    # スコアでソート（降順）
+    results.sort(key=lambda item: calculate_score(item), reverse=True)
     
     # レガシー対応: 文字列のリストも返せるようにする
     # フロントエンドが新しい形式に対応するまでの暫定措置

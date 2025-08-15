@@ -556,6 +556,19 @@ class BaseScraper(ABC):
                         if existing_listing:
                             try:
                                 existing_listing.last_confirmed_at = get_utc_now()
+                                
+                                # 非アクティブな掲載を再アクティブ化
+                                if not existing_listing.is_active:
+                                    existing_listing.is_active = True
+                                    self.logger.debug(f"掲載を再開 (HTML構造エラースキップ) - ID: {existing_listing.id}")
+                                    
+                                    # 物件が販売終了になっていた場合は販売再開
+                                    if existing_listing.master_property and existing_listing.master_property.sold_at:
+                                        existing_listing.master_property.sold_at = None
+                                        existing_listing.master_property.final_price = None
+                                        existing_listing.master_property.final_price_updated_at = None
+                                        self.logger.debug(f"物件を販売再開 (HTML構造エラースキップ) - 物件ID: {existing_listing.master_property.id}")
+                                
                                 self.session.flush()
                             except Exception as e:
                                 self.log_warning(f'最終確認日時の更新に失敗: {e}',
@@ -3579,6 +3592,19 @@ class BaseScraper(ABC):
                 # 既存物件の最終確認日時のみ更新
                 existing_listing.last_scraped_at = datetime.now()
                 existing_listing.last_confirmed_at = datetime.now()
+                
+                # 非アクティブな掲載を再アクティブ化
+                if not existing_listing.is_active:
+                    existing_listing.is_active = True
+                    print(f"  → 掲載を再開 (ID: {existing_listing.id})")
+                    
+                    # 物件が販売終了になっていた場合は販売再開
+                    if existing_listing.master_property and existing_listing.master_property.sold_at:
+                        existing_listing.master_property.sold_at = None
+                        existing_listing.master_property.final_price = None
+                        existing_listing.master_property.final_price_updated_at = None
+                        print(f"  → 物件を販売再開 (物件ID: {existing_listing.master_property.id})")
+                
                 self.session.commit()
                 print(f"  → 既存物件の最終確認日時を更新 (ID: {existing_listing.id})")
                 # update_typeを設定（詳細をスキップした場合は変更なし）

@@ -127,7 +127,7 @@ const PropertyDuplicateGroups: React.FC = () => {
   const [totalGroups, setTotalGroups] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
-  const [anchorEl, setAnchorEl] = useState<{ [key: number]: HTMLElement | null }>({});
+  const [anchorEl, setAnchorEl] = useState<{ [key: string]: HTMLElement | null }>({});
 
   useEffect(() => {
     fetchGroups();

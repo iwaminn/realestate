@@ -199,10 +199,8 @@ export const ListingManagement: React.FC = () => {
         
         // 3秒後に掲載情報を再取得
         setTimeout(() => {
-          // 現在の掲載情報を再取得
-          if (selectedListing && selectedListing.id === listingId) {
-            fetchListingDetail(listingId);
-          }
+          // 掲載情報一覧を再取得
+          fetchListings();
         }, 3000);
       } else {
         // エラーの場合

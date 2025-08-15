@@ -109,11 +109,6 @@ const BuildingDuplicateManager: React.FC = () => {
       console.log('API params:', params);
       const response = await propertyApi.getDuplicateBuildings(params);
       console.log('Response:', response);
-      // デバッグ: 築年月データの確認
-      if (response.duplicate_groups && response.duplicate_groups.length > 0) {
-        console.log('First group primary built_year:', response.duplicate_groups[0].primary.built_year);
-        console.log('First group primary built_month:', response.duplicate_groups[0].primary.built_month);
-      }
       setDuplicateGroups(response.duplicate_groups);
     } catch (error) {
       console.error('Failed to fetch duplicate buildings:', error);
@@ -146,14 +141,25 @@ const BuildingDuplicateManager: React.FC = () => {
   };
 
   const handleSelectGroup = (group: DuplicateGroup) => {
-    setSelectedGroup(group);
+    // 最新のデータから該当グループを探す
+    const latestGroup = duplicateGroups.find(g => g.primary.id === group.primary.id);
+    if (!latestGroup) {
+      setSnackbar({
+        open: true,
+        message: 'このグループは既に処理されています',
+        severity: 'error'
+      });
+      return;
+    }
+    
+    setSelectedGroup(latestGroup);
     // すべての建物を選択（主建物も含む）
-    setSelectedCandidates([group.primary.id, ...group.candidates.map(c => c.id)]);
+    setSelectedCandidates([latestGroup.primary.id, ...latestGroup.candidates.map(c => c.id)]);
     
     // 物件数が最も多い建物をデフォルトのマスターに設定
     const allBuildings = [
-      group.primary,
-      ...group.candidates
+      latestGroup.primary,
+      ...latestGroup.candidates
     ];
     const buildingWithMostProperties = allBuildings.reduce((prev, current) => 
       current.property_count > prev.property_count ? current : prev
@@ -252,39 +258,13 @@ const BuildingDuplicateManager: React.FC = () => {
         severity: 'success'
       });
 
-      // グループをローカルで更新
-      if (isAllSelected) {
-        // 全選択の場合はグループ自体を削除
-        setDuplicateGroups(prevGroups => 
-          prevGroups.filter(group => group.primary.id !== selectedGroup.primary.id)
-        );
-      } else {
-        // 一部選択の場合は選択されなかった候補のみを残す
-        setDuplicateGroups(prevGroups => {
-          return prevGroups.map(group => {
-            if (group.primary.id === selectedGroup.primary.id) {
-              const remainingCandidates = group.candidates.filter(
-                candidate => !selectedCandidates.includes(candidate.id)
-              );
-              
-              // candidatesが空になった場合はグループ自体を削除
-              if (remainingCandidates.length === 0) {
-                return null;
-              }
-              
-              return {
-                ...group,
-                candidates: remainingCandidates
-              };
-            }
-            return group;
-          }).filter(Boolean) as DuplicateGroup[];
-        });
-      }
-
+      // ダイアログを閉じる
       setSelectedGroup(null);
       setSelectedCandidates([]);
       setSelectedMasterId(null);
+      
+      // サーバーから最新のデータを再取得（除外設定が反映された状態）
+      await fetchDuplicateBuildings(searchQuery, minSimilarity, limit);
     } catch (error: any) {
       console.error('Failed to separate buildings:', error);
       setSnackbar({
@@ -300,64 +280,114 @@ const BuildingDuplicateManager: React.FC = () => {
   const handleMerge = async () => {
     if (!selectedGroup || selectedCandidates.length === 0 || !selectedMasterId) return;
 
+    // 事前検証：現在の状態をチェック
+    const currentGroup = duplicateGroups.find(g => g.primary.id === selectedGroup.primary.id);
+    if (!currentGroup) {
+      setSnackbar({
+        open: true,
+        message: 'このグループは既に処理されています。画面を更新してください。',
+        severity: 'error'
+      });
+      setSelectedGroup(null);
+      // 最新データを再取得
+      await fetchDuplicateBuildings(searchQuery, minSimilarity, limit);
+      return;
+    }
+    
+    // 現在存在する建物IDのみを使用
+    const existingBuildingIds = [currentGroup.primary.id, ...currentGroup.candidates.map(c => c.id)];
+    const invalidIds = selectedCandidates.filter(id => !existingBuildingIds.includes(id));
+    
+    if (invalidIds.length > 0) {
+      setSnackbar({
+        open: true,
+        message: `選択された建物の一部（ID: ${invalidIds.join(', ')}）は既に統合済みです。画面を更新してください。`,
+        severity: 'error'
+      });
+      setSelectedGroup(null);
+      // 最新データを再取得
+      await fetchDuplicateBuildings(searchQuery, minSimilarity, limit);
+      return;
+    }
+
     setMerging(true);
     try {
+      const validSelectedIds = selectedCandidates.filter(id => existingBuildingIds.includes(id));
+      
       // マスター以外の建物IDを収集
-      const allBuildingIds = selectedCandidates; // 選択された建物のみ
-      const buildingsToMerge = allBuildingIds.filter(id => id !== selectedMasterId);
+      const buildingsToMerge = validSelectedIds.filter(id => id !== selectedMasterId);
       
       console.log('[DEBUG] Merge request:', {
         selectedMasterId,
         buildingsToMerge,
-        selectedCandidates
+        originalSelectedCandidates: selectedCandidates,
+        validSelectedIds,
+        existingBuildingIds
       });
+      
+      if (buildingsToMerge.length === 0) {
+        throw new Error('統合する建物がありません。統合先のみが選択されています。');
+      }
       
       const response = await propertyApi.mergeBuildings(
         selectedMasterId,
         buildingsToMerge
       );
 
+      // 統合先の建物情報を取得（APIレスポンスを優先、なければローカルデータから）
+      let masterBuildingInfo = `建物ID ${selectedMasterId}`;
+      
+      if (response.primary_building && response.primary_building.normalized_name) {
+        // APIレスポンスから建物名を取得
+        masterBuildingInfo = `「${response.primary_building.normalized_name}」(ID: ${response.primary_building.id})`;
+      } else {
+        // ローカルデータから建物名を取得
+        const masterBuilding = currentGroup.primary.id === selectedMasterId 
+          ? currentGroup.primary 
+          : currentGroup.candidates.find(c => c.id === selectedMasterId);
+        
+        if (masterBuilding) {
+          masterBuildingInfo = `「${masterBuilding.normalized_name}」(ID: ${selectedMasterId})`;
+        }
+      }
+
       setSnackbar({ 
         open: true, 
-        message: `${response.merged_count}件の建物を統合し、${response.moved_properties}件の物件を移動しました`, 
+        message: `${response.merged_count}件の建物を${masterBuildingInfo}に統合し、${response.moved_properties}件の物件を移動しました`, 
         severity: 'success' 
       });
 
-      // 統合された建物を含むグループをリストから削除（スムースな更新）
-      setDuplicateGroups(prevGroups => {
-        // 統合に関わったすべての建物IDのセット
-        const mergedBuildingIds = new Set(selectedCandidates);
-        
-        // 統合された建物を含まないグループのみを残す
-        return prevGroups.filter(group => {
-          // プライマリ建物が統合されたかチェック
-          if (mergedBuildingIds.has(group.primary.id)) return false;
-          
-          // 候補建物が統合されたかチェック
-          const remainingCandidates = group.candidates.filter(
-            candidate => !mergedBuildingIds.has(candidate.id)
-          );
-          
-          // 候補がまだ残っている場合はグループを更新して保持
-          if (remainingCandidates.length > 0) {
-            group.candidates = remainingCandidates;
-            return true;
-          }
-          
-          // 候補がなくなった場合はグループを削除
-          return false;
-        });
-      });
-      
+      // ダイアログを閉じる
       setSelectedGroup(null);
       setSelectedCandidates([]);
       setSelectedMasterId(null);
+      
+      // サーバーから最新のデータを再取得（統合された建物は既に削除されている）
+      await fetchDuplicateBuildings(searchQuery, minSimilarity, limit);
     } catch (error: any) {
       console.error('Failed to merge buildings:', error);
-      const errorMessage = error.response?.data?.detail || error.message || '建物の統合に失敗しました';
+      let errorMessage = '建物の統合に失敗しました';
+      
+      if (error.response?.data?.detail) {
+        // APIからの詳細なエラーメッセージを使用
+        errorMessage = error.response.data.detail;
+        
+        // 改行を含むメッセージの場合は、改行を<br>に変換（Snackbarでは改行が表示されないため）
+        // ただし、長すぎる場合は短縮
+        const lines = errorMessage.split('\n');
+        if (lines.length > 4) {
+          errorMessage = lines.slice(0, 3).join(' / ') + ' ...';
+          console.error('Full error details:', error.response.data.detail);
+        } else {
+          errorMessage = lines.join(' / ');
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
       setSnackbar({ 
         open: true, 
-        message: `エラー: ${errorMessage}`, 
+        message: errorMessage, 
         severity: 'error' 
       });
     } finally {
@@ -751,9 +781,9 @@ const BuildingDuplicateManager: React.FC = () => {
                             <TableCell padding="checkbox" align="center">
                               <Radio
                                 checked={selectedMasterId === building.id}
+                                disabled={!isSelected} // 未選択は統合先に指定不可
                                 onChange={() => setSelectedMasterId(building.id)}
                                 color="primary"
-                                disabled={!isSelected}
                               />
                             </TableCell>
                             <TableCell>

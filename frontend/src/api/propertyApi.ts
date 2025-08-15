@@ -109,9 +109,11 @@ export const propertyApi = {
 
   // 建物名サジェスト取得（エイリアス対応）
   suggestBuildings: async (query: string, limit: number = 10): Promise<Array<string | { value: string; label: string }>> => {
+    console.log('[suggestBuildings] Requesting with query:', query);
     const response = await api.get('/v2/buildings/suggest', {
       params: { q: query, limit }
     });
+    console.log('[suggestBuildings] Response:', response.data);
     return response.data;
   },
 
