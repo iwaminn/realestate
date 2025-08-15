@@ -13,7 +13,7 @@ from backend.app.database import init_db
 from backend.app.utils.logger import api_logger, error_logger
 
 # APIルーターのインポート
-from backend.app.api import admin
+from backend.app.api.admin import router as admin_router
 from backend.app.api import admin_listings
 from backend.app.api import admin_properties
 from backend.app.api import admin_buildings
@@ -83,7 +83,7 @@ async def log_requests(request, call_next):
         raise
 
 # ルーターの登録
-app.include_router(admin.router)
+app.include_router(admin_router)
 app.include_router(admin_listings.router)
 app.include_router(admin_properties.router)
 app.include_router(admin_buildings.router)

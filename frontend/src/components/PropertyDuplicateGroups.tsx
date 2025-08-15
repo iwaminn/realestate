@@ -146,7 +146,7 @@ const PropertyDuplicateGroups: React.FC = () => {
         params.building_name = search || searchQuery;
       }
       
-      const response = await axios.get('/api/admin/duplicate-groups', {
+      const response = await axios.get('/api/admin/duplicate-properties', {
         params
       });
       

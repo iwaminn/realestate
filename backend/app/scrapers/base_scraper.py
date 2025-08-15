@@ -246,7 +246,7 @@ class BaseScraper(ABC):
         except requests.exceptions.HTTPError as e:
             if e.response.status_code == 404:
                 # 404エラーの場合は特別処理
-                self.logger.warning(f"404 Not Found: {url}")
+                self.log_warning('404 Not Found', url=url)
                 self._handle_404_error(url)
                 # 404エラー情報を保存（詳細取得で使用）
                 self._last_fetch_error = {
@@ -302,7 +302,7 @@ class BaseScraper(ABC):
         """物件情報を保存（各スクレイパーで実装）"""
         pass
     
-    def common_scrape_area_logic(self, area_code: str, max_pages: int = None) -> Dict[str, Any]:
+    def scrape_area(self, area_code: str) -> Dict[str, Any]:
         """エリアの物件をスクレイピングする共通ロジック（価格変更ベースのスマートスクレイピング対応）"""
         self.logger.info(f"スクレイピング開始: エリア={area_code}, 最大物件数={self.max_properties}")
         self.current_area_code = area_code  # 現在スクレイピング中のエリアを記録
@@ -362,7 +362,7 @@ class BaseScraper(ABC):
                     self.logger.info(f"[DEBUG] fetch_page呼び出し後")
                     debug_log(f"[{self.source_site}] fetch_page呼び出し後")
                     if not soup:
-                        self.logger.warning(f"ページ {page} の取得に失敗")
+                        self.log_warning(f'ページ {page} の取得に失敗')
                         consecutive_empty_pages += 1
                         if consecutive_empty_pages >= max_consecutive_empty:
                             self.logger.info("連続してページ取得に失敗したため終了")
@@ -425,12 +425,7 @@ class BaseScraper(ABC):
                     # メンテナンス例外の場合は即座に終了
                     self.logger.error(f"メンテナンスを検出: {e}")
                     # エラーログを記録
-                    if hasattr(self, '_save_error_log'):
-                        self._save_error_log({
-                            'url': url,
-                            'reason': str(e),
-                            'timestamp': datetime.now().isoformat()
-                        })
+                    self.log_error(str(e), url=url)
                     # サーキットブレーカーとして即座にスクレイピングを中断
                     raise
                 except Exception as e:
@@ -512,7 +507,7 @@ class BaseScraper(ABC):
                 
                 # 必須フィールドの確認
                 if not property_data.get('url'):
-                    self.logger.warning(f"物件 {i+1}: URLがありません")
+                    self.log_warning(f'物件 {i+1}: URLがありません')
                     self._scraping_stats['other_errors'] += 1
                     total_properties += 1  # 処理件数としてカウント
                     skipped += 1  # スキップとしてカウント
@@ -563,7 +558,8 @@ class BaseScraper(ABC):
                                 existing_listing.last_confirmed_at = get_utc_now()
                                 self.session.flush()
                             except Exception as e:
-                                self.logger.warning(f"最終確認日時の更新に失敗: {e}")
+                                self.log_warning(f'最終確認日時の更新に失敗: {e}',
+                                               url=property_data.get('url', '不明'))
                         
                         processed = True
                     else:
@@ -787,9 +783,9 @@ class BaseScraper(ABC):
         
         # 重複警告があれば表示
         if duplicate_count > 0:
-            self.logger.warning(f"重複物件警告: {duplicate_count}件の物件が複数エリアに掲載されていました（正常な動作です）")
+            self.log_warning(f'重複物件警告: {duplicate_count}件の物件が複数エリアに掲載されていました（正常な動作です）')
         if total_properties != total_calculated:
-            self.logger.warning(f"統計の不一致: 処理総数({total_properties}) != 計算合計({total_calculated})")
+            self.log_warning(f'統計の不一致: 処理総数({total_properties}) != 計算合計({total_calculated})')
         if other_errors > 0:
             self.logger.info(f"その他のエラー（URLなしなど）: {other_errors}件")
         
@@ -864,18 +860,18 @@ class BaseScraper(ABC):
             
             # 不明な件数がある場合は警告
             if unaccounted > 0:
-                self.logger.warning(f"詳細取得したが統計に含まれていない物件が{unaccounted}件あります")
+                self.log_warning(f'詳細取得したが統計に含まれていない物件が{unaccounted}件あります')
         
-        self.logger.info(f"[DEBUG] common_scrape_area_logic終了、結果を返却")
-        debug_log(f"[{self.source_site}] common_scrape_area_logic終了、結果を返却")
+        self.logger.info(f"[DEBUG] scrape_area終了、結果を返却")
+        debug_log(f"[{self.source_site}] scrape_area終了、結果を返却")
         
         return result
     
     def _debug_pause_flag_state(self):
         """一時停止フラグの状態をデバッグ出力"""
         if hasattr(self, 'pause_flag'):
-            self.logger.info(f"[DEBUG] common_scrape_area_logic開始時 - pause_flag exists: {self.pause_flag is not None}")
-            debug_log(f"[{self.source_site}] common_scrape_area_logic開始 - pause_flag exists: {self.pause_flag is not None}")
+            self.logger.info(f"[DEBUG] scrape_area開始時 - pause_flag exists: {self.pause_flag is not None}")
+            debug_log(f"[{self.source_site}] scrape_area開始 - pause_flag exists: {self.pause_flag is not None}")
             if self.pause_flag:
                 self.logger.info(f"[DEBUG] pause_flag ID: {id(self.pause_flag)}, is_set: {self.pause_flag.is_set()}")
                 debug_log(f"[{self.source_site}] pause_flag ID: {id(self.pause_flag)}, is_set: {self.pause_flag.is_set()}")
@@ -1005,7 +1001,7 @@ class BaseScraper(ABC):
     def _check_duplicate_pages(self, current_page_urls: set, previous_page_urls: set, page: int, duplicate_page_count: int) -> bool:
         """ページの重複をチェックし、終了すべきか判定"""
         if current_page_urls and current_page_urls == previous_page_urls:
-            self.logger.warning(f"ページ {page}: 前ページと完全に同じ内容です（ページング失敗の可能性）")
+            self.log_warning(f'ページ {page}: 前ページと完全に同じ内容です（ページング失敗の可能性）')
             if duplicate_page_count >= 1:  # 2回目の重複
                 self.logger.error("2ページ連続で同じ内容のため、ページング処理を終了します")
                 return True
@@ -1356,16 +1352,10 @@ class BaseScraper(ABC):
                     price_diff = abs(list_price - detail_price)
                     price_diff_rate = price_diff / list_price if list_price > 0 else 0
                     
-                    self.logger.warning(
-                        f"価格不一致を検出: {building_name} - "
-                        f"一覧: {list_price}万円, 詳細: {detail_price}万円 "
-                        f"(差額: {price_diff}万円, {price_diff_rate:.1%})"
-                    )
-                    
                     # 価格不一致として記録
                     self._record_price_mismatch(
-                        property_data['url'],
                         property_data.get('site_property_id', ''),
+                        property_data['url'],
                         list_price,
                         detail_price
                     )
@@ -1375,17 +1365,15 @@ class BaseScraper(ABC):
                         self._scraping_stats['price_mismatch'] = 0
                     self._scraping_stats['price_mismatch'] += 1
                     
-                    # エラーログを記録
-                    if hasattr(self, '_save_error_log'):
-                        self._save_error_log({
-                            'url': property_data.get('url', '不明'),
-                            'reason': f'価格不一致: 一覧 {list_price}万円, 詳細 {detail_price}万円',
-                            'building_name': building_name,
-                            'price': f'{list_price} → {detail_price}',
-                            'timestamp': datetime.now().isoformat(),
-                            'site_property_id': property_data.get('site_property_id', ''),
-                            'source_site': self.source_site.value
-                        })
+                    # エラーログを記録（価格不一致は重要なエラーとして扱う）
+                    self.log_error(
+                        f'価格不一致を検出: 一覧 {list_price}万円, 詳細 {detail_price}万円 (差額: {price_diff}万円, {price_diff_rate:.1%})',
+                        url=property_data.get('url', '不明'),
+                        building_name=building_name,
+                        price=f'{list_price} → {detail_price}',
+                        site_property_id=property_data.get('site_property_id', ''),
+                        source_site=self.source_site.value
+                    )
                     
                     # 更新をスキップ
                     print(f"  → 価格不一致のため更新をスキップ (一覧: {list_price}万円, 詳細: {detail_price}万円)")
@@ -1547,11 +1535,11 @@ class BaseScraper(ABC):
         # 必須フィールドのチェック
         if not property_data.get('building_name'):
             validation_errors.append("建物名が未取得")
-            self.logger.warning(f"建物名がありません: URL={url}")
+            self.log_warning('建物名がありません', url=url)
         
         if not property_data.get('price'):
             validation_errors.append("価格が未取得")
-            self.logger.warning(f"価格情報がありません: URL={url}, building_name={building_name}")
+            self.log_warning('価格情報がありません', url=url, building_name=building_name)
         
         # site_property_idを必須項目として追加
         if not property_data.get('site_property_id'):
@@ -2606,7 +2594,29 @@ class BaseScraper(ABC):
                 updated = True
             
             if updated:
-                self.session.flush()
+                # デッドロック対策：リトライロジック
+                max_retries = 3
+                for attempt in range(max_retries):
+                    try:
+                        self.session.flush()
+                        break
+                    except Exception as e:
+                        if "deadlock detected" in str(e).lower() and attempt < max_retries - 1:
+                            self.logger.warning(f"デッドロック検出、リトライ {attempt + 1}/{max_retries}")
+                            self.session.rollback()
+                            # 少し待機してからリトライ
+                            import time
+                            time.sleep(0.1 * (attempt + 1))
+                            # トランザクションを再開
+                            self.session.begin()
+                            # 再度同じ更新を試みる
+                            master_property = self.session.query(MasterProperty).filter(
+                                MasterProperty.id == master_property.id
+                            ).first()
+                            if master_property and balcony_area and not master_property.balcony_area:
+                                master_property.balcony_area = balcony_area
+                        else:
+                            raise
             
             return master_property
         
@@ -3548,6 +3558,22 @@ class BaseScraper(ABC):
     def save_property_common(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
         """物件情報を保存する共通メソッド"""
         try:
+            # トランザクション状態のチェックと修復
+            try:
+                # テスト用のクエリで現在のトランザクション状態を確認
+                self.session.execute("SELECT 1")
+            except Exception as tx_error:
+                error_msg = str(tx_error)
+                if ("rolled back due to a previous exception" in error_msg or
+                    "current transaction is aborted" in error_msg or
+                    "InFailedSqlTransaction" in error_msg):
+                    self.logger.info("save_property_common: トランザクションが無効な状態のため、ロールバックして再開")
+                    try:
+                        self.session.rollback()
+                        self.session.begin()
+                    except:
+                        pass
+            
             # 詳細取得をスキップした場合の処理
             if not property_data.get('detail_fetched', False) and existing_listing:
                 # 既存物件の最終確認日時のみ更新
@@ -3724,7 +3750,31 @@ class BaseScraper(ABC):
                     master_property.balcony_area = property_data.get('balcony_area')
                     updated = True
                 if updated:
-                    self.session.flush()
+                    # デッドロック対策：リトライロジック
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            self.session.flush()
+                            break
+                        except Exception as e:
+                            if "deadlock detected" in str(e).lower() and attempt < max_retries - 1:
+                                self.logger.warning(f"デッドロック検出（既存物件更新）、リトライ {attempt + 1}/{max_retries}")
+                                self.session.rollback()
+                                # 少し待機してからリトライ
+                                import time
+                                time.sleep(0.1 * (attempt + 1))
+                                # トランザクションを再開
+                                self.session.begin()
+                                # 再度同じ更新を試みる（最新の状態を取得）
+                                master_property = self.session.query(MasterProperty).filter(
+                                    MasterProperty.id == master_property.id
+                                ).first()
+                                if master_property:
+                                    # 再度更新が必要か確認
+                                    if property_data.get('balcony_area') and not master_property.balcony_area:
+                                        master_property.balcony_area = property_data.get('balcony_area')
+                            else:
+                                raise
                     
                 self.logger.info(f"既存掲載情報の物件・建物を使用: 建物ID={building.id if building else 'なし'}, 物件ID={master_property.id}")
             else:
@@ -3892,11 +3942,13 @@ class BaseScraper(ABC):
                 import traceback
                 traceback.print_exc()
             else:
-                # トランザクションエラーの場合はロールバック
+                # トランザクションエラーの場合はロールバックして新しいトランザクションを開始
                 try:
                     self.session.rollback()
-                    self.logger.info("save_property_common: トランザクションエラーのためロールバック")
-                except:
+                    self.session.begin()
+                    self.logger.info("save_property_common: トランザクションエラーのためロールバックし、新しいトランザクションを開始")
+                except Exception as rollback_error:
+                    self.logger.warning(f"ロールバック/再開エラー: {rollback_error}")
                     pass
             
             # エラーログを記録
@@ -4535,75 +4587,58 @@ class BaseScraper(ABC):
             self._save_error_log(error_info)
     
     def _save_error_log(self, error_info: Dict[str, Any]):
-        """エラーログを保存（並列スクレイピングマネージャーと連携）"""
-        self.logger.info(f"_save_error_log呼び出し: {error_info}")
-        
-        if hasattr(self, 'scraping_manager') and self.scraping_manager:
-            # タスクIDを取得
-            task_id = getattr(self, 'task_id', None)
-            self.logger.info(f"task_id: {task_id}, scraping_manager: {self.scraping_manager}")
-            
-            if task_id:
-                # エラーログエントリを作成（空文字やNoneを適切に処理）
-                # エラーの詳細を含めたreasonを構築
-                reason = error_info.get('reason') or '不明なエラー'
-                # error_detailがreasonに既に含まれている場合は追加しない
-                if error_info.get('error_detail') and error_info['error_detail'] not in reason:
-                    if error_info.get('error_type'):
-                        reason = f"{reason} - {error_info['error_type']}: {error_info['error_detail']}"
-                    else:
-                        reason = f"{reason}: {error_info['error_detail']}"
-                elif error_info.get('error_type') and error_info['error_type'] not in reason:
-                    reason = f"{reason} - {error_info['error_type']}"
-                
-                error_entry = {
-                    'timestamp': error_info.get('timestamp', datetime.now().isoformat()),
-                    'scraper': self.source_site.value,
-                    'url': error_info.get('url') or '不明',
-                    'reason': reason,
-                    'building_name': error_info.get('building_name') or '',
-                    'price': str(error_info.get('price', '')) if error_info.get('price') is not None else ''
-                }
-                # マネージャーのadd_error_logメソッドを呼び出す
-                self.logger.info(f"add_error_log呼び出し: {error_entry}")
-                self.scraping_manager.add_error_log(task_id, error_entry)
-            else:
-                self.logger.warning("task_idが設定されていません")
-        else:
-            self.logger.warning(f"scraping_managerが設定されていません: hasattr={hasattr(self, 'scraping_manager')}")
+        """エラーログを保存"""
+        # 現在の実装では外部のロギングハンドラー（admin/scraping.py）が
+        # このメソッドをオーバーライドしてログを収集する
+        pass
     
     def _save_warning_log(self, warning_info: Dict[str, Any]):
-        """警告ログを保存（並列スクレイピングマネージャーと連携）"""
-        self.logger.info(f"_save_warning_log呼び出し: {warning_info}")
+        """警告ログを保存"""
+        # 現在の実装では外部のロギングハンドラー（admin/scraping.py）が
+        # このメソッドをオーバーライドしてログを収集する
+        pass
+
+    def log_warning(self, message: str, **kwargs):
+        """警告ログを記録する簡潔なインターフェース
         
-        if hasattr(self, 'scraping_manager') and self.scraping_manager:
-            # タスクIDを取得
-            task_id = getattr(self, 'task_id', None)
-            self.logger.info(f"task_id: {task_id}, scraping_manager: {self.scraping_manager}")
-            
-            if task_id:
-                # 警告ログエントリを作成
-                warning_entry = {
-                    'timestamp': warning_info.get('timestamp', datetime.now().isoformat()),
-                    'scraper': self.source_site.value,
-                    'url': warning_info.get('url', '不明'),
-                    'reason': warning_info.get('reason', '警告'),
-                    'building_name': warning_info.get('building_name', ''),
-                    'price': warning_info.get('price', ''),
-                    'site_property_id': warning_info.get('site_property_id', '')
-                }
-                # マネージャーのadd_warning_logメソッドを呼び出す（存在する場合）
-                if hasattr(self.scraping_manager, 'add_warning_log'):
-                    self.logger.info(f"add_warning_log呼び出し: {warning_entry}")
-                    self.scraping_manager.add_warning_log(task_id, warning_entry)
-                else:
-                    # 警告ログメソッドがない場合は、エラーログとして保存（互換性のため）
-                    self.logger.info(f"add_warning_logがないため、add_error_log呼び出し: {warning_entry}")
-                    self.scraping_manager.add_error_log(task_id, warning_entry)
-            else:
-                self.logger.warning("task_idが設定されていません")
-        else:
-            self.logger.warning(f"scraping_managerが設定されていません: hasattr={hasattr(self, 'scraping_manager')}")
+        Args:
+            message: 警告メッセージ
+            **kwargs: 追加の情報（url, building_name, price等）
+        
+        使用例:
+            self.log_warning("価格不一致を検出", url=url, 
+                           building_name=building_name,
+                           price=f"{list_price} → {detail_price}")
+        """
+        warning_info = {
+            'reason': message,
+            'timestamp': datetime.now().isoformat()
+        }
+        warning_info.update(kwargs)
+        
+        if hasattr(self, '_save_warning_log'):
+            self._save_warning_log(warning_info)
+    
+    def log_error(self, message: str, **kwargs):
+        """エラーログを記録する簡潔なインターフェース
+        
+        Args:
+            message: エラーメッセージ
+            **kwargs: 追加の情報（url, building_name, price等）
+        
+        使用例:
+            self.log_error("物件処理エラー", url=url, 
+                         building_name=building_name, 
+                         error_detail=str(e))
+        """
+        error_info = {
+            'reason': message,
+            'timestamp': datetime.now().isoformat()
+        }
+        error_info.update(kwargs)
+        
+        if hasattr(self, '_save_error_log'):
+            self._save_error_log(error_info)
 
     def _post_listing_creation_hook(self, listing: PropertyListing, property_data: Dict[str, Any]):
         """掲載情報作成後のフック（サブクラスでオーバーライド可能）"""

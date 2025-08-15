@@ -40,15 +40,6 @@ class SuumoScraper(BaseScraper):
         # 建物名取得エラーの履歴（メモリ内管理）
         self._building_name_error_cache = {}  # {url: timestamp}
     
-    def scrape_area(self, area: str, max_pages: int = None):
-        """エリアの物件をスクレイピング
-        
-        Args:
-            area: エリアコード（13101, 13102など）
-            max_pages: 最大ページ数（使用しない）
-        """
-        # 共通ロジックを使用（エリアコードを渡す）
-        return self.common_scrape_area_logic(area)
     
     def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
         """個別の物件を処理（SUUMOスクレイパー固有の実装）"""
@@ -69,7 +60,7 @@ class SuumoScraper(BaseScraper):
         """SUUMOの検索URLを生成（100件/ページ）
         
         Args:
-            area: エリアコード（common_scrape_area_logicから渡される）
+            area: エリアコード（scrape_areaから渡される）
             page: ページ番号
         """
         # エリアコードからローマ字を取得

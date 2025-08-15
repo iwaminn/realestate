@@ -849,18 +849,6 @@ class HomesScraper(BaseScraper):
             self.logger.error(f"[HOMES] サイト物件IDを抽出できません: URL={href}")
             return False
     
-    def scrape_area(self, area: str, max_pages: int = 5):
-        """エリアの物件をスクレイピング"""
-        self.logger.info(f"[HOMES] Starting scrape for area: {area}")
-        
-        # エリアコードの確認
-        from .area_config import get_area_code, get_homes_city_code
-        area_code = get_area_code(area)
-        city_code = get_homes_city_code(area_code)
-        self.logger.info(f"[HOMES] Area conversion: {area} -> {area_code} -> {city_code}")
-        
-        # 共通ロジックを使用
-        return self.common_scrape_area_logic(area, max_pages)
     
     def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None):
         """物件情報を保存"""

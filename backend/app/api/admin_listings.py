@@ -10,7 +10,6 @@ import logging
 
 from ..database import get_db
 from ..models import PropertyListing, MasterProperty, Building, ListingPriceHistory
-from ..auth import verify_admin_credentials
 
 router = APIRouter(prefix="/api/admin", tags=["admin-listings"])
 
@@ -25,8 +24,7 @@ async def get_listings(
     ward: Optional[str] = None,
     sort_by: str = Query("id", regex="^(id|created_at|updated_at|current_price)$"),
     sort_order: str = Query("desc", regex="^(asc|desc)$"),
-    db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
+    db: Session = Depends(get_db)
 ):
     """掲載情報一覧を取得（管理者用）"""
     # ベースクエリ
@@ -142,8 +140,7 @@ async def get_listings(
 @router.get("/listings/{listing_id}")
 async def get_listing_detail(
     listing_id: int,
-    db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
+    db: Session = Depends(get_db)
 ):
     """掲載情報の詳細を取得（管理者用）"""
     listing = db.query(PropertyListing).options(
@@ -226,8 +223,7 @@ async def get_listing_detail(
 @router.delete("/listings/{listing_id}")
 async def delete_listing(
     listing_id: int,
-    db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
+    db: Session = Depends(get_db)
 ):
     """掲載情報を削除（管理者用）"""
     # 対象の掲載情報を取得
@@ -255,8 +251,7 @@ async def delete_listing(
 @router.post("/listings/{listing_id}/detach-candidates")
 async def get_detach_candidates(
     listing_id: int,
-    db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
+    db: Session = Depends(get_db)
 ):
     """掲載情報分離時の候補物件を取得（管理者用）"""
     try:
@@ -384,8 +379,7 @@ async def get_detach_candidates(
 async def attach_listing_to_property(
     listing_id: int,
     request: Dict[str, Any],
-    db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
+    db: Session = Depends(get_db)
 ):
     """掲載情報を指定された物件に紐付け（管理者用）"""
     import logging
@@ -492,8 +486,7 @@ async def attach_listing_to_property(
 async def refresh_listing_detail(
     listing_id: int,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
+    db: Session = Depends(get_db)
 ):
     """掲載情報の詳細を再取得（管理者用）- 簡易版"""
     # 対象の掲載情報を取得

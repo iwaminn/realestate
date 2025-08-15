@@ -629,7 +629,7 @@ def get_duplicate_groups_v2(
         )
     )
     
-    if building_filter:
+    if building_filter is not None:
         base_query = base_query.filter(MasterProperty.building_id.in_(
             db.query(Building.id).filter(building_filter)
         ))

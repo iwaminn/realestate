@@ -112,9 +112,6 @@ class LivableScraper(BaseScraper):
             
         return True
     
-    def scrape_area(self, area: str, max_pages: int = 5):
-        """エリアの物件をスクレイピング"""
-        return self.common_scrape_area_logic(area, max_pages)
     
     def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
         """個別の物件を処理"""

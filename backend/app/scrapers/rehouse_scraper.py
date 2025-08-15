@@ -598,15 +598,6 @@ class RehouseScraper(BaseScraper):
     
     
     
-    def scrape_area(self, area: str = "minato", max_pages: int = 5):
-        """エリアの物件をスクレイピング（東京都港区に対応）"""
-        from .area_config import get_area_code
-        
-        # エリアコードを取得
-        area_code = get_area_code(area)
-        
-        # 共通ロジックを使用（価格変更ベースのスマートスクレイピングを含む）
-        return self.common_scrape_area_logic(area, max_pages)
     
     def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
         """物件情報をデータベースに保存"""

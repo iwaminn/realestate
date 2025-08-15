@@ -69,9 +69,6 @@ class NomuScraper(BaseScraper):
             return f"{base_url}?pager_page={page}"
         return base_url
     
-    def scrape_area(self, area_code: str, max_pages: int = 5):
-        """エリアの物件をスクレイピング"""
-        return self.common_scrape_area_logic(area_code, max_pages)
     
     def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
         """物件一覧を解析"""
