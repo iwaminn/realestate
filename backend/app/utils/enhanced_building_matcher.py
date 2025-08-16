@@ -100,14 +100,19 @@ class EnhancedBuildingMatcher:
                 if not excluded_building1 or not excluded_building2:
                     continue
                 
-                # 現在の建物ペアが、除外履歴の建物ペアと同一の可能性を評価
+                # 自分自身との比較はスキップ
+                if (building1.id == excluded_building1.id and building2.id == excluded_building2.id) or \
+                   (building1.id == excluded_building2.id and building2.id == excluded_building1.id):
+                    continue
+                
+                # 現在の建物ペアが、除外履歴の建物ペアと同一の可能性を評価（統合履歴も考慮）
                 # パターン1: building1がexcluded1と同一、building2がexcluded2と同一
-                b1_matches_ex1 = self._is_likely_same_building(building1, excluded_building1)
-                b2_matches_ex2 = self._is_likely_same_building(building2, excluded_building2)
+                b1_matches_ex1 = self._is_likely_same_building(building1, excluded_building1, session)
+                b2_matches_ex2 = self._is_likely_same_building(building2, excluded_building2, session)
                 
                 # パターン2: building1がexcluded2と同一、building2がexcluded1と同一（逆順）
-                b1_matches_ex2 = self._is_likely_same_building(building1, excluded_building2)
-                b2_matches_ex1 = self._is_likely_same_building(building2, excluded_building1)
+                b1_matches_ex2 = self._is_likely_same_building(building1, excluded_building2, session)
+                b2_matches_ex1 = self._is_likely_same_building(building2, excluded_building1, session)
                 
                 if (b1_matches_ex1 and b2_matches_ex2) or (b1_matches_ex2 and b2_matches_ex1):
                     # 除外履歴の建物ペアと同一の可能性が高い
@@ -141,15 +146,17 @@ class EnhancedBuildingMatcher:
             logger.warning(f"除外パターン分析中にエラー: {e}")
             return {'penalty': 0.0, 'reasons': []}
     
-    def _is_likely_same_building(self, b1: Any, b2: Any) -> bool:
+    def _is_likely_same_building(self, b1: Any, b2: Any, session = None) -> bool:
         """2つの建物が同一の可能性が高いか判定
         
         築年、総階数、建物名などから同一建物の可能性を評価。
+        統合履歴も考慮して、過去の建物名でも比較。
         住所は異なる表記の可能性があるため、重視しない。
         
         Args:
             b1: 建物1
             b2: 建物2
+            session: データベースセッション（統合履歴取得用、オプション）
             
         Returns:
             同一建物の可能性が高い場合True
@@ -173,11 +180,31 @@ class EnhancedBuildingMatcher:
                 score += 0.5  # 1階差は表記の違いの可能性
             factors += 1
         
-        # 建物名の類似度（最も重要）
+        # 建物名の類似度（最も重要）- 統合履歴も考慮
         if b1.normalized_name and b2.normalized_name:
+            # 現在の名前同士の比較
             name_similarity = self.building_normalizer.calculate_similarity(
                 b1.normalized_name, b2.normalized_name
             )
+            
+            # 統合履歴を考慮した比較
+            if session:
+                # b1とb2のエイリアスを取得
+                b1_aliases = self._get_building_aliases(b1, session)
+                b2_aliases = self._get_building_aliases(b2, session)
+                
+                # 全ての名前バリエーションを作成
+                b1_names = {b1.normalized_name} | set(b1_aliases)
+                b2_names = {b2.normalized_name} | set(b2_aliases)
+                
+                # 全組み合わせで最高の類似度を探す
+                for name1 in b1_names:
+                    for name2 in b2_names:
+                        sim = self.building_normalizer.calculate_similarity(name1, name2)
+                        if sim > name_similarity:
+                            name_similarity = sim
+            
+            # 類似度に基づいてスコアを付与
             if name_similarity >= 0.9:
                 score += 2.0  # 名前が非常に類似
             elif name_similarity >= 0.7:
