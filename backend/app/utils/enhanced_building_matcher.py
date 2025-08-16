@@ -65,7 +65,10 @@ class EnhancedBuildingMatcher:
             return []
 
     def _analyze_exclusion_patterns(self, building1: Any, building2: Any, session) -> Dict[str, Any]:
-        """除外履歴から学習して類似度調整のヒントを取得
+        """除外履歴の建物と同一の可能性を評価して類似度調整のヒントを取得
+        
+        過去に除外された建物ペアの各建物と、現在比較中の建物が同一の可能性を評価。
+        同一の可能性が高い場合、そのペアも除外されるべきと判断してペナルティを適用。
         
         Args:
             building1: 建物1のオブジェクト
@@ -84,13 +87,11 @@ class EnhancedBuildingMatcher:
             analysis = {
                 'penalty': 0.0,  # 類似度から減算するペナルティ
                 'reasons': [],    # ペナルティの理由
-                'patterns': []    # 検出されたパターン
+                'matched_exclusions': []  # マッチした除外履歴
             }
             
-            # 過去の除外履歴から類似パターンを探す
+            # 過去の除外履歴を取得
             exclusions = session.query(BuildingMergeExclusion).all()
-            
-            detected_patterns = set()  # 重複検出を防ぐ
             
             for exclusion in exclusions:
                 excluded_building1 = exclusion.building1
@@ -99,39 +100,40 @@ class EnhancedBuildingMatcher:
                 if not excluded_building1 or not excluded_building2:
                     continue
                 
-                # パターン1: 同じ住所・総階数だが築年が異なるパターン
-                if ('address_floors_year_mismatch' not in detected_patterns and
-                    self._is_same_address_pattern(building1, building2, excluded_building1, excluded_building2) and
-                    self._is_same_floors_pattern(building1, building2, excluded_building1, excluded_building2) and
-                    self._is_different_year_pattern(building1, building2, excluded_building1, excluded_building2)):
-                    
-                    analysis['penalty'] += 0.15
-                    analysis['reasons'].append('同じ住所・階数で築年が異なる除外パターンに類似')
-                    analysis['patterns'].append('address_floors_year_mismatch')
-                    detected_patterns.add('address_floors_year_mismatch')
+                # 現在の建物ペアが、除外履歴の建物ペアと同一の可能性を評価
+                # パターン1: building1がexcluded1と同一、building2がexcluded2と同一
+                b1_matches_ex1 = self._is_likely_same_building(building1, excluded_building1)
+                b2_matches_ex2 = self._is_likely_same_building(building2, excluded_building2)
                 
-                # パターン2: 名前が類似しているが属性が異なるパターン
-                if ('name_similar_attributes_different' not in detected_patterns and
-                    self._is_similar_name_pattern(building1, building2, excluded_building1, excluded_building2) and
-                    self._is_different_attributes_pattern(building1, building2, excluded_building1, excluded_building2)):
-                    
-                    analysis['penalty'] += 0.10
-                    analysis['reasons'].append('名前が類似だが属性が異なる除外パターンに類似')
-                    analysis['patterns'].append('name_similar_attributes_different')
-                    detected_patterns.add('name_similar_attributes_different')
+                # パターン2: building1がexcluded2と同一、building2がexcluded1と同一（逆順）
+                b1_matches_ex2 = self._is_likely_same_building(building1, excluded_building2)
+                b2_matches_ex1 = self._is_likely_same_building(building2, excluded_building1)
                 
-                # パターン3: 築年が近いが総階数が大きく異なるパターン
-                if ('year_similar_floors_very_different' not in detected_patterns and
-                    self._is_similar_year_pattern(building1, building2, excluded_building1, excluded_building2) and
-                    self._is_very_different_floors_pattern(building1, building2, excluded_building1, excluded_building2)):
+                if (b1_matches_ex1 and b2_matches_ex2) or (b1_matches_ex2 and b2_matches_ex1):
+                    # 除外履歴の建物ペアと同一の可能性が高い
+                    analysis['penalty'] += 0.25  # 大きなペナルティ
                     
-                    analysis['penalty'] += 0.12
-                    analysis['reasons'].append('築年が近いが階数が大きく異なる除外パターンに類似')
-                    analysis['patterns'].append('year_similar_floors_very_different')
-                    detected_patterns.add('year_similar_floors_very_different')
+                    if b1_matches_ex1 and b2_matches_ex2:
+                        analysis['reasons'].append(
+                            f'除外済みペア（{excluded_building1.normalized_name} ⇔ {excluded_building2.normalized_name}）と同一の可能性'
+                        )
+                    else:
+                        analysis['reasons'].append(
+                            f'除外済みペア（{excluded_building2.normalized_name} ⇔ {excluded_building1.normalized_name}）と同一の可能性'
+                        )
+                    
+                    analysis['matched_exclusions'].append({
+                        'exclusion_id': exclusion.id,
+                        'building1': excluded_building1.normalized_name,
+                        'building2': excluded_building2.normalized_name,
+                        'reason': exclusion.reason
+                    })
+                    
+                    # 1つマッチしたら十分なので、早期終了
+                    break
             
-            # ペナルティの上限を設定（最大0.3まで）
-            analysis['penalty'] = min(analysis['penalty'], 0.3)
+            # ペナルティの上限を設定（最大0.5まで）
+            analysis['penalty'] = min(analysis['penalty'], 0.5)
             
             return analysis
             
@@ -139,64 +141,69 @@ class EnhancedBuildingMatcher:
             logger.warning(f"除外パターン分析中にエラー: {e}")
             return {'penalty': 0.0, 'reasons': []}
     
-    def _is_same_address_pattern(self, b1: Any, b2: Any, eb1: Any, eb2: Any) -> bool:
-        """住所パターンが類似しているか判定"""
-        # 両方のペアで住所が一致または類似している
-        current_addr_similarity = self._calculate_address_similarity(b1.address, b2.address)
-        excluded_addr_similarity = self._calculate_address_similarity(eb1.address, eb2.address)
-        return current_addr_similarity >= 0.8 and excluded_addr_similarity >= 0.8
+    def _is_likely_same_building(self, b1: Any, b2: Any) -> bool:
+        """2つの建物が同一の可能性が高いか判定
+        
+        築年、総階数、建物名などから同一建物の可能性を評価。
+        住所は異なる表記の可能性があるため、重視しない。
+        
+        Args:
+            b1: 建物1
+            b2: 建物2
+            
+        Returns:
+            同一建物の可能性が高い場合True
+        """
+        score = 0.0
+        factors = 0
+        
+        # 築年が完全一致（重要な指標）
+        if b1.built_year and b2.built_year:
+            if b1.built_year == b2.built_year:
+                score += 1.0
+            elif abs(b1.built_year - b2.built_year) <= 1:
+                score += 0.5  # 1年差は入力ミスの可能性
+            factors += 1
+        
+        # 総階数が完全一致（重要な指標）
+        if b1.total_floors and b2.total_floors:
+            if b1.total_floors == b2.total_floors:
+                score += 1.0
+            elif abs(b1.total_floors - b2.total_floors) == 1:
+                score += 0.5  # 1階差は表記の違いの可能性
+            factors += 1
+        
+        # 建物名の類似度（最も重要）
+        if b1.normalized_name and b2.normalized_name:
+            name_similarity = self.building_normalizer.calculate_similarity(
+                b1.normalized_name, b2.normalized_name
+            )
+            if name_similarity >= 0.9:
+                score += 2.0  # 名前が非常に類似
+            elif name_similarity >= 0.7:
+                score += 1.0  # 名前がかなり類似
+            elif name_similarity >= 0.5:
+                score += 0.5  # 名前がやや類似
+            factors += 2  # 名前は2倍の重み
+        
+        # 住所の類似度（参考程度）
+        if b1.address and b2.address:
+            addr_similarity = self._calculate_address_similarity(b1.address, b2.address)
+            if addr_similarity >= 0.9:
+                score += 0.5  # 住所が非常に類似
+            elif addr_similarity >= 0.7:
+                score += 0.25  # 住所がかなり類似
+            factors += 0.5  # 住所は半分の重み
+        
+        # 平均スコアを計算
+        if factors > 0:
+            avg_score = score / factors
+            # 平均スコアが0.7以上なら同一建物の可能性が高い
+            return avg_score >= 0.7
+        
+        return False
     
-    def _is_same_floors_pattern(self, b1: Any, b2: Any, eb1: Any, eb2: Any) -> bool:
-        """総階数パターンが類似しているか判定"""
-        if not all([b1.total_floors, b2.total_floors, eb1.total_floors, eb2.total_floors]):
-            return False
-        return (b1.total_floors == b2.total_floors and 
-                eb1.total_floors == eb2.total_floors)
-    
-    def _is_different_year_pattern(self, b1: Any, b2: Any, eb1: Any, eb2: Any) -> bool:
-        """築年の差異パターンが類似しているか判定"""
-        if not all([b1.built_year, b2.built_year, eb1.built_year, eb2.built_year]):
-            return False
-        current_diff = abs(b1.built_year - b2.built_year)
-        excluded_diff = abs(eb1.built_year - eb2.built_year)
-        # 両方とも2年以上の差がある
-        return current_diff >= 2 and excluded_diff >= 2
-    
-    def _is_similar_name_pattern(self, b1: Any, b2: Any, eb1: Any, eb2: Any) -> bool:
-        """名前の類似パターンが似ているか判定"""
-        current_name_sim = self.building_normalizer.calculate_similarity(
-            b1.normalized_name, b2.normalized_name
-        )
-        excluded_name_sim = self.building_normalizer.calculate_similarity(
-            eb1.normalized_name, eb2.normalized_name
-        )
-        # 両方とも名前が類似している（0.6以上）
-        return current_name_sim >= 0.6 and excluded_name_sim >= 0.6
-    
-    def _is_different_attributes_pattern(self, b1: Any, b2: Any, eb1: Any, eb2: Any) -> bool:
-        """属性の差異パターンが類似しているか判定"""
-        current_attr_sim = self._calculate_attribute_similarity(b1, b2)
-        excluded_attr_sim = self._calculate_attribute_similarity(eb1, eb2)
-        # 両方とも属性の類似度が低い（0.3以下）
-        return current_attr_sim <= 0.3 and excluded_attr_sim <= 0.3
-    
-    def _is_similar_year_pattern(self, b1: Any, b2: Any, eb1: Any, eb2: Any) -> bool:
-        """築年が近いパターンか判定"""
-        if not all([b1.built_year, b2.built_year, eb1.built_year, eb2.built_year]):
-            return False
-        current_diff = abs(b1.built_year - b2.built_year)
-        excluded_diff = abs(eb1.built_year - eb2.built_year)
-        # 両方とも築年が近い（2年以内）
-        return current_diff <= 2 and excluded_diff <= 2
-    
-    def _is_very_different_floors_pattern(self, b1: Any, b2: Any, eb1: Any, eb2: Any) -> bool:
-        """総階数が大きく異なるパターンか判定"""
-        if not all([b1.total_floors, b2.total_floors, eb1.total_floors, eb2.total_floors]):
-            return False
-        current_diff = abs(b1.total_floors - b2.total_floors)
-        excluded_diff = abs(eb1.total_floors - eb2.total_floors)
-        # 両方とも階数が大きく異なる（3階以上）
-        return current_diff >= 3 and excluded_diff >= 3
+
     
     def calculate_comprehensive_similarity(self, building1: Any, building2: Any, session = None) -> float:
         """総合的な類似度を計算
