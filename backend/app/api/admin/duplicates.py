@@ -4,10 +4,11 @@
 
 from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_
+from sqlalchemy import func, or_, and_, text
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+import json
 
 from ...database import get_db
 from ...models import (
@@ -1277,6 +1278,46 @@ async def merge_properties(
         merged_by="admin"
     )
     db.add(merge_history)
+    
+    # ambiguous_property_matchesテーブルの参照を更新
+    # 1. selected_property_idが削除対象の場合、主物件IDに更新
+    db.execute(
+        text("""
+            UPDATE ambiguous_property_matches 
+            SET selected_property_id = :primary_id 
+            WHERE selected_property_id = :secondary_id
+        """),
+        {"primary_id": request.primary_property_id, "secondary_id": request.secondary_property_id}
+    )
+    
+    # 2. candidate_property_idsから削除対象IDを除去し、主物件IDがなければ追加
+    ambiguous_matches = db.execute(
+        text("""
+            SELECT id, candidate_property_ids 
+            FROM ambiguous_property_matches 
+            WHERE candidate_property_ids::text LIKE :pattern
+        """),
+        {"pattern": f"%{request.secondary_property_id}%"}
+    ).fetchall()
+    
+    for match in ambiguous_matches:
+        candidate_ids = match.candidate_property_ids if match.candidate_property_ids else []
+        # 削除対象IDを除去
+        if request.secondary_property_id in candidate_ids:
+            candidate_ids.remove(request.secondary_property_id)
+        # 主物件IDがなければ追加
+        if request.primary_property_id not in candidate_ids:
+            candidate_ids.append(request.primary_property_id)
+        
+        # 更新
+        db.execute(
+            text("""
+                UPDATE ambiguous_property_matches 
+                SET candidate_property_ids = :candidates 
+                WHERE id = :match_id
+            """),
+            {"candidates": json.dumps(candidate_ids), "match_id": match.id}
+        )
     
     # 変更を確実に反映させる
     db.flush()
