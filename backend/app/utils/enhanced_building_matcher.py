@@ -28,13 +28,49 @@ class EnhancedBuildingMatcher:
         
         # デバッグ情報を保存
         self.last_debug_info = {}
+
+    def _get_building_aliases(self, building: Any, session) -> List[str]:
+        """建物の統合履歴からエイリアス（過去の建物名）を取得
+        
+        Args:
+            building: 建物オブジェクト
+            session: データベースセッション
+            
+        Returns:
+            エイリアス建物名のリスト
+        """
+        # sessionがNoneの場合は空リストを返す
+        if session is None:
+            return []
+            
+        try:
+            from backend.app.models import BuildingMergeHistory
+            
+            # この建物に統合された建物の名前を取得
+            merged_history = session.query(BuildingMergeHistory).filter(
+                BuildingMergeHistory.final_primary_building_id == building.id
+            ).all()
+            
+            aliases = []
+            for history in merged_history:
+                if history.merged_building_name:
+                    aliases.append(history.merged_building_name)
+                # canonical_merged_nameも考慮
+                if history.canonical_merged_name and history.canonical_merged_name != history.merged_building_name:
+                    aliases.append(history.canonical_merged_name)
+            
+            return aliases
+        except Exception as e:
+            logger.warning(f"統合履歴の取得中にエラー: {e}")
+            return []
     
-    def calculate_comprehensive_similarity(self, building1: Any, building2: Any) -> float:
+    def calculate_comprehensive_similarity(self, building1: Any, building2: Any, session = None) -> float:
         """総合的な類似度を計算
         
         Args:
             building1: 建物1のオブジェクト（Building model）
             building2: 建物2のオブジェクト（Building model）
+            session: データベースセッション（統合履歴取得用、オプション）
             
         Returns:
             類似度スコア（0.0-1.0）
@@ -54,9 +90,10 @@ class EnhancedBuildingMatcher:
         )
         self.last_debug_info['scores']['address'] = addr_score
         
-        # 2. 建物名の類似度（複数の手法を組み合わせ）
+        # 2. 建物名の類似度（複数の手法を組み合わせ、統合履歴も考慮）
         name_score = self._calculate_name_similarity(
-            building1.normalized_name, building2.normalized_name
+            building1.normalized_name, building2.normalized_name,
+            building1, building2, session
         )
         self.last_debug_info['scores']['name'] = name_score
         
@@ -167,8 +204,18 @@ class EnhancedBuildingMatcher:
         # 両方とも番地情報がない場合は文字列類似度で判定
         return SequenceMatcher(None, norm_addr1, norm_addr2).ratio()
     
-    def _calculate_name_similarity(self, name1: str, name2: str) -> float:
-        """建物名の類似度を計算（英字/カタカナ変換含む）"""
+    def _calculate_name_similarity(self, name1: str, name2: str, 
+                                    building1: Any = None, building2: Any = None, 
+                                    session = None) -> float:
+        """建物名の類似度を計算（英字/カタカナ変換・統合履歴含む）
+        
+        Args:
+            name1: 建物1の名前
+            name2: 建物2の名前  
+            building1: 建物1のオブジェクト（統合履歴取得用、オプション）
+            building2: 建物2のオブジェクト（統合履歴取得用、オプション）
+            session: データベースセッション（統合履歴取得用、オプション）
+        """
         if not name1 or not name2:
             return 0.0
         
@@ -184,13 +231,26 @@ class EnhancedBuildingMatcher:
         variations1 = self._generate_name_variations(name1)
         variations2 = self._generate_name_variations(name2)
         
+        # 3. 統合履歴からエイリアスを追加
+        if building1 and session:
+            aliases1 = self._get_building_aliases(building1, session)
+            for alias in aliases1:
+                variations1.update(self._generate_name_variations(alias))
+                
+        if building2 and session:
+            aliases2 = self._get_building_aliases(building2, session)
+            for alias in aliases2:
+                variations2.update(self._generate_name_variations(alias))
+        
         # デバッグ情報
         self.last_debug_info['name_variations'] = {
-            'name1': list(variations1),
-            'name2': list(variations2)
+            'name1': list(variations1)[:10],  # 最初の10個のみ表示
+            'name2': list(variations2)[:10],
+            'has_aliases1': building1 is not None and session is not None and len(aliases1 if 'aliases1' in locals() else []) > 0,
+            'has_aliases2': building2 is not None and session is not None and len(aliases2 if 'aliases2' in locals() else []) > 0
         }
         
-        # 3. 全ての組み合わせで最高スコアを採用
+        # 4. 全ての組み合わせで最高スコアを採用
         max_score = 0.0
         best_pair = None
         
@@ -216,7 +276,7 @@ class EnhancedBuildingMatcher:
         
         return max_score
     
-    def _generate_name_variations(self, name: str) -> List[str]:
+    def _generate_name_variations(self, name: str) -> set:
         """英字/カタカナ/略語の変換候補を生成"""
         variations = {name}  # setで重複を避ける
         
@@ -256,7 +316,7 @@ class EnhancedBuildingMatcher:
             elif ' ' in var:
                 variations.add(var.replace(' ', '・'))
         
-        return list(variations)
+        return variations
     
     def _is_english(self, text: str) -> bool:
         """英語を含むかチェック"""

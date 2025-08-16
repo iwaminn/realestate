@@ -301,8 +301,8 @@ async def get_duplicate_buildings(
             if (building1.id, building2.id) in excluded_pairs:
                 continue
             
-            # 類似度を計算
-            similarity = matcher.calculate_comprehensive_similarity(building1, building2)
+            # 類似度を計算（統合履歴も考慮）
+            similarity = matcher.calculate_comprehensive_similarity(building1, building2, db)
             
             if similarity >= min_similarity:
                 candidates.append({
