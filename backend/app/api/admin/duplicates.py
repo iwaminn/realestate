@@ -792,10 +792,14 @@ def move_property_to_building(
         
         # 元の建物の情報を更新（物件が減ったため）
         if original_building_id:
-            updater.update_building_name_by_majority(original_building_id)
+            original_building = db.query(Building).filter(Building.id == original_building_id).first()
+            if original_building:
+                updater.update_building_by_majority(original_building)
         
         # 移動先の建物の情報を更新（物件が増えたため）
-        updater.update_building_name_by_majority(target_building_id)
+        target_building_obj = db.query(Building).filter(Building.id == target_building_id).first()
+        if target_building_obj:
+            updater.update_building_by_majority(target_building_obj)
         
         db.commit()
         
@@ -1017,7 +1021,9 @@ async def merge_buildings(
         
         # 多数決で建物情報を更新
         updater = MajorityVoteUpdater(db)
-        updater.update_building_name_by_majority(primary_id)
+        primary_building = db.query(Building).filter(Building.id == primary_id).first()
+        if primary_building:
+            updater.update_building_by_majority(primary_building)
         
         db.commit()
         
@@ -1148,19 +1154,19 @@ async def revert_building_merge(
                 )
             ).delete()
         
-        # 多数決による建物名更新
+        # 多数決による建物情報更新
         updater = MajorityVoteUpdater(db)
         
-        # 主建物の名前を更新
+        # 主建物の全属性を更新
         if primary_building:
-            updater.update_building_name_by_majority(primary_building.id)
+            updater.update_building_by_majority(primary_building)
         
-        # 復元された建物の名前も更新
+        # 復元された建物の全属性も更新
         for merged_building in history.merge_details.get("merged_buildings", []):
             building_id = merged_building["id"]
             restored_building = db.query(Building).filter(Building.id == building_id).first()
             if restored_building:
-                updater.update_building_name_by_majority(building_id)
+                updater.update_building_by_majority(restored_building)
         
         # 履歴レコードを削除
         db.delete(history)

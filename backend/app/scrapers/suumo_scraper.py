@@ -147,6 +147,47 @@ class SuumoScraper(BaseScraper):
             print(f"  → {self.MAX_DISPLAY_ITEMS}件取得（最大表示件数）")
         
         return properties
+
+    def is_last_page(self, soup: BeautifulSoup) -> bool:
+        """
+        現在のページが最終ページかどうかを判定（SUUMOの実装）
+        
+        Returns:
+            最終ページの場合True
+        """
+        try:
+            # SUUMOのページネーション要素を探す
+            # 方法1: 「次へ」リンクの有無で判定
+            next_link = soup.select_one('.pagination a[rel="next"], .pagination-parts a:contains("次へ")')
+            if next_link is None:
+                # 次へリンクがない場合は最終ページ
+                return True
+            
+            # 方法2: ページ番号から判定
+            pagination = soup.select_one('.pagination, .pagination-parts')
+            if pagination:
+                # 現在のページ（activeまたはcurrent）
+                current = pagination.select_one('.active, .current, strong')
+                if current:
+                    # 最後のページ番号を取得
+                    page_links = pagination.select('a')
+                    if page_links:
+                        last_page_text = page_links[-1].get_text(strip=True)
+                        if last_page_text == '次へ' and len(page_links) > 1:
+                            last_page_text = page_links[-2].get_text(strip=True)
+                        
+                        try:
+                            current_page = int(current.get_text(strip=True))
+                            last_page = int(last_page_text)
+                            return current_page >= last_page
+                        except (ValueError, AttributeError):
+                            pass
+            
+            return False
+            
+        except Exception as e:
+            self.logger.warning(f"[SUUMO] ページ終端判定でエラー: {e}")
+            return False
     
     def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
         """SUUMOのsite_property_idの妥当性を検証

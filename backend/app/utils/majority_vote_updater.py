@@ -428,14 +428,17 @@ class MajorityVoteUpdater:
     
     def update_building_by_majority(self, building: Building) -> bool:
         """
-        建物情報を掲載情報の多数決で更新する
+        建物情報を掲載情報の多数決で更新する（建物名を含むすべての属性）
         
         Returns:
             更新があった場合True
         """
+        # まず建物名を更新（特殊な重み付けロジックが必要なため）
+        name_updated = self.update_building_name_by_majority(building)
+        
         # 建物に関連する全ての掲載情報から建物属性を収集
         building_info = self.collect_building_info_from_listings(building.id)
-        updated = False
+        updated = name_updated  # 建物名が更新された場合はTrueから開始
         
         # 住所の多数決（正規化あり）
         if building_info['addresses']:
@@ -597,19 +600,25 @@ class MajorityVoteUpdater:
         
         return info
     
-    def update_building_name_by_majority(self, building_id: int) -> bool:
+    def update_building_name_by_majority(self, building_or_id) -> bool:
         """
         建物名を関連する掲載情報から直接多数決で決定
         
         Args:
-            building_id: 建物ID
+            building_or_id: 建物オブジェクトまたは建物ID
             
         Returns:
             更新があった場合True
         """
-        building = self.session.query(Building).filter_by(id=building_id).first()
-        if not building:
-            return False
+        # 建物オブジェクトまたはIDを処理
+        if isinstance(building_or_id, int):
+            building_id = building_or_id
+            building = self.session.query(Building).filter_by(id=building_id).first()
+            if not building:
+                return False
+        else:
+            building = building_or_id
+            building_id = building.id
         
         # property_listings から直接建物名を取得
         # アクティブな掲載情報があるかチェック

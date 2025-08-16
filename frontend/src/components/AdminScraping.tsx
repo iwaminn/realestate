@@ -1585,9 +1585,25 @@ const AdminScraping: React.FC = () => {
                                               {new Date(log.timestamp).toLocaleTimeString('ja-JP')}
                                             </Typography>
                                             <Chip
-                                              label={log.type === 'new' ? '新規' : '更新'}
+                                              label={(() => {
+                                                switch(log.type) {
+                                                  case 'new': return '新規';
+                                                  case 'price_updated': return '価格更新';
+                                                  case 'other_updates': return 'その他更新';
+                                                  case 'refetched_unchanged': return '変更なし';
+                                                  default: return '更新';
+                                                }
+                                              })()}
                                               size="small"
-                                              color={log.type === 'new' ? 'success' : 'info'}
+                                              color={(() => {
+                                                switch(log.type) {
+                                                  case 'new': return 'success';
+                                                  case 'price_updated': return 'warning';
+                                                  case 'other_updates': return 'info';
+                                                  case 'refetched_unchanged': return 'default';
+                                                  default: return 'info';
+                                                }
+                                              })()}
                                               sx={{ height: 20 }}
                                             />
                                             <Typography variant="body2">

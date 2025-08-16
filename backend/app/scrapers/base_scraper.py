@@ -45,7 +45,22 @@ class BuildingNameVerificationMode(Enum):
 
 
 class BaseScraper(ABC):
-    """スクレイパーの基底クラス"""
+    """
+    スクレイパーの基底クラス
+    
+    必須実装メソッド:
+    - fetch_page(url): ページを取得してBeautifulSoupオブジェクトを返す
+    - get_search_url(area, page): 検索URLを生成
+    - parse_property_list(soup): 物件一覧をパース
+    - parse_property_detail(soup, property_data): 物件詳細をパース
+    
+    オプショナルメソッド（サブクラスで実装可能）:
+    - is_last_page(soup): 現在のページが最終ページかどうかを判定
+        Returns: bool - 最終ページの場合True
+        実装すると、404エラーを出す前にページング処理を終了できる
+    - get_max_page_from_list(soup): 一覧ページから最大ページ数を取得
+        Returns: Optional[int] - 最大ページ数
+    """
     
     # 定数の定義
     DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -376,6 +391,14 @@ class BaseScraper(ABC):
                     properties = self.parse_property_list(soup)
                     self.logger.info(f"[DEBUG] parse_property_list呼び出し後: {len(properties) if properties else 0}件")
                     debug_log(f"[{self.source_site}] parse_property_list呼び出し後: {len(properties) if properties else 0}件")
+                    
+                    # サブクラスでページ終端判定メソッドが実装されている場合は使用
+                    if hasattr(self, 'is_last_page') and callable(getattr(self, 'is_last_page')):
+                        if self.is_last_page(soup):
+                            self.logger.info(f"最終ページ（{page}ページ）を検出しました")
+                            # propertiesがある場合は処理を続行、その後終了
+                            if not properties:
+                                break
                     if not properties:
                         self.logger.info(f"ページ {page}: 物件が見つかりませんでした")
                         consecutive_empty_pages += 1
@@ -413,6 +436,12 @@ class BaseScraper(ABC):
                     
                     # 一覧ページ取得ごとに進捗を更新
                     self._update_progress()
+                    
+                    # サブクラスでページ終端判定メソッドが実装されている場合はチェック
+                    if hasattr(self, 'is_last_page') and callable(getattr(self, 'is_last_page')):
+                        if self.is_last_page(soup):
+                            self.logger.info(f"最終ページのため収集を終了")
+                            break
                     
                     page += 1
                     self.logger.info(f"[DEBUG] ループ終了、次のページ: {page}")
@@ -621,7 +650,7 @@ class BaseScraper(ABC):
                         # 詳細取得の有無に関わらず統計を更新
                         if update_type == 'new':
                             self._scraping_stats['new_listings'] += 1
-                        elif update_type == 'price_changed' or update_type == 'price_updated':
+                        elif update_type == 'price_updated':
                             self._scraping_stats['price_updated'] += 1
                         elif update_type == 'refetched_unchanged':
                             self._scraping_stats['refetched_unchanged'] += 1
@@ -2799,7 +2828,8 @@ class BaseScraper(ABC):
                         f"最新の警告: {warning_messages[0]}"
                     )
         
-        update_type = 'new'  # デフォルトは新規
+        # 既存のリスティングがある場合のupdate_typeは後で判定
+        update_type = None
         
         if listing:
             # 更新タイプを判定
@@ -3149,10 +3179,10 @@ class BaseScraper(ABC):
                     # 建物情報を多数決で更新
                     building = self.session.query(Building).get(master_property.building_id)
                     if building:
+                        # 建物名を含む全属性を多数決で更新
                         self.majority_updater.update_building_by_majority(building)
-                    
-                    # 建物名を多数決で更新
-                    self.majority_updater.update_building_name_by_majority(master_property.building_id)
+                        # 建物名の個別更新も実行（より最新の重み付けロジックを使用）
+                        self.majority_updater.update_building_name_by_majority(master_property.building_id)
                     self.session.flush()  # 変更を確定
                 except Exception as e:
                     # エラーが発生しても処理は続行（ログに記録）
@@ -3174,6 +3204,14 @@ class BaseScraper(ABC):
                 update_details = ', '.join(changed_fields)
             else:
                 update_details = None
+        
+        # update_typeが設定されていない場合の処理
+        if update_type is None:
+            # elseブロック（新規作成）を通った場合、update_typeは未設定なので'new'を設定
+            # 既存リスティングで変更がない場合は'refetched_unchanged'を設定すべきだが、
+            # その場合はelseブロック（2953行目）で既に設定されているはず
+            update_type = 'new'
+            self.logger.debug(f"update_type未設定のため'new'を設定: {url}")
         
         # デバッグログ
         if update_type == 'other_updates' and not update_details:

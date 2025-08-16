@@ -768,6 +768,106 @@ class HomesScraper(BaseScraper):
                             return properties
         
         return properties
+
+    def is_last_page(self, soup: BeautifulSoup) -> bool:
+        """
+        現在のページが最終ページかどうかを判定
+        
+        Returns:
+            最終ページの場合True
+        """
+        try:
+            # ページネーション要素を探す
+            # HOMESは通常、ページネーションがul.paginationやdiv.pagerなどで実装されている
+            
+            # 方法1: 「次へ」ボタンの有無で判定
+            next_buttons = soup.select('a[rel="next"], a.next, .pagination a:contains("次へ"), .pager a:contains("次へ")')
+            if next_buttons:
+                # 次へボタンが無効化されているかチェック
+                for btn in next_buttons:
+                    # disabledクラスや、href属性がない場合は最終ページ
+                    if 'disabled' in btn.get('class', []) or not btn.get('href'):
+                        return True
+                # 有効な次へボタンがある場合は最終ページではない
+                return False
+            
+            # 方法2: ページ番号リストから判定
+            page_links = soup.select('.pagination a, .pager a, .pageNation a')
+            if page_links:
+                # 現在のページ番号を取得
+                current_page_elem = soup.select_one('.pagination .active, .pager .current, .pageNation .current')
+                if current_page_elem:
+                    try:
+                        current_page = int(current_page_elem.get_text(strip=True))
+                        # 最大ページ番号を取得
+                        max_page = current_page
+                        for link in page_links:
+                            text = link.get_text(strip=True)
+                            if text.isdigit():
+                                page_num = int(text)
+                                if page_num > max_page:
+                                    max_page = page_num
+                        # 現在のページが最大ページなら最終ページ
+                        return current_page >= max_page
+                    except (ValueError, AttributeError):
+                        pass
+            
+            # 方法3: 物件がない場合は最終ページとみなす
+            building_blocks = soup.select('.mod-mergeBuilding--sale')
+            if not building_blocks:
+                # 物件が1件もない場合は最終ページ（またはエラーページ）
+                self.logger.info("[HOMES] 物件が見つからないため最終ページと判定")
+                return True
+            
+            # 判定できない場合はFalse（安全側に倒す）
+            return False
+            
+        except Exception as e:
+            self.logger.warning(f"[HOMES] ページ終端判定でエラー: {e}")
+            return False
+    
+    def get_max_page_from_list(self, soup: BeautifulSoup) -> Optional[int]:
+        """
+        一覧ページから最大ページ数を取得
+        
+        Returns:
+            最大ページ数、取得できない場合はNone
+        """
+        try:
+            # ページネーションから最大ページ数を取得
+            page_links = soup.select('.pagination a, .pager a, .pageNation a')
+            max_page = 1
+            
+            for link in page_links:
+                text = link.get_text(strip=True)
+                if text.isdigit():
+                    page_num = int(text)
+                    if page_num > max_page:
+                        max_page = page_num
+            
+            if max_page > 1:
+                self.logger.info(f"[HOMES] 最大ページ数を検出: {max_page}")
+                return max_page
+                
+            # 結果件数から計算する方法
+            result_count_elem = soup.select_one('.result-count, .hit-count, .count')
+            if result_count_elem:
+                import re
+                text = result_count_elem.get_text()
+                match = re.search(r'(\d+)件', text)
+                if match:
+                    total_count = int(match.group(1))
+                    # HOMESは通常1ページ30件程度
+                    items_per_page = 30
+                    max_page = (total_count + items_per_page - 1) // items_per_page
+                    self.logger.info(f"[HOMES] 件数から最大ページ数を推定: {max_page} (総件数: {total_count})")
+                    return max_page
+            
+            return None
+            
+        except Exception as e:
+            self.logger.warning(f"[HOMES] 最大ページ数取得でエラー: {e}")
+            return None
     
     def _parse_property_row(self, row) -> Optional[Dict[str, Any]]:
         """物件行をパース"""

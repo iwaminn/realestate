@@ -242,8 +242,12 @@ async def revert_building_merge(
     
     # 多数決で両建物の情報を更新
     updater = MajorityVoteUpdater(db)
-    updater.update_building_name_by_majority(history.primary_building_id)
-    updater.update_building_name_by_majority(restored_building.id)
+    # 主建物の全属性を更新（建物名含む）
+    primary_building = db.query(Building).filter(Building.id == history.primary_building_id).first()
+    if primary_building:
+        updater.update_building_by_majority(primary_building)
+    # 復元された建物の全属性も更新（建物名含む）
+    updater.update_building_by_majority(restored_building)
     
     # 統合履歴を削除
     db.delete(history)

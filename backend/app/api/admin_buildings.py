@@ -882,11 +882,15 @@ async def attach_property_to_building(
         # 元の建物の情報を更新（物件が減った場合）
         if current_building_id:
             logger.info(f"[DEBUG] Updating original building {current_building_id} with majority vote after property removal")
-            updater.update_building_name_by_majority(current_building_id)
+            original_building = db.query(Building).filter(Building.id == current_building_id).first()
+            if original_building:
+                updater.update_building_by_majority(original_building)
         
         # 移動先の建物の情報を更新（物件が増えた場合）
         logger.info(f"[DEBUG] Updating target building {new_building_id} with majority vote after property addition")
-        updater.update_building_name_by_majority(new_building_id)
+        target_building = db.query(Building).filter(Building.id == new_building_id).first()
+        if target_building:
+            updater.update_building_by_majority(target_building)
         
         db.commit()
         
