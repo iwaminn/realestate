@@ -256,11 +256,7 @@ class NomuScraper(BaseScraper):
             if "区" in cell_text and len(cell_text) < self.MAX_ADDRESS_LENGTH:
                 # 駅情報を除外
                 if "駅" not in cell_text and "徒歩" not in cell_text:
-                    # 東京都が含まれていない場合のみ追加
-                    if "東京都" not in cell_text:
-                        property_data['address'] = "東京都" + cell_text
-                    else:
-                        property_data['address'] = cell_text
+                    property_data['address'] = cell_text
                 # 駅情報
                 elif "駅" in cell_text:
                     property_data['station_info'] = format_station_info(cell_text)
@@ -426,14 +422,14 @@ class NomuScraper(BaseScraper):
                             address_text = p_elem.get_text(strip=True)
                             address_text = clean_address(address_text, p_elem)
                             # 説明文でないことを確認
-                            if address_text and "東京都" in address_text and "区" in address_text:
+                            if address_text and "区" in address_text:
                                 detail_data['address'] = address_text
                                 return True
                         else:
                             # p要素がない場合は直接テキストを確認
                             cell_text = next_cell.get_text(strip=True)
                             cell_text = clean_address(cell_text)
-                            if cell_text and "東京都" in cell_text and "区" in cell_text:
+                            if cell_text and "区" in cell_text:
                                 detail_data['address'] = cell_text
                                 return True
         return False

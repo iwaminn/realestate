@@ -479,7 +479,28 @@ class LivableScraper(BaseScraper):
     
     def _extract_address(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
         """住所を抽出"""
-        # JavaScriptから住所を取得
+        address_from_datalayer = None
+        address_from_html = None
+        
+        # 1. HTMLのテーブルから住所を取得（最も完全な情報が期待できる）
+        # dl.m-status-table要素から住所を探す
+        dl_elements = soup.select('dl.m-status-table')
+        for dl in dl_elements:
+            dt_elements = dl.select('dt.m-status-table__headline')
+            dd_elements = dl.select('dd.m-status-table__body')
+            
+            for dt, dd in zip(dt_elements, dd_elements):
+                dt_text = dt.get_text(strip=True)
+                if '所在地' in dt_text or '住所' in dt_text:
+                    address_text = dd.get_text(strip=True)
+                    if address_text and address_text != '-':
+                        address_from_html = address_text
+                        self.logger.debug(f"HTMLテーブルから住所を取得: {address_from_html}")
+                        break
+            if address_from_html:
+                break
+        
+        # 2. JavaScriptから住所を取得（フォールバック用）
         # dataLayerから住所を抽出
         script_texts = soup.find_all('script', string=lambda text: text and 'dataLayer.push' in text if text else False)
         self.logger.debug(f"dataLayerを含むscriptタグ数: {len(script_texts)}")
@@ -488,21 +509,46 @@ class LivableScraper(BaseScraper):
             # "address":"東京都港区白金２丁目1-8" のパターンを探す
             address_match = re.search(r'"address"\s*:\s*"([^"]+)"', script_content)
             if address_match:
-                property_data['address'] = address_match.group(1)
-                self.logger.debug(f"dataLayerから住所を取得: {property_data['address']}")
-                return
+                address_from_datalayer = address_match.group(1)
+                self.logger.debug(f"dataLayerから住所を取得: {address_from_datalayer}")
+                break
         
-        # gmapParmsからも試す
-        script_texts = soup.find_all('script', string=lambda text: text and 'gmapParms' in text if text else False)
-        self.logger.debug(f"gmapParmsを含むscriptタグ数: {len(script_texts)}")
-        for script in script_texts:
-            script_content = script.string
-            # address: '東京都港区白金２丁目1-8' のパターンを探す
-            address_match = re.search(r"address\s*:\s*['\"]([^'\"]+)['\"]", script_content)
-            if address_match:
-                property_data['address'] = address_match.group(1)
-                self.logger.debug(f"gmapParmsから住所を取得: {property_data['address']}")
-                return
+        # gmapParmsからも試す（dataLayerにない場合）
+        if not address_from_datalayer:
+            script_texts = soup.find_all('script', string=lambda text: text and 'gmapParms' in text if text else False)
+            self.logger.debug(f"gmapParmsを含むscriptタグ数: {len(script_texts)}")
+            for script in script_texts:
+                script_content = script.string
+                # address: '東京都港区白金２丁目1-8' のパターンを探す
+                address_match = re.search(r"address\s*:\s*['\"]([^'\"]+)['\"]", script_content)
+                if address_match:
+                    address_from_datalayer = address_match.group(1)
+                    self.logger.debug(f"gmapParmsから住所を取得: {address_from_datalayer}")
+                    break
+        
+        # 3. 最適な住所を選択（より完全な住所を優先）
+        if address_from_html and address_from_datalayer:
+            # 両方ある場合は、より長い（完全な）方を選択
+            if len(address_from_html) >= len(address_from_datalayer):
+                property_data['address'] = address_from_html
+                self.logger.info(f"HTMLテーブルの住所を採用（より完全）: {property_data['address']}")
+            else:
+                property_data['address'] = address_from_datalayer
+                self.logger.info(f"dataLayerの住所を採用（より完全）: {property_data['address']}")
+        elif address_from_html:
+            property_data['address'] = address_from_html
+            self.logger.info(f"HTMLテーブルから住所を取得: {property_data['address']}")
+        elif address_from_datalayer:
+            property_data['address'] = address_from_datalayer
+            self.logger.info(f"dataLayerから住所を取得: {property_data['address']}")
+        else:
+            # 最終手段: metaタグから取得
+            meta_address = soup.find('meta', {'name': 'address'})
+            if meta_address and meta_address.get('content'):
+                property_data['address'] = meta_address.get('content')
+                self.logger.info(f"metaタグから住所を取得: {property_data['address']}")
+            else:
+                self.logger.warning(f"住所を取得できませんでした")
     
     def _extract_detail_price(self, soup: BeautifulSoup, property_data: Dict[str, Any], url: str) -> bool:
         """詳細ページから価格を抽出"""
@@ -570,10 +616,22 @@ class LivableScraper(BaseScraper):
                 
                 for dt, dd in zip(dt_elements, dd_elements):
                     label = dt.get_text(strip=True)
-                    # リンク要素を除外してテキストを取得
-                    for link in dd.find_all('a'):
-                        link.extract()
-                    value = dd.get_text(strip=True)
+                    
+                    # 交通情報の場合は特別処理
+                    if '交通' in label or '最寄' in label or '駅' in label:
+                        # 交通情報を正しく抽出（リンクテキストと通常テキストを結合）
+                        station_parts = []
+                        for elem in dd.descendants:
+                            if isinstance(elem, str) and elem.strip():
+                                station_parts.append(elem.strip())
+                        value = ' '.join(station_parts)
+                    else:
+                        # 他の情報はリンク要素を除外してテキストを取得
+                        dd_copy = dd.__copy__()  # ddを変更しないためコピーを作成
+                        for link in dd_copy.find_all('a'):
+                            link.extract()
+                        value = dd_copy.get_text(strip=True)
+                    
                     self._extract_property_info(label, value, property_data, detail_info)
             else:
                 # table構造の場合（従来の処理）
@@ -584,10 +642,22 @@ class LivableScraper(BaseScraper):
                     
                     if label_elem and value_elem:
                         label = label_elem.get_text(strip=True)
-                        # リンク要素を除外してテキストを取得
-                        for link in value_elem.find_all('a'):
-                            link.extract()
-                        value = value_elem.get_text(strip=True)
+                        
+                        # 交通情報の場合は特別処理
+                        if '交通' in label or '最寄' in label or '駅' in label:
+                            # 交通情報を正しく抽出（リンクテキストと通常テキストを結合）
+                            station_parts = []
+                            for elem in value_elem.descendants:
+                                if isinstance(elem, str) and elem.strip():
+                                    station_parts.append(elem.strip())
+                            value = ' '.join(station_parts)
+                        else:
+                            # 他の情報はリンク要素を除外してテキストを取得
+                            value_elem_copy = value_elem.__copy__()
+                            for link in value_elem_copy.find_all('a'):
+                                link.extract()
+                            value = value_elem_copy.get_text(strip=True)
+                        
                         self._extract_property_info(label, value, property_data, detail_info)
         
         # 通常のテーブルとdl要素もチェック（フォールバック）
@@ -604,11 +674,23 @@ class LivableScraper(BaseScraper):
                     cells = row.find_all(['th', 'td'])
                     if len(cells) >= 2:
                         label = cells[0].get_text(strip=True)
-                        # リンク要素を除外してテキストを取得
                         value_cell = cells[1]
-                        for link in value_cell.find_all('a'):
-                            link.extract()
-                        value = value_cell.get_text(strip=True)
+                        
+                        # 交通情報の場合は特別処理
+                        if '交通' in label or '最寄' in label or '駅' in label:
+                            # 交通情報を正しく抽出（リンクテキストと通常テキストを結合）
+                            station_parts = []
+                            for elem in value_cell.descendants:
+                                if isinstance(elem, str) and elem.strip():
+                                    station_parts.append(elem.strip())
+                            value = ' '.join(station_parts)
+                        else:
+                            # 他の情報はリンク要素を除外してテキストを取得
+                            value_cell_copy = value_cell.__copy__()
+                            for link in value_cell_copy.find_all('a'):
+                                link.extract()
+                            value = value_cell_copy.get_text(strip=True)
+                        
                         self._extract_property_info(label, value, property_data, detail_info)
             
             elif elem.name == 'dl':
@@ -617,11 +699,23 @@ class LivableScraper(BaseScraper):
                 for i, dt in enumerate(dt_elements):
                     if i < len(dd_elements):
                         label = dt.get_text(strip=True)
-                        # リンク要素を除外してテキストを取得
                         value_elem = dd_elements[i]
-                        for link in value_elem.find_all('a'):
-                            link.extract()
-                        value = value_elem.get_text(strip=True)
+                        
+                        # 交通情報の場合は特別処理
+                        if '交通' in label or '最寄' in label or '駅' in label:
+                            # 交通情報を正しく抽出（リンクテキストと通常テキストを結合）
+                            station_parts = []
+                            for elem in value_elem.descendants:
+                                if isinstance(elem, str) and elem.strip():
+                                    station_parts.append(elem.strip())
+                            value = ' '.join(station_parts)
+                        else:
+                            # 他の情報はリンク要素を除外してテキストを取得
+                            value_elem_copy = value_elem.__copy__()
+                            for link in value_elem_copy.find_all('a'):
+                                link.extract()
+                            value = value_elem_copy.get_text(strip=True)
+                        
                         self._extract_property_info(label, value, property_data, detail_info)
     
     def _extract_agency_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
@@ -663,7 +757,10 @@ class LivableScraper(BaseScraper):
         # 所在地/住所
         elif '所在地' in label or '住所' in label:
             if value and value.strip() and value != '-':
-                property_data['address'] = value
+                # すでに住所が設定されている場合は、より完全な住所のみで上書き
+                current_address = property_data.get('address', '')
+                if not current_address or len(value) > len(current_address):
+                    property_data['address'] = value
         
         # 階数（所在階）
         elif ('階数' in label or '所在階' in label) and '総階数' not in label:
@@ -924,7 +1021,10 @@ class LivableScraper(BaseScraper):
         # 所在地
         elif '所在地' in label:
             if value and value.strip() and value != '-':
-                property_data['address'] = value
+                # すでに住所が設定されている場合は、より完全な住所のみで上書き
+                current_address = property_data.get('address', '')
+                if not current_address or len(value) > len(current_address):
+                    property_data['address'] = value
         
         # 交通
         elif '交通' in label or '駅徒歩' in label:

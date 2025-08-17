@@ -215,11 +215,20 @@ class RehouseScraper(BaseScraper):
         """description-sectionから情報を抽出"""
         desc_text = desc_section.get_text(' ', strip=True)
         
-        # 住所を抽出
-        if '港区' in desc_text:
-            addr_match = re.search(r'(港区[^\s/]+)', desc_text)
+        # 住所を抽出（都道府県、区、市町村から始まるパターンに対応）
+        # 都道府県が含まれている完全な住所、または区・市から始まる住所を探す
+        address_patterns = [
+            r'((?:東京都|北海道|(?:京都|大阪)府|(?:青森|岩手|宮城|秋田|山形|福島|茨城|栃木|群馬|埼玉|千葉|神奈川|新潟|富山|石川|福井|山梨|長野|岐阜|静岡|愛知|三重|滋賀|兵庫|奈良|和歌山|鳥取|島根|岡山|広島|山口|徳島|香川|愛媛|高知|福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|沖縄)県)[^\s]+)',
+            r'([^\s]*[市区町村][^\s/]+)'  # 市区町村から始まる住所
+        ]
+        
+        for pattern in address_patterns:
+            addr_match = re.search(pattern, desc_text)
             if addr_match:
-                property_data['address'] = '東京都' + addr_match.group(1)
+                address = addr_match.group(1)
+                # そのまま設定（基底クラスの検証に任せる）
+                property_data['address'] = address
+                break
         
         # 駅情報
         station_match = re.search(r'([^\s]+線\s*[^\s]+駅\s*徒歩\d+分)', desc_text)
@@ -476,6 +485,7 @@ class RehouseScraper(BaseScraper):
         elif '所在地' in label or '住所' in label:
             # GoogleMapsなどの不要な文字を削除
             address = re.sub(r'GoogleMaps.*$', '', value).strip()
+            # そのまま設定（基底クラスの検証に任せる）
             property_data['address'] = address
         
         # 交通/最寄り駅

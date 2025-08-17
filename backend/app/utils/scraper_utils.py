@@ -95,6 +95,9 @@ def update_listing_from_detail(listing, detail_info: Dict[str, Any]) -> None:
         'direction': 'listing_direction',
         'management_fee': 'management_fee',
         'repair_fund': 'repair_fund',
+        'station_info': 'station_info',  # 交通情報を追加
+        'address': 'listing_address',  # 住所も追加（listing_addressフィールドに保存）
+        'building_name': 'listing_building_name',  # 建物名も追加
     }
     
     for detail_key, listing_attr in field_mapping.items():

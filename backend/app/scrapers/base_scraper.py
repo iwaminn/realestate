@@ -4529,6 +4529,38 @@ class BaseScraper(ABC):
         
         return None
     
+    def validate_address(self, address: str) -> bool:
+        """住所が都道府県から始まる完全な形式であることを検証
+        
+        Args:
+            address: 検証する住所文字列
+            
+        Returns:
+            bool: 都道府県から始まる完全な住所の場合True
+        """
+        if not address:
+            return False
+        
+        # 日本の都道府県のリスト
+        prefectures = [
+            '北海道', '青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県',
+            '茨城県', '栃木県', '群馬県', '埼玉県', '千葉県', '東京都', '神奈川県',
+            '新潟県', '富山県', '石川県', '福井県', '山梨県', '長野県', '岐阜県',
+            '静岡県', '愛知県', '三重県', '滋賀県', '京都府', '大阪府', '兵庫県',
+            '奈良県', '和歌山県', '鳥取県', '島根県', '岡山県', '広島県', '山口県',
+            '徳島県', '香川県', '愛媛県', '高知県', '福岡県', '佐賀県', '長崎県',
+            '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県'
+        ]
+        
+        # 住所が都道府県で始まるかチェック
+        for prefecture in prefectures:
+            if address.startswith(prefecture):
+                # 都道府県だけでなく、それ以降の住所情報があることを確認
+                if len(address) > len(prefecture):
+                    return True
+        
+        return False
+
     def validate_detail_page_fields(self, property_data: Dict[str, Any], url: str = None) -> bool:
         """詳細ページで取得した物件データの必須フィールドを検証
         
@@ -4570,8 +4602,16 @@ class BaseScraper(ABC):
             if not validate_built_year(built_year):
                 url = url or property_data.get('url', '不明')
                 self.record_field_extraction_error('built_year', url)
-                self.logger.error(f"築年が不正な値です: {built_year}年 (許容範囲: 1900年〜現在年+5年) - URL: {url}")
+                self.logger.error(f"築年が不正な値です: {built_year}年 (許容範囲: 1900年～現在年+5年) - URL: {url}")
                 return False
+        
+        # 住所の検証（都道府県から始まる完全な住所かチェック）
+        address = property_data.get('address')
+        if address and not self.validate_address(address):
+            url = url or property_data.get('url', '不明')
+            self.record_field_extraction_error('address', url)
+            self.logger.error(f"住所が都道府県から始まっていません: {address} - URL: {url}")
+            return False
         
         return True
     

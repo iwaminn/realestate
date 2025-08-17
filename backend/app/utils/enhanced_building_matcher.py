@@ -46,17 +46,19 @@ class EnhancedBuildingMatcher:
         try:
             from backend.app.models import BuildingMergeHistory
             
-            # この建物に統合された建物の名前を取得
+            # この建物に統合された建物の名前を取得（すべての統合履歴を取得）
             merged_history = session.query(BuildingMergeHistory).filter(
                 BuildingMergeHistory.final_primary_building_id == building.id
+            ).order_by(
+                BuildingMergeHistory.merged_at.desc()  # 最新の統合を優先
             ).all()
             
             aliases = []
             for history in merged_history:
-                if history.merged_building_name:
+                if history.merged_building_name and history.merged_building_name not in aliases:
                     aliases.append(history.merged_building_name)
                 # canonical_merged_nameも考慮
-                if history.canonical_merged_name and history.canonical_merged_name != history.merged_building_name:
+                if history.canonical_merged_name and history.canonical_merged_name != history.merged_building_name and history.canonical_merged_name not in aliases:
                     aliases.append(history.canonical_merged_name)
             
             return aliases
@@ -64,94 +66,12 @@ class EnhancedBuildingMatcher:
             logger.warning(f"統合履歴の取得中にエラー: {e}")
             return []
 
-    def _analyze_exclusion_patterns(self, building1: Any, building2: Any, session) -> Dict[str, Any]:
-        """除外履歴の建物と同一の可能性を評価して類似度調整のヒントを取得
-        
-        過去に除外された建物ペアの各建物と、現在比較中の建物が同一の可能性を評価。
-        同一の可能性が高い場合、そのペアも除外されるべきと判断してペナルティを適用。
-        
-        Args:
-            building1: 建物1のオブジェクト
-            building2: 建物2のオブジェクト  
-            session: データベースセッション
-            
-        Returns:
-            除外パターンの分析結果
-        """
-        if session is None:
-            return {'penalty': 0.0, 'reasons': []}
-            
-        try:
-            from backend.app.models import BuildingMergeExclusion, Building
-            
-            analysis = {
-                'penalty': 0.0,  # 類似度から減算するペナルティ
-                'reasons': [],    # ペナルティの理由
-                'matched_exclusions': []  # マッチした除外履歴
-            }
-            
-            # 過去の除外履歴を取得
-            exclusions = session.query(BuildingMergeExclusion).all()
-            
-            for exclusion in exclusions:
-                excluded_building1 = exclusion.building1
-                excluded_building2 = exclusion.building2
-                
-                if not excluded_building1 or not excluded_building2:
-                    continue
-                
-                # 自分自身との比較はスキップ
-                if (building1.id == excluded_building1.id and building2.id == excluded_building2.id) or \
-                   (building1.id == excluded_building2.id and building2.id == excluded_building1.id):
-                    continue
-                
-                # 現在の建物ペアが、除外履歴の建物ペアと同一の可能性を評価（統合履歴も考慮）
-                # パターン1: building1がexcluded1と同一、building2がexcluded2と同一
-                b1_matches_ex1 = self._is_likely_same_building(building1, excluded_building1, session)
-                b2_matches_ex2 = self._is_likely_same_building(building2, excluded_building2, session)
-                
-                # パターン2: building1がexcluded2と同一、building2がexcluded1と同一（逆順）
-                b1_matches_ex2 = self._is_likely_same_building(building1, excluded_building2, session)
-                b2_matches_ex1 = self._is_likely_same_building(building2, excluded_building1, session)
-                
-                if (b1_matches_ex1 and b2_matches_ex2) or (b1_matches_ex2 and b2_matches_ex1):
-                    # 除外履歴の建物ペアと同一の可能性が高い
-                    analysis['penalty'] += 0.25  # 大きなペナルティ
-                    
-                    if b1_matches_ex1 and b2_matches_ex2:
-                        analysis['reasons'].append(
-                            f'除外済みペア（{excluded_building1.normalized_name} ⇔ {excluded_building2.normalized_name}）と同一の可能性'
-                        )
-                    else:
-                        analysis['reasons'].append(
-                            f'除外済みペア（{excluded_building2.normalized_name} ⇔ {excluded_building1.normalized_name}）と同一の可能性'
-                        )
-                    
-                    analysis['matched_exclusions'].append({
-                        'exclusion_id': exclusion.id,
-                        'building1': excluded_building1.normalized_name,
-                        'building2': excluded_building2.normalized_name,
-                        'reason': exclusion.reason
-                    })
-                    
-                    # 1つマッチしたら十分なので、早期終了
-                    break
-            
-            # ペナルティの上限を設定（最大0.5まで）
-            analysis['penalty'] = min(analysis['penalty'], 0.5)
-            
-            return analysis
-            
-        except Exception as e:
-            logger.warning(f"除外パターン分析中にエラー: {e}")
-            return {'penalty': 0.0, 'reasons': []}
-    
     def _is_likely_same_building(self, b1: Any, b2: Any, session = None) -> bool:
         """2つの建物が同一の可能性が高いか判定
         
-        築年、総階数、建物名などから同一建物の可能性を評価。
-        統合履歴も考慮して、過去の建物名でも比較。
-        住所は異なる表記の可能性があるため、重視しない。
+        【アルゴリズム改善版】高速判定に特化
+        
+        築年、総階数、建物名から同一建物の可能性を評価。
         
         Args:
             b1: 建物1
@@ -161,72 +81,35 @@ class EnhancedBuildingMatcher:
         Returns:
             同一建物の可能性が高い場合True
         """
-        score = 0.0
-        factors = 0
-        
-        # 築年が完全一致（重要な指標）
+        # 高速判定1: 築年が完全一致（最も確実な指標）
         if b1.built_year and b2.built_year:
-            if b1.built_year == b2.built_year:
-                score += 1.0
-            elif abs(b1.built_year - b2.built_year) <= 1:
-                score += 0.5  # 1年差は入力ミスの可能性
-            factors += 1
+            if abs(b1.built_year - b2.built_year) > 1:
+                return False  # 2年以上異なれば別建物
         
-        # 総階数が完全一致（重要な指標）
+        # 高速判定2: 総階数が完全一致
         if b1.total_floors and b2.total_floors:
-            if b1.total_floors == b2.total_floors:
-                score += 1.0
-            elif abs(b1.total_floors - b2.total_floors) == 1:
-                score += 0.5  # 1階差は表記の違いの可能性
-            factors += 1
+            if abs(b1.total_floors - b2.total_floors) > 1:
+                return False  # 2階以上異なれば別建物
         
-        # 建物名の類似度（最も重要）- 統合履歴も考慮
+        # 高速判定3: 建物名の類似度（最も重要）
         if b1.normalized_name and b2.normalized_name:
-            # 現在の名前同士の比較
             name_similarity = self.building_normalizer.calculate_similarity(
                 b1.normalized_name, b2.normalized_name
             )
             
-            # 統合履歴を考慮した比較
-            if session:
-                # b1とb2のエイリアスを取得
-                b1_aliases = self._get_building_aliases(b1, session)
-                b2_aliases = self._get_building_aliases(b2, session)
-                
-                # 全ての名前バリエーションを作成
-                b1_names = {b1.normalized_name} | set(b1_aliases)
-                b2_names = {b2.normalized_name} | set(b2_aliases)
-                
-                # 全組み合わせで最高の類似度を探す
-                for name1 in b1_names:
-                    for name2 in b2_names:
-                        sim = self.building_normalizer.calculate_similarity(name1, name2)
-                        if sim > name_similarity:
-                            name_similarity = sim
+            # 名前が高い類似度なら同一建物と判定
+            if name_similarity >= 0.8:
+                return True
             
-            # 類似度に基づいてスコアを付与
-            if name_similarity >= 0.9:
-                score += 2.0  # 名前が非常に類似
-            elif name_similarity >= 0.7:
-                score += 1.0  # 名前がかなり類似
-            elif name_similarity >= 0.5:
-                score += 0.5  # 名前がやや類似
-            factors += 2  # 名前は2倍の重み
-        
-        # 住所の類似度（参考程度）
-        if b1.address and b2.address:
-            addr_similarity = self._calculate_address_similarity(b1.address, b2.address)
-            if addr_similarity >= 0.9:
-                score += 0.5  # 住所が非常に類似
-            elif addr_similarity >= 0.7:
-                score += 0.25  # 住所がかなり類似
-            factors += 0.5  # 住所は半分の重み
-        
-        # 平均スコアを計算
-        if factors > 0:
-            avg_score = score / factors
-            # 平均スコアが0.7以上なら同一建物の可能性が高い
-            return avg_score >= 0.7
+            # 名前が低い類似度なら別建物と判定
+            if name_similarity < 0.5:
+                return False
+            
+            # 中間的な場合は築年・階数で判定
+            # 両方とも一致なら同一建物の可能性高い
+            if b1.built_year and b2.built_year and b1.built_year == b2.built_year:
+                if b1.total_floors and b2.total_floors and b1.total_floors == b2.total_floors:
+                    return True
         
         return False
     
@@ -238,7 +121,7 @@ class EnhancedBuildingMatcher:
         Args:
             building1: 建物1のオブジェクト（Building model）
             building2: 建物2のオブジェクト（Building model）
-            session: データベースセッション（統合履歴・除外履歴取得用、オプション）
+            session: データベースセッション（統合履歴取得用、オプション）
             
         Returns:
             類似度スコア（0.0-1.0）
@@ -271,32 +154,13 @@ class EnhancedBuildingMatcher:
         )
         self.last_debug_info['scores']['attributes'] = attr_score
         
-        # 4. 基本の総合スコア計算
-        base_score = self._calculate_final_score(
+        # 4. 最終スコア計算
+        final_score = self._calculate_final_score(
             addr_score, name_score, attr_score
         )
-        self.last_debug_info['base_score'] = base_score
+        self.last_debug_info['final_score'] = final_score
         
-        # 5. 除外パターン分析によるペナルティ適用
-        if session:
-            exclusion_analysis = self._analyze_exclusion_patterns(building1, building2, session)
-            
-            if exclusion_analysis['penalty'] > 0:
-                # ペナルティを適用
-                adjusted_score = max(0.0, base_score - exclusion_analysis['penalty'])
-                
-                self.last_debug_info['exclusion_analysis'] = exclusion_analysis
-                self.last_debug_info['final_score'] = adjusted_score
-                self.last_debug_info['adjustment'] = f"ペナルティ適用: {base_score:.3f} → {adjusted_score:.3f}"
-                
-                # ペナルティ理由を記録
-                if exclusion_analysis['reasons']:
-                    self.last_debug_info['penalty_reasons'] = exclusion_analysis['reasons']
-                
-                return adjusted_score
-        
-        self.last_debug_info['final_score'] = base_score
-        return base_score
+        return final_score
     
     def _calculate_address_similarity(self, addr1: Optional[str], addr2: Optional[str]) -> float:
         """住所の類似度を計算（正規化後）"""
@@ -418,7 +282,7 @@ class EnhancedBuildingMatcher:
         variations1 = self._generate_name_variations(name1)
         variations2 = self._generate_name_variations(name2)
         
-        # 3. 統合履歴からエイリアスを追加
+        # 3. 統合履歴からエイリアスを追加（すべて使用）
         if building1 and session:
             aliases1 = self._get_building_aliases(building1, session)
             for alias in aliases1:
@@ -443,16 +307,18 @@ class EnhancedBuildingMatcher:
         
         for v1 in variations1:
             for v2 in variations2:
-                # 正規化してから比較
-                norm_v1 = self.building_normalizer.normalize(v1)
-                norm_v2 = self.building_normalizer.normalize(v2)
-                
                 # 構造化比較も試みる
                 score = self.building_normalizer.calculate_similarity(v1, v2)
                 
                 if score > max_score:
                     max_score = score
                     best_pair = (v1, v2)
+                    
+                # 完全一致が見つかったら早期終了
+                if max_score >= 1.0:
+                    break
+            if max_score >= 1.0:
+                break
         
         # デバッグ情報
         if best_pair:

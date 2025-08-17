@@ -421,7 +421,9 @@ class HomesScraper(BaseScraper):
             self.logger.debug(f"[HOMES] 面積フィールド検出 - label: '{label}', value: '{value}'")
         
         if '所在地' in label or '住所' in label:
-            details['address'] = value
+            address = value
+            # そのまま設定（基底クラスの検証に任せる）
+            details['address'] = address
         elif '間取り' in label:
             layout_match = re.search(r'^([1-9]\d*[SLDK]+)', value)
             if layout_match:
