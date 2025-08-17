@@ -48,6 +48,7 @@ interface DuplicateGroup {
     normalized_name: string;
     address: string;
     total_floors?: number | null;
+    total_units?: number | null;
     built_year?: number | null;
     built_month?: number | null;
     property_count: number;
@@ -57,6 +58,7 @@ interface DuplicateGroup {
     normalized_name: string;
     address: string;
     total_floors?: number | null;
+    total_units?: number | null;
     built_year?: number | null;
     built_month?: number | null;
     property_count: number;
@@ -215,13 +217,22 @@ const BuildingDuplicateManager: React.FC = () => {
       if (isAllSelected) {
         // 全選択の場合：すべての建物を相互に除外
         const allBuildings = selectedCandidates; // すでに主建物も含まれている
+        let successCount = 0;
+        let skipCount = 0;
+        
         for (let i = 0; i < allBuildings.length; i++) {
           for (let j = i + 1; j < allBuildings.length; j++) {
-            await propertyApi.excludeBuildings(
+            const result = await propertyApi.excludeBuildings(
               allBuildings[i],
               allBuildings[j],
               '手動で別建物として指定'
             );
+            if (result.success) {
+              successCount++;
+            } else {
+              skipCount++;
+              console.log(`既に除外済み: ${allBuildings[i]} - ${allBuildings[j]}`);
+            }
           }
         }
       } else {
@@ -237,13 +248,22 @@ const BuildingDuplicateManager: React.FC = () => {
         // 選択されていない候補を未選択リストに追加
         unselectedBuildingIds.push(...unselectedCandidates.map(c => c.id));
         
+        let successCount = 0;
+        let skipCount = 0;
+        
         for (const selected of selectedBuildingIds) {
           for (const unselected of unselectedBuildingIds) {
-            await propertyApi.excludeBuildings(
+            const result = await propertyApi.excludeBuildings(
               selected,
               unselected,
               '別グループとして分離'
             );
+            if (result.success) {
+              successCount++;
+            } else {
+              skipCount++;
+              console.log(`既に除外済み: ${selected} - ${unselected}`);
+            }
           }
         }
       }
@@ -599,7 +619,10 @@ const BuildingDuplicateManager: React.FC = () => {
                     </Typography>
                   </TableCell>
                   <TableCell>{group.primary.address || '-'}</TableCell>
-                  <TableCell align="center">{group.primary.total_floors || '-'}F</TableCell>
+                  <TableCell align="center">
+                    {group.primary.total_floors || '-'}F
+                    {group.primary.total_units && ` / ${group.primary.total_units}戸`}
+                  </TableCell>
                   <TableCell align="center">
                     {group.primary.built_year ? (
                       group.primary.built_month ? 
@@ -648,7 +671,10 @@ const BuildingDuplicateManager: React.FC = () => {
                               <TableRow key={candidate.id}>
                                 <TableCell>{candidate.normalized_name}</TableCell>
                                 <TableCell>{candidate.address || '-'}</TableCell>
-                                <TableCell align="center">{candidate.total_floors || '-'}F</TableCell>
+                                <TableCell align="center">
+                                  {candidate.total_floors || '-'}F
+                                  {candidate.total_units && ` / ${candidate.total_units}戸`}
+                                </TableCell>
                                 <TableCell align="center">
                                   {candidate.built_year ? (
                                     candidate.built_month ? 
@@ -798,6 +824,7 @@ const BuildingDuplicateManager: React.FC = () => {
                             </TableCell>
                             <TableCell align="center">
                               {building.total_floors || '-'}F
+                              {building.total_units && ` / ${building.total_units}戸`}
                             </TableCell>
                             <TableCell align="center">
                               {building.built_year ? (
