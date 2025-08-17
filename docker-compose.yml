@@ -35,6 +35,13 @@ services:
       - TZ=Asia/Tokyo
       - ADMIN_USERNAME=admin
       - ADMIN_PASSWORD=admin_password
+      # スクレイパー設定（デフォルト値）
+      - SCRAPER_DETAIL_REFETCH_DAYS=90  # 詳細ページ再取得間隔（日）。0に設定すると常に再取得
+      # 常に詳細を再取得したい場合は下記のコメントを解除
+      # - SCRAPER_DETAIL_REFETCH_DAYS=0  # 全スクレイパーで常に詳細を再取得
+      # スクレイパー個別設定の例（必要に応じてコメントアウトを解除）
+      # - SCRAPER_SUUMO_DETAIL_REFETCH_DAYS=60
+      # - SCRAPER_HOMES_DETAIL_REFETCH_DAYS=30
     command: poetry run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
     depends_on:
       - postgres

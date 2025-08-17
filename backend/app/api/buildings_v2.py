@@ -112,14 +112,35 @@ async def get_buildings_v2(
         query = query.filter(or_(*ward_conditions))
     
     if search:
-        # 建物名で検索（部分一致）
-        search_pattern = f'%{search}%'
-        query = query.filter(
-            or_(
-                Building.normalized_name.ilike(search_pattern),
-                Building.canonical_name.ilike(search_pattern) if hasattr(Building, 'canonical_name') else False
-            )
-        )
+        # ひらがなをカタカナに変換してから検索
+        from ..utils.search_normalizer import normalize_search_text, create_search_patterns
+        from ..models import BuildingListingName
+        from ..scrapers.data_normalizer import canonicalize_building_name
+        
+        # 検索語を正規化（ひらがな→カタカナ変換）
+        normalized_search = normalize_search_text(search)
+        search_terms = normalized_search.split()
+        
+        # canonicalで検索
+        canonical_search = canonicalize_building_name(search)
+        
+        # BuildingListingNameから該当する建物IDを取得
+        listing_building_ids = db.query(BuildingListingName.building_id).filter(
+            BuildingListingName.canonical_name.ilike(f"%{canonical_search}%")
+        ).distinct().subquery()
+        
+        # 検索パターンを生成
+        search_patterns = create_search_patterns(search)
+        
+        # 複数のパターンで検索
+        search_conditions = []
+        for pattern in search_patterns[:3]:  # 最初の3パターンを使用
+            search_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
+        
+        # BuildingListingNameの建物IDも含める
+        search_conditions.append(Building.id.in_(listing_building_ids))
+        
+        query = query.filter(or_(*search_conditions))
     
     if min_price:
         query = query.filter(property_stats.c.min_price >= min_price)
@@ -300,8 +321,16 @@ async def suggest_buildings(
     # 結果を格納する辞書（building_id -> 情報）
     building_info: Dict[int, Dict[str, Union[str, List[str]]]] = {}
     
-    # スペース区切りでAND検索対応
-    search_terms = q.strip().split()
+    # スペース区切りでAND検索対応（ひらがな→カタカナ変換）
+    from ..utils.search_normalizer import normalize_search_text
+    from ..scrapers.data_normalizer import canonicalize_building_name
+    
+    # 検索語を正規化（ひらがな→カタカナ変換）
+    normalized_q = normalize_search_text(q)
+    search_terms = normalized_q.split()
+    
+    # canonical形式も生成
+    canonical_q = canonicalize_building_name(q)
     
     # 1. 建物名で直接検索（AND条件）
     query = db.query(Building)
@@ -330,27 +359,70 @@ async def suggest_buildings(
                 "matched_by": "reading"
             }
     
-    # 3. 掲載情報の建物名から検索（AND条件）
-    query = db.query(
-        BuildingListingName.building_id,
-        BuildingListingName.listing_name,
-        func.max(BuildingListingName.occurrence_count).label('max_count')
-    ).group_by(
-        BuildingListingName.building_id,
-        BuildingListingName.listing_name
-    )
+    # 3. 掲載情報の建物名から検索（各掲載名に対して全検索語がAND条件で含まれるものを検索）
+    listing_matches = []
     
-    for term in search_terms:
-        if term:  # 空文字列をスキップ
-            subq = db.query(BuildingListingName.building_id).filter(
-                or_(
-                    BuildingListingName.listing_name.ilike(f"%{term}%"),
-                    BuildingListingName.canonical_name.ilike(f"%{term}%")
-                )
-            ).distinct().subquery()
-            query = query.filter(BuildingListingName.building_id.in_(subq))
-    
-    listing_matches = query.all()
+    if len(search_terms) > 1:
+        # 複数の検索語がある場合：各掲載名に全ての検索語が含まれるものを探す
+        # canonical形式の検索語リストを作成
+        canonical_terms = [canonicalize_building_name(term) for term in search_terms if term]
+        
+        # まず最初の検索語で絞り込み
+        first_term = search_terms[0]
+        first_canonical = canonical_terms[0]
+        query = db.query(
+            BuildingListingName.building_id,
+            BuildingListingName.listing_name,
+            BuildingListingName.canonical_name,
+            func.max(BuildingListingName.occurrence_count).label('max_count')
+        ).filter(
+            or_(
+                BuildingListingName.listing_name.ilike(f"%{first_term}%"),
+                BuildingListingName.canonical_name.ilike(f"%{first_canonical}%")
+            )
+        ).group_by(
+            BuildingListingName.building_id,
+            BuildingListingName.listing_name,
+            BuildingListingName.canonical_name
+        )
+        
+        candidates = query.all()
+        
+        # 残りの検索語でフィルタリング
+        for listing in candidates:
+            listing_name_lower = listing.listing_name.lower() if listing.listing_name else ""
+            canonical_name = listing.canonical_name if listing.canonical_name else ""
+            
+            # 全ての検索語が含まれているかチェック
+            all_terms_match = True
+            for i, term in enumerate(search_terms[1:], 1):  # 2番目以降の検索語
+                if term:  # 空文字列をスキップ
+                    term_lower = term.lower()
+                    canonical_term = canonical_terms[i]
+                    # 通常の名前またはcanonical名のいずれかで各検索語がマッチするか
+                    if not (term_lower in listing_name_lower or canonical_term in canonical_name):
+                        all_terms_match = False
+                        break
+            
+            if all_terms_match:
+                listing_matches.append(listing)
+    else:
+        # 単一の検索語の場合：従来通りの検索
+        canonical_q = canonicalize_building_name(q)
+        query = db.query(
+            BuildingListingName.building_id,
+            BuildingListingName.listing_name,
+            func.max(BuildingListingName.occurrence_count).label('max_count')
+        ).filter(
+            or_(
+                BuildingListingName.listing_name.ilike(f"%{q}%"),
+                BuildingListingName.canonical_name.ilike(f"%{canonical_q}%")
+            )
+        ).group_by(
+            BuildingListingName.building_id,
+            BuildingListingName.listing_name
+        )
+        listing_matches = query.all()
     
     # 掲載名でマッチした建物の情報を取得
     for listing_match in listing_matches:

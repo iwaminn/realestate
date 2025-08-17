@@ -2049,28 +2049,35 @@ class BaseScraper(ABC):
                 self.logger.warning(f"統合チェインが深すぎます: {building_name}")
                 return None
             
-            # この名前で統合履歴を検索（2つのカラムで検索）
+            # BuildingListingNameから検索
             from sqlalchemy import or_
-            merge_history = self.session.query(BuildingMergeHistory).filter(
+            from ..models import BuildingListingName
+            from ..scrapers.data_normalizer import canonicalize_building_name
+            
+            # 検索語を正規化
+            canonical_search = canonicalize_building_name(building_name)
+            
+            # BuildingListingNameから該当する建物を検索
+            listing_match = self.session.query(BuildingListingName).filter(
                 or_(
-                    BuildingMergeHistory.merged_building_name == building_name,
-                    BuildingMergeHistory.canonical_merged_name == building_name
+                    BuildingListingName.listing_name == building_name,
+                    BuildingListingName.canonical_name == canonical_search
                 )
             ).first()
             
-            if not merge_history:
+            if not listing_match:
                 return None
             
-            # 統合先の建物を取得
+            # 建物を取得
             primary_building = self.session.query(Building).filter(
-                Building.id == merge_history.primary_building_id
+                Building.id == listing_match.building_id
             ).first()
             
             if primary_building:
                 # 建物が存在する場合は返す
                 self.logger.info(
-                    f"統合履歴から建物を発見: '{building_name}' → '{primary_building.normalized_name}' "
-                    f"(統合履歴ID: {merge_history.id})"
+                    f"掲載名から建物を発見: '{building_name}' → '{primary_building.normalized_name}' "
+                    f"(建物ID: {primary_building.id})"
                 )
                 return primary_building
             else:
@@ -2206,19 +2213,25 @@ class BaseScraper(ABC):
             addr_normalizer = AddressNormalizer()
             normalized_address = addr_normalizer.normalize_for_comparison(address)
             
-            # 元の建物名で統合履歴を検索
+            # 元の建物名でBuildingListingNameから検索
             from sqlalchemy import or_
-            merge_history = self.session.query(BuildingMergeHistory).filter(
+            from ..models import BuildingListingName
+            from ..scrapers.data_normalizer import canonicalize_building_name
+            
+            # 検索語を正規化
+            canonical_search = canonicalize_building_name(original_building_name)
+            
+            listing_match = self.session.query(BuildingListingName).filter(
                 or_(
-                    BuildingMergeHistory.merged_building_name == original_building_name,
-                    BuildingMergeHistory.canonical_merged_name == search_key  # search_keyは正規化済み
+                    BuildingListingName.listing_name == original_building_name,
+                    BuildingListingName.canonical_name == canonical_search
                 )
             ).first()
             
-            if merge_history:
-                # 統合先の建物を取得
+            if listing_match:
+                # 建物を取得
                 primary_building = self.session.query(Building).filter(
-                    Building.id == merge_history.primary_building_id
+                    Building.id == listing_match.building_id
                 ).first()
                 
                 if primary_building and primary_building.address:

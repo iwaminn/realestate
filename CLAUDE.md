@@ -459,11 +459,33 @@ make scrape-parallel-test
 - 90日以上詳細を取得していない物件は自動的に再取得（環境変数で設定可能）
 - 更新マーク（NEW表示など）は参考情報として保存するが、詳細取得の判断には使用しない
 
-設定例：
-```bash
-export SCRAPER_DETAIL_REFETCH_DAYS=90     # 全スクレイパー共通
-export SCRAPER_SUUMO_DETAIL_REFETCH_DAYS=60  # SUUMOのみ60日
+#### 詳細再取得期間の設定方法
+
+##### 方法1: docker-compose.ymlで設定（恒久的）
+```yaml
+environment:
+  - SCRAPER_DETAIL_REFETCH_DAYS=90  # 全スクレイパー共通（デフォルト）
+  # - SCRAPER_DETAIL_REFETCH_DAYS=0  # 常に詳細を再取得
+  # - SCRAPER_SUUMO_DETAIL_REFETCH_DAYS=60  # SUUMOのみ60日
 ```
+設定後は`docker-compose restart backend`で反映
+
+##### 方法2: コマンドライン実行時に指定（一時的）
+```bash
+# 全物件の詳細を強制再取得（0日設定）
+make scrape-force-detail
+
+# SUUMOのみ全物件の詳細を強制再取得
+make scrape-suumo-force-detail
+
+# 手動で環境変数を指定
+docker exec realestate-backend bash -c "SCRAPER_DETAIL_REFETCH_DAYS=0 poetry run python backend/scripts/run_scrapers.py"
+```
+
+##### 設定値の意味
+- `0`: 常に詳細ページを再取得（価格変更がなくても）
+- `90`: 90日経過した物件のみ詳細を再取得（デフォルト）
+- 省略時: 90日（デフォルト値）
 
 **価格変更検出の仕組み**：
 1. 一覧ページから価格を取得

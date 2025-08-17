@@ -118,12 +118,25 @@ async def get_duplicate_buildings(
             func.count(MasterProperty.id) > 0  # 物件がある建物のみ
         )
         
-        from backend.app.utils.search_normalizer import normalize_search_text
-        normalized_search = normalize_search_text(search)
-        search_terms = normalized_search.split()
+        # BuildingListingNameを使用した検索
+        from backend.app.models import BuildingListingName
+        from backend.app.scrapers.data_normalizer import canonicalize_building_name
         
-        for term in search_terms:
-            base_query = base_query.filter(Building.normalized_name.ilike(f"%{term}%"))
+        # 検索語を正規化
+        canonical_search = canonicalize_building_name(search)
+        
+        # BuildingListingNameから該当する建物IDを取得
+        matching_building_ids = db.query(BuildingListingName.building_id).filter(
+            BuildingListingName.canonical_name.ilike(f"%{canonical_search}%")
+        ).distinct().subquery()
+        
+        # Building.normalized_name または BuildingListingNameでマッチ
+        base_query = base_query.filter(
+            or_(
+                Building.normalized_name.ilike(f"%{search}%"),
+                Building.id.in_(matching_building_ids)
+            )
+        )
         
         buildings_with_count = base_query.order_by(Building.normalized_name).all()
     else:
@@ -500,12 +513,24 @@ def get_duplicate_properties(
     # 2. 建物名フィルタの準備
     building_ids = None
     if building_name:
-        from ...utils.search_normalizer import normalize_search_text
-        normalized_search = normalize_search_text(building_name)
-        search_terms = normalized_search.split()
+        # BuildingListingNameを使用した検索
+        from backend.app.models import BuildingListingName
+        from backend.app.scrapers.data_normalizer import canonicalize_building_name
         
+        # 検索語を正規化
+        canonical_search = canonicalize_building_name(building_name)
+        
+        # BuildingListingNameから該当する建物IDを取得
+        matching_listing_ids = db.query(BuildingListingName.building_id).filter(
+            BuildingListingName.canonical_name.ilike(f"%{canonical_search}%")
+        ).distinct()
+        
+        # Building.normalized_name または BuildingListingNameでマッチ
         building_ids = [b.id for b in db.query(Building.id).filter(
-            and_(*[Building.normalized_name.ilike(f"%{term}%") for term in search_terms])
+            or_(
+                Building.normalized_name.ilike(f"%{building_name}%"),
+                Building.id.in_(matching_listing_ids.subquery())
+            )
         ).all()]
         
         if not building_ids:
@@ -689,51 +714,27 @@ def search_properties_for_merge(
                 "listing_count": len(active_listings)
             })
     
-    # 建物名で検索
-    from ...utils.search_normalizer import create_search_patterns, normalize_search_text
+    # 建物名で検索（BuildingListingName対応）
+    from backend.app.models import BuildingListingName
+    from backend.app.scrapers.data_normalizer import canonicalize_building_name
     
-    # 検索文字列を正規化
-    normalized_query = normalize_search_text(query)
-    search_terms = normalized_query.split()
+    # 検索語を正規化
+    canonical_search = canonicalize_building_name(query)
     
+    # BuildingListingNameから該当する建物IDを取得
+    matching_building_ids = db.query(BuildingListingName.building_id).filter(
+        BuildingListingName.canonical_name.ilike(f"%{canonical_search}%")
+    ).distinct().subquery()
+    
+    # Building.normalized_name または BuildingListingNameでマッチ
     name_query = db.query(MasterProperty).join(
         Building, MasterProperty.building_id == Building.id
+    ).filter(
+        or_(
+            Building.normalized_name.ilike(f"%{query}%"),
+            Building.id.in_(matching_building_ids)
+        )
     )
-    
-    if len(search_terms) > 1:
-        # 複数の検索語がある場合
-        # 各検索語のパターンを生成
-        all_conditions = []
-        
-        # AND条件（全ての単語を含む）
-        and_conditions = []
-        for term in search_terms:
-            term_patterns = create_search_patterns(term)
-            term_conditions = []
-            for pattern in term_patterns:
-                term_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
-            if term_conditions:
-                and_conditions.append(or_(*term_conditions))
-        
-        if and_conditions:
-            all_conditions.append(and_(*and_conditions))
-        
-        # 全体文字列のパターンでも検索
-        full_patterns = create_search_patterns(query)
-        for pattern in full_patterns:
-            all_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
-        
-        if all_conditions:
-            name_query = name_query.filter(or_(*all_conditions))
-    else:
-        # 単一の検索語の場合
-        search_patterns = create_search_patterns(query)
-        search_conditions = []
-        for pattern in search_patterns:
-            search_conditions.append(Building.normalized_name.ilike(f"%{pattern}%"))
-        
-        if search_conditions:
-            name_query = name_query.filter(or_(*search_conditions))
     
     properties = name_query.limit(limit).all()
     

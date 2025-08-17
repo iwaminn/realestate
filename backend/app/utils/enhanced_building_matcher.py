@@ -30,7 +30,7 @@ class EnhancedBuildingMatcher:
         self.last_debug_info = {}
 
     def _get_building_aliases(self, building: Any, session) -> List[str]:
-        """建物の統合履歴からエイリアス（過去の建物名）を取得
+        """建物の掲載履歴からエイリアス（建物名のバリエーション）を取得
         
         Args:
             building: 建物オブジェクト
@@ -44,26 +44,27 @@ class EnhancedBuildingMatcher:
             return []
             
         try:
-            from backend.app.models import BuildingMergeHistory
+            from backend.app.models import BuildingListingName
             
-            # この建物に統合された建物の名前を取得（すべての統合履歴を取得）
-            merged_history = session.query(BuildingMergeHistory).filter(
-                BuildingMergeHistory.final_primary_building_id == building.id
-            ).order_by(
-                BuildingMergeHistory.merged_at.desc()  # 最新の統合を優先
+            # この建物の掲載名をすべて取得
+            listing_names = session.query(BuildingListingName).filter(
+                BuildingListingName.building_id == building.id
             ).all()
             
             aliases = []
-            for history in merged_history:
-                if history.merged_building_name and history.merged_building_name not in aliases:
-                    aliases.append(history.merged_building_name)
-                # canonical_merged_nameも考慮
-                if history.canonical_merged_name and history.canonical_merged_name != history.merged_building_name and history.canonical_merged_name not in aliases:
-                    aliases.append(history.canonical_merged_name)
+            seen_canonical = set()  # 重複排除用
+            
+            for listing in listing_names:
+                # 正規化された名前（canonical_name）で重複チェック
+                if listing.canonical_name not in seen_canonical:
+                    seen_canonical.add(listing.canonical_name)
+                    # 実際の掲載名（listing_name）をエイリアスとして追加
+                    if listing.listing_name and listing.listing_name not in aliases:
+                        aliases.append(listing.listing_name)
             
             return aliases
         except Exception as e:
-            logger.warning(f"統合履歴の取得中にエラー: {e}")
+            logger.warning(f"掲載履歴の取得中にエラー: {e}")
             return []
 
     def _is_likely_same_building(self, b1: Any, b2: Any, session = None) -> bool:
@@ -121,7 +122,7 @@ class EnhancedBuildingMatcher:
         Args:
             building1: 建物1のオブジェクト（Building model）
             building2: 建物2のオブジェクト（Building model）
-            session: データベースセッション（統合履歴取得用、オプション）
+            session: データベースセッション（掲載履歴取得用、オプション）
             
         Returns:
             類似度スコア（0.0-1.0）
@@ -258,14 +259,14 @@ class EnhancedBuildingMatcher:
     def _calculate_name_similarity(self, name1: str, name2: str, 
                                     building1: Any = None, building2: Any = None, 
                                     session = None) -> float:
-        """建物名の類似度を計算（英字/カタカナ変換・統合履歴含む）
+        """建物名の類似度を計算（英字/カタカナ変換・掲載履歴含む）
         
         Args:
             name1: 建物1の名前
             name2: 建物2の名前  
-            building1: 建物1のオブジェクト（統合履歴取得用、オプション）
-            building2: 建物2のオブジェクト（統合履歴取得用、オプション）
-            session: データベースセッション（統合履歴取得用、オプション）
+            building1: 建物1のオブジェクト（掲載履歴取得用、オプション）
+            building2: 建物2のオブジェクト（掲載履歴取得用、オプション）
+            session: データベースセッション（掲載履歴取得用、オプション）
         """
         if not name1 or not name2:
             return 0.0
@@ -282,7 +283,7 @@ class EnhancedBuildingMatcher:
         variations1 = self._generate_name_variations(name1)
         variations2 = self._generate_name_variations(name2)
         
-        # 3. 統合履歴からエイリアスを追加（すべて使用）
+        # 3. 掲載履歴からエイリアスを追加（すべて使用）
         if building1 and session:
             aliases1 = self._get_building_aliases(building1, session)
             for alias in aliases1:

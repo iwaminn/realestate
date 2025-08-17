@@ -784,71 +784,53 @@ export const BuildingManagement: React.FC = () => {
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
                       この建物に統合された建物の履歴です
                     </Typography>
-                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                      {selectedBuilding.aliases.map((alias, index) => (
-                        <Chip
-                          key={index}
-                          label={`${alias.name}${alias.property_count ? ` (${alias.property_count}件)` : ''}`}
-                          variant="outlined"
-                          color="primary"
-                          sx={{ 
-                            fontSize: '0.9rem',
-                            '& .MuiChip-label': { px: 2, py: 1 }
-                          }}
-                        />
-                      ))}
-                    </Box>
-                    {selectedBuilding.aliases.some(alias => alias.merged_at) && (
-                      <Box sx={{ mt: 2 }}>
-                        <Table size="small" sx={{ mt: 1 }}>
-                          <TableHead>
-                            <TableRow>
-                              <TableCell>統合された建物名</TableCell>
-                              <TableCell align="right">物件数</TableCell>
-                              <TableCell>統合日時</TableCell>
-                              <TableCell>統合者</TableCell>
-                              <TableCell align="center">操作</TableCell>
-                            </TableRow>
-                          </TableHead>
-                          <TableBody>
-                            {selectedBuilding.aliases.map((alias, index) => (
-                              <TableRow key={index}>
-                                <TableCell>{alias.name}</TableCell>
-                                <TableCell align="right">
-                                  {alias.property_count ? (
-                                    <Chip
-                                      label={`${alias.property_count}件`}
-                                      size="small"
-                                      color={alias.property_count > 0 ? "primary" : "default"}
-                                    />
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>統合された建物名</TableCell>
+                          <TableCell align="right">物件数</TableCell>
+                          <TableCell>統合日時</TableCell>
+                          <TableCell>統合者</TableCell>
+                          <TableCell align="center">操作</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {selectedBuilding.aliases.map((alias, index) => (
+                          <TableRow key={index}>
+                            <TableCell>{alias.name}</TableCell>
+                            <TableCell align="right">
+                              {alias.property_count ? (
+                                <Chip
+                                  label={`${alias.property_count}件`}
+                                  size="small"
+                                  color={alias.property_count > 0 ? "primary" : "default"}
+                                />
+                              ) : (
+                                '-'
+                              )}
+                            </TableCell>
+                            <TableCell>{alias.merged_at ? formatDate(alias.merged_at) : '-'}</TableCell>
+                            <TableCell>{alias.merged_by || 'システム'}</TableCell>
+                            <TableCell align="center">
+                              <Tooltip title="統合を取り消す">
+                                <IconButton
+                                  size="small"
+                                  color="warning"
+                                  onClick={() => revertBuildingMerge(alias.id)}
+                                  disabled={revertingMergeId === alias.id}
+                                >
+                                  {revertingMergeId === alias.id ? (
+                                    <CircularProgress size={20} />
                                   ) : (
-                                    '-'
+                                    <UndoIcon />
                                   )}
-                                </TableCell>
-                                <TableCell>{alias.merged_at ? formatDate(alias.merged_at) : '-'}</TableCell>
-                                <TableCell>{alias.merged_by || 'システム'}</TableCell>
-                                <TableCell align="center">
-                                  <Tooltip title="統合を取り消す">
-                                    <IconButton
-                                      size="small"
-                                      color="warning"
-                                      onClick={() => revertBuildingMerge(alias.id)}
-                                      disabled={revertingMergeId === alias.id}
-                                    >
-                                      {revertingMergeId === alias.id ? (
-                                        <CircularProgress size={20} />
-                                      ) : (
-                                        <UndoIcon />
-                                      )}
-                                    </IconButton>
-                                  </Tooltip>
-                                </TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </Box>
-                    )}
+                                </IconButton>
+                              </Tooltip>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
                   </CardContent>
                 </Card>
               )}

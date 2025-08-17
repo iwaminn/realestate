@@ -170,7 +170,6 @@ def apply_building_name_filter_with_alias(
     db_session,
     building_table,
     property_table=None,
-    merge_history_table=None,
     search_building_name: bool = True,
     search_property_display_name: bool = False,
     search_aliases: bool = True,
@@ -185,7 +184,6 @@ def apply_building_name_filter_with_alias(
         db_session: データベースセッション
         building_table: Buildingモデルクラス
         property_table: MasterPropertyモデルクラス（オプション）
-        merge_history_table: BuildingMergeHistoryモデルクラス（互換性のため保持）
         search_building_name: Building.normalized_nameを検索対象に含めるか
         search_property_display_name: MasterProperty.display_building_nameを検索対象に含めるか
         search_aliases: 掲載情報の建物名を検索対象に含めるか
@@ -206,13 +204,54 @@ def apply_building_name_filter_with_alias(
     if not search_terms:
         return query
     
+    # 検索語の正規化
+    from backend.app.scrapers.data_normalizer import normalize_building_name
+    import re
+    
+    # 検索文字列を正規化して分割
+    # 「白金ザ・スカイ」→「白金ザ スカイ」→ ['白金ザ', 'スカイ']
+    # 「白金ザスカイ」の場合も考慮する
+    normalized_search = normalize_building_name(search_text)
+    search_terms = normalized_search.split()
+    
+    # 元の検索語にスペースがない場合、賢く分割する
+    if not search_terms or len(search_terms) == 1:
+        # カタカナと漢字の境界で分割を試みる
+        # 「白金ザスカイ」→ ['白金', 'ザ', 'スカイ']
+        original_term = search_terms[0] if search_terms else search_text
+        
+        # 漢字、カタカナ、ひらがな、英数字の塊で分割
+        parts = re.findall(r'[一-龥]+|[ァ-ヴー]+|[ぁ-ん]+|[a-zA-Z0-9]+', original_term)
+        
+        if len(parts) > 1:
+            # 複数パートに分かれた場合はそれぞれを検索語にする
+            new_terms = []
+            for part in parts:
+                # カタカナの場合、「ザ」「ノ」「ガ」などの1〜2文字の助詞で始まるか確認
+                if re.match(r'^[ァ-ヴー]+$', part) and len(part) > 2:
+                    # 「ザスカイ」→「ザ」「スカイ」のように分割を試みる
+                    if part[:1] in ['ザ', 'ノ', 'ガ', 'デ']:
+                        new_terms.append(part[:1])  # 「ザ」
+                        new_terms.append(part[1:])  # 「スカイ」
+                    elif part[:2] in ['ザ・']:
+                        new_terms.append(part[:2])
+                        new_terms.append(part[2:])
+                    else:
+                        new_terms.append(part)
+                else:
+                    new_terms.append(part)
+            search_terms = new_terms
+    
+    # 重複を除去
+    search_terms = list(dict.fromkeys(search_terms))
+    
     for term in search_terms:
         if not term:  # 空文字列をスキップ
             continue
         
         conditions = []
         
-        # Building.normalized_nameでの検索
+        # Building.normalized_nameでの検索（すでに正規化済みの名前同士で比較）
         if search_building_name:
             conditions.append(building_table.normalized_name.ilike(f"%{term}%"))
         
@@ -222,13 +261,15 @@ def apply_building_name_filter_with_alias(
         
         # 掲載情報の建物名での検索（BuildingListingNameテーブル使用）
         if search_aliases:
+            # 検索語をcanonical形式に変換
+            from backend.app.scrapers.data_normalizer import canonicalize_building_name
+            canonical_term = canonicalize_building_name(term)
+            
             listing_building_ids = db_session.query(
                 BuildingListingName.building_id
             ).filter(
-                or_(
-                    BuildingListingName.listing_name.ilike(f"%{term}%"),
-                    BuildingListingName.canonical_name.ilike(f"%{term}%")
-                )
+                # canonical_nameで検索（ひらがな→カタカナ変換済み）
+                BuildingListingName.canonical_name.ilike(f"%{canonical_term}%")
             )
             
             # 現在の建物を除外

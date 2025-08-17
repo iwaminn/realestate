@@ -301,7 +301,7 @@ class BuildingListingName(Base):
     id = Column(Integer, primary_key=True, index=True)
     building_id = Column(Integer, ForeignKey("buildings.id", ondelete="CASCADE"), nullable=False)
     listing_name = Column(String(200), nullable=False)        # 掲載で使用されている建物名
-    canonical_name = Column(String(200))                      # 検索用に正規化された名前
+    canonical_name = Column(String(200))                      # 検索用に正規化された名前（スペース・記号なし）
     source_sites = Column(Text)                               # この名前を使用しているサイト（カンマ区切り）
     occurrence_count = Column(Integer, default=1)             # この名前の出現回数
     first_seen_at = Column(DateTime, server_default=func.now())
@@ -313,7 +313,7 @@ class BuildingListingName(Base):
     building = relationship("Building")
     
     __table_args__ = (
-        UniqueConstraint('building_id', 'listing_name', name='unique_building_listing_name'),
+        UniqueConstraint('building_id', 'canonical_name', name='unique_building_canonical_name'),
         Index('idx_building_listing_names_building', 'building_id'),
         Index('idx_building_listing_names_canonical', 'canonical_name'),
         # 通常のインデックスのみ（GINインデックスは後で追加）

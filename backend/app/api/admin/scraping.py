@@ -71,6 +71,9 @@ class ScrapingRequest(BaseModel):
     scrapers: List[str]  # ["suumo", "homes", "rehouse", "nomu", "livable"]
     area_codes: List[str] = ["13103"]  # デフォルト: 港区
     max_properties: int = 100  # 各スクレイパー・各エリアで取得する最大件数
+    detail_refetch_hours: Optional[int] = None  # 詳細ページ再取得期間（時間単位）
+    force_detail_fetch: bool = False  # 強制詳細取得モード
+    ignore_error_history: bool = False  # エラー履歴を無視
 
 
 class ParallelScrapingRequest(BaseModel):
@@ -252,12 +255,15 @@ def setup_logging_handlers(scraper, task_id: str, scraper_name: str, area_name: 
             # オリジナルメソッドを呼び出し
             result = original_create_or_update(*args, **kwargs)
             
+            # update_typeを取得
+            update_type = result[1] if isinstance(result, tuple) and len(result) > 1 else 'unknown'
+            
             # ログ用の情報
             building_info = master_property.building.normalized_name if master_property and master_property.building else ''
             
             log_entry = {
                 "timestamp": datetime.now().isoformat(),
-                "type": "new" if not existing else "update",
+                "type": update_type,  # update_typeをそのまま使用
                 "scraper": scraper_name,
                 "area": area_name,
                 "url": url,
@@ -268,7 +274,6 @@ def setup_logging_handlers(scraper, task_id: str, scraper_name: str, area_name: 
             
             # ログメッセージを作成（update_typeに基づく）
             should_log = False
-            update_type = result[1] if isinstance(result, tuple) and len(result) > 1 else 'unknown'
             
             # デバッグ：update_typeの値を確認
             if update_type == 'price_updated':
@@ -437,7 +442,10 @@ def run_single_scraper_for_areas(
     task_id: str,
     scraper_name: str,
     area_codes: List[str],
-    max_properties: int
+    max_properties: int,
+    detail_refetch_hours: Optional[int] = None,
+    force_detail_fetch: bool = False,
+    ignore_error_history: bool = False
 ) -> Tuple[int, int]:
     """単一のスクレイパーで複数エリアを順次実行（並列実行時の各ワーカー用）"""
     from ...scrapers.suumo_scraper import SuumoScraper
@@ -527,8 +535,26 @@ def run_single_scraper_for_areas(
                             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                         })
                 else:
-                    scraper = scraper_class(max_properties=max_properties)
+                    # 環境変数を設定（詳細再取得期間）
+                    import os
+                    if detail_refetch_hours is not None:
+                        # 時間を日数に変換（0時間の場合は0日）
+                        detail_refetch_days = 0 if detail_refetch_hours == 0 else max(1, detail_refetch_hours // 24)
+                        os.environ['SCRAPER_DETAIL_REFETCH_DAYS'] = str(detail_refetch_days)
+                        print(f"[{task_id}] Setting SCRAPER_DETAIL_REFETCH_DAYS={detail_refetch_days} (from {detail_refetch_hours} hours)")
+                    
+                    # スクレイパーインスタンスを作成
+                    scraper = scraper_class(
+                        max_properties=max_properties,
+                        force_detail_fetch=force_detail_fetch,
+                        ignore_error_history=ignore_error_history
+                    )
                     scraper_instances[instance_key] = scraper
+                    
+                    # 環境変数をクリア（他のタスクに影響しないように）
+                    if detail_refetch_hours is not None:
+                        if 'SCRAPER_DETAIL_REFETCH_DAYS' in os.environ:
+                            del os.environ['SCRAPER_DETAIL_REFETCH_DAYS']
             
             # タスクIDを設定
             scraper._task_id = task_id
@@ -627,7 +653,10 @@ def execute_scraping_strategy(
     scrapers: List[str],
     area_codes: List[str],
     max_properties: int,
-    is_parallel: bool = False
+    is_parallel: bool = False,
+    detail_refetch_hours: Optional[int] = None,
+    force_detail_fetch: bool = False,
+    ignore_error_history: bool = False
 ):
     """スクレイピングタスクを実行（並列または直列の戦略に基づいて）"""
     print(f"[{task_id}] Starting {'parallel' if is_parallel else 'serial'} scraping task with scrapers: {scrapers}, areas: {area_codes}")
@@ -663,7 +692,8 @@ def execute_scraping_strategy(
                 for scraper_name in scrapers:
                     future = executor.submit(
                         run_single_scraper_for_areas,
-                        task_id, scraper_name, area_codes, max_properties
+                        task_id, scraper_name, area_codes, max_properties,
+                        detail_refetch_hours, force_detail_fetch, ignore_error_history
                     )
                     futures[future] = scraper_name
                 
@@ -805,9 +835,26 @@ def execute_scraping_strategy(
                                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
                                 })
                         else:
+                            # 環境変数を設定（詳細再取得期間）
+                            import os
+                            if detail_refetch_hours is not None:
+                                # 時間を日数に変換（0時間の場合は0日）
+                                detail_refetch_days = 0 if detail_refetch_hours == 0 else max(1, detail_refetch_hours // 24)
+                                os.environ['SCRAPER_DETAIL_REFETCH_DAYS'] = str(detail_refetch_days)
+                                print(f"[{task_id}] Setting SCRAPER_DETAIL_REFETCH_DAYS={detail_refetch_days} (from {detail_refetch_hours} hours)")
+                            
                             # 新しいインスタンスを作成
-                            scraper = scraper_class(max_properties=max_properties)
+                            scraper = scraper_class(
+                                max_properties=max_properties,
+                                force_detail_fetch=force_detail_fetch,
+                                ignore_error_history=ignore_error_history
+                            )
                             scraper_instances[instance_key] = scraper
+                            
+                            # 環境変数をクリア（他のタスクに影響しないように）
+                            if detail_refetch_hours is not None:
+                                if 'SCRAPER_DETAIL_REFETCH_DAYS' in os.environ:
+                                    del os.environ['SCRAPER_DETAIL_REFETCH_DAYS']
                     
                     # スクレイピング実行
                     # タスクIDを設定
@@ -1015,7 +1062,11 @@ def start_scraping(
         task_id,
         request.scrapers,
         request.area_codes,
-        request.max_properties
+        request.max_properties,
+        is_parallel=False,
+        detail_refetch_hours=request.detail_refetch_hours,
+        force_detail_fetch=request.force_detail_fetch,
+        ignore_error_history=request.ignore_error_history
     )
     
     save_tasks_to_file()
@@ -1307,7 +1358,10 @@ def start_parallel_scraping(
         request.scrapers,
         request.area_codes,
         request.max_properties,
-        is_parallel=True  # 並列実行フラグを追加
+        is_parallel=True,  # 並列実行フラグを追加
+        detail_refetch_hours=request.detail_refetch_hours,
+        force_detail_fetch=request.force_detail_fetch,
+        ignore_error_history=request.ignore_error_history
     )
     
     save_tasks_to_file()

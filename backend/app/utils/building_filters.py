@@ -27,24 +27,29 @@ def apply_building_name_filter(
         return query
     
     from ..models import BuildingListingName
+    from ..scrapers.data_normalizer import canonicalize_building_name
     
     terms = building_name.split()
     for term in terms:
+        # 検索語をcanonical形式に変換（ひらがな→カタカナ、記号除去、小文字化）
+        canonical_term = canonicalize_building_name(term)
+        
         # BuildingListingNameテーブルから該当する建物IDを取得
-        # canonical_nameを使用してtrigram検索（部分一致）
+        # canonical_nameを使用して検索（ひらがな入力でも検索可能）
         listing_building_ids = db.query(
             BuildingListingName.building_id
         ).filter(
-            or_(
-                BuildingListingName.listing_name.ilike(f"%{term}%"),
-                BuildingListingName.canonical_name.ilike(f"%{term}%")
-            )
+            BuildingListingName.canonical_name.ilike(f"%{canonical_term}%")
         ).distinct().subquery()
         
         # Building.normalized_name または 掲載建物名でマッチ
+        # normalized_nameに対してもcanonical化した検索語で検索
+        from ..utils.search_normalizer import normalize_search_text
+        normalized_term = normalize_search_text(term)
+        
         query = query.filter(
             or_(
-                building_table.normalized_name.ilike(f"%{term}%"),
+                building_table.normalized_name.ilike(f"%{normalized_term}%"),
                 building_table.id.in_(listing_building_ids)
             )
         )

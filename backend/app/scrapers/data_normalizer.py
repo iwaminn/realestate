@@ -860,7 +860,10 @@ def extract_total_floors(text: str) -> Tuple[Optional[int], Optional[int]]:
 
 
 def normalize_building_name(text: str) -> str:
-    """建物名を正規化（検索用）"""
+    """
+    建物名を正規化（表示用）
+    記号をスペースに統一し、表記を整える
+    """
     if not text:
         return ""
     
@@ -873,7 +876,7 @@ def normalize_building_name(text: str) -> str:
     # カッコ内の説明を削除（例：「パークハウス（賃貸）」→「パークハウス」）
     normalized = re.sub(r'[（\(][^）\)]*[）\)]', '', normalized)
     
-    # 記号を統一
+    # 記号をスペースに統一
     normalized = normalized.replace('・', ' ')
     normalized = normalized.replace('･', ' ')
     normalized = normalized.replace('−', '-')
@@ -883,6 +886,40 @@ def normalize_building_name(text: str) -> str:
     normalized = re.sub(r'\s+', ' ', normalized)
     
     return normalized.strip()
+
+
+def canonicalize_building_name(text: str) -> str:
+    """
+    建物名を正規化（検索用）
+    normalize_building_nameの結果からスペースを削除し、ひらがなをカタカナに統一
+    
+    例：
+    「白金ザ・スカイ」→「白金ザスカイ」
+    「白金ザ スカイ」→「白金ザスカイ」  
+    「WORLD TOWER RESIDENCE」→「worldtowerresidence」
+    「もみじ坂テラス」→「モミジ坂テラス」
+    """
+    if not text:
+        return ""
+    
+    # まずnormalizeで記号をスペースに統一
+    normalized = normalize_building_name(text)
+    
+    # ひらがなをカタカナに変換
+    import unicodedata
+    canonical = ''
+    for char in normalized:
+        # ひらがなの範囲（U+3040〜U+309F）をカタカナ（U+30A0〜U+30FF）に変換
+        if '\u3040' <= char <= '\u309f':
+            # ひらがなをカタカナに変換（コードポイントを0x60加算）
+            canonical += chr(ord(char) + 0x60)
+        else:
+            canonical += char
+    
+    # スペースとハイフンを削除して小文字化
+    canonical = canonical.replace(' ', '').replace('-', '').lower()
+    
+    return canonical
 
 
 def normalize_layout(text: str) -> Optional[str]:

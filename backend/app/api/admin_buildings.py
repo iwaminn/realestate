@@ -33,18 +33,16 @@ async def get_buildings(
     
     # フィルタリング
     if name:
-        # 共通の建物名検索関数を使用
+        # 共通の建物名検索関数を使用（BuildingListingNameベース）
         from ..utils.building_search import apply_building_name_filter_with_alias
-        from ..models import BuildingMergeHistory
         query = apply_building_name_filter_with_alias(
             query,
             name,
             db,
             Building,
-            merge_history_table=BuildingMergeHistory,
             search_building_name=True,
             search_property_display_name=False,
-            search_aliases=True  # エイリアスも検索対象に含める
+            search_aliases=True  # 掲載情報の建物名も検索対象に含める
         )
     
     if address:
@@ -150,25 +148,29 @@ async def search_buildings_for_merge(
 ):
     """建物検索（統合用）"""
     from ..utils.search_normalizer import create_search_patterns, normalize_search_text
-    from ..models import BuildingMergeHistory
+    from ..models import BuildingListingName
+    from ..scrapers.data_normalizer import canonicalize_building_name
     
     # 検索文字列を正規化してAND検索用に分割
     normalized_search = normalize_search_text(query)
     search_terms = normalized_search.split()
     
-    # まず統合履歴（エイリアス）から検索
+    # 検索語を正規化（canonical形式）
+    canonical_search = canonicalize_building_name(query)
+    
+    # BuildingListingNameから検索
     alias_matches = db.query(
-        BuildingMergeHistory.primary_building_id,
-        BuildingMergeHistory.merged_building_name.label('alias_name')
+        BuildingListingName.building_id,
+        BuildingListingName.listing_name.label('alias_name')
     ).filter(
         or_(
-            BuildingMergeHistory.merged_building_name.ilike(f"%{query}%"),
-            BuildingMergeHistory.canonical_merged_name.ilike(f"%{normalized_search}%")
+            BuildingListingName.listing_name.ilike(f"%{query}%"),
+            BuildingListingName.canonical_name.ilike(f"%{canonical_search}%")
         )
     ).distinct().all()
     
     # エイリアスにマッチした建物IDのリスト
-    alias_building_ids = [match.primary_building_id for match in alias_matches]
+    alias_building_ids = [match.building_id for match in alias_matches]
     
     # クエリ構築
     name_query = db.query(
@@ -229,23 +231,23 @@ async def search_buildings_for_merge(
         func.count(MasterProperty.id).desc()
     ).limit(limit).all()
     
-    # 各建物のエイリアス情報を取得
+    # 各建物のエイリアス情報を取得（BuildingListingNameから）
     building_ids_for_alias = [b.id for b in buildings]
     aliases_dict = {}
     if building_ids_for_alias:
-        aliases = db.query(
-            BuildingMergeHistory.primary_building_id,
+        listing_names = db.query(
+            BuildingListingName.building_id,
             func.string_agg(
-                BuildingMergeHistory.merged_building_name, 
+                BuildingListingName.listing_name, 
                 ', '
             ).label('aliases')
         ).filter(
-            BuildingMergeHistory.primary_building_id.in_(building_ids_for_alias)
+            BuildingListingName.building_id.in_(building_ids_for_alias)
         ).group_by(
-            BuildingMergeHistory.primary_building_id
+            BuildingListingName.building_id
         ).all()
         
-        aliases_dict = {alias.primary_building_id: alias.aliases for alias in aliases}
+        aliases_dict = {ln.building_id: ln.aliases for ln in listing_names}
     
     result = []
     for building in buildings:
@@ -262,7 +264,7 @@ async def search_buildings_for_merge(
             building_data["aliases"] = aliases_dict[building.id]
         
         # 掲載情報検索でマッチした場合、どの建物名でマッチしたか表示
-        for match in listing_matches:
+        for match in alias_matches:
             if match.building_id == building.id:
                 building_data["matched_alias"] = match.alias_name
                 break
@@ -671,22 +673,26 @@ async def get_detach_candidates(
             'match_type': 'direct'
         })
     
-    # 2. エイリアスから検索
-    from ..models import BuildingMergeHistory
+    # 2. BuildingListingNameから検索
+    from ..models import BuildingListingName
+    from ..scrapers.data_normalizer import canonicalize_building_name
     
-    merge_histories = db.query(BuildingMergeHistory).filter(
+    # 検索語を正規化
+    canonical_search = canonicalize_building_name(most_common_building_name)
+    
+    # BuildingListingNameから該当する建物を検索
+    listing_name_matches = db.query(BuildingListingName).filter(
         or_(
-            BuildingMergeHistory.canonical_merged_name == search_key,  # canonical_nameでの検索を追加
-            BuildingMergeHistory.merged_building_name == most_common_building_name,
-            BuildingMergeHistory.merged_building_name == most_common_building_name.replace(' ', '　'),
-            BuildingMergeHistory.canonical_merged_name == normalized_name,
-            func.replace(BuildingMergeHistory.merged_building_name, '　', ' ') == most_common_building_name
+            BuildingListingName.listing_name == most_common_building_name,
+            BuildingListingName.listing_name == most_common_building_name.replace(' ', '　'),
+            BuildingListingName.canonical_name == canonical_search,
+            func.replace(BuildingListingName.listing_name, '　', ' ') == most_common_building_name
         )
     ).all()
     
-    for merge_history in merge_histories:
+    for listing_match in listing_name_matches:
         building = db.query(Building).filter(
-            Building.id == merge_history.primary_building_id,
+            Building.id == listing_match.building_id,
             Building.id != current_building_id
         ).first()
         
@@ -694,9 +700,9 @@ async def get_detach_candidates(
             score = 0
             match_details = []
             
-            # エイリアス名の一致
+            # 掲載名の一致
             score += 10
-            match_details.append(f"エイリアス名一致({merge_history.merged_building_name})")
+            match_details.append(f"掲載名一致({listing_match.listing_name})")
             
             # 住所の比較
             if property_address_normalized and building.address:
@@ -732,7 +738,7 @@ async def get_detach_candidates(
                     'score': score,
                     'match_details': match_details,
                     'match_type': 'alias',
-                    'alias_name': merge_history.merged_building_name
+                    'alias_name': listing_match.listing_name
                 })
     
     # スコア順にソート

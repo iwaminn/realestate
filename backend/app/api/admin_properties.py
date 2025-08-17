@@ -36,14 +36,13 @@ async def get_properties(
     if building_name:
         # 共通の建物名検索関数を使用
         from ..utils.building_search import apply_building_name_filter_with_alias
-        from ..models import BuildingMergeHistory
+        # BuildingListingNameを使用した検索（BuildingMergeHistoryは不要）
         query = apply_building_name_filter_with_alias(
-            query,
-            building_name,
-            db,
-            Building,
+            query=query,
+            search_text=building_name,
+            db_session=db,
+            building_table=Building,
             property_table=MasterProperty,
-            merge_history_table=BuildingMergeHistory,
             search_building_name=True,
             search_property_display_name=True,
             search_aliases=True

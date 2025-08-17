@@ -39,6 +39,12 @@ scrape: ## スクレイピングを実行
 scrape-suumo: ## SUUMOのみスクレイピング
 	docker-compose -f docker-compose.dev.yml exec backend poetry run python backend/scripts/run_scrapers.py --scraper suumo
 
+scrape-force-detail: ## すべての物件の詳細を再取得（0日設定）
+	docker-compose -f docker-compose.dev.yml exec backend bash -c "SCRAPER_DETAIL_REFETCH_DAYS=0 poetry run python backend/scripts/run_scrapers.py"
+
+scrape-suumo-force-detail: ## SUUMOの全物件の詳細を再取得（0日設定）
+	docker-compose -f docker-compose.dev.yml exec backend bash -c "SCRAPER_DETAIL_REFETCH_DAYS=0 poetry run python backend/scripts/run_scrapers.py --scraper suumo"
+
 scrape-parallel: ## 並列スクレイピングを実行（全サイト・全エリア）
 	docker-compose -f docker-compose.dev.yml exec backend poetry run python backend/scripts/run_scrapers_parallel.py
 

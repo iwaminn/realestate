@@ -18,7 +18,7 @@ from ..models import (
     PropertyListing,
     BuildingListingName
 )
-from ..scrapers.data_normalizer import normalize_building_name
+from ..scrapers.data_normalizer import normalize_building_name, canonicalize_building_name
 
 logger = logging.getLogger(__name__)
 
@@ -208,18 +208,27 @@ class BuildingListingNameManager:
             PropertyListing.source_site
         ).all()
         
-        # 建物名ごとに集約
-        name_aggregation = defaultdict(lambda: {
+        # 正規化後の名前で集約
+        canonical_aggregation = defaultdict(lambda: {
+            'listing_names': {},  # {name: count} の辞書
             'sites': set(),
-            'count': 0,
+            'total_count': 0,
             'first_seen': None,
             'last_seen': None
         })
         
         for name, site, count, first_seen, last_seen in listing_names:
-            agg = name_aggregation[name]
+            canonical_name = canonicalize_building_name(name)
+            agg = canonical_aggregation[canonical_name]
+            
+            # 元の表記とその出現回数を記録
+            if name in agg['listing_names']:
+                agg['listing_names'][name] += count
+            else:
+                agg['listing_names'][name] = count
+            
             agg['sites'].add(site)
-            agg['count'] += count
+            agg['total_count'] += count
             
             if agg['first_seen'] is None or (first_seen and first_seen < agg['first_seen']):
                 agg['first_seen'] = first_seen
@@ -228,15 +237,16 @@ class BuildingListingNameManager:
                 agg['last_seen'] = last_seen
         
         # BuildingListingNameに保存
-        for listing_name, agg_data in name_aggregation.items():
-            canonical_name = normalize_building_name(listing_name)
+        for canonical_name, agg_data in canonical_aggregation.items():
+            # 最も出現回数が多い表記を代表名とする
+            most_common_name = max(agg_data['listing_names'].items(), key=lambda x: x[1])[0]
             
             new_entry = BuildingListingName(
                 building_id=building_id,
-                listing_name=listing_name,
+                listing_name=most_common_name,  # 最も一般的な表記を使用
                 canonical_name=canonical_name,
                 source_sites=','.join(sorted(agg_data['sites'])),
-                occurrence_count=agg_data['count'],
+                occurrence_count=agg_data['total_count'],
                 first_seen_at=agg_data['first_seen'] or datetime.now(),
                 last_seen_at=agg_data['last_seen'] or datetime.now()
             )
@@ -261,17 +271,19 @@ class BuildingListingNameManager:
         if not listing_name:
             return
             
-        canonical_name = normalize_building_name(listing_name)
+        # canonical_nameはスペース・記号を完全に削除
+        canonical_name = canonicalize_building_name(listing_name)
         
-        # 既存レコードを確認
+        # 正規化後の名前で既存レコードを確認
         existing = self.db.query(BuildingListingName).filter(
             BuildingListingName.building_id == building_id,
-            BuildingListingName.listing_name == listing_name
+            BuildingListingName.canonical_name == canonical_name
         ).first()
         
         if existing:
             # 更新
-            existing.canonical_name = canonical_name
+            # 元のlisting_nameと異なる場合、最も一般的な表記を保持（出現回数が多い方を優先）
+            # 例：「白金ザ・スカイ　西棟」と「白金ザ・スカイ 西棟」のうち、より多く使われている方を代表名とする
             existing.occurrence_count += 1
             existing.last_seen_at = datetime.now()
             
@@ -312,15 +324,19 @@ class BuildingListingNameManager:
         ).all()
         
         for source_name in source_names:
-            # 移動先に同じ名前があるか確認
+            # 移動先に同じ正規化名があるか確認（canonical_nameで判定）
             target_name = self.db.query(BuildingListingName).filter(
                 BuildingListingName.building_id == to_building_id,
-                BuildingListingName.listing_name == source_name.listing_name
+                BuildingListingName.canonical_name == source_name.canonical_name
             ).first()
             
             if target_name:
                 # 既存レコードを更新
                 target_name.occurrence_count += source_name.occurrence_count
+                
+                # より出現回数が多い表記を保持
+                if source_name.occurrence_count > target_name.occurrence_count:
+                    target_name.listing_name = source_name.listing_name
                 
                 # サイト情報をマージ
                 source_sites = set(source_name.source_sites.split(',')) if source_name.source_sites else set()
@@ -357,13 +373,31 @@ class BuildingListingNameManager:
         ).all()
         
         for source_name in source_names:
-            # コピー先に同じ名前があるか確認
+            # コピー先に同じ正規化名があるか確認（canonical_nameで判定）
             existing = self.db.query(BuildingListingName).filter(
                 BuildingListingName.building_id == to_building_id,
-                BuildingListingName.listing_name == source_name.listing_name
+                BuildingListingName.canonical_name == source_name.canonical_name
             ).first()
             
-            if not existing:
+            if existing:
+                # 既存レコードを更新（出現回数を加算）
+                existing.occurrence_count += source_name.occurrence_count
+                
+                # より出現回数が多い表記を保持
+                if source_name.occurrence_count > existing.occurrence_count:
+                    existing.listing_name = source_name.listing_name
+                
+                # サイト情報をマージ
+                source_sites = set(source_name.source_sites.split(',')) if source_name.source_sites else set()
+                existing_sites = set(existing.source_sites.split(',')) if existing.source_sites else set()
+                existing.source_sites = ','.join(sorted(source_sites | existing_sites))
+                
+                # 日付を更新
+                if source_name.first_seen_at < existing.first_seen_at:
+                    existing.first_seen_at = source_name.first_seen_at
+                if source_name.last_seen_at > existing.last_seen_at:
+                    existing.last_seen_at = source_name.last_seen_at
+            else:
                 # 新規作成（コピー）
                 new_entry = BuildingListingName(
                     building_id=to_building_id,

@@ -7,7 +7,7 @@ from sqlalchemy import func, or_, and_, distinct, select
 from urllib.parse import unquote
 
 from ..database import get_db
-from ..models import Building, MasterProperty, PropertyListing, BuildingMergeHistory
+from ..models import Building, MasterProperty, PropertyListing, BuildingListingName
 from ..utils.building_filters import apply_building_name_filter
 
 router = APIRouter(prefix="/api/v2", tags=["grouped-properties"])
@@ -49,20 +49,50 @@ async def get_properties_grouped_by_buildings(
     if layouts:
         base_query = base_query.filter(MasterProperty.layout.in_(layouts))
     if building_name:
-        # エイリアス（統合履歴）も含めて検索
-        terms = building_name.split()
+        # 検索語を正規化してスペース区切りでAND検索
+        from backend.app.scrapers.data_normalizer import normalize_building_name
+        
+        # 検索文字列全体を正規化（記号をスペースに統一）
+        normalized_search = normalize_building_name(building_name)
+        terms = normalized_search.split()
+        
+        # 元の検索語にスペースがない場合、賢く分割する
+        if not terms or len(terms) == 1:
+            original_term = terms[0] if terms else building_name
+            
+            # 漢字、カタカナ、ひらがな、英数字の塊で分割
+            parts = re.findall(r'[一-龥]+|[ァ-ヴー]+|[ぁ-ん]+|[a-zA-Z0-9]+', original_term)
+            
+            if len(parts) > 1:
+                new_terms = []
+                for part in parts:
+                    # カタカナの場合、「ザ」「ノ」「ガ」などの助詞で始まるか確認
+                    if re.match(r'^[ァ-ヴー]+$', part) and len(part) > 2:
+                        if part[:1] in ['ザ', 'ノ', 'ガ', 'デ']:
+                            new_terms.append(part[:1])
+                            new_terms.append(part[1:])
+                        else:
+                            new_terms.append(part)
+                    else:
+                        new_terms.append(part)
+                terms = new_terms
+        
+        # 重複を除去
+        terms = list(dict.fromkeys(terms))
+        
         for term in terms:
+            if not term:  # 空文字列をスキップ
+                continue
+            
             # エイリアスマッチした建物IDを取得
             alias_building_ids = db.query(
-                BuildingMergeHistory.primary_building_id
+                BuildingListingName.building_id
             ).filter(
-                or_(
-                    BuildingMergeHistory.merged_building_name.ilike(f"%{term}%"),
-                    BuildingMergeHistory.canonical_merged_name.ilike(f"%{term}%")
-                )
+                # canonical_nameは正規化済みなので、termをそのまま使用
+                BuildingListingName.canonical_name.ilike(f"%{term}%")
             ).distinct().subquery()
             
-            # Building.normalized_name または エイリアスでマッチ
+            # Building.normalized_name（正規化済み） または エイリアスでマッチ
             base_query = base_query.filter(
                 or_(
                     Building.normalized_name.ilike(f"%{term}%"),
