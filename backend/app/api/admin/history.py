@@ -15,6 +15,7 @@ from ...models import (
     BuildingMergeExclusion
 )
 from ...utils.majority_vote_updater import MajorityVoteUpdater
+from ...utils.building_listing_name_manager import BuildingListingNameManager
 
 router = APIRouter(tags=["admin-history"])
 
@@ -372,6 +373,16 @@ async def revert_property_merge(
                 if listing:
                     listing.master_property_id = secondary_property_id
                     moved_count += 1
+        
+        # BuildingListingNameテーブルを更新（物件分離）
+        listing_name_manager = BuildingListingNameManager(db)
+        # 復元された物件が異なる建物の場合のみ更新
+        if restored_property.building_id != primary_property.building_id:
+            listing_name_manager.update_from_property_split(
+                original_property_id=primary_property_id,
+                new_property_id=restored_property.id,
+                new_building_id=restored_property.building_id
+            )
         
         # 多数決で両物件の情報を更新
         updater = MajorityVoteUpdater(db)

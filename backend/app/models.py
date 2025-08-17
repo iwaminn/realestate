@@ -171,6 +171,7 @@ class PropertyListing(Base):
     listing_land_rights = Column(String(500))                 # 掲載上の敷地権利形態
     listing_parking_info = Column(Text)                       # 掲載上の駐車場情報
     listing_station_info = Column(Text)                       # 掲載上の交通情報
+
     
     # スクレイピング情報
     scraped_from_area = Column(String(20))                    # どのエリアのスクレイピングで取得されたか
@@ -287,6 +288,36 @@ class BuildingMergeHistory(Base):
         Index('idx_building_merge_history_direct_primary', 'direct_primary_building_id'),  # 直接統合先用インデックス
     )
 
+
+class BuildingListingName(Base):
+    """建物掲載名テーブル
+    
+    建物に紐づく掲載情報で使用されている建物名を集約。
+    同じ建物でもサイトによって異なる表記がされることがあるため、
+    それらをすべて検索対象として保持する。
+    """
+    __tablename__ = "building_listing_names"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    building_id = Column(Integer, ForeignKey("buildings.id", ondelete="CASCADE"), nullable=False)
+    listing_name = Column(String(200), nullable=False)        # 掲載で使用されている建物名
+    canonical_name = Column(String(200))                      # 検索用に正規化された名前
+    source_sites = Column(Text)                               # この名前を使用しているサイト（カンマ区切り）
+    occurrence_count = Column(Integer, default=1)             # この名前の出現回数
+    first_seen_at = Column(DateTime, server_default=func.now())
+    last_seen_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    
+    # リレーションシップ
+    building = relationship("Building")
+    
+    __table_args__ = (
+        UniqueConstraint('building_id', 'listing_name', name='unique_building_listing_name'),
+        Index('idx_building_listing_names_building', 'building_id'),
+        Index('idx_building_listing_names_canonical', 'canonical_name'),
+        # 通常のインデックスのみ（GINインデックスは後で追加）
+    )
 
 class BuildingMergeExclusion(Base):
     """建物統合候補除外テーブル"""

@@ -859,6 +859,32 @@ def extract_total_floors(text: str) -> Tuple[Optional[int], Optional[int]]:
     return _normalizer.extract_total_floors(text)
 
 
+def normalize_building_name(text: str) -> str:
+    """建物名を正規化（検索用）"""
+    if not text:
+        return ""
+    
+    import unicodedata
+    import re
+    
+    # 全角英数字を半角に変換
+    normalized = unicodedata.normalize('NFKC', text)
+    
+    # カッコ内の説明を削除（例：「パークハウス（賃貸）」→「パークハウス」）
+    normalized = re.sub(r'[（\(][^）\)]*[）\)]', '', normalized)
+    
+    # 記号を統一
+    normalized = normalized.replace('・', ' ')
+    normalized = normalized.replace('･', ' ')
+    normalized = normalized.replace('−', '-')
+    normalized = normalized.replace('－', '-')
+    
+    # 連続するスペースを1つに
+    normalized = re.sub(r'\s+', ' ', normalized)
+    
+    return normalized.strip()
+
+
 def normalize_layout(text: str) -> Optional[str]:
     """間取り表記を正規化"""
     return _normalizer.normalize_layout(text)

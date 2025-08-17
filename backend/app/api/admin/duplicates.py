@@ -19,6 +19,7 @@ from ...models import (
 )
 from ...utils.enhanced_building_matcher import EnhancedBuildingMatcher
 from ...utils.majority_vote_updater import MajorityVoteUpdater
+from ...utils.building_listing_name_manager import BuildingListingNameManager
 from ...scrapers.data_normalizer import normalize_layout, normalize_direction
 
 router = APIRouter(tags=["admin-duplicates"])
@@ -832,6 +833,14 @@ def move_property_to_building(
         
         db.flush()
         
+        # BuildingListingNameテーブルを更新（物件分離）
+        listing_name_manager = BuildingListingNameManager(db)
+        listing_name_manager.update_from_property_split(
+            original_property_id=property_id,
+            new_property_id=moved_property_id,
+            new_building_id=target_building_id
+        )
+        
         # 多数決による建物情報の更新
         updater = MajorityVoteUpdater(db)
         
@@ -1226,6 +1235,14 @@ async def merge_buildings(
         if primary_building:
             updater.update_building_by_majority(primary_building)
         
+        # BuildingListingNameテーブルを更新
+        listing_name_manager = BuildingListingNameManager(db)
+        for secondary_building in secondary_buildings:
+            listing_name_manager.update_from_building_merge(
+                primary_building_id=primary_id,
+                secondary_building_id=secondary_building.id
+            )
+        
         db.commit()
         
         # キャッシュをクリア（統合によりデータが変更されたため）
@@ -1356,6 +1373,19 @@ async def revert_building_merge(
                     )
                 )
             ).delete()
+        
+        # BuildingListingNameテーブルを更新（建物分離）
+        listing_name_manager = BuildingListingNameManager(db)
+        for merged_building in history.merge_details.get("merged_buildings", []):
+            building_id = merged_building["id"]
+            property_ids = merged_building.get("property_ids", [])
+            if property_ids:
+                # 復元された建物に移動した物件のIDを渡して更新
+                listing_name_manager.update_from_building_split(
+                    original_building_id=history.primary_building_id,
+                    new_building_id=building_id,
+                    property_ids_to_move=property_ids
+                )
         
         # 多数決による建物情報更新
         updater = MajorityVoteUpdater(db)
@@ -1534,6 +1564,13 @@ async def merge_properties(
     ).first()
     if primary_property:
         updater.update_master_property_by_majority(primary_property)
+    
+    # BuildingListingNameテーブルを更新
+    listing_name_manager = BuildingListingNameManager(db)
+    listing_name_manager.update_from_property_merge(
+        primary_property_id=request.primary_property_id,
+        secondary_property_id=request.secondary_property_id
+    )
     
     db.commit()
     

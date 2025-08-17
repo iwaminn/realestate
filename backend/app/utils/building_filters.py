@@ -12,7 +12,7 @@ def apply_building_name_filter(
     building_table = Building
 ) -> Query:
     """
-    建物名フィルタを適用（エイリアス対応）
+    建物名フィルタを適用（掲載情報の建物名を検索）
     
     Args:
         query: ベースクエリ
@@ -25,26 +25,27 @@ def apply_building_name_filter(
     """
     if not building_name:
         return query
-        
-    from ..utils.search_normalizer import create_search_patterns
+    
+    from ..models import BuildingListingName
     
     terms = building_name.split()
     for term in terms:
-        # エイリアスマッチした建物IDを取得
-        alias_building_ids = db.query(
-            BuildingMergeHistory.primary_building_id
+        # BuildingListingNameテーブルから該当する建物IDを取得
+        # canonical_nameを使用してtrigram検索（部分一致）
+        listing_building_ids = db.query(
+            BuildingListingName.building_id
         ).filter(
             or_(
-                BuildingMergeHistory.merged_building_name.ilike(f"%{term}%"),
-                BuildingMergeHistory.canonical_merged_name.ilike(f"%{term}%")
+                BuildingListingName.listing_name.ilike(f"%{term}%"),
+                BuildingListingName.canonical_name.ilike(f"%{term}%")
             )
         ).distinct().subquery()
         
-        # Building.normalized_name または エイリアスでマッチ
+        # Building.normalized_name または 掲載建物名でマッチ
         query = query.filter(
             or_(
                 building_table.normalized_name.ilike(f"%{term}%"),
-                building_table.id.in_(alias_building_ids)
+                building_table.id.in_(listing_building_ids)
             )
         )
     

@@ -290,9 +290,9 @@ async def suggest_buildings(
     limit: int = Query(10, ge=1, le=50, description="最大候補数"),
     db: Session = Depends(get_db)
 ):
-    """建物名のサジェスト（インクリメンタルサーチ）- エイリアス対応版"""
+    """建物名のサジェスト（インクリメンタルサーチ）- 掲載情報ベース"""
     from typing import Dict, List, Union
-    from ..models import BuildingMergeHistory
+    from ..models import BuildingListingName
     
     if len(q) < 1:
         return []
@@ -330,39 +330,44 @@ async def suggest_buildings(
                 "matched_by": "reading"
             }
     
-    # 3. 統合履歴（エイリアス）から検索（AND条件）
+    # 3. 掲載情報の建物名から検索（AND条件）
     query = db.query(
-        BuildingMergeHistory.primary_building_id,
-        BuildingMergeHistory.merged_building_name
-    ).distinct()
+        BuildingListingName.building_id,
+        BuildingListingName.listing_name,
+        func.max(BuildingListingName.occurrence_count).label('max_count')
+    ).group_by(
+        BuildingListingName.building_id,
+        BuildingListingName.listing_name
+    )
     
     for term in search_terms:
         if term:  # 空文字列をスキップ
-            query = query.filter(
+            subq = db.query(BuildingListingName.building_id).filter(
                 or_(
-                    BuildingMergeHistory.merged_building_name.ilike(f"%{term}%"),
-                    BuildingMergeHistory.canonical_merged_name.ilike(f"%{term}%")
+                    BuildingListingName.listing_name.ilike(f"%{term}%"),
+                    BuildingListingName.canonical_name.ilike(f"%{term}%")
                 )
-            )
+            ).distinct().subquery()
+            query = query.filter(BuildingListingName.building_id.in_(subq))
     
-    alias_matches = query.all()
+    listing_matches = query.all()
     
-    # エイリアスでマッチした建物の情報を取得
-    for alias_match in alias_matches:
+    # 掲載名でマッチした建物の情報を取得
+    for listing_match in listing_matches:
         building = db.query(Building).filter(
-            Building.id == alias_match.primary_building_id
+            Building.id == listing_match.building_id
         ).first()
         
         if building:
             if building.id not in building_info:
                 building_info[building.id] = {
                     "name": building.normalized_name,
-                    "matched_by": "alias",
-                    "alias": alias_match.merged_building_name
+                    "matched_by": "listing",
+                    "listing_name": listing_match.listing_name
                 }
             elif building_info[building.id].get("matched_by") != "name":
-                # 既に他の方法でマッチしていて、かつ名前マッチではない場合はエイリアス情報を追加
-                building_info[building.id]["alias"] = alias_match.merged_building_name
+                # 既に他の方法でマッチしていて、かつ名前マッチではない場合は掲載名情報を追加
+                building_info[building.id]["listing_name"] = listing_match.listing_name
     
     # 建物名でグループ化して重複をチェック
     name_groups = {}
@@ -385,11 +390,13 @@ async def suggest_buildings(
                 "label": info["name"]
             }
             
-            # エイリアスでマッチした場合はラベルに表示
-            if info.get("matched_by") == "alias" and info.get("alias"):
-                result_item["label"] = f"{info['name']} (旧: {info['alias']})"
-            elif info.get("alias"):
-                result_item["label"] = f"{info['name']} (別名: {info['alias']})"
+            # 掲載名でマッチした場合はラベルに表示
+            if info.get("matched_by") == "listing" and info.get("listing_name"):
+                if info["listing_name"] != info["name"]:
+                    result_item["label"] = f"{info['name']} (掲載名: {info['listing_name']})"
+            elif info.get("listing_name"):
+                if info["listing_name"] != info["name"]:
+                    result_item["label"] = f"{info['name']} (別表記: {info['listing_name']})"
             
             results.append(result_item)
             seen_names.add(name)

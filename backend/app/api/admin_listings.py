@@ -481,7 +481,9 @@ async def attach_listing_to_property(
     
     # 多数決処理を実行（元の物件と移動先の物件の両方）
     from ..utils.majority_vote_updater import MajorityVoteUpdater
+    from ..utils.building_listing_name_manager import BuildingListingNameManager
     updater = MajorityVoteUpdater(db)
+    listing_name_manager = BuildingListingNameManager(db)
     
     # 元の物件が削除されていない場合は更新
     if not original_deleted:
@@ -489,6 +491,28 @@ async def attach_listing_to_property(
     
     # 移動先の物件を更新
     updater.update_master_property(new_property_id)
+    
+    # BuildingListingNameテーブルを更新
+    # 掲載情報の移動後、その掲載情報の建物名を反映
+    listing_name_manager.update_from_listing(listing)
+    
+    # 物件が異なる建物に移動する場合、物件分離として処理
+    if create_new:
+        # 新規物件作成の場合
+        if current_property.building_id != new_property.building_id:
+            listing_name_manager.update_from_property_split(
+                original_property_id=current_property.id,
+                new_property_id=new_property.id,
+                new_building_id=new_property.building_id
+            )
+    else:
+        # 既存物件に紐付ける場合
+        target_property = db.query(MasterProperty).filter(
+            MasterProperty.id == target_property_id
+        ).first()
+        if target_property and current_property.building_id != target_property.building_id:
+            # 異なる建物への移動の場合、掲載情報の建物名を新しい建物にも登録
+            listing_name_manager.refresh_building_names(target_property.building_id)
     
     try:
         db.commit()

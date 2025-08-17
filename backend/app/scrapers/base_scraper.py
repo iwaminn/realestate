@@ -30,6 +30,7 @@ from ..utils.building_name_normalizer import (
 )
 from ..utils.fuzzy_property_matcher import FuzzyPropertyMatcher
 from ..utils.majority_vote_updater import MajorityVoteUpdater
+# BuildingListingNameManagerは循環インポートを避けるため遅延インポート
 from ..utils.exceptions import TaskPausedException, TaskCancelledException, MaintenanceException
 from ..utils.datetime_utils import get_utc_now
 import time as time_module
@@ -122,6 +123,8 @@ class BaseScraper(ABC):
         self.fuzzy_matcher = FuzzyPropertyMatcher()
         self.majority_updater = MajorityVoteUpdater(self.session)
         self.external_id_handler = BuildingExternalIdHandler(self.session, self.logger)
+        # BuildingListingNameManagerは遅延初期化
+        self._listing_name_manager = None
         
         # スマートスクレイピング設定
         self.detail_refetch_days = self._get_detail_refetch_days()
@@ -3163,7 +3166,17 @@ class BaseScraper(ABC):
                 else:
                     self.logger.info(f"新規登録: {price}万円 - {url}")
         
-        # 掲載情報の登録・更新後、建物名と物件情報を多数決で更新
+        # 掲載情報の登録・更新後、BuildingListingNameテーブルを更新
+        if listing and listing.listing_building_name:
+            try:
+                if self._listing_name_manager is None:
+                    from ..utils.building_listing_name_manager import BuildingListingNameManager
+                    self._listing_name_manager = BuildingListingNameManager(self.session)
+                self._listing_name_manager.update_from_listing(listing)
+            except Exception as e:
+                self.logger.warning(f"BuildingListingNameの更新に失敗しました: {e}")
+        
+        # 建物名と物件情報を多数決で更新
         if master_property:
             try:
                 # 物件情報を多数決で更新
