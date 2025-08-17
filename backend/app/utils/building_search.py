@@ -177,7 +177,7 @@ def apply_building_name_filter_with_alias(
     exclude_building_id: Optional[int] = None
 ) -> Query:
     """
-    建物名検索のフィルターを適用する共通関数（エイリアス検索対応）
+    建物名検索のフィルターを適用する共通関数（掲載情報ベース）
     
     Args:
         query: 既存のクエリオブジェクト
@@ -185,10 +185,10 @@ def apply_building_name_filter_with_alias(
         db_session: データベースセッション
         building_table: Buildingモデルクラス
         property_table: MasterPropertyモデルクラス（オプション）
-        merge_history_table: BuildingMergeHistoryモデルクラス（オプション）
+        merge_history_table: BuildingMergeHistoryモデルクラス（互換性のため保持）
         search_building_name: Building.normalized_nameを検索対象に含めるか
         search_property_display_name: MasterProperty.display_building_nameを検索対象に含めるか
-        search_aliases: 建物統合履歴（エイリアス）を検索対象に含めるか
+        search_aliases: 掲載情報の建物名を検索対象に含めるか
         exclude_building_id: 除外する建物ID
     
     Returns:
@@ -196,6 +196,9 @@ def apply_building_name_filter_with_alias(
     """
     if not search_text:
         return query
+    
+    # BuildingListingNameテーブルを使用
+    from backend.app.models import BuildingListingName
     
     # スペース区切りでAND検索
     search_terms = search_text.strip().split()
@@ -217,25 +220,25 @@ def apply_building_name_filter_with_alias(
         if search_property_display_name and property_table:
             conditions.append(property_table.display_building_name.ilike(f"%{term}%"))
         
-        # エイリアス（統合履歴）での検索
-        if search_aliases and merge_history_table:
-            alias_building_ids = db_session.query(
-                merge_history_table.primary_building_id
+        # 掲載情報の建物名での検索（BuildingListingNameテーブル使用）
+        if search_aliases:
+            listing_building_ids = db_session.query(
+                BuildingListingName.building_id
             ).filter(
                 or_(
-                    merge_history_table.merged_building_name.ilike(f"%{term}%"),
-                    merge_history_table.canonical_merged_name.ilike(f"%{term}%")
+                    BuildingListingName.listing_name.ilike(f"%{term}%"),
+                    BuildingListingName.canonical_name.ilike(f"%{term}%")
                 )
             )
             
             # 現在の建物を除外
             if exclude_building_id:
-                alias_building_ids = alias_building_ids.filter(
-                    merge_history_table.primary_building_id != exclude_building_id
+                listing_building_ids = listing_building_ids.filter(
+                    BuildingListingName.building_id != exclude_building_id
                 )
             
-            alias_building_ids = alias_building_ids.distinct()
-            conditions.append(building_table.id.in_(alias_building_ids.subquery()))
+            listing_building_ids = listing_building_ids.distinct()
+            conditions.append(building_table.id.in_(listing_building_ids.subquery()))
         
         # 各検索語に対してOR条件を適用（AND条件でつなげる）
         if conditions:

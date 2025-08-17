@@ -261,9 +261,9 @@ async def search_buildings_for_merge(
         if building.id in aliases_dict:
             building_data["aliases"] = aliases_dict[building.id]
         
-        # エイリアス検索でマッチした場合、どのエイリアスでマッチしたか表示
-        for match in alias_matches:
-            if match.primary_building_id == building.id:
+        # 掲載情報検索でマッチした場合、どの建物名でマッチしたか表示
+        for match in listing_matches:
+            if match.building_id == building.id:
                 building_data["matched_alias"] = match.alias_name
                 break
         
@@ -321,6 +321,20 @@ async def get_building_detail(
     # 外部建物IDを取得
     external_ids = db.query(BuildingExternalId).filter(
         BuildingExternalId.building_id == building_id
+    ).all()
+    
+    # 掲載情報の建物名を取得
+    from ..models import BuildingListingName
+    listing_names = db.query(
+        BuildingListingName.listing_name,
+        BuildingListingName.source_sites,
+        BuildingListingName.occurrence_count,
+        BuildingListingName.first_seen_at,
+        BuildingListingName.last_seen_at
+    ).filter(
+        BuildingListingName.building_id == building_id
+    ).order_by(
+        BuildingListingName.occurrence_count.desc()
     ).all()
     
     # エイリアス（統合された建物名）を取得
@@ -383,6 +397,16 @@ async def get_building_detail(
         'min_price': min_price,
         'max_price': max_price,
         'aliases': unique_aliases,  # エイリアス情報を追加
+        'listing_names': [  # 掲載情報の建物名を追加
+            {
+                'name': ln.listing_name,
+                'source_sites': ln.source_sites.split(',') if ln.source_sites else [],
+                'occurrence_count': ln.occurrence_count,
+                'first_seen_at': ln.first_seen_at.isoformat() if ln.first_seen_at else None,
+                'last_seen_at': ln.last_seen_at.isoformat() if ln.last_seen_at else None
+            }
+            for ln in listing_names
+        ],
         'external_ids': [
             {
                 'source_site': ext_id.source_site,
