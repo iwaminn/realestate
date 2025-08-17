@@ -2935,6 +2935,9 @@ class BaseScraper(ABC):
             update_details = None
             if price_changed:
                 update_type = 'price_updated'
+                # 価格変更の詳細を記録（旧価格と新価格）
+                update_details = f"価格変更: {old_price}万円 → {price}万円"
+                
                 # 物件と建物の詳細情報を含むログメッセージ
                 building_name = kwargs.get('listing_building_name', listing.listing_building_name or '')
                 if master_property and master_property.building:

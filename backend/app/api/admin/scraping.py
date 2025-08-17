@@ -275,23 +275,33 @@ def setup_logging_handlers(scraper, task_id: str, scraper_name: str, area_name: 
             # ログメッセージを作成（update_typeに基づく）
             should_log = False
             
-            # デバッグ：update_typeの値を確認
-            if update_type == 'price_updated':
-                print(f"[DEBUG] 価格更新検出: update_type={update_type}, title={title}, price={price}, old_price={old_price}")
+            # update_detailsを取得（create_or_update_listingから返される第3要素）
+            update_details = result[2] if isinstance(result, tuple) and len(result) > 2 else None
             
             if update_type == 'new':
                 log_entry["message"] = f"新規物件登録: {title} ({price}万円)"
                 should_log = True
             elif update_type == 'price_updated':
-                if existing and old_price is not None:
+                # update_detailsから価格変更情報を抽出
+                if update_details and '価格変更:' in update_details:
+                    # "価格変更: 6980万円 → 6780万円" のような形式から抽出
+                    import re
+                    price_match = re.search(r'(\d+)万円\s*→\s*(\d+)万円', update_details)
+                    if price_match:
+                        old_price_from_details = int(price_match.group(1))
+                        new_price_from_details = int(price_match.group(2))
+                        log_entry["message"] = f"価格更新: {title} ({old_price_from_details}万円 → {new_price_from_details}万円)"
+                        log_entry["price_change"] = {"old": old_price_from_details, "new": new_price_from_details}
+                    else:
+                        log_entry["message"] = f"価格更新: {title} (→ {price}万円)"
+                elif existing and old_price is not None:
+                    # フォールバック：既存のロジック
                     log_entry["message"] = f"価格更新: {title} ({old_price}万円 → {price}万円)"
                     log_entry["price_change"] = {"old": old_price, "new": price}
                 else:
                     log_entry["message"] = f"価格更新: {title} (→ {price}万円)"
                 should_log = True
             elif update_type == 'other_updates':
-                # update_detailsを取得（create_or_update_listingから返される第3要素）
-                update_details = result[2] if isinstance(result, tuple) and len(result) > 2 else None
                 log_entry["message"] = f"その他の更新: {title} ({price}万円)"
                 if update_details:
                     log_entry["update_details"] = update_details
