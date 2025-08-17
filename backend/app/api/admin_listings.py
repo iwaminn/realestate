@@ -476,6 +476,20 @@ async def attach_listing_to_property(
         original_deleted = True
         message += "（元の物件は削除されました）"
     
+    # データベースに変更を反映
+    db.flush()
+    
+    # 多数決処理を実行（元の物件と移動先の物件の両方）
+    from ..utils.majority_vote_updater import MajorityVoteUpdater
+    updater = MajorityVoteUpdater(db)
+    
+    # 元の物件が削除されていない場合は更新
+    if not original_deleted:
+        updater.update_master_property(current_property.id)
+    
+    # 移動先の物件を更新
+    updater.update_master_property(new_property_id)
+    
     try:
         db.commit()
         return {
@@ -551,7 +565,9 @@ def refresh_single_listing_detail(
             return False
         
         # 詳細情報を取得（ユーティリティ関数を使用）
-        detail_info = fetch_property_detail(url, source_site)
+        # source_siteを大文字に変換（データベースに小文字で保存されている場合があるため）
+        source_site_upper = source_site.upper() if source_site else source_site
+        detail_info = fetch_property_detail(url, source_site_upper)
         
         if not detail_info:
             logger.error(f"詳細情報解析失敗: {url}")
@@ -576,6 +592,18 @@ def refresh_single_listing_detail(
         
         # 詳細情報から各フィールドを更新（ユーティリティ関数を使用）
         update_listing_from_detail(listing, detail_info)
+        
+        # 多数決処理を実行して物件情報と建物情報を更新
+        from ..utils.majority_vote_updater import MajorityVoteUpdater
+        
+        if listing.master_property:
+            logger.info(f"物件の多数決処理を実行: master_property_id={listing.master_property.id}")
+            updater = MajorityVoteUpdater(db)
+            updater.update_master_property_by_majority(listing.master_property)
+            
+            if listing.master_property.building:
+                logger.info(f"建物の多数決処理を実行: building_id={listing.master_property.building.id}")
+                updater.update_building_by_majority(listing.master_property.building)
         
         db.commit()
         logger.info(f"詳細情報更新完了: listing_id={listing_id}")

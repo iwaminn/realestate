@@ -874,6 +874,9 @@ async def attach_property_to_building(
         message = f"物件を建物「{target_building.normalized_name}」に紐付けました"
         new_building_id = target_building_id
     
+    # 物件の移動を確実にデータベースに反映させる
+    db.flush()
+    
     # 多数決処理を実行（元の建物と移動先の建物の両方）
     from ..utils.majority_vote_updater import MajorityVoteUpdater
     updater = MajorityVoteUpdater(db)
