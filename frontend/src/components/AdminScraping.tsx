@@ -132,7 +132,7 @@ interface ScrapingTask {
   errors: string[];
   logs?: Array<{
     timestamp: string;
-    type: 'new' | 'update';
+    type: 'new' | 'update' | 'price_updated' | 'other_updates' | 'refetched_unchanged';
     scraper: string;
     area: string;
     url: string;

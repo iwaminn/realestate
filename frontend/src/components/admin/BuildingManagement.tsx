@@ -68,13 +68,21 @@ interface BuildingDetail extends Building {
     external_id: string;
     created_at?: string;
   }>;
-  // エイリアス（統合された建物名）
+  // 統合履歴
   aliases?: Array<{
     id: number;  // 統合履歴IDを追加
     name: string;
     merged_at?: string;
     merged_by?: string;
     property_count?: number;  // 統合時の物件数を追加
+  }>;
+  // 掲載情報の建物名（別名）
+  listing_names?: Array<{
+    name: string;
+    source_sites: string[];
+    occurrence_count: number;
+    first_seen_at?: string;
+    last_seen_at?: string;
   }>;
   // 物件一覧
   properties: Array<{
@@ -741,13 +749,40 @@ export const BuildingManagement: React.FC = () => {
                 </CardContent>
               </Card>
 
-              {/* エイリアス（統合された建物名） */}
+              {/* 掲載情報の建物名（別名） */}
+              {selectedBuilding.listing_names && selectedBuilding.listing_names.length > 0 && (
+                <Card sx={{ mb: 2 }}>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>掲載情報の建物名（別名）</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                      各不動産サイトで使用されている建物名の一覧です
+                    </Typography>
+                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                      {selectedBuilding.listing_names.map((listingName, index) => (
+                        <Chip
+                          key={index}
+                          label={`${listingName.name} (${listingName.occurrence_count}件)`}
+                          variant="outlined"
+                          color="secondary"
+                          sx={{ 
+                            fontSize: '0.9rem',
+                            '& .MuiChip-label': { px: 2, py: 1 }
+                          }}
+                          title={`サイト: ${listingName.source_sites.join(', ')}`}
+                        />
+                      ))}
+                    </Box>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* 統合履歴 */}
               {selectedBuilding.aliases && selectedBuilding.aliases.length > 0 && (
                 <Card sx={{ mb: 2 }}>
                   <CardContent>
-                    <Typography variant="h6" gutterBottom>統合された建物名（エイリアス）</Typography>
+                    <Typography variant="h6" gutterBottom>統合履歴</Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                      この建物に統合されている別名の一覧です
+                      この建物に統合された建物の履歴です
                     </Typography>
                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
                       {selectedBuilding.aliases.map((alias, index) => (
@@ -765,13 +800,10 @@ export const BuildingManagement: React.FC = () => {
                     </Box>
                     {selectedBuilding.aliases.some(alias => alias.merged_at) && (
                       <Box sx={{ mt: 2 }}>
-                        <Typography variant="caption" color="text.secondary">
-                          統合履歴:
-                        </Typography>
                         <Table size="small" sx={{ mt: 1 }}>
                           <TableHead>
                             <TableRow>
-                              <TableCell>建物名</TableCell>
+                              <TableCell>統合された建物名</TableCell>
                               <TableCell align="right">物件数</TableCell>
                               <TableCell>統合日時</TableCell>
                               <TableCell>統合者</TableCell>
@@ -1147,9 +1179,9 @@ export const BuildingManagement: React.FC = () => {
                                 </TableCell>
                                 <TableCell>
                                   {candidate.normalized_name}
-                                  {candidate.match_type === 'alias' && (
+                                  {(candidate.match_type === 'alias' || candidate.match_type === 'listing') && (
                                     <Chip
-                                      label={`エイリアス: ${candidate.alias_name}`}
+                                      label={`別名: ${candidate.alias_name || candidate.matched_alias}`}
                                       size="small"
                                       color="info"
                                       sx={{ ml: 1 }}
