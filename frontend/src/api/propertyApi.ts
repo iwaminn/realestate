@@ -8,6 +8,25 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  // 配列パラメータを正しく送信するための設定
+  paramsSerializer: (params) => {
+    const searchParams = new URLSearchParams();
+    Object.keys(params).forEach(key => {
+      const value = params[key];
+      if (value === undefined || value === null || value === '') {
+        return;
+      }
+      if (Array.isArray(value)) {
+        // 配列の場合、各要素を同じキー名で追加
+        value.forEach(item => {
+          searchParams.append(key, item);
+        });
+      } else {
+        searchParams.append(key, String(value));
+      }
+    });
+    return searchParams.toString();
+  },
 });
 
 // 認証情報を含めるためのインターセプター
