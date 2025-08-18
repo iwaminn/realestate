@@ -18,6 +18,7 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 async def get_properties(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
+    property_id: Optional[int] = None,  # 物件ID検索を追加
     building_name: Optional[str] = None,
     address: Optional[str] = None,
     room_number: Optional[str] = None,
@@ -33,6 +34,9 @@ async def get_properties(
     query = db.query(MasterProperty).join(Building)
     
     # フィルタリング
+    if property_id:
+        # 物件IDで直接検索
+        query = query.filter(MasterProperty.id == property_id)
     if building_name:
         # 共通の建物名検索関数を使用
         from ..utils.building_search import apply_building_name_filter_with_alias
@@ -281,3 +285,40 @@ async def update_property(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"更新に失敗しました: {str(e)}")
+
+
+@router.delete("/properties/{property_id}")
+async def delete_property(
+    property_id: int,
+    db: Session = Depends(get_db),
+    _: Any = Depends(verify_admin_credentials)
+):
+    """物件を削除（管理者用）"""
+    # 物件を取得
+    property = db.query(MasterProperty).filter(MasterProperty.id == property_id).first()
+    
+    if not property:
+        raise HTTPException(status_code=404, detail="物件が見つかりません")
+    
+    # 掲載情報の数を確認
+    listing_count = db.query(PropertyListing).filter(
+        PropertyListing.master_property_id == property_id
+    ).count()
+    
+    if listing_count > 0:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"この物件には{listing_count}件の掲載情報が紐づいています。削除する前に掲載情報を削除または別の物件に移動してください。"
+        )
+    
+    try:
+        # 物件を削除（カスケード削除により関連データも削除される）
+        db.delete(property)
+        db.commit()
+        return {
+            "success": True,
+            "message": f"物件ID {property_id} を削除しました"
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"削除に失敗しました: {str(e)}")

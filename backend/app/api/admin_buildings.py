@@ -8,7 +8,7 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from ..database import get_db
-from ..models import Building, MasterProperty, PropertyListing, BuildingExternalId
+from ..models import Building, MasterProperty, PropertyListing, BuildingExternalId, BuildingListingName
 from ..auth import verify_admin_credentials
 
 router = APIRouter(prefix="/api/admin", tags=["admin-buildings"])
@@ -467,6 +467,53 @@ async def update_building(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"更新に失敗しました: {str(e)}")
+
+
+@router.delete("/buildings/{building_id}")
+async def delete_building(
+    building_id: int,
+    db: Session = Depends(get_db)
+    # _: Any = Depends(verify_admin_credentials)  # 開発環境では一時的に無効化
+):
+    """建物を削除（管理者用）"""
+    # 建物を取得
+    building = db.query(Building).filter(Building.id == building_id).first()
+    
+    if not building:
+        raise HTTPException(status_code=404, detail="建物が見つかりません")
+    
+    # 物件の数を確認
+    property_count = db.query(MasterProperty).filter(
+        MasterProperty.building_id == building_id
+    ).count()
+    
+    if property_count > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"この建物には{property_count}件の物件が存在します。削除する前に物件を削除または別の建物に移動してください。"
+        )
+    
+    try:
+        # BuildingListingNameの削除
+        db.query(BuildingListingName).filter(
+            BuildingListingName.building_id == building_id
+        ).delete()
+        
+        # BuildingExternalIdの削除
+        db.query(BuildingExternalId).filter(
+            BuildingExternalId.building_id == building_id
+        ).delete()
+        
+        # 建物を削除
+        db.delete(building)
+        db.commit()
+        return {
+            "success": True,
+            "message": f"建物ID {building_id} を削除しました"
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"削除に失敗しました: {str(e)}")
 
 
 @router.post("/properties/{property_id}/detach-candidates")

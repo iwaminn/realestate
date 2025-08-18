@@ -83,6 +83,7 @@ def update_listing_from_detail(listing, detail_info: Dict[str, Any]) -> None:
     """
     # 各フィールドを更新（存在する場合のみ）
     field_mapping = {
+        'title': 'title',  # タイトルを追加
         'agency_name': 'agency_name',
         'agency_tel': 'agency_tel',
         'balcony_area': 'balcony_area',

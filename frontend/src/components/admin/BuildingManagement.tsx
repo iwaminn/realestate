@@ -40,6 +40,7 @@ import {
   Home as HomeIcon,
   Undo as UndoIcon,
   CallSplit as CallSplitIcon,
+  Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import axios, { isAxiosError } from 'axios';
@@ -266,6 +267,41 @@ export const BuildingManagement: React.FC = () => {
       built_year: String(selectedBuilding.built_year || ''),
     });
     setEditDialogOpen(true);
+  };
+
+  // 建物を削除
+  const deleteBuilding = async (buildingId: number) => {
+    if (!window.confirm('この建物を削除してもよろしいですか？\n削除後は元に戻せません。')) {
+      return;
+    }
+
+    try {
+      const response = await axios.delete(`/api/admin/buildings/${buildingId}`);
+      console.log('Delete response:', response);
+      
+      // 削除成功（axiosのtryブロック内なら成功）
+      alert('建物を削除しました');
+      await fetchBuildings(); // 一覧を更新
+      if (detailDialogOpen) {
+        setDetailDialogOpen(false); // 詳細ダイアログを閉じる
+      }
+    } catch (error) {
+      console.error('建物削除エラー:', error);
+      if (isAxiosError(error)) {
+        if (error.response?.status === 404) {
+          // 404の場合は既に削除されている
+          alert('建物は既に削除されています');
+          await fetchBuildings(); // 一覧を更新
+        } else if (error.response) {
+          console.error('Error response:', error.response);
+          alert(`削除に失敗しました: ${error.response.data.detail || 'エラーが発生しました'}`);
+        } else {
+          alert('削除に失敗しました（ネットワークエラー）');
+        }
+      } else {
+        alert('削除に失敗しました');
+      }
+    }
   };
 
   // 建物統合を復元
@@ -656,6 +692,17 @@ export const BuildingManagement: React.FC = () => {
                           <HomeIcon />
                         </IconButton>
                       </Tooltip>
+                      {building.property_count === 0 && (
+                        <Tooltip title="建物を削除">
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={() => deleteBuilding(building.id)}
+                          >
+                            <DeleteIcon />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -690,13 +737,26 @@ export const BuildingManagement: React.FC = () => {
             <Typography variant="h6">
               建物詳細 (ID: {selectedBuilding?.id})
             </Typography>
-            <Button
-              variant="outlined"
-              startIcon={<EditIcon />}
-              onClick={openEditDialog}
-            >
-              編集
-            </Button>
+            <Box>
+              {selectedBuilding && selectedBuilding.property_count === 0 && (
+                <Button
+                  variant="outlined"
+                  color="error"
+                  startIcon={<DeleteIcon />}
+                  onClick={() => deleteBuilding(selectedBuilding.id)}
+                  sx={{ mr: 1 }}
+                >
+                  削除
+                </Button>
+              )}
+              <Button
+                variant="outlined"
+                startIcon={<EditIcon />}
+                onClick={openEditDialog}
+              >
+                編集
+              </Button>
+            </Box>
           </Box>
         </DialogTitle>
         <DialogContent>

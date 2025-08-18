@@ -44,7 +44,7 @@ import {
   Home as HomeIcon,
   OpenInNew as OpenInNewIcon,
   CallSplit as CallSplitIcon,
-
+  Delete as DeleteIcon,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import axios, { isAxiosError } from 'axios';
@@ -204,6 +204,7 @@ export const PropertyManagement: React.FC = () => {
   const [rowsPerPage, setRowsPerPage] = useState(50);
   const [totalCount, setTotalCount] = useState(0);
   const [searchParams, setSearchParams] = useState({
+    propertyId: '',  // 物件ID検索を追加
     buildingName: '',
     address: '',
     minArea: '',
@@ -250,6 +251,7 @@ export const PropertyManagement: React.FC = () => {
       params.append('offset', String(page * rowsPerPage));
       params.append('limit', String(rowsPerPage));
       
+      if (searchParams.propertyId) params.append('property_id', searchParams.propertyId);
       if (searchParams.buildingName) params.append('building_name', searchParams.buildingName);
       if (searchParams.address) params.append('address', searchParams.address);
       if (searchParams.minArea) params.append('min_area', searchParams.minArea);
@@ -335,6 +337,7 @@ export const PropertyManagement: React.FC = () => {
 
   const handleClearSearch = () => {
     setSearchParams({
+      propertyId: '',
       buildingName: '',
       address: '',
       minArea: '',
@@ -357,6 +360,41 @@ export const PropertyManagement: React.FC = () => {
       direction: selectedProperty.direction || '',
     });
     setEditDialogOpen(true);
+  };
+
+  // 物件を削除
+  const deleteProperty = async (propertyId: number) => {
+    if (!window.confirm('この物件を削除してもよろしいですか？\n削除後は元に戻せません。')) {
+      return;
+    }
+
+    try {
+      const response = await axios.delete(`/api/admin/properties/${propertyId}`);
+      console.log('Delete response:', response);
+      
+      // 削除成功（axiosのtryブロック内なら成功）
+      alert('物件を削除しました');
+      await fetchProperties(); // 一覧を更新
+      if (detailDialogOpen) {
+        setDetailDialogOpen(false); // 詳細ダイアログを閉じる
+      }
+    } catch (error) {
+      console.error('物件削除エラー:', error);
+      if (isAxiosError(error)) {
+        if (error.response?.status === 404) {
+          // 404の場合は既に削除されている
+          alert('物件は既に削除されています');
+          await fetchProperties(); // 一覧を更新
+        } else if (error.response) {
+          console.error('Error response:', error.response);
+          alert(`削除に失敗しました: ${error.response.data.detail || 'エラーが発生しました'}`);
+        } else {
+          alert('削除に失敗しました（ネットワークエラー）');
+        }
+      } else {
+        alert('削除に失敗しました');
+      }
+    }
   };
 
   // 掲載情報分離の候補を取得
@@ -476,7 +514,18 @@ export const PropertyManagement: React.FC = () => {
       {/* 検索フォーム */}
       <Paper sx={{ p: 3, mb: 3 }}>
         <Grid container spacing={2}>
-          <Grid item xs={12} sm={6} md={4}>
+          <Grid item xs={12} sm={6} md={3}>
+            <TextField
+              fullWidth
+              label="物件ID"
+              value={searchParams.propertyId}
+              onChange={(e) => setSearchParams({ ...searchParams, propertyId: e.target.value })}
+              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              type="number"
+              helperText="物件IDで直接検索"
+            />
+          </Grid>
+          <Grid item xs={12} sm={6} md={3}>
             <TextField
               fullWidth
               label="建物名"
@@ -486,7 +535,7 @@ export const PropertyManagement: React.FC = () => {
               helperText="スペース区切りでAND検索"
             />
           </Grid>
-          <Grid item xs={12} sm={6} md={4}>
+          <Grid item xs={12} sm={6} md={3}>
             <TextField
               fullWidth
               label="住所"
@@ -696,6 +745,17 @@ export const PropertyManagement: React.FC = () => {
                           <HomeIcon />
                         </IconButton>
                       </Tooltip>
+                      {property.listing_summary.total_count === 0 && (
+                        <Tooltip title="物件を削除">
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={() => deleteProperty(property.id)}
+                          >
+                            <DeleteIcon />
+                          </IconButton>
+                        </Tooltip>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -730,13 +790,26 @@ export const PropertyManagement: React.FC = () => {
             <Typography variant="h6">
               物件詳細 (ID: {selectedProperty?.id})
             </Typography>
-            <Button
-              variant="outlined"
-              startIcon={<EditIcon />}
-              onClick={openEditDialog}
-            >
-              編集
-            </Button>
+            <Box>
+              {selectedProperty && selectedProperty.active_listings.length === 0 && selectedProperty.inactive_listings.length === 0 && (
+                <Button
+                  variant="outlined"
+                  color="error"
+                  startIcon={<DeleteIcon />}
+                  onClick={() => deleteProperty(selectedProperty.id)}
+                  sx={{ mr: 1 }}
+                >
+                  削除
+                </Button>
+              )}
+              <Button
+                variant="outlined"
+                startIcon={<EditIcon />}
+                onClick={openEditDialog}
+              >
+                編集
+              </Button>
+            </Box>
           </Box>
         </DialogTitle>
         <DialogContent>

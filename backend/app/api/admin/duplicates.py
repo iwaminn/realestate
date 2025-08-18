@@ -24,16 +24,15 @@ from ...scrapers.data_normalizer import normalize_layout, normalize_direction
 
 router = APIRouter(tags=["admin-duplicates"])
 
-# キャッシュ用のグローバル変数
-_duplicate_buildings_cache = {}
-_duplicate_buildings_cache_time = 0
-CACHE_DURATION = 300  # 5分
+# キャッシュ用のグローバル変数（無効化）
+# _duplicate_buildings_cache = {}
+# _duplicate_buildings_cache_time = 0
+# CACHE_DURATION = 300  # 5分
 
 def clear_duplicate_buildings_cache():
-    """重複建物キャッシュをクリア"""
-    global _duplicate_buildings_cache, _duplicate_buildings_cache_time
-    _duplicate_buildings_cache = {}
-    _duplicate_buildings_cache_time = 0
+    """重複建物キャッシュをクリア（無効化）"""
+    # キャッシュ機能は無効化されています
+    pass
 
 
 class DuplicateCandidate(BaseModel):
@@ -73,7 +72,7 @@ async def get_duplicate_buildings(
     db: Session = Depends(get_db)
 ):
     """建物の重複候補を取得（改善版）"""
-    global _duplicate_buildings_cache, _duplicate_buildings_cache_time
+    # キャッシュ機能は無効化されています
     import re
     import time
     from backend.app.utils.enhanced_building_matcher import EnhancedBuildingMatcher
@@ -82,15 +81,7 @@ async def get_duplicate_buildings(
     start_time = time.time()
     phase_times = {}
     
-    # キャッシュキーの作成
-    cache_key = f"{search}_{min_similarity}_{limit}"
-    current_time = time.time()
-    
-    # キャッシュが有効な場合は返す（検索なしの場合のみ）
-    if (not search and 
-        cache_key in _duplicate_buildings_cache and 
-        current_time - _duplicate_buildings_cache_time < CACHE_DURATION):
-        return _duplicate_buildings_cache[cache_key]
+    # キャッシュ機能は無効化（常に新規計算）
     
     # フェーズ1: Matcherの初期化
     phase_start = time.time()
@@ -523,9 +514,10 @@ async def get_duplicate_buildings(
         "phase_times": phase_times
     }
     
-    if not search:
-        _duplicate_buildings_cache = {cache_key: result}
-        _duplicate_buildings_cache_time = current_time
+    # キャッシュ機能は無効化（保存しない）
+    # if not search:
+    #     _duplicate_buildings_cache = {cache_key: result}
+    #     _duplicate_buildings_cache_time = current_time
     
     # 処理時間のログ出力
     import logging

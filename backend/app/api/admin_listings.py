@@ -469,16 +469,9 @@ async def attach_listing_to_property(
         message = f"{listing.source_site}の掲載情報を物件ID {target_property_id} に紐付けました"
         new_property_id = target_property_id
     
-    # 元の物件を削除（必要な場合）
-    original_deleted = False
-    if delete_original and remaining_listings_count == 0:
-        # 元の物件に掲載情報が残らない場合のみ削除
-        db.delete(current_property)
-        original_deleted = True
-        message += "（元の物件は削除されました）"
-    
-    # データベースに変更を反映
-    db.flush()
+    # 元の物件を削除する前に必要な情報を保存
+    original_property_id = current_property.id
+    original_building_id = current_property.building_id
     
     # 多数決処理を実行（元の物件と移動先の物件の両方）
     from ..utils.majority_vote_updater import MajorityVoteUpdater
@@ -486,12 +479,30 @@ async def attach_listing_to_property(
     updater = MajorityVoteUpdater(db)
     listing_name_manager = BuildingListingNameManager(db)
     
-    # 元の物件が削除されていない場合は更新
-    if not original_deleted:
-        updater.update_master_property(current_property.id)
+    # データベースに変更を反映（掲載情報の紐付けを先に確定）
+    db.flush()
     
-    # 移動先の物件を更新
-    updater.update_master_property(new_property_id)
+    # 移動先の物件を更新（削除前に実行）
+    new_property_obj = db.query(MasterProperty).filter(MasterProperty.id == new_property_id).first()
+    if new_property_obj:
+        updater.update_master_property_by_majority(new_property_obj)
+    
+    # 元の物件を削除（必要な場合）
+    original_deleted = False
+    if delete_original and remaining_listings_count == 0:
+        # 元の物件に掲載情報が残らない場合のみ削除
+        # SQLAlchemyのセッションから切り離して削除
+        db.expire(listing)  # 掲載情報をセッションから切り離す
+        db.flush()  # 確実に反映
+        db.delete(current_property)
+        db.flush()  # 削除を確実に反映
+        original_deleted = True
+        message += "（元の物件は削除されました）"
+    else:
+        # 元の物件が削除されない場合は更新
+        original_property_obj = db.query(MasterProperty).filter(MasterProperty.id == original_property_id).first()
+        if original_property_obj:
+            updater.update_master_property_by_majority(original_property_obj)
     
     # BuildingListingNameテーブルを更新
     # 掲載情報の移動後、その掲載情報の建物名を反映
@@ -500,9 +511,9 @@ async def attach_listing_to_property(
     # 物件が異なる建物に移動する場合、物件分離として処理
     if create_new:
         # 新規物件作成の場合
-        if current_property.building_id != new_property.building_id:
+        if original_building_id != new_property.building_id:
             listing_name_manager.update_from_property_split(
-                original_property_id=current_property.id,
+                original_property_id=original_property_id,
                 new_property_id=new_property.id,
                 new_building_id=new_property.building_id
             )
@@ -511,7 +522,7 @@ async def attach_listing_to_property(
         target_property = db.query(MasterProperty).filter(
             MasterProperty.id == target_property_id
         ).first()
-        if target_property and current_property.building_id != target_property.building_id:
+        if target_property and original_building_id != target_property.building_id:
             # 異なる建物への移動の場合、掲載情報の建物名を新しい建物にも登録
             listing_name_manager.refresh_building_names(target_property.building_id)
     
@@ -520,7 +531,7 @@ async def attach_listing_to_property(
         return {
             "success": True,
             "message": message,
-            "original_property_id": current_property.id,
+            "original_property_id": original_property_id,
             "new_property_id": new_property_id
         }
     except Exception as e:
@@ -590,9 +601,8 @@ def refresh_single_listing_detail(
             return False
         
         # 詳細情報を取得（ユーティリティ関数を使用）
-        # source_siteを大文字に変換（データベースに小文字で保存されている場合があるため）
-        source_site_upper = source_site.upper() if source_site else source_site
-        detail_info = fetch_property_detail(url, source_site_upper)
+        # source_siteはそのまま使用（スクレイパーが小文字を期待）
+        detail_info = fetch_property_detail(url, source_site)
         
         if not detail_info:
             logger.error(f"詳細情報解析失敗: {url}")

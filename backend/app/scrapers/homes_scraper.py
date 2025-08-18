@@ -234,13 +234,21 @@ class HomesScraper(BaseScraper):
     
     def _extract_building_name_from_breadcrumb(self, soup: BeautifulSoup) -> Optional[str]:
         """パンくずリストから建物名を取得"""
-        # LIFULL HOME'Sのパンくずリスト：breadcrumb-listタグ内のol > li要素
+        # LIFULL HOME'Sのパンくずリスト：複数のパターンに対応
+        # 1. breadcrumb-listタグ
+        # 2. p.mod-breadcrumbs
+        # 3. [class*="breadcrumb"]
         breadcrumb_tag = soup.find('breadcrumb-list')
         if breadcrumb_tag:
             breadcrumb_list = breadcrumb_tag.select('ol > li')
         else:
-            # フォールバック：最初のol要素（hide-scrollbarクラス）
-            breadcrumb_list = soup.select('ol.hide-scrollbar > li')
+            # p.mod-breadcrumbsパターンを試す
+            breadcrumb_tag = soup.select_one('p.mod-breadcrumbs, [class*="breadcrumb"]')
+            if breadcrumb_tag:
+                breadcrumb_list = breadcrumb_tag.select('li')
+            else:
+                # フォールバック：最初のol要素（hide-scrollbarクラス）
+                breadcrumb_list = soup.select('ol.hide-scrollbar > li')
         
         if breadcrumb_list:
             # 最後のli要素を取得
@@ -323,8 +331,10 @@ class HomesScraper(BaseScraper):
     def _extract_building_name_from_h1(self, soup: BeautifulSoup) -> Tuple[Optional[str], Optional[str]]:
         """h1タグから建物名と部屋番号を取得
         
-        LIFULL HOME'Sの実際の構造:
-        - span要素が複数ある場合、4番目に建物名と階数が含まれる
+        LIFULL HOME'Sの実際の構造（複数パターン対応）:
+        1. bukkenNameクラスがある場合（新フォーマット）
+        2. break-wordsクラスがある場合（別の新フォーマット）
+        3. span要素の位置で判断（旧フォーマット）
         """
         building_name = None
         room_number = None
@@ -332,42 +342,73 @@ class HomesScraper(BaseScraper):
         # h1タグから情報を取得（Header__logoクラスを除外）
         h1_elem = soup.find('h1', class_=lambda x: x and 'Header__logo' not in x)
         if h1_elem:
-            # H1内のspan要素を探す
-            spans = h1_elem.select('span')
-            if len(spans) >= 4:
-                # 4番目のspan要素を使用（実際のHTML構造に基づく）
-                building_name_text = spans[3].get_text(strip=True)
+            # パターン1: bukkenNameクラスを探す（最も正確）
+            bukken_name_elem = h1_elem.select_one('.bukkenName')
+            if bukken_name_elem:
+                building_name = bukken_name_elem.get_text(strip=True)
+                self.logger.debug(f"[HOMES] bukkenNameクラスから建物名を取得: {building_name}")
                 
-                # 階数情報を除去（例：「パルロイヤルアレフ赤坂 2階/207」→「パルロイヤルアレフ赤坂」）
-                if ' ' in building_name_text:
-                    parts = building_name_text.split(' ')
-                    # 最後の部分が階数情報の場合は除去
-                    if parts[-1] and ('階' in parts[-1] or '/' in parts[-1]):
-                        building_name = ' '.join(parts[:-1])
-                        # 部屋番号を抽出
-                        match = re.search(r'/(\d{3,4}[A-Z]?)(?:\s|$)', parts[-1])
-                        if match:
-                            room_number = match.group(1)
-                    else:
-                        building_name = building_name_text
-                else:
-                    building_name = building_name_text
-                
-                # 部屋番号も抽出（階数情報の後ろにある可能性）
-                if not room_number and ' ' in building_name_text and '/' in building_name_text:
-                    match = re.search(r'/(\d{3,4}[A-Z]?)(?:\s|$)', building_name_text)
+                # bukkenRoomクラスから部屋番号を取得
+                bukken_room_elem = h1_elem.select_one('.bukkenRoom')
+                if bukken_room_elem:
+                    room_text = bukken_room_elem.get_text(strip=True)
+                    match = re.search(r'/(\d{3,4}[A-Z]?)(?:\s|$)', room_text)
                     if match:
                         room_number = match.group(1)
+            
+            # パターン2: break-wordsクラスを探す（代官山アドレスのような新フォーマット）
+            elif h1_elem.select_one('.break-words'):
+                break_words_elem = h1_elem.select_one('.break-words')
+                text = break_words_elem.get_text(strip=True)
+                # 「代官山アドレス 18階」のような形式から建物名を抽出
+                if '階' in text:
+                    # 最後の階数部分を除去
+                    parts = text.rsplit(' ', 1)
+                    if len(parts) > 1 and '階' in parts[-1]:
+                        building_name = parts[0]
+                    else:
+                        building_name = text
+                else:
+                    building_name = text
+                self.logger.debug(f"[HOMES] break-wordsクラスから建物名を取得: {building_name}")
+            
+            # パターン3: 従来の方法（span要素の位置で判断）
             else:
-                # 従来の方法（span要素がない場合）
-                h1_text = h1_elem.get_text(strip=True)
-                # 駅名情報のパターンを含む場合はスキップ
-                if not any(pattern in h1_text for pattern in ['徒歩', '駅', '（', '区）', '市）', '線']):
-                    if '中古マンション' in h1_text:
-                        h1_text = h1_text.replace('中古マンション', '').strip()
-                    parts = h1_text.split('/')
-                    if parts:
-                        building_name = parts[0].strip()
+                spans = h1_elem.select('span')
+                if len(spans) >= 4:
+                    # 3番目のspan要素に建物名がある
+                    building_name_text = spans[2].get_text(strip=True)
+                    
+                    # 階数情報を除去
+                    if ' ' in building_name_text:
+                        parts = building_name_text.split(' ')
+                        # 最後の部分が階数情報の場合は除去
+                        if parts[-1] and ('階' in parts[-1] or '/' in parts[-1]):
+                            building_name = ' '.join(parts[:-1])
+                            # 部屋番号を抽出
+                            match = re.search(r'/(\d{3,4}[A-Z]?)(?:\s|$)', parts[-1])
+                            if match:
+                                room_number = match.group(1)
+                        else:
+                            building_name = building_name_text
+                    else:
+                        building_name = building_name_text
+                
+                    # 部屋番号も抽出（階数情報の後ろにある可能性）
+                    if not room_number and ' ' in building_name_text and '/' in building_name_text:
+                        match = re.search(r'/(\d{3,4}[A-Z]?)(?:\s|$)', building_name_text)
+                        if match:
+                            room_number = match.group(1)
+                else:
+                    # span要素が少ない場合の処理
+                    h1_text = h1_elem.get_text(strip=True)
+                    # 駅名情報のパターンを含む場合はスキップ
+                    if not any(pattern in h1_text for pattern in ['徒歩', '駅', '（', '区）', '市）', '線']):
+                        if '中古マンション' in h1_text:
+                            h1_text = h1_text.replace('中古マンション', '').strip()
+                        parts = h1_text.split('/')
+                        if parts:
+                            building_name = parts[0].strip()
         
         # 最終的なクリーンアップ
         if building_name:
@@ -380,7 +421,7 @@ class HomesScraper(BaseScraper):
         """データリスト（dl/dt/dd）から情報を抽出"""
         details = {}
         
-        # dl要素を処理
+        # 既存のパターン（これまで正常に動作していた処理）
         for dl in soup.select('.detailInfo dl, .mod-detailInfo dl, [class*="detail"] dl'):
             dt = dl.select_one('dt')
             dd = dl.select_one('dd')
@@ -392,7 +433,7 @@ class HomesScraper(BaseScraper):
             value = dd.get_text(strip=True)
             self._process_detail_field(label, value, details)
         
-        # dl要素の別パターン
+        # dl要素の別パターン（これまでの処理）
         for dl in soup.select('dl'):
             dt_elements = dl.select('dt')
             dd_elements = dl.select('dd')
@@ -401,6 +442,23 @@ class HomesScraper(BaseScraper):
                     label = dt.get_text(strip=True)
                     value = dd_elements[i].get_text(strip=True)
                     self._process_detail_field(label, value, details)
+        
+        # 新しいパターン（m-status-table）を追加（今回のページ対応）
+        # この処理は上記で取得できなかった場合のフォールバックとして機能
+        for dl in soup.select('dl.m-status-table'):
+            # m-status-table__headline と m-status-table__body のペアを処理
+            headlines = dl.select('dt.m-status-table__headline')
+            bodies = dl.select('dd.m-status-table__body')
+            
+            for i, headline in enumerate(headlines):
+                if i < len(bodies):
+                    label = headline.get_text(strip=True)
+                    value = bodies[i].get_text(strip=True)
+                    # 既に取得済みのフィールドはスキップ
+                    if '専有面積' in label and 'area' not in details:
+                        self._process_detail_field(label, value, details)
+                    else:
+                        self._process_detail_field(label, value, details)
         
         return details
     
@@ -411,10 +469,17 @@ class HomesScraper(BaseScraper):
         for table in soup.select('table'):
             for row in table.select('tr'):
                 cells = row.select('th, td')
-                if len(cells) >= 2:
-                    label = cells[0].get_text(strip=True)
-                    value = cells[1].get_text(strip=True)
-                    self._process_detail_field(label, value, details)
+                # 複数のth/tdペアがある場合に対応
+                i = 0
+                while i < len(cells) - 1:
+                    # th, tdのペアを処理
+                    if cells[i].name == 'th' and cells[i + 1].name == 'td':
+                        label = cells[i].get_text(strip=True)
+                        value = cells[i + 1].get_text(strip=True)
+                        self._process_detail_field(label, value, details)
+                        i += 2
+                    else:
+                        i += 1
         
         return details
     
@@ -440,12 +505,6 @@ class HomesScraper(BaseScraper):
             area = extract_area(value)
             if area:
                 details['area'] = area
-        elif '面積' in label and 'バルコニー' not in label and '建築' not in label and '敷地' not in label and '専有' not in label:
-            # 専有面積が取得できていない場合のみ、他の面積情報を使用
-            if 'area' not in details:
-                area = extract_area(value)
-                if area:
-                    details['area'] = area
         elif '築年月' in label:
             built_year = extract_built_year(value)
             if built_year:
@@ -535,6 +594,58 @@ class HomesScraper(BaseScraper):
             month = int(date_match.group(2))
             day = int(date_match.group(3))
             return datetime(year, month, day)
+        return None
+    
+    def _extract_area_from_page(self, soup: BeautifulSoup, page_text: str) -> Optional[float]:
+        """ページ全体から専有面積情報を探す（フォールバック処理）
+        
+        通常のdl/tableから取得できなかった場合に、
+        特にm-status-tableクラスなどの新しい構造から専有面積を取得する
+        """
+        import re
+        
+        # 専有面積のみを探す（他の面積情報は使用しない）
+        # m-status-table形式の要素を優先的に探す
+        status_tables = soup.select('dl.m-status-table')
+        for dl in status_tables:
+            # m-status-table__headline と m-status-table__body のペアを探す
+            headlines = dl.select('dt.m-status-table__headline')
+            bodies = dl.select('dd.m-status-table__body')
+            
+            for i, headline in enumerate(headlines):
+                if i < len(bodies):
+                    label = headline.get_text(strip=True)
+                    if '専有面積' in label:
+                        value = bodies[i].get_text(strip=True)
+                        area = extract_area(value)
+                        if area and 10 <= area <= 300:
+                            self.logger.info(f"[HOMES] フォールバック: m-status-tableから専有面積{area}㎡を取得")
+                            return area
+        
+        # その他の要素から専有面積を探す
+        # 専有面積と明記されているもののみを対象とする
+        search_selectors = [
+            'span:contains("専有面積")',
+            'p:contains("専有面積")',
+            'div:contains("専有面積")',
+            '[class*="area"]:contains("専有")',
+        ]
+        
+        for selector in search_selectors:
+            # BeautifulSoupはcontains擬似セレクタをサポートしないため、別の方法を使用
+            elements = soup.find_all(text=re.compile('専有面積'))
+            for text_node in elements:
+                parent = text_node.parent
+                if parent:
+                    full_text = parent.get_text(strip=True)
+                    # 専有面積の値を抽出
+                    match = re.search(r'専有面積[：:\s]*(\d+(?:\.\d+)?)\s*(?:㎡|m²|平米)', full_text)
+                    if match:
+                        area_value = float(match.group(1))
+                        if 10 <= area_value <= 300:
+                            self.logger.info(f"[HOMES] フォールバック: テキストから専有面積{area_value}㎡を取得")
+                            return area_value
+        
         return None
     
     def _extract_date_from_page(self, soup: BeautifulSoup, page_text: str) -> Optional[datetime]:
@@ -671,6 +782,29 @@ class HomesScraper(BaseScraper):
             else:
                 self.logger.error(f"[HOMES] 建物名を取得できませんでした: {url}")
             
+            # 建物ページの場合、h1のspan[3]から階数情報を取得
+            if is_building_page:
+                h1_elem = soup.find('h1', class_=lambda x: x and 'Header__logo' not in x)
+                if h1_elem:
+                    spans = h1_elem.select('span')
+                    if len(spans) >= 4:
+                        floor_info = spans[3].get_text(strip=True)
+                        # "5階/-" または "5階/8階建" のような形式から階数を抽出
+                        match = re.match(r'(\d+)階/(.+)', floor_info)
+                        if match:
+                            floor_number = int(match.group(1))
+                            property_data['floor_number'] = floor_number
+                            self.logger.info(f"[HOMES] 建物ページから階数を取得: {floor_number}階")
+                            
+                            # 総階数も取得（"8階建"のような形式の場合）
+                            total_floors_str = match.group(2)
+                            if '階建' in total_floors_str:
+                                total_floors_match = re.search(r'(\d+)階建', total_floors_str)
+                                if total_floors_match:
+                                    total_floors = int(total_floors_match.group(1))
+                                    property_data['total_floors'] = total_floors
+                                    self.logger.info(f"[HOMES] 建物ページから総階数を取得: {total_floors}階建")
+            
             if room_number:
                 property_data['room_number'] = room_number
             
@@ -686,6 +820,14 @@ class HomesScraper(BaseScraper):
             # 詳細情報（テーブル）
             table_details = self._extract_property_details_from_table(soup)
             property_data.update(table_details)
+            
+            # 面積が取得できなかった場合のフォールバック処理
+            if 'area' not in property_data:
+                # ページ全体から面積を探す
+                area_value = self._extract_area_from_page(soup, page_text)
+                if area_value:
+                    property_data['area'] = area_value
+                    self.logger.info(f"[HOMES] フォールバック処理で面積を取得: {area_value}㎡")
             
             # 建物ページの場合、面積情報の妥当性を確認
             if is_building_page and 'area' in property_data:
