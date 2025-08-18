@@ -726,6 +726,10 @@ export const ListingManagement: React.FC = () => {
                             <Typography variant="body2">{selectedListing.building.total_floors}階建</Typography>
                           </Grid>
                           <Grid item xs={4}>
+                            <Typography variant="caption" color="text.secondary">総戸数</Typography>
+                            <Typography variant="body2">{selectedListing.building.total_units ? `${selectedListing.building.total_units}戸` : '-'}</Typography>
+                          </Grid>
+                          <Grid item xs={4}>
                             <Typography variant="caption" color="text.secondary">構造</Typography>
                             <Typography variant="body2">{selectedListing.building.construction_type || '-'}</Typography>
                           </Grid>

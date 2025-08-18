@@ -347,6 +347,7 @@ class BaseScraper(ABC):
             seen_urls = set()  # 既に発見した物件のURLを記録
             previous_page_urls = set()  # 前ページの物件URL
             duplicate_page_count = 0  # 完全に重複したページの連続回数
+            max_page = None  # 最大ページ数（事前に取得できた場合）
             
             # 収集フェーズを示すフラグ
             self._scraping_stats['phase'] = 'collecting'  # 第1段階: 収集中
@@ -383,7 +384,7 @@ class BaseScraper(ABC):
                         self.log_warning(f'ページ {page} の取得に失敗')
                         consecutive_empty_pages += 1
                         if consecutive_empty_pages >= max_consecutive_empty:
-                            self.logger.info("連続してページ取得に失敗したため終了")
+                            self.logger.info("連続してページ取得に失敗したため終了（最終ページを超えた可能性があります）")
                             break
                         page += 1
                         continue
@@ -395,13 +396,26 @@ class BaseScraper(ABC):
                     self.logger.info(f"[DEBUG] parse_property_list呼び出し後: {len(properties) if properties else 0}件")
                     debug_log(f"[{self.source_site}] parse_property_list呼び出し後: {len(properties) if properties else 0}件")
                     
+                    # 最初のページで最大ページ数を取得（サブクラスで実装されている場合）
+                    if page == 1 and max_page is None:
+                        if hasattr(self, 'get_max_page_from_list') and callable(getattr(self, 'get_max_page_from_list')):
+                            max_page = self.get_max_page_from_list(soup)
+                            if max_page:
+                                self.logger.info(f"最大ページ数を取得: {max_page}ページ")
+                    
+                    # ページ終端の判定フラグ
+                    is_final_page = False
+                    
+                    # 最大ページ数が分かっている場合は、それを超えたら終了
+                    if max_page and page >= max_page:
+                        self.logger.info(f"最終ページ（{page}/{max_page}ページ）に到達しました")
+                        is_final_page = True
+                    
                     # サブクラスでページ終端判定メソッドが実装されている場合は使用
-                    if hasattr(self, 'is_last_page') and callable(getattr(self, 'is_last_page')):
+                    elif hasattr(self, 'is_last_page') and callable(getattr(self, 'is_last_page')):
                         if self.is_last_page(soup):
                             self.logger.info(f"最終ページ（{page}ページ）を検出しました")
-                            # propertiesがある場合は処理を続行、その後終了
-                            if not properties:
-                                break
+                            is_final_page = True
                     if not properties:
                         self.logger.info(f"ページ {page}: 物件が見つかりませんでした")
                         consecutive_empty_pages += 1
@@ -440,11 +454,10 @@ class BaseScraper(ABC):
                     # 一覧ページ取得ごとに進捗を更新
                     self._update_progress()
                     
-                    # サブクラスでページ終端判定メソッドが実装されている場合はチェック
-                    if hasattr(self, 'is_last_page') and callable(getattr(self, 'is_last_page')):
-                        if self.is_last_page(soup):
-                            self.logger.info(f"最終ページのため収集を終了")
-                            break
+                    # 最終ページの場合は、現在のページの物件を処理した後で終了
+                    if is_final_page:
+                        self.logger.info(f"最終ページのため、このページの処理後に収集を終了します")
+                        break
                     
                     page += 1
                     self.logger.info(f"[DEBUG] ループ終了、次のページ: {page}")
@@ -748,9 +761,8 @@ class BaseScraper(ABC):
                     "rolled back due to a previous exception" in str(e)):
                     try:
                         self.session.rollback()
-                        # 新しいトランザクションを開始
-                        self.session.begin()
-                        self.logger.info("トランザクションをロールバックし、新しいトランザクションを開始しました")
+                        # トランザクションは自動的に開始される
+                        self.logger.info("トランザクションをロールバックしました")
                     except:
                         pass
                 continue
@@ -2665,9 +2677,7 @@ class BaseScraper(ABC):
                             # 少し待機してからリトライ
                             import time
                             time.sleep(0.1 * (attempt + 1))
-                            # トランザクションを再開
-                            self.session.begin()
-                            # 再度同じ更新を試みる
+                            # 再度同じ更新を試みる（トランザクションは自動的に開始される）
                             master_property = self.session.query(MasterProperty).filter(
                                 MasterProperty.id == master_property.id
                             ).first()
@@ -2698,10 +2708,8 @@ class BaseScraper(ABC):
             if "duplicate key value violates unique constraint" in str(e):
                 self.logger.warning(f"Duplicate property detected, rolling back and retrying")
                 self.session.rollback()
-                # 新しいトランザクションを開始
-                self.session.begin()
                 
-                # 再度検索（同じ条件で）
+                # 再度検索（同じ条件で）（トランザクションは自動的に開始される）
                 return self.get_or_create_master_property(
                     building, room_number, floor_number, area, 
                     layout, direction, balcony_area, url
@@ -2951,6 +2959,8 @@ class BaseScraper(ABC):
                         detail_info.append(f"{master_property.area}㎡")
                     if master_property.layout:
                         detail_info.append(f"{master_property.layout}")
+                    if master_property.direction:
+                        detail_info.append(f"{master_property.direction}向き")
                 
                 detail_str = ' / '.join(detail_info) if detail_info else ''
                 
@@ -2968,7 +2978,36 @@ class BaseScraper(ABC):
             elif other_changed:
                 update_type = 'other_updates'
                 update_details = ', '.join(changed_fields)  # 変更内容を記録
-                self.logger.info(f"その他更新: {url} - 詳細: {update_details}")
+                
+                # 物件と建物の詳細情報を含むログメッセージ
+                building_name = kwargs.get('listing_building_name', listing.listing_building_name or '')
+                if master_property and master_property.building:
+                    building_name = master_property.building.normalized_name or building_name
+                
+                detail_info = []
+                if master_property:
+                    if master_property.floor_number:
+                        detail_info.append(f"{master_property.floor_number}階")
+                    if master_property.area:
+                        detail_info.append(f"{master_property.area}㎡")
+                    if master_property.layout:
+                        detail_info.append(f"{master_property.layout}")
+                    if master_property.direction:
+                        detail_info.append(f"{master_property.direction}向き")
+                
+                detail_str = ' / '.join(detail_info) if detail_info else ''
+                
+                # 建物名と物件詳細を含む自然なログメッセージ
+                if building_name:
+                    if detail_str:
+                        self.logger.info(f"その他更新: {building_name} {detail_str} - 詳細: {update_details} - {url}")
+                    else:
+                        self.logger.info(f"その他更新: {building_name} - 詳細: {update_details} - {url}")
+                else:
+                    if detail_str:
+                        self.logger.info(f"その他更新: {detail_str} - 詳細: {update_details} - {url}")
+                    else:
+                        self.logger.info(f"その他更新: {url} - 詳細: {update_details}")
             else:
                 update_type = 'refetched_unchanged'
                 self.logger.debug(f"変更なし: {url}")
@@ -3088,16 +3127,23 @@ class BaseScraper(ABC):
                 self.session.add(listing)
                 self.session.flush()
             except Exception as e:
-                # URL重複エラーの場合は、再度検索して既存レコードを使用
-                if "property_listings_url_key" in str(e):
+                # URL重複エラーまたはsite_property_id重複エラーの場合は、再度検索して既存レコードを使用
+                if "property_listings_url_key" in str(e) or "property_listings_site_property_unique" in str(e):
                     self.session.rollback()
-                    self.logger.debug(f"URL重複エラー検出。既存レコードを再検索...")
+                    self.logger.debug(f"重複エラー検出。既存レコードを再検索... エラー: {str(e)}")
                     
                     # 再度検索（他のプロセスが同時に作成した可能性）
-                    listing = self.session.query(PropertyListing).filter(
-                        PropertyListing.url == url,
-                        PropertyListing.source_site == self.source_site
-                    ).first()
+                    # site_property_idがある場合はそれで検索、なければURLで検索
+                    if site_property_id:
+                        listing = self.session.query(PropertyListing).filter(
+                            PropertyListing.source_site == self.source_site,
+                            PropertyListing.site_property_id == site_property_id
+                        ).first()
+                    else:
+                        listing = self.session.query(PropertyListing).filter(
+                            PropertyListing.url == url,
+                            PropertyListing.source_site == self.source_site
+                        ).first()
                     
                     if listing:
                         print(f"  → 既存レコード発見 (ID: {listing.id}, 物件ID: {listing.master_property_id})")
@@ -3650,7 +3696,6 @@ class BaseScraper(ABC):
                     self.logger.info("save_property_common: トランザクションが無効な状態のため、ロールバックして再開")
                     try:
                         self.session.rollback()
-                        self.session.begin()
                     except:
                         pass
             
@@ -4037,7 +4082,6 @@ class BaseScraper(ABC):
                 # トランザクションエラーの場合はロールバックして新しいトランザクションを開始
                 try:
                     self.session.rollback()
-                    self.session.begin()
                     self.logger.info("save_property_common: トランザクションエラーのためロールバックし、新しいトランザクションを開始")
                 except Exception as rollback_error:
                     self.logger.warning(f"ロールバック/再開エラー: {rollback_error}")

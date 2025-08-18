@@ -202,6 +202,7 @@ async def get_listing_detail(
             'normalized_name': building.normalized_name,
             'address': building.address,
             'total_floors': building.total_floors,
+            'total_units': building.total_units,
             'built_year': building.built_year,
         } if building else None,
         'listing_floor_number': listing.listing_floor_number,

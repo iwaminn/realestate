@@ -544,10 +544,16 @@ class NomuScraper(BaseScraper):
             
             for row in rows:
                 cells = row.find_all(["th", "td"])
-                if len(cells) >= 2:
-                    label = cells[0].get_text(strip=True)
-                    value = cells[1].get_text(strip=True)
-                    self._process_mansion_field(label, value, detail_data)
+                # 複数のth/tdペアがある行に対応（例：築年月と総戸数が同じ行にある）
+                i = 0
+                while i < len(cells) - 1:
+                    if cells[i].name == "th" and cells[i + 1].name == "td":
+                        label = cells[i].get_text(strip=True)
+                        value = cells[i + 1].get_text(strip=True)
+                        self._process_mansion_field(label, value, detail_data)
+                        i += 2  # 次のペアへ
+                    else:
+                        i += 1  # 次のセルへ
         else:
             # 旧フォーマット: tableMansionクラス
             mansion_table = soup.find("table", {"class": "tableMansion"})

@@ -90,6 +90,7 @@ def update_listing_from_detail(listing, detail_info: Dict[str, Any]) -> None:
         'summary_remarks': 'summary_remarks',
         'floor_number': 'listing_floor_number',
         'total_floors': 'listing_total_floors',
+        'total_units': 'listing_total_units',  # 総戸数を追加
         'area': 'listing_area',
         'layout': 'listing_layout',
         'direction': 'listing_direction',

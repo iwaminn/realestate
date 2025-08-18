@@ -927,6 +927,11 @@ async def attach_property_to_building(
         
         db.commit()
         
+        # 建物構成が変わったため、重複建物のキャッシュをクリア
+        from .admin.duplicates import clear_duplicate_buildings_cache
+        clear_duplicate_buildings_cache()
+        logger.info("建物重複管理のキャッシュをクリアしました")
+        
         logger.info(f"物件 {property_id} を建物 {current_building_id} から {new_building_id} に移動し、両建物の多数決処理を完了しました")
         
         return {

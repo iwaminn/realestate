@@ -256,7 +256,7 @@ async def get_duplicate_buildings(
     
     phase_times['exclusion_fetch'] = time.time() - phase_start
     
-    # フェーズ4: 重複候補の検出と類似度計算
+    # フェーズ4: 重複候補の検出と類似度計算（推移的グループ化対応）
     phase_start = time.time()
     
     duplicate_groups = []
@@ -266,10 +266,17 @@ async def get_duplicate_buildings(
     candidate_fetch_times = []
     similarity_calc_times = []
     
+    # 推移的グループを構築するための隣接リストを準備
+    # key: building_id, value: dict of {related_building_id: similarity}
+    similarity_graph = {}
+    
+    # まず全ての類似関係を構築
+    all_building_ids = [b[0].id for b in buildings_with_count]
+    for building_id in all_building_ids:
+        similarity_graph[building_id] = {}
+    
+    # フェーズ4-1: 全ての類似関係を構築
     for idx, (building1, count1) in enumerate(buildings_with_count):
-        if building1.id in processed_ids:
-            continue
-        
         building_start = time.time()
         
         # 建物名の共通部分を先に抽出（グループ検出の改善）
@@ -286,8 +293,7 @@ async def get_duplicate_buildings(
         if len(base_name) >= 5:
             same_base_buildings = db.query(Building).filter(
                 Building.normalized_name.like(f"{base_name}%"),
-                Building.id != building1.id,
-                Building.id.notin_(processed_ids)
+                Building.id != building1.id
             ).all()
             
             # グループ内の全建物IDを記録（後で重複しないようにする）
@@ -383,7 +389,6 @@ async def get_duplicate_buildings(
         ).filter(
             and_(
                 Building.id != building1.id,
-                Building.id.notin_(processed_ids),
                 or_(*candidate_conditions)  # いずれかの条件に一致
             )
         ).group_by(Building.id).having(
@@ -395,16 +400,13 @@ async def get_duplicate_buildings(
         candidate_fetch_times.append(time.time() - building_start)
         similarity_start = time.time()
         
-        # 詳細な類似度計算
-        candidates = []
-        excluded_count = 0
+        # 詳細な類似度計算とグラフ構築
         for building2, count2 in candidate_buildings:
             # 除外ペアをチェック
             is_excluded = (building1.id, building2.id) in excluded_pairs
             
             # 除外されている場合はスキップ
             if is_excluded:
-                excluded_count += 1
                 continue
             
             # 類似度を計算（統合履歴も考慮）
@@ -415,54 +417,99 @@ async def get_duplicate_buildings(
                 logger.warning(f"類似度計算が遅い: {calc_time:.2f}秒 (建物1: {building1.id}, 建物2: {building2.id})")
             
             if similarity >= min_similarity:
-                candidate_info = {
-                    "id": building2.id,
-                    "normalized_name": building2.normalized_name,
-                    "address": building2.address,
-                    "total_floors": building2.total_floors,
-                    "total_units": building2.total_units,  # 総戸数を追加
-                    "built_year": building2.built_year,
-                    "built_month": building2.built_month,
-                    "property_count": count2 or 0,
-                    "similarity": round(similarity, 3),
-                    "is_excluded": False  # 除外済みは既にスキップしているのでFalse
-                }
-                candidates.append(candidate_info)
+                # グラフに辺を追加（双方向）
+                similarity_graph[building1.id][building2.id] = similarity
                 
-                # 候補建物はグループ内の建物として記録
-                group_building_ids.add(building2.id)
+                if building2.id not in similarity_graph:
+                    similarity_graph[building2.id] = {}
+                similarity_graph[building2.id][building1.id] = similarity
         
-        if candidates:
-            # 候補を類似度でソート（除外済みは後ろに）
-            candidates_sorted = sorted(candidates, 
-                key=lambda x: (x["is_excluded"], -x["similarity"]))
+        similarity_calc_times.append(time.time() - similarity_start)
+    
+    phase_times['similarity_graph_build'] = time.time() - phase_start
+    
+    # フェーズ4-2: 連結成分を見つけて推移的グループを構築
+    phase_start = time.time()
+    
+    def find_connected_components(graph):
+        """グラフから連結成分を見つける（深さ優先探索）"""
+        visited = set()
+        components = []
+        
+        def dfs(node, component):
+            visited.add(node)
+            component.add(node)
+            for neighbor in graph.get(node, {}):
+                if neighbor not in visited:
+                    dfs(neighbor, component)
+        
+        for node in graph:
+            if node not in visited:
+                component = set()
+                dfs(node, component)
+                if len(component) > 1:  # 単独の建物は除外
+                    components.append(component)
+        
+        return components
+    
+    # 連結成分を見つける
+    connected_components = find_connected_components(similarity_graph)
+    
+    # 各連結成分をグループとして構築
+    duplicate_groups = []
+    for component in connected_components:
+        if len(duplicate_groups) >= limit:
+            break
+            
+        # コンポーネント内の建物情報を取得
+        component_buildings = []
+        for building_id in component:
+            # buildings_with_countから建物情報を探す
+            building_info = None
+            for building, count in buildings_with_count:
+                if building.id == building_id:
+                    building_info = (building, count)
+                    break
+            
+            if building_info:
+                component_buildings.append({
+                    "id": building_info[0].id,
+                    "normalized_name": building_info[0].normalized_name,
+                    "address": building_info[0].address,
+                    "total_floors": building_info[0].total_floors,
+                    "total_units": building_info[0].total_units if hasattr(building_info[0], 'total_units') else None,
+                    "built_year": building_info[0].built_year,
+                    "built_month": building_info[0].built_month,
+                    "property_count": building_info[1] or 0
+                })
+        
+        if len(component_buildings) > 1:
+            # 物件数が最も多い建物をprimaryとする
+            component_buildings.sort(key=lambda x: x["property_count"], reverse=True)
+            primary = component_buildings[0]
+            candidates = []
+            
+            # 他の建物をcandidatesとして追加（similarityも含める）
+            for building in component_buildings[1:]:
+                # グラフから類似度を取得
+                similarity = similarity_graph.get(primary["id"], {}).get(building["id"], 0)
+                building["similarity"] = round(similarity, 3)
+                building["is_excluded"] = False
+                candidates.append(building)
+            
+            # 類似度でソート
+            candidates.sort(key=lambda x: -x["similarity"])
             
             duplicate_groups.append({
-                "primary": {
-                    "id": building1.id,
-                    "normalized_name": building1.normalized_name,
-                    "address": building1.address,
-                    "total_floors": building1.total_floors,
-                    "total_units": building1.total_units,  # 総戸数を追加
-                    "built_year": building1.built_year,
-                    "built_month": building1.built_month,
-                    "property_count": count1 or 0
-                },
-                "candidates": candidates_sorted,
+                "primary": primary,
+                "candidates": candidates,
                 "total_candidates": len(candidates),
-                "excluded_count": excluded_count,
-                "group_info": f"建物群: {len(candidates)}件（除外済み: {excluded_count}件）"
+                "excluded_count": 0,
+                "group_info": f"推移的グループ: 合計{len(component_buildings)}件の建物"
             })
-            # グループ内の全建物をprocessed_idsに追加（重複処理を防ぐ）
-            processed_ids.update(group_building_ids)
-            
-            similarity_calc_times.append(time.time() - similarity_start)
-            
-            # limit に達したら終了
-            if len(duplicate_groups) >= limit:
-                break
     
-    phase_times['duplicate_detection'] = time.time() - phase_start
+    phase_times['connected_components'] = time.time() - phase_start
+    phase_times['duplicate_detection'] = phase_times['similarity_graph_build'] + phase_times['connected_components']
     phase_times['avg_candidate_fetch'] = sum(candidate_fetch_times) / len(candidate_fetch_times) if candidate_fetch_times else 0
     phase_times['avg_similarity_calc'] = sum(similarity_calc_times) / len(similarity_calc_times) if similarity_calc_times else 0
     phase_times['total_buildings_processed'] = len(candidate_fetch_times)

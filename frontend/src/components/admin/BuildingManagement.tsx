@@ -313,12 +313,13 @@ export const BuildingManagement: React.FC = () => {
         });
       }
       
-      // 最高スコアの候補をデフォルト選択
-      if (response.data.candidates && response.data.candidates.length > 0) {
-        setSelectedBuildingId(response.data.candidates[0].id);
-        setCreateNewBuilding(false);
-      } else {
+      // 候補がない場合は新規建物作成タブを選択
+      if (!response.data.candidates || response.data.candidates.length === 0) {
         setCreateNewBuilding(true);
+      } else {
+        setCreateNewBuilding(false);
+        // デフォルトでは何も選択しない
+        setSelectedBuildingId(null);
       }
     } catch (error: any) {
       console.error('候補取得に失敗しました:', error);

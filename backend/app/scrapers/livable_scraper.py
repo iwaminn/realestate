@@ -207,7 +207,7 @@ class LivableScraper(BaseScraper):
         if link:
             link_text = link.get_text(' ', strip=True)
             # パターン: 数字/数字の後、物件タイプの前
-            match = re.search(r'\d+/\d+<?>\s*(.*?)\s*(?:中古マンション|新築マンション)', link_text)
+            match = re.search(r'\d+/\d+<?>\s*(.*?)(?:\s*（間取り）)?\s*(?:中古マンション|新築マンション)', link_text)
             if match:
                 building_name = match.group(1).strip()
         
@@ -216,11 +216,12 @@ class LivableScraper(BaseScraper):
             img = item.select_one('img[alt]')
             if img:
                 alt = img.get('alt', '').strip()
-                # alt属性から建物名を抽出（「(外観)」などを除去）
-                if alt and '外観' not in alt:
+                # alt属性から建物名を抽出（「(外観)」「（間取り）」などを除去）
+                if alt and '外観' not in alt and '間取り' not in alt:
                     building_name = alt
                 elif alt:
-                    building_name = re.sub(r'\(.*?\)', '', alt).strip()
+                    # （外観）、（間取り）などのカッコ付きテキストを除去
+                    building_name = re.sub(r'[（(][^）)]*[）)]', '', alt).strip()
         
         if building_name:
             property_data['building_name_from_list'] = building_name
