@@ -123,9 +123,13 @@ class HomesScraper(BaseScraper):
             return BeautifulSoup(response.content, 'html.parser')
             
         except Exception as e:
-            self.logger.error(f"Failed to fetch {url}: {type(e).__name__}: {e}")
+            # 404エラーの場合も警告として記録（URL構造が変わった可能性もある）
+            if hasattr(e, 'response') and e.response is not None and e.response.status_code == 404:
+                self.logger.warning(f"[HOMES] ページが見つかりません（404）: {url} - 最終ページを超えたか、URL構造が変更された可能性があります")
+            else:
+                self.logger.error(f"Failed to fetch {url}: {type(e).__name__}: {e}")
             if hasattr(e, 'response') and e.response is not None:
-                self.logger.error(f"Response headers: {dict(e.response.headers)}")
+                self.logger.debug(f"Response headers: {dict(e.response.headers)}")
             return None
     
     def get_search_url(self, area: str, page: int = 1) -> str:
@@ -779,47 +783,64 @@ class HomesScraper(BaseScraper):
             最終ページの場合True
         """
         try:
-            # ページネーション要素を探す
-            # HOMESは通常、ページネーションがul.paginationやdiv.pagerなどで実装されている
+            # HOMESの新しいページネーション構造に対応
+            # ol.pagination__list のような構造を確認
             
-            # 方法1: 「次へ」ボタンの有無で判定
-            next_buttons = soup.select('a[rel="next"], a.next, .pagination a:contains("次へ"), .pager a:contains("次へ")')
-            if next_buttons:
-                # 次へボタンが無効化されているかチェック
-                for btn in next_buttons:
-                    # disabledクラスや、href属性がない場合は最終ページ
-                    if 'disabled' in btn.get('class', []) or not btn.get('href'):
-                        return True
-                # 有効な次へボタンがある場合は最終ページではない
+            # 方法1: 次へボタンの有無と状態で判定（最も確実）
+            # HOMESでは「次へ」リンクがない、または無効化されている場合が最終ページ
+            next_link = soup.select_one('a[aria-label*="次"], a[title*="次"], .pagination__item--next a, .pagination a[rel="next"]')
+            if next_link:
+                # href属性がない、または#のみの場合は最終ページ
+                href = next_link.get('href', '')
+                if not href or href == '#':
+                    self.logger.info("[HOMES] 次へリンクが無効化されているため最終ページと判定")
+                    return True
+                # 次へリンクが有効な場合は最終ページではない
                 return False
             
-            # 方法2: ページ番号リストから判定
-            page_links = soup.select('.pagination a, .pager a, .pageNation a')
-            if page_links:
-                # 現在のページ番号を取得
-                current_page_elem = soup.select_one('.pagination .active, .pager .current, .pageNation .current')
-                if current_page_elem:
-                    try:
-                        current_page = int(current_page_elem.get_text(strip=True))
-                        # 最大ページ番号を取得
-                        max_page = current_page
-                        for link in page_links:
-                            text = link.get_text(strip=True)
-                            if text.isdigit():
-                                page_num = int(text)
-                                if page_num > max_page:
-                                    max_page = page_num
-                        # 現在のページが最大ページなら最終ページ
-                        return current_page >= max_page
-                    except (ValueError, AttributeError):
-                        pass
+            # 方法2: 現在のページと最大ページの比較
+            # ページ番号のリストを取得
+            pagination_items = soup.select('.pagination__item, .pagination li, .pager li')
+            if pagination_items:
+                current_page = None
+                max_page_num = 0
+                
+                for item in pagination_items:
+                    # 現在のページを探す（active, current, selected などのクラスを持つ）
+                    if any(cls in item.get('class', []) for cls in ['active', 'current', 'selected', 'is-current']):
+                        try:
+                            current_text = item.get_text(strip=True)
+                            if current_text.isdigit():
+                                current_page = int(current_text)
+                        except (ValueError, AttributeError):
+                            pass
+                    
+                    # ページ番号を取得
+                    link = item.select_one('a')
+                    if link:
+                        page_text = link.get_text(strip=True)
+                        if page_text.isdigit():
+                            try:
+                                page_num = int(page_text)
+                                max_page_num = max(max_page_num, page_num)
+                            except ValueError:
+                                pass
+                
+                # 現在のページが最大ページと同じかそれ以上なら最終ページ
+                if current_page and max_page_num > 0:
+                    if current_page >= max_page_num:
+                        self.logger.info(f"[HOMES] 現在のページ({current_page})が最大ページ({max_page_num})のため最終ページと判定")
+                        return True
             
-            # 方法3: 物件がない場合は最終ページとみなす
-            building_blocks = soup.select('.mod-mergeBuilding--sale')
-            if not building_blocks:
-                # 物件が1件もない場合は最終ページ（またはエラーページ）
-                self.logger.info("[HOMES] 物件が見つからないため最終ページと判定")
-                return True
+            # 方法3: 「次へ」要素自体が存在しない場合
+            # ページネーションに次へボタンが表示されていない = 最終ページ
+            pagination_container = soup.select_one('.pagination, .pager, nav[aria-label*="ページ"]')
+            if pagination_container:
+                # ページネーションはあるが、次へボタンがない
+                has_next = bool(pagination_container.select('a[aria-label*="次"], a[title*="次"], .next, [class*="next"]'))
+                if not has_next:
+                    self.logger.info("[HOMES] ページネーションに次へボタンがないため最終ページと判定")
+                    return True
             
             # 判定できない場合はFalse（安全側に倒す）
             return False

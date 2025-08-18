@@ -23,7 +23,8 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   FormControlLabel,
-  Checkbox
+  Checkbox,
+  Tooltip,
 } from '@mui/material';
 import { 
   Apartment as ApartmentIcon,
@@ -267,22 +268,22 @@ const BuildingPropertiesPage: React.FC = () => {
     if (diffDays === 0) {
       return '本日';
     } else if (diffDays === 1) {
-      return '1日';
+      return '1日前';
     } else if (diffDays < 7) {
-      return `${diffDays}日`;
+      return `${diffDays}日前`;
     } else if (diffDays < 30) {
       const weeks = Math.floor(diffDays / 7);
-      return `${weeks}週間`;
+      return `${weeks}週間前`;
     } else if (diffDays < 365) {
       const months = Math.floor(diffDays / 30);
-      return `${months}ヶ月`;
+      return `${months}ヶ月前`;
     } else {
       const years = Math.floor(diffDays / 365);
       const remainingMonths = Math.floor((diffDays % 365) / 30);
       if (remainingMonths > 0) {
-        return `${years}年${remainingMonths}ヶ月`;
+        return `${years}年${remainingMonths}ヶ月前`;
       }
-      return `${years}年`;
+      return `${years}年前`;
     }
   };
 
@@ -420,86 +421,137 @@ const BuildingPropertiesPage: React.FC = () => {
         {buildingInfo.normalized_name}
       </Typography>
 
-      {/* 建物の統計情報 */}
+      {/* 建物の基本情報 */}
+      {building && (
+        <Paper elevation={2} sx={{ p: 3, mb: 3 }}>
+          <Grid container spacing={3}>
+            <Grid item xs={12} sm={6} md={3}>
+              <Box>
+                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                  築年月
+                </Typography>
+                <Typography variant="h6">
+                  {building.built_year ? (
+                    <>
+                      {building.built_year}年{building.built_month ? `${building.built_month}月` : ''}
+                      <Typography component="span" variant="body1" color="text.secondary" sx={{ ml: 1 }}>
+                        （築{new Date().getFullYear() - building.built_year}年）
+                      </Typography>
+                    </>
+                  ) : '不明'}
+                </Typography>
+              </Box>
+            </Grid>
+            
+            <Grid item xs={12} sm={6} md={3}>
+              <Box>
+                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                  総戸数
+                </Typography>
+                <Typography variant="h6">
+                  {building.total_units ? `${building.total_units}戸` : '-'}
+                </Typography>
+              </Box>
+            </Grid>
+            
+            <Grid item xs={12} sm={6} md={3}>
+              <Box>
+                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                  総階数
+                </Typography>
+                <Typography variant="h6">
+                  {building.total_floors ? `${building.total_floors}階` : maxFloorFromProperties ? `${maxFloorFromProperties}階以上` : '-'}
+                </Typography>
+              </Box>
+            </Grid>
+            
+            <Grid item xs={12} sm={6} md={3}>
+              <Box>
+                <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                  所在地
+                </Typography>
+                <Typography variant="h6">
+                  {building.address || '不明'}
+                </Typography>
+              </Box>
+            </Grid>
+
+          </Grid>
+        </Paper>
+      )}
+
+      {/* 販売状況 */}
       {stats && (
         <Paper elevation={2} sx={{ p: 3, mb: 4 }}>
-          <Typography variant="h6" gutterBottom>建物情報</Typography>
+          <Typography variant="h6" gutterBottom>販売状況</Typography>
           <Grid container spacing={3}>
-            <Grid item xs={6} sm={2.4}>
+            <Grid item xs={12} sm={6} md={3}>
               <Box textAlign="center">
-                <Typography variant="h4" color="primary">
+                <Typography variant="h3" color="primary">
+                  {stats.price_range.avg && stats.area_range.min && stats.area_range.max 
+                    ? Math.round(stats.price_range.avg / ((stats.area_range.min + stats.area_range.max) / 2 / 3.30578)).toLocaleString()
+                    : '-'}
+                </Typography>
+                <Typography variant="body1" color="text.secondary">
+                  平均坪単価（万円）
+                </Typography>
+              </Box>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <Box textAlign="center">
+                <Typography variant="h3" color="primary">
                   {stats.total_units}
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body1" color="text.secondary">
                   販売中の戸数
                 </Typography>
               </Box>
             </Grid>
-            <Grid item xs={6} sm={2.4}>
-              <Box textAlign="center">
-                <Typography variant="h4" color="primary">
-                  {building?.total_units ? `${building.total_units}` : '-'}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  総戸数
-                </Typography>
-              </Box>
-            </Grid>
-            <Grid item xs={6} sm={2.4}>
-              <Box textAlign="center">
-                <Typography variant="h4" color="primary">
-                  {stats.total_floors ? `${stats.total_floors}` : maxFloorFromProperties ? `${maxFloorFromProperties}+` : '-'}
-                </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  {stats.total_floors ? '階建て' : maxFloorFromProperties ? '階以上（推定）' : '階数情報なし'}
-                </Typography>
-              </Box>
-            </Grid>
-            <Grid item xs={6} sm={2.4}>
+            <Grid item xs={12} sm={6} md={3}>
               <Box textAlign="center">
                 {stats.price_range.min === stats.price_range.max ? (
-                  <Typography variant="h4" color="primary">
+                  <Typography variant="h3" color="primary">
                     {formatPrice(stats.price_range.min)}
                   </Typography>
                 ) : (
-                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <Typography variant="h6" color="primary" sx={{ fontWeight: 'medium' }}>
+                  <>
+                    <Typography variant="h5" color="primary">
                       {formatPrice(stats.price_range.min)}
                     </Typography>
-                    <Typography variant="h6" color="primary">
+                    <Typography variant="body2" color="text.secondary">
                       〜
                     </Typography>
-                    <Typography variant="h6" color="primary" sx={{ fontWeight: 'medium' }}>
+                    <Typography variant="h5" color="primary">
                       {formatPrice(stats.price_range.max)}
                     </Typography>
-                  </Box>
+                  </>
                 )}
-                <Typography variant="body2" color="text.secondary">
+                <Typography variant="body1" color="text.secondary">
                   価格{stats.price_range.min === stats.price_range.max ? '' : '帯'}
                 </Typography>
               </Box>
             </Grid>
-            <Grid item xs={6} sm={2.4}>
+            <Grid item xs={12} sm={6} md={3}>
               <Box textAlign="center">
                 {stats.area_range.min === stats.area_range.max ? (
-                  <Typography variant="h4" color="primary">
-                    {stats.area_range.min.toFixed(1)}㎡
+                  <Typography variant="h3" color="primary">
+                    {stats.area_range.min.toFixed(1)}
                   </Typography>
                 ) : (
-                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <Typography variant="h6" color="primary" sx={{ fontWeight: 'medium' }}>
-                      {stats.area_range.min.toFixed(1)}㎡
+                  <>
+                    <Typography variant="h5" color="primary">
+                      {stats.area_range.min.toFixed(1)}
                     </Typography>
-                    <Typography variant="h6" color="primary">
+                    <Typography variant="body2" color="text.secondary">
                       〜
                     </Typography>
-                    <Typography variant="h6" color="primary" sx={{ fontWeight: 'medium' }}>
-                      {stats.area_range.max.toFixed(1)}㎡
+                    <Typography variant="h5" color="primary">
+                      {stats.area_range.max.toFixed(1)}
                     </Typography>
-                  </Box>
+                  </>
                 )}
-                <Typography variant="body2" color="text.secondary">
-                  専有面積{stats.area_range.min === stats.area_range.max ? '' : '範囲'}
+                <Typography variant="body1" color="text.secondary">
+                  専有面積（㎡）
                 </Typography>
               </Box>
             </Grid>
@@ -551,41 +603,72 @@ const BuildingPropertiesPage: React.FC = () => {
         />
       </Box>
 
+      {/* モバイル時のスクロールヒント */}
+      <Box sx={{ display: { xs: 'block', md: 'none' }, mb: 1 }}>
+        <Typography variant="caption" color="text.secondary">
+          ← 左右にスクロールできます →
+        </Typography>
+      </Box>
+
       {viewMode === 'table' ? (
-        <TableContainer component={Paper}>
-          <Table>
-            <TableHead>
+        <TableContainer 
+          component={Paper} 
+          sx={{ 
+            overflowX: 'auto',
+            // スクロールバーのスタイリング
+            '&::-webkit-scrollbar': {
+              height: 8,
+              width: 8,
+            },
+            '&::-webkit-scrollbar-track': {
+              backgroundColor: '#f1f1f1',
+            },
+            '&::-webkit-scrollbar-thumb': {
+              backgroundColor: '#888',
+              borderRadius: 4,
+            },
+            '&::-webkit-scrollbar-thumb:hover': {
+              backgroundColor: '#555',
+            },
+            // モバイルでスクロール可能であることを示す影
+            '@media (max-width: 900px)': {
+              boxShadow: 'inset -1px 0 0 0 rgba(0,0,0,0.1)',
+            }
+          }}
+        >
+          <Table sx={{ minWidth: { xs: 800, md: 'auto' } }}>
+            <TableHead sx={{
+              position: 'sticky',
+              top: 0,
+              backgroundColor: 'background.paper',
+              zIndex: 2,
+              '& th': {
+                backgroundColor: 'background.paper',
+                fontWeight: 'bold'
+              }
+            }}>
               <TableRow>
-                <TableCell>
-                  <TableSortLabel
-                    active={orderBy === 'earliest_published_at'}
-                    direction={orderBy === 'earliest_published_at' ? order : 'asc'}
-                    onClick={() => handleRequestSort('earliest_published_at')}
-                  >
-                    売出確認日
-                  </TableSortLabel>
-                </TableCell>
-                <TableCell align="right">経過日数</TableCell>
-                <TableCell>販売終了日</TableCell>
-                <TableCell align="right">
+                <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 50, sm: 'auto' } }}>
                   <TableSortLabel
                     active={orderBy === 'floor_number'}
                     direction={orderBy === 'floor_number' ? order : 'asc'}
                     onClick={() => handleRequestSort('floor_number')}
                   >
-                    階数
+                    <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>階数</Box>
+                    <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>階</Box>
                   </TableSortLabel>
                 </TableCell>
-                <TableCell align="right">
+                <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 60, sm: 'auto' } }}>
                   <TableSortLabel
                     active={orderBy === 'area'}
                     direction={orderBy === 'area' ? order : 'asc'}
                     onClick={() => handleRequestSort('area')}
                   >
-                    専有面積
+                    <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>専有面積</Box>
+                    <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>面積</Box>
                   </TableSortLabel>
                 </TableCell>
-                <TableCell>
+                <TableCell sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 60, sm: 'auto' } }}>
                   <TableSortLabel
                     active={orderBy === 'layout'}
                     direction={orderBy === 'layout' ? order : 'asc'}
@@ -594,7 +677,7 @@ const BuildingPropertiesPage: React.FC = () => {
                     間取り
                   </TableSortLabel>
                 </TableCell>
-                <TableCell>
+                <TableCell sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 50, sm: 'auto' } }}>
                   <TableSortLabel
                     active={orderBy === 'direction'}
                     direction={orderBy === 'direction' ? order : 'asc'}
@@ -603,7 +686,7 @@ const BuildingPropertiesPage: React.FC = () => {
                     方角
                   </TableSortLabel>
                 </TableCell>
-                <TableCell align="right">
+                <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 70, sm: 'auto' } }}>
                   <TableSortLabel
                     active={orderBy === 'min_price'}
                     direction={orderBy === 'min_price' ? order : 'asc'}
@@ -612,7 +695,7 @@ const BuildingPropertiesPage: React.FC = () => {
                     価格
                   </TableSortLabel>
                 </TableCell>
-                <TableCell align="right">
+                <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 80, sm: 'auto' } }}>
                   <TableSortLabel
                     active={orderBy === 'price_per_tsubo'}
                     direction={orderBy === 'price_per_tsubo' ? order : 'asc'}
@@ -621,24 +704,44 @@ const BuildingPropertiesPage: React.FC = () => {
                     坪単価
                   </TableSortLabel>
                 </TableCell>
-                <TableCell>掲載サイト</TableCell>
-                <TableCell align="center">操作</TableCell>
+                <TableCell sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 120, sm: 'auto' } }}>
+                  <TableSortLabel
+                    active={orderBy === 'earliest_published_at'}
+                    direction={orderBy === 'earliest_published_at' ? order : 'asc'}
+                    onClick={() => handleRequestSort('earliest_published_at')}
+                  >
+                    <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>売出確認日</Box>
+                    <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>売出日</Box>
+                  </TableSortLabel>
+                </TableCell>
+                {includeInactive && <TableCell sx={{ px: { xs: 1, sm: 2 } }}>販売終了日</TableCell>}
+                <TableCell sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 50, sm: 'auto' } }}>
+                  <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>掲載情報</Box>
+                  <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>掲載</Box>
+                </TableCell>
+                <TableCell align="center" sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 50, sm: 'auto' } }}>操作</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {sortedProperties.map((property) => (
                 <TableRow key={property.id} hover sx={{ opacity: property.sold_at ? 0.7 : 1 }}>
-                  <TableCell component="th" scope="row">
-                    {formatDate(property.earliest_published_at)}
-                  </TableCell>
-                  <TableCell align="right">
-                    {calculateDaysFromPublished(property.earliest_published_at)}
-                  </TableCell>
-                  <TableCell>
-                    {property.sold_at ? formatDate(property.sold_at) : '-'}
-                  </TableCell>
-                  <TableCell align="right">
-                    <Box display="flex" alignItems="center" justifyContent="flex-end">
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.85rem', sm: '0.875rem' } }}>
+                    <Box display="flex" alignItems="center" justifyContent="flex-end" flexWrap="nowrap">
+                      {property.sold_at && (
+                        <Chip
+                          label="終"
+                          size="small"
+                          sx={{ 
+                            mr: 0.5,
+                            backgroundColor: '#d32f2f',
+                            color: 'white',
+                            fontWeight: 'bold',
+                            fontSize: { xs: '0.7rem', sm: '0.75rem' },
+                            height: { xs: 18, sm: 24 },
+                            display: { xs: 'inline-flex', sm: 'none' }
+                          }}
+                        />
+                      )}
                       {property.sold_at && (
                         <Chip
                           label="販売終了"
@@ -647,59 +750,106 @@ const BuildingPropertiesPage: React.FC = () => {
                             mr: 0.5,
                             backgroundColor: '#d32f2f',
                             color: 'white',
-                            fontWeight: 'bold'
+                            fontWeight: 'bold',
+                            display: { xs: 'none', sm: 'inline-flex' }
                           }}
                         />
                       )}
                       {property.is_resale && (
-                        <CachedIcon fontSize="small" color="warning" sx={{ mr: 0.5 }} />
+                        <CachedIcon sx={{ fontSize: { xs: 16, sm: 20 }, color: 'warning.main', mr: 0.5 }} />
                       )}
-                      {property.floor_number ? `${property.floor_number}階` : '-'}
+                      <Box component="span" sx={{ whiteSpace: 'nowrap' }}>
+                        {property.floor_number ? `${property.floor_number}階` : '-'}
+                      </Box>
                     </Box>
                   </TableCell>
-                  <TableCell align="right">
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.85rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
                     {property.area ? `${property.area}㎡` : '-'}
                   </TableCell>
-                  <TableCell>{property.layout || '-'}</TableCell>
-                  <TableCell>{property.direction ? `${property.direction}向き` : '-'}</TableCell>
-                  <TableCell align="right">
-                    {property.sold_at && property.last_sale_price
-                      ? `${formatPrice(property.last_sale_price)}（販売終了時）`
-                      : formatPrice(property.majority_price || property.min_price)}
+                  <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.85rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>{property.layout || '-'}</TableCell>
+                  <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.85rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                    <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>{property.direction ? `${property.direction}向き` : '-'}</Box>
+                    <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.direction || '-'}</Box>
                   </TableCell>
-                  <TableCell align="right">
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.85rem', sm: '0.875rem' } }}>
+                    <Box sx={{ whiteSpace: 'nowrap' }}>
+                      {property.sold_at && property.last_sale_price
+                        ? formatPrice(property.last_sale_price)
+                        : formatPrice(property.majority_price || property.min_price)}
+                    </Box>
+                    {property.sold_at && property.last_sale_price && (
+                      <Box sx={{ fontSize: '0.7rem', color: 'text.secondary', display: { xs: 'none', sm: 'block' } }}>
+                        （販売終了時）
+                      </Box>
+                    )}
+                  </TableCell>
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.85rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
                     {property.sold_at && property.last_sale_price
                       ? calculatePricePerTsubo(property.last_sale_price, property.area)
                       : calculatePricePerTsubo(property.majority_price || property.min_price, property.area)}
                   </TableCell>
-                  <TableCell>
-                    <Box>
-                      {property.source_sites.map((site) => (
-                        <Chip
-                          key={site}
-                          label={site}
-                          size="small"
-                          sx={{
-                            backgroundColor: getSourceColor(site),
-                            color: 'white',
-                            mr: 0.5,
-                            mb: 0.5
-                          }}
-                        />
-                      ))}
-                      {property.listing_count > 1 && (
-                        <Typography variant="caption" color="text.secondary" display="block">
-                          {property.listing_count}件の掲載
-                        </Typography>
-                      )}
+                  <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.85rem', sm: '0.875rem' } }}>
+                    <Box sx={{ whiteSpace: 'nowrap' }}>
+                      {formatDate(property.earliest_published_at)}
                     </Box>
+                    {property.earliest_published_at && (
+                      <Box component="span" sx={{ fontSize: '0.75rem', color: 'text.secondary', ml: 0.5, whiteSpace: 'nowrap' }}>
+                        ({calculateDaysFromPublished(property.earliest_published_at)})
+                      </Box>
+                    )}
                   </TableCell>
-                  <TableCell align="center">
+                  {includeInactive && (
+                    <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.85rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                      {property.sold_at ? formatDate(property.sold_at) : '-'}
+                    </TableCell>
+                  )}
+                  <TableCell sx={{ px: { xs: 1, sm: 2 } }}>
+                    <Tooltip 
+                      title={
+                        <Box>
+                          {property.source_sites.map((site) => (
+                            <Box key={site} sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                              <Box 
+                                sx={{ 
+                                  width: 8, 
+                                  height: 8, 
+                                  borderRadius: '50%',
+                                  backgroundColor: getSourceColor(site),
+                                  mr: 1
+                                }} 
+                              />
+                              <Typography variant="body2">{site}</Typography>
+                            </Box>
+                          ))}
+                        </Box>
+                      }
+                      arrow
+                      placement="left"
+                    >
+                      <Chip
+                        label={`${property.listing_count || property.source_sites.length}件`}
+                        size="small"
+                        variant="outlined"
+                        sx={{ 
+                          cursor: 'pointer',
+                          fontSize: { xs: '0.7rem', sm: '0.75rem' },
+                          height: { xs: 20, sm: 24 }
+                        }}
+                      />
+                    </Tooltip>
+                  </TableCell>
+                  <TableCell align="center" sx={{ px: { xs: 1, sm: 2 } }}>
                     <Button
                       component={Link}
                       to={`/properties/${property.id}`}
                       variant="outlined"
                       size="small"
+                      sx={{
+                        fontSize: { xs: '0.7rem', sm: '0.875rem' },
+                        px: { xs: 1, sm: 2 },
+                        py: { xs: 0.5, sm: 1 },
+                        minWidth: { xs: 40, sm: 64 }
+                      }}
                     >
                       詳細
                     </Button>
@@ -738,27 +888,54 @@ const BuildingPropertiesPage: React.FC = () => {
                         />
                       )}
                     </Box>
-                    <Box>
-                      {property.source_sites.map((site) => (
-                        <Chip
-                          key={site}
-                          label={site}
-                          size="small"
-                          sx={{
-                            backgroundColor: getSourceColor(site),
-                            color: 'white',
-                            ml: 0.5
-                          }}
-                        />
-                      ))}
-                    </Box>
+                    <Tooltip 
+                      title={
+                        <Box>
+                          {property.source_sites.map((site) => (
+                            <Box key={site} sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+                              <Box 
+                                sx={{ 
+                                  width: 8, 
+                                  height: 8, 
+                                  borderRadius: '50%',
+                                  backgroundColor: getSourceColor(site),
+                                  mr: 1
+                                }} 
+                              />
+                              <Typography variant="body2">{site}</Typography>
+                            </Box>
+                          ))}
+                        </Box>
+                      }
+                      arrow
+                      placement="left"
+                    >
+                      <Chip
+                        label={`掲載${property.listing_count || property.source_sites.length}件`}
+                        size="small"
+                        variant="outlined"
+                        sx={{ cursor: 'pointer' }}
+                      />
+                    </Tooltip>
                   </Box>
 
-                  <Typography variant="h5" color={property.sold_at ? "text.secondary" : "primary"} sx={{ mt: 1, mb: 2 }}>
-                    {property.sold_at && property.last_sale_price
-                      ? `${formatPrice(property.last_sale_price)}（販売終了時）`
-                      : formatPrice(property.majority_price || property.min_price)}
-                  </Typography>
+                  <Box sx={{ mt: 2, mb: 2 }}>
+                    <Typography variant="h5" color={property.sold_at ? "text.secondary" : "primary"}>
+                      {property.sold_at && property.last_sale_price
+                        ? formatPrice(property.last_sale_price)
+                        : formatPrice(property.majority_price || property.min_price)}
+                    </Typography>
+                    {property.sold_at && property.last_sale_price && (
+                      <Typography variant="body2" color="text.secondary">
+                        （販売終了時）
+                      </Typography>
+                    )}
+                    <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
+                      坪単価: {property.sold_at && property.last_sale_price
+                        ? calculatePricePerTsubo(property.last_sale_price, property.area)
+                        : calculatePricePerTsubo(property.majority_price || property.min_price, property.area)}
+                    </Typography>
+                  </Box>
 
                   <Grid container spacing={2}>
                     {property.layout && (
@@ -799,21 +976,27 @@ const BuildingPropertiesPage: React.FC = () => {
                     )}
                   </Grid>
 
-                  {property.listing_count > 1 && (
-                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                      {property.listing_count}件の掲載あり
-                    </Typography>
-                  )}
-
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                    売出確認日: {formatDate(property.earliest_published_at)}
-                    {property.sold_at && (
-                      <>
-                        <br />
-                        販売終了日: {formatDate(property.sold_at)}
-                      </>
-                    )}
-                  </Typography>
+                  <Box sx={{ mt: 2, p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
+                    <Grid container spacing={1}>
+                      <Grid item xs={12}>
+                        <Typography variant="body2" color="text.secondary">
+                          売出確認日: {formatDate(property.earliest_published_at)}
+                          {property.earliest_published_at && (
+                            <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 0.5 }}>
+                              ({calculateDaysFromPublished(property.earliest_published_at)})
+                            </Typography>
+                          )}
+                        </Typography>
+                      </Grid>
+                      {property.sold_at && (
+                        <Grid item xs={12}>
+                          <Typography variant="body2" color="text.secondary">
+                            販売終了日: {formatDate(property.sold_at)}
+                          </Typography>
+                        </Grid>
+                      )}
+                    </Grid>
+                  </Box>
 
                   <Divider sx={{ my: 2 }} />
 

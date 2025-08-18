@@ -261,6 +261,20 @@ def setup_logging_handlers(scraper, task_id: str, scraper_name: str, area_name: 
             # ログ用の情報
             building_info = master_property.building.normalized_name if master_property and master_property.building else ''
             
+            # 物件の詳細情報を構築
+            detail_info = []
+            if master_property:
+                if master_property.floor_number:
+                    detail_info.append(f"{master_property.floor_number}階")
+                if master_property.area:
+                    detail_info.append(f"{master_property.area}㎡")
+                if master_property.layout:
+                    detail_info.append(f"{master_property.layout}")
+                if master_property.direction:
+                    detail_info.append(f"{master_property.direction}向き")
+            
+            detail_str = ' / '.join(detail_info) if detail_info else ''
+            
             log_entry = {
                 "timestamp": datetime.now().isoformat(),
                 "type": update_type,  # update_typeをそのまま使用
@@ -279,7 +293,15 @@ def setup_logging_handlers(scraper, task_id: str, scraper_name: str, area_name: 
             update_details = result[2] if isinstance(result, tuple) and len(result) > 2 else None
             
             if update_type == 'new':
-                log_entry["message"] = f"新規物件登録: {title} ({price}万円)"
+                # 建物名と詳細情報を含むメッセージ
+                if building_info and detail_str:
+                    log_entry["message"] = f"新規物件登録: {building_info} {detail_str} ({price}万円)"
+                elif building_info:
+                    log_entry["message"] = f"新規物件登録: {building_info} ({price}万円)"
+                elif detail_str:
+                    log_entry["message"] = f"新規物件登録: {detail_str} ({price}万円)"
+                else:
+                    log_entry["message"] = f"新規物件登録: {title} ({price}万円)"
                 should_log = True
             elif update_type == 'price_updated':
                 # update_detailsから価格変更情報を抽出
@@ -290,19 +312,48 @@ def setup_logging_handlers(scraper, task_id: str, scraper_name: str, area_name: 
                     if price_match:
                         old_price_from_details = int(price_match.group(1))
                         new_price_from_details = int(price_match.group(2))
-                        log_entry["message"] = f"価格更新: {title} ({old_price_from_details}万円 → {new_price_from_details}万円)"
+                        # 建物名と詳細情報を含むメッセージ
+                        if building_info and detail_str:
+                            log_entry["message"] = f"価格更新: {building_info} {detail_str} ({old_price_from_details}万円 → {new_price_from_details}万円)"
+                        elif building_info:
+                            log_entry["message"] = f"価格更新: {building_info} ({old_price_from_details}万円 → {new_price_from_details}万円)"
+                        elif detail_str:
+                            log_entry["message"] = f"価格更新: {detail_str} ({old_price_from_details}万円 → {new_price_from_details}万円)"
+                        else:
+                            log_entry["message"] = f"価格更新: {title} ({old_price_from_details}万円 → {new_price_from_details}万円)"
                         log_entry["price_change"] = {"old": old_price_from_details, "new": new_price_from_details}
                     else:
-                        log_entry["message"] = f"価格更新: {title} (→ {price}万円)"
+                        if building_info and detail_str:
+                            log_entry["message"] = f"価格更新: {building_info} {detail_str} (→ {price}万円)"
+                        else:
+                            log_entry["message"] = f"価格更新: {title} (→ {price}万円)"
                 elif existing and old_price is not None:
                     # フォールバック：既存のロジック
-                    log_entry["message"] = f"価格更新: {title} ({old_price}万円 → {price}万円)"
+                    if building_info and detail_str:
+                        log_entry["message"] = f"価格更新: {building_info} {detail_str} ({old_price}万円 → {price}万円)"
+                    elif building_info:
+                        log_entry["message"] = f"価格更新: {building_info} ({old_price}万円 → {price}万円)"
+                    elif detail_str:
+                        log_entry["message"] = f"価格更新: {detail_str} ({old_price}万円 → {price}万円)"
+                    else:
+                        log_entry["message"] = f"価格更新: {title} ({old_price}万円 → {price}万円)"
                     log_entry["price_change"] = {"old": old_price, "new": price}
                 else:
-                    log_entry["message"] = f"価格更新: {title} (→ {price}万円)"
+                    if building_info and detail_str:
+                        log_entry["message"] = f"価格更新: {building_info} {detail_str} (→ {price}万円)"
+                    else:
+                        log_entry["message"] = f"価格更新: {title} (→ {price}万円)"
                 should_log = True
             elif update_type == 'other_updates':
-                log_entry["message"] = f"その他の更新: {title} ({price}万円)"
+                # 建物名と詳細情報を含むメッセージ
+                if building_info and detail_str:
+                    log_entry["message"] = f"その他の更新: {building_info} {detail_str} ({price}万円)"
+                elif building_info:
+                    log_entry["message"] = f"その他の更新: {building_info} ({price}万円)"
+                elif detail_str:
+                    log_entry["message"] = f"その他の更新: {detail_str} ({price}万円)"
+                else:
+                    log_entry["message"] = f"その他の更新: {title} ({price}万円)"
                 if update_details:
                     log_entry["update_details"] = update_details
                 should_log = True

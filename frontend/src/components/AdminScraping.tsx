@@ -1607,7 +1607,49 @@ const AdminScraping: React.FC = () => {
                                               sx={{ height: 20 }}
                                             />
                                             <Typography variant="body2">
-                                              {log.message}
+                                              {(() => {
+                                                // メッセージから建物名、物件詳細、価格を抽出して整形
+                                                const message = log.message;
+                                                
+                                                // 新規登録の場合
+                                                if (message.includes('新規登録:')) {
+                                                  // パターン: "新規登録: 建物名 階数 / 面積 / 間取り / 方角 - 価格万円 - URL"
+                                                  const match = message.match(/新規登録:\s*([^-]+?)\s*-\s*(\d+)万円/);
+                                                  if (match) {
+                                                    const details = match[1].trim();
+                                                    const price = match[2];
+                                                    return `新規物件登録: ${details} (${price}万円)`;
+                                                  }
+                                                }
+                                                
+                                                // 価格更新の場合
+                                                if (message.includes('価格更新:')) {
+                                                  // パターン: "価格更新: 建物名 階数 / 面積 / 間取り / 方角 - 旧価格万円 → 新価格万円 - URL"
+                                                  const match = message.match(/価格更新:\s*([^-]+?)\s*-\s*(\d+)万円\s*→\s*(\d+)万円/);
+                                                  if (match) {
+                                                    const details = match[1].trim();
+                                                    const oldPrice = match[2];
+                                                    const newPrice = match[3];
+                                                    return `価格更新: ${details} (${oldPrice}万円 → ${newPrice}万円)`;
+                                                  }
+                                                }
+                                                
+                                                // その他更新の場合
+                                                if (message.includes('その他更新:')) {
+                                                  // パターン: "その他更新: 建物名 階数 / 面積 / 間取り / 方角 - 詳細: 更新内容 - URL"
+                                                  const match = message.match(/その他更新:\s*([^-]+?)(?:\s*-\s*詳細:\s*([^-]+))?\s*-\s*https?:/);
+                                                  if (match) {
+                                                    const details = match[1].trim();
+                                                    const updateDetails = match[2] ? match[2].trim() : '';
+                                                    return updateDetails 
+                                                      ? `その他更新: ${details} (${updateDetails})`
+                                                      : `その他更新: ${details}`;
+                                                  }
+                                                }
+                                                
+                                                // デフォルトはそのまま表示
+                                                return log.message;
+                                              })()}
                                             </Typography>
                                           </Box>
                                         }
