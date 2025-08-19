@@ -925,66 +925,39 @@ class HomesScraper(BaseScraper):
             最終ページの場合True
         """
         try:
-            # HOMESの新しいページネーション構造に対応
-            # ol.pagination__list のような構造を確認
+            # LIFULL HOME'Sの最終ページ判定（2025年8月改訂）
+            # 最終ページの特徴：
+            # 1. li.nextPage要素が存在しない
+            # 2. または、li.nextPage要素はあるがその中にaタグがない
             
-            # 方法1: 次へボタンの有無と状態で判定（最も確実）
-            # HOMESでは「次へ」リンクがない、または無効化されている場合が最終ページ
-            next_link = soup.select_one('a[aria-label*="次"], a[title*="次"], .pagination__item--next a, .pagination a[rel="next"]')
-            if next_link:
-                # href属性がない、または#のみの場合は最終ページ
-                href = next_link.get('href', '')
-                if not href or href == '#':
-                    self.logger.info("[HOMES] 次へリンクが無効化されているため最終ページと判定")
-                    return True
-                # 次へリンクが有効な場合は最終ページではない
-                return False
+            # 方法1: li.nextPage要素の存在と状態を確認（最も確実な方法）
+            next_page_li = soup.select_one('li.nextPage')
+            if not next_page_li:
+                # li.nextPage要素が存在しない = 最終ページ
+                self.logger.info("[HOMES] li.nextPage要素が存在しないため最終ページと判定")
+                return True
             
-            # 方法2: 現在のページと最大ページの比較
-            # ページ番号のリストを取得
-            pagination_items = soup.select('.pagination__item, .pagination li, .pager li')
-            if pagination_items:
-                current_page = None
-                max_page_num = 0
-                
-                for item in pagination_items:
-                    # 現在のページを探す（active, current, selected などのクラスを持つ）
-                    if any(cls in item.get('class', []) for cls in ['active', 'current', 'selected', 'is-current']):
-                        try:
-                            current_text = item.get_text(strip=True)
-                            if current_text.isdigit():
-                                current_page = int(current_text)
-                        except (ValueError, AttributeError):
-                            pass
-                    
-                    # ページ番号を取得
-                    link = item.select_one('a')
-                    if link:
-                        page_text = link.get_text(strip=True)
-                        if page_text.isdigit():
-                            try:
-                                page_num = int(page_text)
-                                max_page_num = max(max_page_num, page_num)
-                            except ValueError:
-                                pass
-                
-                # 現在のページが最大ページと同じかそれ以上なら最終ページ
-                if current_page and max_page_num > 0:
-                    if current_page >= max_page_num:
-                        self.logger.info(f"[HOMES] 現在のページ({current_page})が最大ページ({max_page_num})のため最終ページと判定")
-                        return True
+            # li.nextPageは存在するが、その中のaタグを確認
+            next_link = next_page_li.select_one('a')
+            if not next_link:
+                # li.nextPageはあるがaタグがない = 最終ページ
+                self.logger.info("[HOMES] li.nextPageはあるがaタグがないため最終ページと判定")
+                return True
             
-            # 方法3: 「次へ」要素自体が存在しない場合
-            # ページネーションに次へボタンが表示されていない = 最終ページ
-            pagination_container = soup.select_one('.pagination, .pager, nav[aria-label*="ページ"]')
-            if pagination_container:
-                # ページネーションはあるが、次へボタンがない
-                has_next = bool(pagination_container.select('a[aria-label*="次"], a[title*="次"], .next, [class*="next"]'))
-                if not has_next:
-                    self.logger.info("[HOMES] ページネーションに次へボタンがないため最終ページと判定")
-                    return True
+            # 方法2: 物件数が0の場合も最終ページと判定（念のため）
+            building_blocks = soup.select('.mod-mergeBuilding--sale')
+            if len(building_blocks) == 0:
+                self.logger.info("[HOMES] 物件リストが空のため最終ページと判定")
+                return True
             
-            # 判定できない場合はFalse（安全側に倒す）
+            # 方法3: 物件数が30件未満の場合も最終ページの可能性が高い
+            # （通常は1ページ30件表示）
+            if 0 < len(building_blocks) < 30:
+                self.logger.info(f"[HOMES] 物件数が{len(building_blocks)}件（30件未満）のため最終ページの可能性")
+                # この場合もli.nextPageの状態を優先的に判定
+                return not next_page_li or not next_link
+            
+            # すべての条件に該当しない場合は最終ページではない
             return False
             
         except Exception as e:
