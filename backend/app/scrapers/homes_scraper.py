@@ -123,9 +123,9 @@ class HomesScraper(BaseScraper):
             return BeautifulSoup(response.content, 'html.parser')
             
         except Exception as e:
-            # 404エラーの場合はデバッグレベルで記録（HOMESでは最終ページ判定の正常な動作）
+            # 404エラーの場合も警告として記録（URL構造が変わった可能性もある）
             if hasattr(e, 'response') and e.response is not None and e.response.status_code == 404:
-                self.logger.debug(f"[HOMES] ページが見つかりません（404）: {url} - 最終ページを超えた可能性があります")
+                self.logger.warning(f"[HOMES] ページが見つかりません（404）: {url} - 最終ページを超えたか、URL構造が変更された可能性があります")
             else:
                 self.logger.error(f"Failed to fetch {url}: {type(e).__name__}: {e}")
             if hasattr(e, 'response') and e.response is not None:
