@@ -127,6 +127,19 @@ class EnhancedBuildingMatcher:
         Returns:
             類似度スコア（0.0-1.0）
         """
+        # 早期リターン: 明らかに異なる建物の場合
+        # 築年が3年以上異なる場合は即座に低スコアを返す
+        if building1.built_year and building2.built_year:
+            year_diff = abs(building1.built_year - building2.built_year)
+            if year_diff > 2:
+                return 0.3  # 類似度閾値（0.7）以下を返す
+        
+        # 総階数が3階以上異なる場合は即座に低スコアを返す
+        if building1.total_floors and building2.total_floors:
+            floor_diff = abs(building1.total_floors - building2.total_floors)
+            if floor_diff > 2:
+                return 0.3  # 類似度閾値（0.7）以下を返す
+        
         # デバッグ情報をリセット
         self.last_debug_info = {
             'building1_id': building1.id,

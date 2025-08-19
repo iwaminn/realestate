@@ -46,6 +46,9 @@ class Building(Base):
         Index('idx_buildings_normalized_address', 'normalized_address'),
         Index('idx_buildings_canonical_normalized_addr', 'canonical_name', 'normalized_address'),
         Index('idx_buildings_built_year', 'built_year'),
+        # 重複検出の高速化用インデックス
+        Index('idx_buildings_duplicate_detection', 'normalized_name', 'built_year', 'total_floors'),
+        Index('idx_buildings_attributes', 'built_year', 'total_floors', 'total_units'),
     )
 
 

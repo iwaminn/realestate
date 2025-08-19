@@ -202,6 +202,41 @@ async def get_duplicate_buildings(
                 func.count(Building.id) > 1  # 同じ属性の組み合わせが2つ以上
             ).limit(50).all()
             
+            # 追加: 総階数が±1階の誤差を許容するパターンも検索
+            if len(buildings_with_count) < limit * 2:
+                flexible_groups = db.query(
+                    func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
+                    Building.built_year,
+                    Building.total_units,
+                    func.count(Building.id).label('group_count')
+                ).filter(
+                    Building.id.in_(
+                        db.query(MasterProperty.building_id).distinct()
+                    ),
+                    Building.built_year.isnot(None),
+                    Building.total_units.isnot(None)
+                ).group_by(
+                    func.substring(Building.normalized_address, 1, 10),
+                    Building.built_year,
+                    Building.total_units
+                ).having(
+                    func.count(Building.id) > 1
+                ).limit(30).all()
+                
+                for group in flexible_groups:
+                    if len(buildings_with_count) >= limit * 3:
+                        break
+                    matching_buildings = duplicate_candidates.filter(
+                        Building.normalized_address.like(f"{group.address_prefix}%"),
+                        Building.built_year == group.built_year,
+                        Building.total_units == group.total_units
+                    ).limit(10).all()
+                    
+                    # 既に追加済みの建物は除外
+                    for building, count in matching_buildings:
+                        if not any(b[0].id == building.id for b in buildings_with_count):
+                            buildings_with_count.append((building, count))
+            
             # 見つかった組み合わせに一致する建物を取得
             for group in attribute_groups:
                 if len(buildings_with_count) >= limit * 3:
@@ -216,8 +251,8 @@ async def get_duplicate_buildings(
                 buildings_with_count.extend(matching_buildings)
         
         # 優先度3: まだ枠がある場合は、通常の建物を追加（フォールバック）
-        # 最大100件に制限して高速化
-        if len(buildings_with_count) < 100:
+        # 最大30件に制限して高速化（実際の重複はほぼ優先度1,2で見つかる）
+        if len(buildings_with_count) < 30:
             remaining_buildings = db.query(
                 Building,
                 func.count(MasterProperty.id).label('property_count')
@@ -229,7 +264,7 @@ async def get_duplicate_buildings(
                 func.count(MasterProperty.id) > 0
             ).order_by(
                 Building.normalized_name
-            ).limit(100 - len(buildings_with_count)).all()
+            ).limit(30 - len(buildings_with_count)).all()
             
             buildings_with_count.extend(remaining_buildings)
     
@@ -400,7 +435,7 @@ async def get_duplicate_buildings(
             if is_excluded:
                 continue
             
-            # 類似度を計算（統合履歴も考慮）
+            # 類似度を計算
             calc_start = time.time()
             similarity = matcher.calculate_comprehensive_similarity(building1, building2, db)
             calc_time = time.time() - calc_start
