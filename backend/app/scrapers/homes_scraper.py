@@ -123,9 +123,9 @@ class HomesScraper(BaseScraper):
             return BeautifulSoup(response.content, 'html.parser')
             
         except Exception as e:
-            # 404エラーの場合も警告として記録（URL構造が変わった可能性もある）
+            # 404エラーの場合はデバッグレベルで記録（HOMESでは最終ページ判定の正常な動作）
             if hasattr(e, 'response') and e.response is not None and e.response.status_code == 404:
-                self.logger.warning(f"[HOMES] ページが見つかりません（404）: {url} - 最終ページを超えたか、URL構造が変更された可能性があります")
+                self.logger.debug(f"[HOMES] ページが見つかりません（404）: {url} - 最終ページを超えた可能性があります")
             else:
                 self.logger.error(f"Failed to fetch {url}: {type(e).__name__}: {e}")
             if hasattr(e, 'response') and e.response is not None:
@@ -137,7 +137,11 @@ class HomesScraper(BaseScraper):
         from .area_config import get_area_code, get_homes_city_code
         area_code = get_area_code(area)
         city_code = get_homes_city_code(area_code)
-        return f"{self.BASE_URL}/mansion/chuko/tokyo/{city_code}/list/?page={page}"
+        # ページ1の場合はページパラメータを付けない（HOMESの仕様）
+        if page == 1:
+            return f"{self.BASE_URL}/mansion/chuko/tokyo/{city_code}/list/"
+        else:
+            return f"{self.BASE_URL}/mansion/chuko/tokyo/{city_code}/list/?page={page}"
     
     def _extract_price(self, soup: BeautifulSoup, page_text: str) -> Optional[int]:
         """価格情報を抽出"""
