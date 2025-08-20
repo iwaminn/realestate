@@ -280,6 +280,11 @@ async def get_duplicate_buildings(
         excluded_pairs.add((exclusion.building1_id, exclusion.building2_id))
         excluded_pairs.add((exclusion.building2_id, exclusion.building1_id))
     
+    # デバッグ: 除外設定の確認（本番環境ではコメントアウト）
+    # if (161, 333) in excluded_pairs or (333, 161) in excluded_pairs:
+    #     print(f"[DEBUG] 白金ザ・スカイの除外設定が含まれています: (161, 333) in excluded_pairs = {(161, 333) in excluded_pairs}")
+    #     print(f"[DEBUG] 除外設定の総数: {len(excluded_pairs)}")
+    
     phase_times['exclusion_fetch'] = time.time() - phase_start
     
     # フェーズ4: 重複候補の検出と類似度計算（推移的グループ化対応）
@@ -481,58 +486,148 @@ async def get_duplicate_buildings(
     # 連結成分を見つける
     connected_components = find_connected_components(similarity_graph)
     
-    # 各連結成分をグループとして構築
+    # 除外設定を考慮してコンポーネントを分割
+    def split_component_by_exclusions(component, excluded_pairs):
+        """除外設定に基づいてコンポーネントを分割
+        
+        除外ペアがある場合、そのペアを含まないサブグループに分割する。
+        例: [A, B, C, D]で(A, B)が除外ペアの場合、
+        可能な組み合わせを作る（Aを含むグループとBを含むグループは別になる）
+        """
+        # コンポーネント内で除外されているペアがあるかチェック
+        building_ids = list(component)
+        has_exclusion = False
+        
+        # デバッグ: 除外設定を確認（本番環境ではコメントアウト）
+        # if 161 in building_ids or 333 in building_ids:
+        #     print(f"[DEBUG] 白金ザ・スカイのコンポーネント: {building_ids}")
+        #     print(f"[DEBUG] 除外ペア（161, 333）: {(161, 333) in excluded_pairs}")
+        
+        # コンポーネント内の除外ペアを収集
+        component_exclusions = []
+        for i in range(len(building_ids)):
+            for j in range(i + 1, len(building_ids)):
+                if (building_ids[i], building_ids[j]) in excluded_pairs:
+                    component_exclusions.append((building_ids[i], building_ids[j]))
+                    # print(f"[DEBUG] 除外ペア発見: ({building_ids[i]}, {building_ids[j]})")
+                    has_exclusion = True
+        
+        # 除外設定がない場合はそのまま返す
+        if not has_exclusion:
+            return [component]
+        
+        # 除外ペアがある場合、それぞれを別のグループに分ける
+        # 簡単な実装：最初の除外ペアで2つのグループに分ける
+        if component_exclusions:
+            excluded_pair = component_exclusions[0]
+            bid1, bid2 = excluded_pair
+            
+            # bid1を含むグループとbid2を含むグループを作成
+            group1 = {bid1}
+            group2 = {bid2}
+            
+            # 残りの建物を適切なグループに割り当て
+            for bid in building_ids:
+                if bid == bid1 or bid == bid2:
+                    continue
+                
+                # bid1と除外関係にない かつ similarity_graphで接続されている場合はgroup1へ
+                can_join_group1 = (bid, bid1) not in excluded_pairs and (bid1, bid) not in excluded_pairs
+                connected_to_group1 = bid in similarity_graph.get(bid1, {}) or bid1 in similarity_graph.get(bid, {})
+                
+                # bid2と除外関係にない かつ similarity_graphで接続されている場合はgroup2へ
+                can_join_group2 = (bid, bid2) not in excluded_pairs and (bid2, bid) not in excluded_pairs
+                connected_to_group2 = bid in similarity_graph.get(bid2, {}) or bid2 in similarity_graph.get(bid, {})
+                
+                # デバッグ（本番環境ではコメントアウト）
+                # if 161 in [bid, bid1, bid2] or 333 in [bid, bid1, bid2]:
+                #     print(f"[DEBUG] 建物{bid}: can_join_group1={can_join_group1}, connected_to_group1={connected_to_group1}, can_join_group2={can_join_group2}, connected_to_group2={connected_to_group2}")
+                
+                # 両方のグループに参加可能な場合は、より接続が強い方へ
+                if can_join_group1 and connected_to_group1 and can_join_group2 and connected_to_group2:
+                    # 両方に接続されている場合は、グループ1を優先
+                    group1.add(bid)
+                elif can_join_group1 and connected_to_group1:
+                    group1.add(bid)
+                elif can_join_group2 and connected_to_group2:
+                    group2.add(bid)
+                # どちらにも接続されていない場合は、除外関係がない方へ
+                elif can_join_group1:
+                    group1.add(bid)
+                elif can_join_group2:
+                    group2.add(bid)
+            
+            # 結果を作成
+            result = []
+            if len(group1) > 1:
+                result.append(group1)
+            if len(group2) > 1:
+                result.append(group2)
+            
+            # デバッグ: 分割結果を確認（本番環境ではコメントアウト）
+            # if 161 in building_ids or 333 in building_ids:
+            #     print(f"[DEBUG] 分割後のグループ: {result}")
+            
+            return result if result else []
+        
+        return [component]
+    
+    # 各連結成分を除外設定で分割してからグループを構築
     duplicate_groups = []
     for component in connected_components:
-        if len(duplicate_groups) >= limit:
-            break
-            
-        # コンポーネント内の建物情報を取得
-        component_buildings = []
-        for building_id in component:
-            # buildings_with_countから建物情報を探す
-            building_info = None
-            for building, count in buildings_with_count:
-                if building.id == building_id:
-                    building_info = (building, count)
-                    break
-            
-            if building_info:
-                component_buildings.append({
-                    "id": building_info[0].id,
-                    "normalized_name": building_info[0].normalized_name,
-                    "address": building_info[0].address,
-                    "total_floors": building_info[0].total_floors,
-                    "total_units": building_info[0].total_units if hasattr(building_info[0], 'total_units') else None,
-                    "built_year": building_info[0].built_year,
-                    "built_month": building_info[0].built_month,
-                    "property_count": building_info[1] or 0
-                })
+        # 除外設定で分割
+        subcomponents = split_component_by_exclusions(component, excluded_pairs)
         
-        if len(component_buildings) > 1:
-            # 物件数が最も多い建物をprimaryとする
-            component_buildings.sort(key=lambda x: x["property_count"], reverse=True)
-            primary = component_buildings[0]
-            candidates = []
+        for subcomponent in subcomponents:
+            if len(duplicate_groups) >= limit:
+                break
             
-            # 他の建物をcandidatesとして追加（similarityも含める）
-            for building in component_buildings[1:]:
-                # グラフから類似度を取得
-                similarity = similarity_graph.get(primary["id"], {}).get(building["id"], 0)
-                building["similarity"] = round(similarity, 3)
-                building["is_excluded"] = False
-                candidates.append(building)
+            # サブコンポーネント内の建物情報を取得
+            component_buildings = []
+            for building_id in subcomponent:  # component → subcomponent に修正
+                # buildings_with_countから建物情報を探す
+                building_info = None
+                for building, count in buildings_with_count:
+                    if building.id == building_id:
+                        building_info = (building, count)
+                        break
+                
+                if building_info:
+                    component_buildings.append({
+                        "id": building_info[0].id,
+                        "normalized_name": building_info[0].normalized_name,
+                        "address": building_info[0].address,
+                        "total_floors": building_info[0].total_floors,
+                        "total_units": building_info[0].total_units if hasattr(building_info[0], 'total_units') else None,
+                        "built_year": building_info[0].built_year,
+                        "built_month": building_info[0].built_month,
+                        "property_count": building_info[1] or 0
+                    })
             
-            # 類似度でソート
-            candidates.sort(key=lambda x: -x["similarity"])
-            
-            duplicate_groups.append({
-                "primary": primary,
-                "candidates": candidates,
-                "total_candidates": len(candidates),
-                "excluded_count": 0,
-                "group_info": f"推移的グループ: 合計{len(component_buildings)}件の建物"
-            })
+            if len(component_buildings) > 1:
+                # 物件数が最も多い建物をprimaryとする
+                component_buildings.sort(key=lambda x: x["property_count"], reverse=True)
+                primary = component_buildings[0]
+                candidates = []
+                
+                # 他の建物をcandidatesとして追加（similarityも含める）
+                for building in component_buildings[1:]:
+                    # グラフから類似度を取得
+                    similarity = similarity_graph.get(primary["id"], {}).get(building["id"], 0)
+                    building["similarity"] = round(similarity, 3)
+                    building["is_excluded"] = False
+                    candidates.append(building)
+                
+                # 類似度でソート
+                candidates.sort(key=lambda x: -x["similarity"])
+                
+                duplicate_groups.append({
+                    "primary": primary,
+                    "candidates": candidates,
+                    "total_candidates": len(candidates),
+                    "excluded_count": 0,
+                    "group_info": f"推移的グループ: 合計{len(component_buildings)}件の建物"
+                })
     
     phase_times['connected_components'] = time.time() - phase_start
     phase_times['duplicate_detection'] = phase_times['similarity_graph_build'] + phase_times['connected_components']

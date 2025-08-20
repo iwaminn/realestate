@@ -2206,11 +2206,14 @@ class BaseScraper(ABC):
                     return building, extracted_room_number
                 else:
                     # 外部IDは存在するが建物が見つからない（データ不整合）
-                    print(f"[WARNING] 外部ID {external_property_id} に紐づく建物ID {existing_external.building_id} が存在しません")
+                    orphaned_building_id = existing_external.building_id
+                    print(f"[WARNING] 外部ID {external_property_id} に紐づく建物ID {orphaned_building_id} が存在しません")
                     # 孤立した外部IDレコードを削除
                     self.session.delete(existing_external)
                     self.session.flush()
-                    print(f"[INFO] 孤立した外部IDレコードを削除しました")
+                    print(f"[INFO] 孤立した外部IDレコード（building_id={orphaned_building_id}）を削除しました")
+                    # 重要: 孤立レコード削除後は新規建物作成として処理を続行
+                    # existing_externalをNoneとして扱う
         
         # 建物名から部屋番号を抽出（内部処理用）
         clean_building_name, extracted_room_number = self.normalizer.extract_room_number(building_name)
@@ -2395,6 +2398,17 @@ class BaseScraper(ABC):
         )
         self.session.add(building)
         self.session.flush()
+        
+        # デバッグ: 新規作成された建物のIDを確認
+        self.logger.info(f"[DEBUG] 新規建物作成後のID: {building.id}, 名前: {building.normalized_name}")
+        
+        # 念のため、作成された建物が実際にデータベースに存在するか確認
+        verify_building = self.session.query(Building).filter(Building.id == building.id).first()
+        if not verify_building:
+            self.logger.error(f"[CRITICAL] 新規作成した建物ID {building.id} がデータベースに見つかりません！")
+            raise RuntimeError(f"新規作成した建物ID {building.id} がデータベースに見つかりません")
+        else:
+            self.logger.debug(f"[OK] 新規建物ID {building.id} の存在を確認")
         
         # 外部IDを追加（ある場合）
         if external_property_id:
@@ -2689,6 +2703,14 @@ class BaseScraper(ABC):
             return master_property
         
         # 新規作成（property_hashは一時的にNULLで作成）
+        self.logger.info(f"[DEBUG] 新規MasterProperty作成: building_id={building.id if building else 'None'}, floor={floor_number}, room={room_number}")
+        
+        # buildingオブジェクトの検証
+        if building and not self.session.query(Building).filter(Building.id == building.id).first():
+            self.logger.error(f"[ERROR] 建物ID {building.id} がデータベースに存在しません！")
+            # 建物を再取得または作成
+            raise ValueError(f"建物ID {building.id} がデータベースに存在しません")
+        
         master_property = MasterProperty(
             building_id=building.id,
             room_number=room_number,
@@ -3918,6 +3940,11 @@ class BaseScraper(ABC):
             else:
                 # 既存の掲載情報がない、または物件情報がない場合は従来通りの処理
                 
+                # セッションの状態を確認
+                if not self.session.is_active:
+                    self.logger.warning("セッションが非アクティブです。新しいトランザクションを開始します。")
+                    self.session.begin()
+                
                 # 建物を取得または作成
                 building, extracted_room_number = self.get_or_create_building(
                 building_name=property_data.get('building_name'),
@@ -3931,6 +3958,44 @@ class BaseScraper(ABC):
                 land_rights=property_data.get('land_rights'),
                 station_info=property_data.get('station_info')  # 最初の掲載情報から設定
             )
+            
+            # 建物オブジェクトの検証
+            if building:
+                # セッションに建物が含まれているか確認
+                if building not in self.session:
+                    self.logger.warning(f"建物オブジェクトがセッションから切り離されています。再取得します。")
+                    building = self.session.query(Building).filter(Building.id == building.id).first()
+                    if not building:
+                        self.logger.error(f"建物ID {building.id} がデータベースに存在しません！")
+                        # エラーログを記録
+                        if hasattr(self, '_save_error_log'):
+                            self._save_error_log({
+                                'url': property_data.get('url', '不明'),
+                                'reason': f'建物ID {building.id} がデータベースに存在しません',
+                                'building_name': property_data.get('building_name', ''),
+                                'price': property_data.get('price', ''),
+                                'timestamp': datetime.now().isoformat()
+                            })
+                        property_data['property_saved'] = False
+                        return False
+                
+                # 建物IDが実際にデータベースに存在するか再確認
+                db_building = self.session.query(Building).filter(Building.id == building.id).first()
+                if not db_building:
+                    self.logger.error(f"建物ID {building.id} がデータベースに存在しません！get_or_create_buildingからの戻り値が不正です。")
+                    # エラーログを記録
+                    if hasattr(self, '_save_error_log'):
+                        self._save_error_log({
+                            'url': property_data.get('url', '不明'),
+                            'reason': f'建物ID {building.id} がデータベースに存在しません（get_or_create_building戻り値不正）',
+                            'building_name': property_data.get('building_name', ''),
+                            'price': property_data.get('price', ''),
+                            'timestamp': datetime.now().isoformat()
+                        })
+                    property_data['property_saved'] = False
+                    return False
+                else:
+                    self.logger.debug(f"建物ID {building.id} の存在を確認しました: {db_building.normalized_name}")
             
             if not building:
                 self.logger.warning("建物の作成に失敗しました")

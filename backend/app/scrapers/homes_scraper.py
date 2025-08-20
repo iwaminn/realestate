@@ -18,6 +18,10 @@ from . import (
     normalize_layout, normalize_direction, extract_monthly_fee,
     format_station_info, extract_built_year, parse_date, extract_total_floors
 )
+# validate_area関数を定義
+def validate_area(area: float) -> bool:
+    """面積の妥当性をチェック（10㎡以上、300㎡以下）"""
+    return 10 <= area <= 300
 
 
 class HomesScraper(BaseScraper):
@@ -506,8 +510,9 @@ class HomesScraper(BaseScraper):
                 if layout:
                     details['layout'] = layout
         elif '専有面積' in label:
+            # 専有面積を数値として抽出
             area = extract_area(value)
-            if area:
+            if area and validate_area(area):  # data_normalizerの共通検証を使用
                 details['area'] = area
         elif '築年月' in label:
             built_year = extract_built_year(value)
@@ -608,7 +613,23 @@ class HomesScraper(BaseScraper):
         """
         import re
         
-        # 専有面積のみを探す（他の面積情報は使用しない）
+        # 1. floorplanセクションから専有面積を探す（新パターン）
+        floorplan_section = soup.find('section', id='floorplan')
+        if floorplan_section:
+            # span要素で「専有面積」を探す
+            area_label = floorplan_section.find('span', string=re.compile('専有面積'))
+            if area_label:
+                # 次のspan要素を取得
+                next_span = area_label.find_next_sibling('span')
+                if next_span:
+                    area_text = next_span.get_text(strip=True)
+                    # 「311.64㎡(壁心)」のような形式から数値を抽出
+                    area = extract_area(area_text)
+                    if area and validate_area(area):  # data_normalizerの共通検証を使用
+                        self.logger.info(f"[HOMES] floorplanセクションから専有面積{area}㎡を取得")
+                        return area
+        
+        # 2. 専有面積のみを探す（他の面積情報は使用しない）
         # m-status-table形式の要素を優先的に探す
         status_tables = soup.select('dl.m-status-table')
         for dl in status_tables:
@@ -622,7 +643,7 @@ class HomesScraper(BaseScraper):
                     if '専有面積' in label:
                         value = bodies[i].get_text(strip=True)
                         area = extract_area(value)
-                        if area and 10 <= area <= 300:
+                        if area and validate_area(area):  # data_normalizerの共通検証を使用
                             self.logger.info(f"[HOMES] フォールバック: m-status-tableから専有面積{area}㎡を取得")
                             return area
         
@@ -646,7 +667,7 @@ class HomesScraper(BaseScraper):
                     match = re.search(r'専有面積[：:\s]*(\d+(?:\.\d+)?)\s*(?:㎡|m²|平米)', full_text)
                     if match:
                         area_value = float(match.group(1))
-                        if 10 <= area_value <= 300:
+                        if validate_area(area_value):  # data_normalizerの共通検証を使用
                             self.logger.info(f"[HOMES] フォールバック: テキストから専有面積{area_value}㎡を取得")
                             return area_value
         
@@ -836,8 +857,8 @@ class HomesScraper(BaseScraper):
             # 建物ページの場合、面積情報の妥当性を確認
             if is_building_page and 'area' in property_data:
                 area_value = property_data.get('area')
-                # 専有面積として妥当な範囲（10-300㎡）であれば保持
-                if area_value and 10 <= area_value <= 300:
+                # data_normalizerの共通検証を使用
+                if area_value and validate_area(area_value):
                     self.logger.info(f"[HOMES] 建物ページですが専有面積として妥当な値のため保持: {area_value}㎡")
                 else:
                     self.logger.info(f"[HOMES] 建物ページで異常な面積値のため削除: {area_value}㎡")

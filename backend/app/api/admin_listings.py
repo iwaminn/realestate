@@ -525,6 +525,8 @@ async def attach_listing_to_property(
         if target_property and original_building_id != target_property.building_id:
             # 異なる建物への移動の場合、掲載情報の建物名を新しい建物にも登録
             listing_name_manager.refresh_building_names(target_property.building_id)
+            # 重要: 元の建物の掲載名も再計算
+            listing_name_manager.refresh_building_names(original_building_id)
     
     try:
         db.commit()

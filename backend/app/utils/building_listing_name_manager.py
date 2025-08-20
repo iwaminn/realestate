@@ -137,11 +137,18 @@ class BuildingListingNameManager:
         if not original_property or not original_property.building_id:
             return
             
+        # 元の建物IDを保存
+        original_building_id = original_property.building_id
+            
         # 元の建物の掲載名を新しい建物にもコピー
         self._copy_building_names(
-            from_building_id=original_property.building_id,
+            from_building_id=original_building_id,
             to_building_id=new_building_id
         )
+        
+        # 重要: 元の建物の掲載名を再計算
+        # 物件が移動したので、元の建物に残っている物件の掲載情報から再構築
+        self.refresh_building_names(original_building_id)
     
     def update_from_building_split(
         self,

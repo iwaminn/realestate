@@ -398,7 +398,8 @@ class DataNormalizer:
         
         # 数字なしの+パターン（LDK+S、DK+Sなど）
         # ワンルームマンションの特殊な間取りとして1を付ける
-        no_num_layout_match = re.search(r'^([SLDK]+)[＋+]([SLDK]+)$', text)
+        # 注釈（※など）がある場合も考慮
+        no_num_layout_match = re.search(r'^([SLDK]+)[＋+]([SLDK]+)', text)
         if no_num_layout_match:
             main_rooms = no_num_layout_match.group(1)
             additional_rooms = no_num_layout_match.group(2)
@@ -424,7 +425,8 @@ class DataNormalizer:
         
         # 数字なしのLDKパターン（LDK、DKなど）
         # ワンルームマンションの特殊な間取りとして1を付ける
-        no_num_simple_match = re.search(r'^([SLDK]+)$', text)
+        # 注釈（※など）がある場合も考慮
+        no_num_simple_match = re.search(r'^([SLDK]+)(?:\s|$|※)', text)
         if no_num_simple_match:
             rooms = no_num_simple_match.group(1)
             # S/L/D/Kの順序を正規化
