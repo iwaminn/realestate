@@ -31,6 +31,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
+import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import UpdateIcon from '@mui/icons-material/Update';
 import NewReleasesIcon from '@mui/icons-material/NewReleases';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
@@ -52,6 +53,7 @@ const AreaSelectionPage: React.FC = () => {
   const [recentUpdates, setRecentUpdates] = useState<RecentUpdatesResponse | null>(null);
   const [updatesLoading, setUpdatesLoading] = useState(true);
   const [selectedWardTab, setSelectedWardTab] = useState(0);
+  const [selectedWardName, setSelectedWardName] = useState<string | null>(null);
   const [updateType, setUpdateType] = useState<'price_changes' | 'new_listings'>('price_changes');
 
   // 全体の物件数を取得（初回のみ）
@@ -256,7 +258,20 @@ const AreaSelectionPage: React.FC = () => {
               value={updateType} 
               onChange={(e, newValue) => {
                 setUpdateType(newValue);
-                setSelectedWardTab(0); // タブ切り替え時にエリアタブをリセット
+                // 選択中のエリアを保持して、新しいタブでそのエリアを探す
+                if (selectedWardName && recentUpdates) {
+                  const newWards = sortWardsByLandPrice(
+                    recentUpdates.updates_by_ward.filter(ward => 
+                      newValue === 'price_changes' 
+                        ? ward.price_changes.length > 0 
+                        : ward.new_listings.length > 0
+                    )
+                  );
+                  const wardIndex = newWards.findIndex(w => w.ward === selectedWardName);
+                  setSelectedWardTab(wardIndex >= 0 ? wardIndex : 0);
+                } else {
+                  setSelectedWardTab(0);
+                }
               }}
               sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}
             >
@@ -294,7 +309,20 @@ const AreaSelectionPage: React.FC = () => {
               <>
                 <Tabs
                   value={selectedWardTab}
-                  onChange={(e, newValue) => setSelectedWardTab(newValue)}
+                  onChange={(e, newValue) => {
+                    setSelectedWardTab(newValue);
+                    // 選択されたエリア名を保存
+                    const wards = sortWardsByLandPrice(
+                      recentUpdates.updates_by_ward.filter(ward => 
+                        updateType === 'price_changes' 
+                          ? ward.price_changes.length > 0 
+                          : ward.new_listings.length > 0
+                      )
+                    );
+                    if (wards[newValue]) {
+                      setSelectedWardName(wards[newValue].ward);
+                    }
+                  }}
                   variant="scrollable"
                   scrollButtons="auto"
                   sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}
@@ -345,94 +373,149 @@ const AreaSelectionPage: React.FC = () => {
                         sx={{ p: 2 }}
                       >
                         {updateType === 'price_changes' ? (
-                          <List>
-                            {ward.price_changes.map((property) => (
-                              <ListItem key={`price-${property.id}`} sx={{ pl: 0 }}>
-                                <ListItemText
-                                  primary={
+                          <Box>
+                            {ward.price_changes.map((property, index) => (
+                              <Paper 
+                                key={`price-${property.id}`} 
+                                sx={{ 
+                                  p: 2, 
+                                  mb: 2, 
+                                  border: 1,
+                                  borderColor: 'divider',
+                                  '&:hover': { 
+                                    boxShadow: 2,
+                                    bgcolor: alpha(theme.palette.primary.main, 0.02)
+                                  }
+                                }}
+                              >
+                                <Grid container spacing={2}>
+                                  <Grid item xs={12} md={8}>
                                     <Link
                                       href={`/properties/${property.id}`}
                                       sx={{ textDecoration: 'none', color: 'inherit', '&:hover': { textDecoration: 'underline' } }}
                                     >
-                                      <Typography variant="body1" sx={{ fontWeight: 'bold' }}>
-                                        {property.building_name} {property.room_number && `${property.room_number}号室`}
+                                      <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 1 }}>
+                                        {property.building_name}
+                                        {property.room_number && (
+                                          <Chip label={`${property.room_number}号室`} size="small" sx={{ ml: 1 }} />
+                                        )}
                                       </Typography>
                                     </Link>
-                                  }
-                                  secondary={
-                                    <Box sx={{ mt: 1 }}>
-                                      <Typography variant="body2" component="span" sx={{ color: theme.palette.error.main, fontWeight: 'bold', fontSize: '1.1rem' }}>
+                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1 }}>
+                                      {property.floor_number && (
+                                        <Chip icon={<LocationOnIcon />} label={`${property.floor_number}階`} size="small" variant="outlined" />
+                                      )}
+                                      {property.area && (
+                                        <Chip label={`${property.area}㎡`} size="small" variant="outlined" />
+                                      )}
+                                      {property.layout && (
+                                        <Chip label={property.layout} size="small" variant="outlined" />
+                                      )}
+                                      {property.direction && (
+                                        <Chip label={`${property.direction}向き`} size="small" variant="outlined" />
+                                      )}
+                                    </Box>
+                                  </Grid>
+                                  <Grid item xs={12} md={4}>
+                                    <Box sx={{ textAlign: { xs: 'left', md: 'right' } }}>
+                                      <Typography variant="h5" sx={{ color: theme.palette.error.main, fontWeight: 'bold' }}>
                                         {formatPrice(property.price)}
-                                        {property.previous_price && (
-                                          <>
-                                            {' '}
-                                            <span style={{ color: 'gray', textDecoration: 'line-through', fontSize: '0.9rem' }}>
-                                              {formatPrice(property.previous_price)}
-                                            </span>
-                                            {' '}
+                                      </Typography>
+                                      {property.previous_price && (
+                                        <Box sx={{ mt: 1 }}>
+                                          <Typography variant="body2" sx={{ color: 'text.secondary', textDecoration: 'line-through' }}>
+                                            {formatPrice(property.previous_price)}
+                                          </Typography>
+                                          <Box sx={{ display: 'flex', gap: 1, justifyContent: { xs: 'flex-start', md: 'flex-end' }, mt: 0.5 }}>
                                             <Chip
+                                              icon={property.price_diff && property.price_diff < 0 ? <TrendingDownIcon /> : <TrendingUpIcon />}
                                               label={`${property.price_diff && property.price_diff > 0 ? '+' : ''}${property.price_diff?.toLocaleString()}万円`}
                                               size="small"
                                               color={property.price_diff && property.price_diff < 0 ? 'primary' : 'error'}
-                                              sx={{ ml: 1 }}
                                             />
                                             <Chip
                                               label={`${property.price_diff_rate && property.price_diff_rate > 0 ? '+' : ''}${property.price_diff_rate}%`}
                                               size="small"
                                               variant="outlined"
                                               color={property.price_diff && property.price_diff < 0 ? 'primary' : 'error'}
-                                              sx={{ ml: 1 }}
                                             />
-                                          </>
-                                        )}
-                                      </Typography>
-                                      <Typography variant="body2" sx={{ mt: 0.5, color: 'text.secondary' }}>
-                                        {formatPropertyInfo(property)}
-                                      </Typography>
+                                          </Box>
+                                        </Box>
+                                      )}
                                     </Box>
-                                  }
-                                />
-                                <Divider />
-                              </ListItem>
+                                  </Grid>
+                                </Grid>
+                              </Paper>
                             ))}
-                          </List>
+                          </Box>
                         ) : (
-                          <List>
-                            {ward.new_listings.map((property) => (
-                              <ListItem key={`new-${property.id}`} sx={{ pl: 0 }}>
-                                <ListItemText
-                                  primary={
-                                    <Link
-                                      href={`/properties/${property.id}`}
-                                      sx={{ textDecoration: 'none', color: 'inherit', '&:hover': { textDecoration: 'underline' } }}
-                                    >
-                                      <Typography variant="body1" sx={{ fontWeight: 'bold' }}>
-                                        <Chip
-                                          icon={<NewReleasesIcon />}
-                                          label="NEW"
-                                          color="success"
-                                          size="small"
-                                          sx={{ mr: 1 }}
-                                        />
-                                        {property.building_name} {property.room_number && `${property.room_number}号室`}
-                                      </Typography>
-                                    </Link>
+                          <Box>
+                            {ward.new_listings.map((property, index) => (
+                              <Paper 
+                                key={`new-${property.id}`} 
+                                sx={{ 
+                                  p: 2, 
+                                  mb: 2,
+                                  border: 1,
+                                  borderColor: 'divider',
+                                  background: `linear-gradient(to right, ${alpha(theme.palette.success.main, 0.03)} 0%, transparent 100%)`,
+                                  '&:hover': { 
+                                    boxShadow: 2,
+                                    bgcolor: alpha(theme.palette.success.main, 0.05)
                                   }
-                                  secondary={
-                                    <Box sx={{ mt: 1 }}>
-                                      <Typography variant="body2" component="span" sx={{ color: theme.palette.success.main, fontWeight: 'bold', fontSize: '1.1rem' }}>
+                                }}
+                              >
+                                <Grid container spacing={2}>
+                                  <Grid item xs={12} md={8}>
+                                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                                      <Chip
+                                        icon={<NewReleasesIcon />}
+                                        label="NEW"
+                                        color="success"
+                                        size="small"
+                                        sx={{ mr: 2 }}
+                                      />
+                                      <Link
+                                        href={`/properties/${property.id}`}
+                                        sx={{ textDecoration: 'none', color: 'inherit', '&:hover': { textDecoration: 'underline' } }}
+                                      >
+                                        <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                                          {property.building_name}
+                                          {property.room_number && (
+                                            <Chip label={`${property.room_number}号室`} size="small" sx={{ ml: 1 }} />
+                                          )}
+                                        </Typography>
+                                      </Link>
+                                    </Box>
+                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+                                      {property.floor_number && (
+                                        <Chip icon={<LocationOnIcon />} label={`${property.floor_number}階`} size="small" variant="outlined" />
+                                      )}
+                                      {property.area && (
+                                        <Chip label={`${property.area}㎡`} size="small" variant="outlined" />
+                                      )}
+                                      {property.layout && (
+                                        <Chip label={property.layout} size="small" variant="outlined" />
+                                      )}
+                                      {property.direction && (
+                                        <Chip label={`${property.direction}向き`} size="small" variant="outlined" />
+                                      )}
+                                    </Box>
+                                  </Grid>
+                                  <Grid item xs={12} md={4}>
+                                    <Box sx={{ textAlign: { xs: 'left', md: 'right' } }}>
+                                      <Typography variant="h5" sx={{ color: theme.palette.success.main, fontWeight: 'bold' }}>
                                         {formatPrice(property.price)}
                                       </Typography>
-                                      <Typography variant="body2" sx={{ mt: 0.5, color: 'text.secondary' }}>
-                                        {formatPropertyInfo(property)}
+                                      <Typography variant="body2" sx={{ mt: 1, color: 'text.secondary' }}>
+                                        {property.created_at && `掲載: ${new Date(property.created_at).toLocaleDateString('ja-JP')}`}
                                       </Typography>
                                     </Box>
-                                  }
-                                />
-                                <Divider />
-                              </ListItem>
+                                  </Grid>
+                                </Grid>
+                              </Paper>
                             ))}
-                          </List>
+                          </Box>
                         )}
                       </Box>
                     ))}
