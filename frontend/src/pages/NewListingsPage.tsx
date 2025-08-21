@@ -252,7 +252,7 @@ const NewListingsPage: React.FC = () => {
                 <TableCell>面積</TableCell>
                 <TableCell>間取り</TableCell>
                 <TableCell>方角</TableCell>
-                <TableCell>掲載日時</TableCell>
+                <TableCell>掲載日</TableCell>
                 <TableCell>サイト</TableCell>
               </TableRow>
             </TableHead>
