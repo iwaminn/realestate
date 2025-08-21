@@ -180,14 +180,17 @@ async def get_recent_updates(
         .subquery()
     )
     
-    # 価格改定のあった物件を取得（変更前の価格も取得）
+    # 価格改定のあった物件を取得（物件ごとにグループ化）
     price_changed_properties = []
     
-    # 価格改定があった物件のIDを取得
+    # 価格改定があった掲載IDを取得
     price_changed_listing_ids = (
         db.query(price_changes_subq.c.property_listing_id)
         .all()
     )
+    
+    # 物件ごとに最新の価格変更を集約
+    master_property_changes = {}
     
     for (listing_id,) in price_changed_listing_ids:
         # 現在の物件情報を取得
@@ -199,7 +202,8 @@ async def get_recent_updates(
                 PropertyListing.title,
                 PropertyListing.url,
                 PropertyListing.source_site,
-                PropertyListing.id
+                PropertyListing.id,
+                PropertyListing.master_property_id
             )
             .join(PropertyListing, PropertyListing.master_property_id == MasterProperty.id)
             .join(Building, MasterProperty.building_id == Building.id)
@@ -213,6 +217,8 @@ async def get_recent_updates(
         if not current_info:
             continue
             
+        master_property_id = current_info[7]
+        
         # この物件の価格履歴を取得（最新2件）
         price_history = (
             db.query(
@@ -231,7 +237,7 @@ async def get_recent_updates(
             
             # 価格変更があった場合のみ追加
             if current_price_record[0] != previous_price_record[0]:
-                price_changed_properties.append({
+                change_info = {
                     'master_property': current_info[0],
                     'building': current_info[1],
                     'current_price': current_info[2],
@@ -240,11 +246,20 @@ async def get_recent_updates(
                     'url': current_info[4],
                     'source_site': current_info[5],
                     'changed_at': current_price_record[1]
-                })
+                }
+                
+                # 物件ごとに最新の変更のみを保持
+                if master_property_id not in master_property_changes:
+                    master_property_changes[master_property_id] = change_info
+                elif change_info['changed_at'] > master_property_changes[master_property_id]['changed_at']:
+                    master_property_changes[master_property_id] = change_info
+    
+    # 辞書から最終的なリストに変換
+    price_changed_properties = list(master_property_changes.values())
     
     
-    # 新着物件を取得（created_atが期間内）
-    new_properties = (
+    # 新着物件を取得（物件ごとにグループ化）
+    new_listings_raw = (
         db.query(
             MasterProperty,
             Building,
@@ -252,7 +267,8 @@ async def get_recent_updates(
             PropertyListing.title,
             PropertyListing.url,
             PropertyListing.source_site,
-            PropertyListing.created_at.label('changed_at')
+            PropertyListing.created_at.label('changed_at'),
+            MasterProperty.id.label('master_property_id')
         )
         .join(PropertyListing, PropertyListing.master_property_id == MasterProperty.id)
         .join(Building, MasterProperty.building_id == Building.id)
@@ -262,6 +278,20 @@ async def get_recent_updates(
         )
         .all()
     )
+    
+    # 物件ごとに最新の掲載のみを保持
+    master_property_new = {}
+    for item in new_listings_raw:
+        master_property, building, price, title, url, source, created_at, master_id = item
+        
+        if master_id not in master_property_new:
+            master_property_new[master_id] = (master_property, building, price, title, url, source, created_at)
+        elif created_at > master_property_new[master_id][6]:
+            # より新しい掲載がある場合は更新
+            master_property_new[master_id] = (master_property, building, price, title, url, source, created_at)
+    
+    # 辞書から最終的なリストに変換
+    new_properties = list(master_property_new.values())
     
     # 結果を区ごとにグループ化
     updates_by_ward = {}
