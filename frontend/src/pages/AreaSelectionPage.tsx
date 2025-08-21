@@ -35,33 +35,7 @@ import UpdateIcon from '@mui/icons-material/Update';
 import NewReleasesIcon from '@mui/icons-material/NewReleases';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import { propertyApi, RecentUpdatesResponse, WardUpdates } from '../api/propertyApi';
-
-// 東京23区のリスト
-const TOKYO_WARDS = [
-  { name: '港区', id: 'minato', popular: true },
-  { name: '渋谷区', id: 'shibuya', popular: true },
-  { name: '新宿区', id: 'shinjuku', popular: true },
-  { name: '千代田区', id: 'chiyoda', popular: true },
-  { name: '中央区', id: 'chuo', popular: true },
-  { name: '文京区', id: 'bunkyo', popular: true },
-  { name: '目黒区', id: 'meguro', popular: true },
-  { name: '世田谷区', id: 'setagaya', popular: true },
-  { name: '品川区', id: 'shinagawa' },
-  { name: '大田区', id: 'ota' },
-  { name: '杉並区', id: 'suginami' },
-  { name: '中野区', id: 'nakano' },
-  { name: '豊島区', id: 'toshima' },
-  { name: '練馬区', id: 'nerima' },
-  { name: '板橋区', id: 'itabashi' },
-  { name: '北区', id: 'kita' },
-  { name: '荒川区', id: 'arakawa' },
-  { name: '足立区', id: 'adachi' },
-  { name: '葛飾区', id: 'katsushika' },
-  { name: '江戸川区', id: 'edogawa' },
-  { name: '墨田区', id: 'sumida' },
-  { name: '江東区', id: 'koto' },
-  { name: '台東区', id: 'taito' },
-];
+import { TOKYO_WARDS, sortWardsByLandPrice, getPopularWards, getOtherWards } from '../constants/wardOrder';
 
 interface AreaStat {
   ward: string;
@@ -136,8 +110,8 @@ const AreaSelectionPage: React.FC = () => {
     ward.name.includes(searchText)
   );
 
-  const popularWards = TOKYO_WARDS.filter((ward) => ward.popular);
-  const otherWards = TOKYO_WARDS.filter((ward) => !ward.popular);
+  const popularWards = getPopularWards();
+  const otherWards = getOtherWards();
 
   const formatPrice = (price: number) => {
     if (price >= 10000) {
@@ -309,12 +283,14 @@ const AreaSelectionPage: React.FC = () => {
             </Tabs>
 
             {/* エリア別タブ */}
-            {recentUpdates.updates_by_ward
-              .filter(ward => 
-                updateType === 'price_changes' 
-                  ? ward.price_changes.length > 0 
-                  : ward.new_listings.length > 0
-              ).length > 0 && (
+            {sortWardsByLandPrice(
+              recentUpdates.updates_by_ward
+                .filter(ward => 
+                  updateType === 'price_changes' 
+                    ? ward.price_changes.length > 0 
+                    : ward.new_listings.length > 0
+                )
+            ).length > 0 && (
               <>
                 <Tabs
                   value={selectedWardTab}
@@ -323,12 +299,14 @@ const AreaSelectionPage: React.FC = () => {
                   scrollButtons="auto"
                   sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}
                 >
-                  {recentUpdates.updates_by_ward
-                    .filter(ward => 
-                      updateType === 'price_changes' 
-                        ? ward.price_changes.length > 0 
-                        : ward.new_listings.length > 0
-                    )
+                  {sortWardsByLandPrice(
+                    recentUpdates.updates_by_ward
+                      .filter(ward => 
+                        updateType === 'price_changes' 
+                          ? ward.price_changes.length > 0 
+                          : ward.new_listings.length > 0
+                      )
+                  )
                     .map((ward, index) => (
                       <Tab 
                         key={ward.ward} 
@@ -352,12 +330,14 @@ const AreaSelectionPage: React.FC = () => {
 
                 {/* タブコンテンツ */}
                 <Box sx={{ minHeight: 300, maxHeight: 500, overflowY: 'auto' }}>
-                  {recentUpdates.updates_by_ward
-                    .filter(ward => 
-                      updateType === 'price_changes' 
-                        ? ward.price_changes.length > 0 
-                        : ward.new_listings.length > 0
-                    )
+                  {sortWardsByLandPrice(
+                    recentUpdates.updates_by_ward
+                      .filter(ward => 
+                        updateType === 'price_changes' 
+                          ? ward.price_changes.length > 0 
+                          : ward.new_listings.length > 0
+                      )
+                  )
                     .map((ward, index) => (
                       <Box
                         key={ward.ward}

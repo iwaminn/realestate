@@ -28,6 +28,7 @@ import NewReleasesIcon from '@mui/icons-material/NewReleases';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { propertyApi, RecentUpdate } from '../api/propertyApi';
 import { useNavigate } from 'react-router-dom';
+import { sortWardNamesByLandPrice } from '../constants/wardOrder';
 
 const NewListingsPage: React.FC = () => {
   const theme = useTheme();
@@ -64,7 +65,7 @@ const NewListingsPage: React.FC = () => {
       allNewListings.sort((a, b) => b.price - a.price);
       
       setNewListings(allNewListings);
-      setWards(Array.from(wardSet).sort());
+      setWards(sortWardNamesByLandPrice(Array.from(wardSet)));
       setLastUpdated(new Date());
     } catch (error) {
       console.error('Failed to fetch new listings:', error);

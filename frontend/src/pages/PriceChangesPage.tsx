@@ -31,6 +31,7 @@ import UpdateIcon from '@mui/icons-material/Update';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { propertyApi, RecentUpdate } from '../api/propertyApi';
 import { useNavigate } from 'react-router-dom';
+import { sortWardNamesByLandPrice } from '../constants/wardOrder';
 
 const PriceChangesPage: React.FC = () => {
   const theme = useTheme();
@@ -71,7 +72,7 @@ const PriceChangesPage: React.FC = () => {
       });
       
       setPriceChanges(allPriceChanges);
-      setWards(Array.from(wardSet).sort());
+      setWards(sortWardNamesByLandPrice(Array.from(wardSet)));
       setLastUpdated(new Date());
     } catch (error) {
       console.error('Failed to fetch price changes:', error);
