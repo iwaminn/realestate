@@ -16,9 +16,6 @@ import {
   Divider,
   useTheme,
   alpha,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
   List,
   ListItem,
   ListItemText,
@@ -26,12 +23,14 @@ import {
   Link,
   Skeleton,
   Button,
+  Tabs,
+  Tab,
+  TabScrollButton,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import UpdateIcon from '@mui/icons-material/Update';
 import NewReleasesIcon from '@mui/icons-material/NewReleases';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
@@ -78,6 +77,8 @@ const AreaSelectionPage: React.FC = () => {
   const [totalCount, setTotalCount] = useState(0);
   const [recentUpdates, setRecentUpdates] = useState<RecentUpdatesResponse | null>(null);
   const [updatesLoading, setUpdatesLoading] = useState(true);
+  const [selectedWardTab, setSelectedWardTab] = useState(0);
+  const [updateType, setUpdateType] = useState<'price_changes' | 'new_listings'>('price_changes');
 
   // 全体の物件数を取得（初回のみ）
   useEffect(() => {
@@ -275,43 +276,97 @@ const AreaSelectionPage: React.FC = () => {
             </Grid>
           </Grid>
 
-          {/* エリア別の更新情報 */}
-          <Box sx={{ maxHeight: 600, overflowY: 'auto' }}>
+          {/* タブで価格改定/新着を切り替え */}
+          <Paper sx={{ p: 2 }}>
+            <Tabs 
+              value={updateType} 
+              onChange={(e, newValue) => {
+                setUpdateType(newValue);
+                setSelectedWardTab(0); // タブ切り替え時にエリアタブをリセット
+              }}
+              sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}
+            >
+              <Tab 
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <UpdateIcon />
+                    価格改定物件
+                    <Chip label={recentUpdates.total_price_changes} size="small" color="error" />
+                  </Box>
+                } 
+                value="price_changes" 
+              />
+              <Tab 
+                label={
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <NewReleasesIcon />
+                    新着物件
+                    <Chip label={recentUpdates.total_new_listings} size="small" color="success" />
+                  </Box>
+                } 
+                value="new_listings" 
+              />
+            </Tabs>
+
+            {/* エリア別タブ */}
             {recentUpdates.updates_by_ward
-              .filter(ward => ward.price_changes.length > 0 || ward.new_listings.length > 0)
-              .map((ward, index) => (
-                <Accordion key={ward.ward} defaultExpanded={index < 3}>
-                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                    <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', gap: 2 }}>
-                      <Typography variant="h6">{ward.ward}</Typography>
-                      <Box sx={{ display: 'flex', gap: 1, ml: 'auto', mr: 2 }}>
-                        {ward.price_changes.length > 0 && (
-                          <Chip
-                            label={`価格改定 ${ward.price_changes.length}件`}
-                            color="error"
-                            size="small"
-                          />
-                        )}
-                        {ward.new_listings.length > 0 && (
-                          <Chip
-                            label={`新着 ${ward.new_listings.length}件`}
-                            color="success"
-                            size="small"
-                          />
-                        )}
-                      </Box>
-                    </Box>
-                  </AccordionSummary>
-                  <AccordionDetails>
-                    <Grid container spacing={2}>
-                      {/* 価格改定物件 */}
-                      {ward.price_changes.length > 0 && (
-                        <Grid item xs={12} md={6}>
-                          <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: theme.palette.error.main }}>
-                            価格改定
-                          </Typography>
-                          <List dense>
-                            {ward.price_changes.slice(0, 5).map((property) => (
+              .filter(ward => 
+                updateType === 'price_changes' 
+                  ? ward.price_changes.length > 0 
+                  : ward.new_listings.length > 0
+              ).length > 0 && (
+              <>
+                <Tabs
+                  value={selectedWardTab}
+                  onChange={(e, newValue) => setSelectedWardTab(newValue)}
+                  variant="scrollable"
+                  scrollButtons="auto"
+                  sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}
+                >
+                  {recentUpdates.updates_by_ward
+                    .filter(ward => 
+                      updateType === 'price_changes' 
+                        ? ward.price_changes.length > 0 
+                        : ward.new_listings.length > 0
+                    )
+                    .map((ward, index) => (
+                      <Tab 
+                        key={ward.ward} 
+                        label={
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            {ward.ward}
+                            <Chip 
+                              label={
+                                updateType === 'price_changes' 
+                                  ? ward.price_changes.length 
+                                  : ward.new_listings.length
+                              } 
+                              size="small" 
+                              color={updateType === 'price_changes' ? 'error' : 'success'}
+                            />
+                          </Box>
+                        }
+                      />
+                    ))}
+                </Tabs>
+
+                {/* タブコンテンツ */}
+                <Box sx={{ minHeight: 300, maxHeight: 500, overflowY: 'auto' }}>
+                  {recentUpdates.updates_by_ward
+                    .filter(ward => 
+                      updateType === 'price_changes' 
+                        ? ward.price_changes.length > 0 
+                        : ward.new_listings.length > 0
+                    )
+                    .map((ward, index) => (
+                      <Box
+                        key={ward.ward}
+                        hidden={selectedWardTab !== index}
+                        sx={{ p: 2 }}
+                      >
+                        {updateType === 'price_changes' ? (
+                          <List>
+                            {ward.price_changes.map((property) => (
                               <ListItem key={`price-${property.id}`} sx={{ pl: 0 }}>
                                 <ListItemText
                                   primary={
@@ -319,53 +374,51 @@ const AreaSelectionPage: React.FC = () => {
                                       href={`/properties/${property.id}`}
                                       sx={{ textDecoration: 'none', color: 'inherit', '&:hover': { textDecoration: 'underline' } }}
                                     >
-                                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                                      <Typography variant="body1" sx={{ fontWeight: 'bold' }}>
                                         {property.building_name} {property.room_number && `${property.room_number}号室`}
                                       </Typography>
                                     </Link>
                                   }
                                   secondary={
-                                    <>
-                                      <Typography variant="caption" component="span" sx={{ color: theme.palette.error.main, fontWeight: 'bold' }}>
+                                    <Box sx={{ mt: 1 }}>
+                                      <Typography variant="body2" component="span" sx={{ color: theme.palette.error.main, fontWeight: 'bold', fontSize: '1.1rem' }}>
                                         {formatPrice(property.price)}
                                         {property.previous_price && (
                                           <>
                                             {' '}
-                                            <span style={{ color: 'gray', textDecoration: 'line-through' }}>
+                                            <span style={{ color: 'gray', textDecoration: 'line-through', fontSize: '0.9rem' }}>
                                               {formatPrice(property.previous_price)}
                                             </span>
                                             {' '}
-                                            <span style={{ color: property.price_diff && property.price_diff < 0 ? 'blue' : 'red' }}>
-                                              ({property.price_diff && property.price_diff > 0 ? '+' : ''}{property.price_diff?.toLocaleString()}万円)
-                                            </span>
+                                            <Chip
+                                              label={`${property.price_diff && property.price_diff > 0 ? '+' : ''}${property.price_diff?.toLocaleString()}万円`}
+                                              size="small"
+                                              color={property.price_diff && property.price_diff < 0 ? 'primary' : 'error'}
+                                              sx={{ ml: 1 }}
+                                            />
+                                            <Chip
+                                              label={`${property.price_diff_rate && property.price_diff_rate > 0 ? '+' : ''}${property.price_diff_rate}%`}
+                                              size="small"
+                                              variant="outlined"
+                                              color={property.price_diff && property.price_diff < 0 ? 'primary' : 'error'}
+                                              sx={{ ml: 1 }}
+                                            />
                                           </>
                                         )}
                                       </Typography>
-                                      <Typography variant="caption" component="span" sx={{ ml: 1 }}>
+                                      <Typography variant="body2" sx={{ mt: 0.5, color: 'text.secondary' }}>
                                         {formatPropertyInfo(property)}
                                       </Typography>
-                                    </>
+                                    </Box>
                                   }
                                 />
+                                <Divider />
                               </ListItem>
                             ))}
-                            {ward.price_changes.length > 5 && (
-                              <Typography variant="caption" color="text.secondary" sx={{ pl: 2 }}>
-                                他 {ward.price_changes.length - 5} 件
-                              </Typography>
-                            )}
                           </List>
-                        </Grid>
-                      )}
-                      
-                      {/* 新着物件 */}
-                      {ward.new_listings.length > 0 && (
-                        <Grid item xs={12} md={6}>
-                          <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: theme.palette.success.main }}>
-                            新着
-                          </Typography>
-                          <List dense>
-                            {ward.new_listings.slice(0, 5).map((property) => (
+                        ) : (
+                          <List>
+                            {ward.new_listings.map((property) => (
                               <ListItem key={`new-${property.id}`} sx={{ pl: 0 }}>
                                 <ListItemText
                                   primary={
@@ -373,37 +426,40 @@ const AreaSelectionPage: React.FC = () => {
                                       href={`/properties/${property.id}`}
                                       sx={{ textDecoration: 'none', color: 'inherit', '&:hover': { textDecoration: 'underline' } }}
                                     >
-                                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                                      <Typography variant="body1" sx={{ fontWeight: 'bold' }}>
+                                        <Chip
+                                          icon={<NewReleasesIcon />}
+                                          label="NEW"
+                                          color="success"
+                                          size="small"
+                                          sx={{ mr: 1 }}
+                                        />
                                         {property.building_name} {property.room_number && `${property.room_number}号室`}
                                       </Typography>
                                     </Link>
                                   }
                                   secondary={
-                                    <>
-                                      <Typography variant="caption" component="span" sx={{ color: theme.palette.success.main, fontWeight: 'bold' }}>
+                                    <Box sx={{ mt: 1 }}>
+                                      <Typography variant="body2" component="span" sx={{ color: theme.palette.success.main, fontWeight: 'bold', fontSize: '1.1rem' }}>
                                         {formatPrice(property.price)}
                                       </Typography>
-                                      <Typography variant="caption" component="span" sx={{ ml: 1 }}>
+                                      <Typography variant="body2" sx={{ mt: 0.5, color: 'text.secondary' }}>
                                         {formatPropertyInfo(property)}
                                       </Typography>
-                                    </>
+                                    </Box>
                                   }
                                 />
+                                <Divider />
                               </ListItem>
                             ))}
-                            {ward.new_listings.length > 5 && (
-                              <Typography variant="caption" color="text.secondary" sx={{ pl: 2 }}>
-                                他 {ward.new_listings.length - 5} 件
-                              </Typography>
-                            )}
                           </List>
-                        </Grid>
-                      )}
-                    </Grid>
-                  </AccordionDetails>
-                </Accordion>
-              ))}
-          </Box>
+                        )}
+                      </Box>
+                    ))}
+                </Box>
+              </>
+            )}
+          </Paper>
         </Box>
       )}
 
