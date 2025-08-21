@@ -956,7 +956,9 @@ async def attach_property_to_building(
     
     # 多数決処理を実行（元の建物と移動先の建物の両方）
     from ..utils.majority_vote_updater import MajorityVoteUpdater
+    from ..utils.building_listing_name_manager import BuildingListingNameManager
     updater = MajorityVoteUpdater(db)
+    listing_name_manager = BuildingListingNameManager(db)
     
     try:
         # 元の建物の情報を更新（物件が減った場合）
@@ -965,12 +967,18 @@ async def attach_property_to_building(
             original_building = db.query(Building).filter(Building.id == current_building_id).first()
             if original_building:
                 updater.update_building_by_majority(original_building)
+                # 建物の掲載名（別名）も更新
+                listing_name_manager.refresh_building_names(current_building_id)
+                logger.info(f"[DEBUG] Refreshed listing names for original building {current_building_id}")
         
         # 移動先の建物の情報を更新（物件が増えた場合）
         logger.info(f"[DEBUG] Updating target building {new_building_id} with majority vote after property addition")
         target_building = db.query(Building).filter(Building.id == new_building_id).first()
         if target_building:
             updater.update_building_by_majority(target_building)
+            # 建物の掲載名（別名）も更新
+            listing_name_manager.refresh_building_names(new_building_id)
+            logger.info(f"[DEBUG] Refreshed listing names for target building {new_building_id}")
         
         db.commit()
         

@@ -177,30 +177,68 @@ async def get_duplicate_buildings(
             )
             
             # サブクエリで重複の可能性が高い組み合わせを特定
-            # 総戸数、総階数、築年月がすべて一致する建物を優先的に検索
-            attribute_groups = db.query(
-                func.substring(Building.normalized_address, 1, 10).label('address_prefix'),  # 正規化済み住所の前半部分
-                Building.built_year,
-                Building.built_month,
+            # 総戸数、総階数がすべて一致し、築年が近い建物を優先的に検索
+            # 築年は±1年の許容範囲を考慮するため、個別に処理
+            from sqlalchemy import case
+            
+            attribute_groups = []
+            
+            # 住所、総階数、総戸数でグループ化（築年は後で個別チェック）
+            # PostgreSQL配列をPythonリストに変換する必要があるため、個別にクエリ
+            base_groups = db.query(
+                func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
                 Building.total_floors,
-                Building.total_units,  # 総戸数を追加
+                Building.total_units,
+                func.array_agg(Building.id).label('building_ids'),
+                func.array_agg(Building.built_year).label('built_years'),
                 func.count(Building.id).label('group_count')
             ).filter(
                 Building.id.in_(
                     db.query(MasterProperty.building_id).distinct()
                 ),
-                Building.built_year.isnot(None),
                 Building.total_floors.isnot(None),
                 Building.total_units.isnot(None)  # 総戸数が存在する建物のみ
             ).group_by(
                 func.substring(Building.normalized_address, 1, 10),
-                Building.built_year,
-                Building.built_month,
                 Building.total_floors,
                 Building.total_units
             ).having(
                 func.count(Building.id) > 1  # 同じ属性の組み合わせが2つ以上
             ).limit(50).all()
+            
+            # 築年が±1年以内の建物をグループとして追加
+            for group in base_groups:
+                building_ids = group.building_ids if group.building_ids else []
+                built_years = group.built_years if group.built_years else []
+                
+                # デバッグ: 白金ザ・スカイグループが含まれているか確認
+                if 333 in building_ids or 3210 in building_ids:
+                    logger.info(f"[DEBUG] 白金ザ・スカイグループ発見: IDs={building_ids}, Years={built_years}")
+                
+                # 築年が±1年以内のペアがあるかチェック
+                has_close_years = False
+                for i in range(len(built_years)):
+                    for j in range(i + 1, len(built_years)):
+                        if built_years[i] and built_years[j]:
+                            if abs(built_years[i] - built_years[j]) <= 1:
+                                has_close_years = True
+                                break
+                    if has_close_years:
+                        break
+                
+                if has_close_years:
+                    # 仮想的なグループとして追加（後の処理で使用）
+                    attribute_groups.append({
+                        'address_prefix': group.address_prefix,
+                        'total_floors': group.total_floors,
+                        'total_units': group.total_units,
+                        'building_ids': building_ids,
+                        'group_count': len(building_ids)
+                    })
+                    
+                    # デバッグ: 追加されたグループを確認
+                    if 333 in building_ids or 3210 in building_ids:
+                        logger.info(f"[DEBUG] 白金ザ・スカイグループを attribute_groups に追加")
             
             # 追加: 総階数が±1階の誤差を許容するパターンも検索
             if len(buildings_with_count) < limit * 2:
@@ -241,14 +279,28 @@ async def get_duplicate_buildings(
             for group in attribute_groups:
                 if len(buildings_with_count) >= limit * 3:
                     break
-                matching_buildings = duplicate_candidates.filter(
-                    Building.normalized_address.like(f"{group.address_prefix}%"),
-                    Building.built_year == group.built_year,
-                    Building.built_month == group.built_month if group.built_month else True,
-                    Building.total_floors == group.total_floors,
-                    Building.total_units == group.total_units  # 総戸数も一致条件に追加
-                ).limit(10).all()
-                buildings_with_count.extend(matching_buildings)
+                
+                # building_idsから実際の建物を取得
+                if 'building_ids' in group and group['building_ids']:
+                    # デバッグ: 白金ザ・スカイグループの処理を確認
+                    if any(bid in [333, 3210] for bid in group['building_ids']):
+                        logger.info(f"[DEBUG] 白金ザ・スカイグループ処理中: IDs={group['building_ids']}")
+                    
+                    for building_id in group['building_ids']:
+                        building_obj = db.query(Building).filter(Building.id == building_id).first()
+                        if building_obj:
+                            property_count = db.query(func.count(MasterProperty.id)).filter(
+                                MasterProperty.building_id == building_id
+                            ).scalar()
+                            
+                            # 既に追加済みでなければ追加
+                            if not any(b[0].id == building_id for b in buildings_with_count):
+                                buildings_with_count.append((building_obj, property_count))
+                                # デバッグ: 追加を確認
+                                if building_id in [333, 3210]:
+                                    logger.info(f"[DEBUG] 建物ID {building_id} を buildings_with_count に追加")
+                            elif building_id in [333, 3210]:
+                                logger.info(f"[DEBUG] 建物ID {building_id} は既に追加済み")
         
         # 優先度3: まだ枠がある場合は、通常の建物を追加（フォールバック）
         # 最大30件に制限して高速化（実際の重複はほぼ優先度1,2で見つかる）
@@ -358,12 +410,12 @@ async def get_duplicate_buildings(
         # 3つの条件パターンのいずれかに一致する建物を候補とする
         candidate_conditions = []
         
-        # パターン1: 住所（地名まで）+ 築年が同一
+        # パターン1: 住所（地名まで）+ 築年が同一または±1年
         if building1.built_year:
             candidate_conditions.append(
                 and_(
                     area_condition,
-                    Building.built_year == building1.built_year
+                    Building.built_year.between(building1.built_year - 1, building1.built_year + 1)
                 )
             )
         
@@ -381,7 +433,7 @@ async def get_duplicate_buildings(
             candidate_conditions.append(
                 and_(
                     area_condition,
-                    Building.built_year == building1.built_year,
+                    Building.built_year.between(building1.built_year - 1, building1.built_year + 1),
                     Building.total_floors == building1.total_floors
                 )
             )
@@ -392,7 +444,7 @@ async def get_duplicate_buildings(
             candidate_conditions.append(
                 and_(
                     area_condition,
-                    Building.built_year == building1.built_year,
+                    Building.built_year.between(building1.built_year - 1, building1.built_year + 1),
                     Building.total_floors == building1.total_floors,
                     Building.total_units == building1.total_units
                 )

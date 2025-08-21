@@ -23,7 +23,7 @@ class DataNormalizer:
     MIN_PRICE = 100  # 最小価格: 100万円
     MAX_PRICE = 1000000  # 最大価格: 100億円（1000000万円）
     MIN_AREA = 10.0  # 最小面積: 10㎡
-    MAX_AREA = 500.0  # 最大面積: 500㎡
+    MAX_AREA = 1000.0  # 最大面積: 1000㎡（高級ペントハウス等に対応）
     
     def __init__(self):
         """初期化"""

@@ -498,6 +498,9 @@ async def attach_listing_to_property(
         db.flush()  # 削除を確実に反映
         original_deleted = True
         message += "（元の物件は削除されました）"
+        # 元の物件が削除された場合も、建物の掲載名を更新
+        listing_name_manager.refresh_building_names(original_building_id)
+        logger.info(f"[DEBUG] Refreshed listing names for building {original_building_id} after property deletion")
     else:
         # 元の物件が削除されない場合は更新
         original_property_obj = db.query(MasterProperty).filter(MasterProperty.id == original_property_id).first()

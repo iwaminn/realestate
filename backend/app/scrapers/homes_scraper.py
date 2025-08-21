@@ -13,15 +13,12 @@ from .constants import SourceSite
 from .base_scraper import BaseScraper
 from ..models import PropertyListing
 from ..utils.exceptions import TaskPausedException, TaskCancelledException
-from . import (
+from .data_normalizer import (
     normalize_integer, extract_price, extract_area, extract_floor_number,
     normalize_layout, normalize_direction, extract_monthly_fee,
-    format_station_info, extract_built_year, parse_date, extract_total_floors
+    format_station_info, extract_built_year, parse_date, extract_total_floors,
+    validate_area  # 共通のvalidate_area関数を使用（1000㎡まで対応）
 )
-# validate_area関数を定義
-def validate_area(area: float) -> bool:
-    """面積の妥当性をチェック（10㎡以上、300㎡以下）"""
-    return 10 <= area <= 300
 
 
 class HomesScraper(BaseScraper):
