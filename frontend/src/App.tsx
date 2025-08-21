@@ -5,6 +5,7 @@ import CssBaseline from '@mui/material/CssBaseline';
 import { Container } from '@mui/material';
 import { AuthProvider } from './contexts/AuthContext';
 import Header from './components/Header';
+import AreaSelectionPage from './pages/AreaSelectionPage';
 import PropertyListPage from './pages/PropertyListPage';
 import PropertyDetailPage from './pages/PropertyDetailPage';
 import BuildingPropertiesPage from './pages/BuildingPropertiesPage';
@@ -46,7 +47,7 @@ function App() {
           <Header />
           <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
             <Routes>
-              <Route path="/" element={<PropertyListPage />} />
+              <Route path="/" element={<AreaSelectionPage />} />
               <Route path="/properties" element={<PropertyListPage />} />
               <Route path="/properties/:id" element={<PropertyDetailPage />} />
               <Route path="/buildings/:buildingId/properties" element={<BuildingPropertiesPage />} />
