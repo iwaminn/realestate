@@ -311,3 +311,158 @@ async def get_property_details_v2(
         unified_price_history=all_price_records,
         price_discrepancies=price_discrepancies
     )
+
+
+@router.get("/properties/recent-updates", response_model=Dict[str, Any])
+async def get_recent_updates(
+    hours: int = Query(24, ge=1, le=168, description="過去N時間以内の更新"),
+    db: Session = Depends(get_db)
+):
+    """
+    直近N時間以内の価格改定物件と新着物件を取得
+    デフォルトは24時間以内
+    """
+    from datetime import datetime, timedelta
+    from sqlalchemy import case
+    
+    # 対象期間の開始時刻
+    cutoff_time = datetime.now() - timedelta(hours=hours)
+    
+    # 価格履歴から価格改定物件を取得
+    price_changes_subq = (
+        db.query(
+            ListingPriceHistory.listing_id,
+            func.max(ListingPriceHistory.changed_at).label('last_change')
+        )
+        .filter(ListingPriceHistory.changed_at >= cutoff_time)
+        .group_by(ListingPriceHistory.listing_id)
+        .subquery()
+    )
+    
+    # 価格改定のあった物件を取得
+    price_changed_properties = (
+        db.query(
+            MasterProperty,
+            Building,
+            PropertyListing.current_price,
+            PropertyListing.title,
+            PropertyListing.url,
+            PropertyListing.source_site,
+            price_changes_subq.c.last_change.label('changed_at'),
+            func.literal('price_change').label('update_type')
+        )
+        .join(PropertyListing, PropertyListing.master_property_id == MasterProperty.id)
+        .join(Building, MasterProperty.building_id == Building.id)
+        .join(price_changes_subq, price_changes_subq.c.listing_id == PropertyListing.id)
+        .filter(PropertyListing.is_active == True)
+        .all()
+    )
+    
+    # 新着物件を取得（created_atが期間内）
+    new_properties = (
+        db.query(
+            MasterProperty,
+            Building,
+            PropertyListing.current_price,
+            PropertyListing.title,
+            PropertyListing.url,
+            PropertyListing.source_site,
+            PropertyListing.created_at.label('changed_at'),
+            func.literal('new').label('update_type')
+        )
+        .join(PropertyListing, PropertyListing.master_property_id == MasterProperty.id)
+        .join(Building, MasterProperty.building_id == Building.id)
+        .filter(
+            PropertyListing.is_active == True,
+            PropertyListing.created_at >= cutoff_time
+        )
+        .all()
+    )
+    
+    # 結果を区ごとにグループ化
+    updates_by_ward = {}
+    
+    def get_ward(address):
+        """住所から区名を抽出"""
+        if not address:
+            return "不明"
+        import re
+        match = re.search(r'(.*?[区市町村])', address)
+        if match:
+            ward = match.group(1)
+            # 都道府県名を除去
+            ward = re.sub(r'^東京都', '', ward)
+            return ward
+        return "不明"
+    
+    # 価格改定物件を処理
+    for item in price_changed_properties:
+        master_property, building, price, title, url, source, changed_at, update_type = item
+        ward = get_ward(building.address)
+        
+        if ward not in updates_by_ward:
+            updates_by_ward[ward] = {
+                'ward': ward,
+                'price_changes': [],
+                'new_listings': []
+            }
+        
+        updates_by_ward[ward]['price_changes'].append({
+            'id': master_property.id,
+            'building_name': building.normalized_name,
+            'room_number': master_property.room_number,
+            'floor_number': master_property.floor_number,
+            'area': master_property.area,
+            'layout': master_property.layout,
+            'direction': master_property.direction,
+            'price': price,
+            'title': title,
+            'url': url,
+            'source_site': source,
+            'changed_at': changed_at.isoformat() if changed_at else None,
+            'address': building.address
+        })
+    
+    # 新着物件を処理
+    for item in new_properties:
+        master_property, building, price, title, url, source, changed_at, update_type = item
+        ward = get_ward(building.address)
+        
+        if ward not in updates_by_ward:
+            updates_by_ward[ward] = {
+                'ward': ward,
+                'price_changes': [],
+                'new_listings': []
+            }
+        
+        updates_by_ward[ward]['new_listings'].append({
+            'id': master_property.id,
+            'building_name': building.normalized_name,
+            'room_number': master_property.room_number,
+            'floor_number': master_property.floor_number,
+            'area': master_property.area,
+            'layout': master_property.layout,
+            'direction': master_property.direction,
+            'price': price,
+            'title': title,
+            'url': url,
+            'source_site': source,
+            'created_at': changed_at.isoformat() if changed_at else None,
+            'address': building.address
+        })
+    
+    # 区名でソート
+    sorted_wards = sorted(updates_by_ward.keys())
+    sorted_updates = [updates_by_ward[ward] for ward in sorted_wards]
+    
+    # サマリー情報を計算
+    total_price_changes = sum(len(w['price_changes']) for w in sorted_updates)
+    total_new_listings = sum(len(w['new_listings']) for w in sorted_updates)
+    
+    return {
+        'period_hours': hours,
+        'cutoff_time': cutoff_time.isoformat(),
+        'total_price_changes': total_price_changes,
+        'total_new_listings': total_new_listings,
+        'updates_by_ward': sorted_updates
+    }

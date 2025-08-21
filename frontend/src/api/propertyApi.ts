@@ -43,6 +43,37 @@ api.interceptors.request.use(
   }
 );
 
+export interface RecentUpdate {
+  id: number;
+  building_name: string;
+  room_number: string | null;
+  floor_number: number | null;
+  area: number | null;
+  layout: string | null;
+  direction: string | null;
+  price: number;
+  title: string;
+  url: string;
+  source_site: string;
+  changed_at?: string;
+  created_at?: string;
+  address: string | null;
+}
+
+export interface WardUpdates {
+  ward: string;
+  price_changes: RecentUpdate[];
+  new_listings: RecentUpdate[];
+}
+
+export interface RecentUpdatesResponse {
+  period_hours: number;
+  cutoff_time: string;
+  total_price_changes: number;
+  total_new_listings: number;
+  updates_by_ward: WardUpdates[];
+}
+
 export const propertyApi = {
   // 物件一覧検索
   searchProperties: async (params: SearchParams): Promise<ApiResponse<Property>> => {
@@ -320,6 +351,14 @@ export const propertyApi = {
     total: number;
   }> => {
     const response = await api.get('/admin/building-exclusions', { params });
+    return response.data;
+  },
+
+  // 直近の価格改定・新着物件を取得
+  getRecentUpdates: async (hours: number = 24): Promise<RecentUpdatesResponse> => {
+    const response = await api.get('/v2/properties/recent-updates', {
+      params: { hours }
+    });
     return response.data;
   },
 };

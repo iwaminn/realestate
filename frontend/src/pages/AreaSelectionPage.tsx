@@ -16,12 +16,24 @@ import {
   Divider,
   useTheme,
   alpha,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  List,
+  ListItem,
+  ListItemText,
+  Badge,
+  Link,
+  Skeleton,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-import { propertyApi } from '../api/propertyApi';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import UpdateIcon from '@mui/icons-material/Update';
+import NewReleasesIcon from '@mui/icons-material/NewReleases';
+import { propertyApi, RecentUpdatesResponse, WardUpdates } from '../api/propertyApi';
 
 // 東京23区のリスト
 const TOKYO_WARDS = [
@@ -62,6 +74,8 @@ const AreaSelectionPage: React.FC = () => {
   const [areaStats, setAreaStats] = useState<{[key: string]: number}>({});
   const [loading, setLoading] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
+  const [recentUpdates, setRecentUpdates] = useState<RecentUpdatesResponse | null>(null);
+  const [updatesLoading, setUpdatesLoading] = useState(true);
 
   // 全体の物件数を取得（初回のみ）
   useEffect(() => {
@@ -85,6 +99,25 @@ const AreaSelectionPage: React.FC = () => {
     fetchTotalStats();
   }, []);
 
+  // 価格改定・新着物件を取得
+  useEffect(() => {
+    const fetchRecentUpdates = async () => {
+      setUpdatesLoading(true);
+      try {
+        const updates = await propertyApi.getRecentUpdates(24);
+        setRecentUpdates(updates);
+      } catch (error) {
+        console.error('Failed to fetch recent updates:', error);
+      }
+      setUpdatesLoading(false);
+    };
+
+    fetchRecentUpdates();
+    // 5分ごとに更新
+    const interval = setInterval(fetchRecentUpdates, 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
   const handleAreaClick = (wardName: string) => {
     navigate(`/properties?wards=${encodeURIComponent(wardName)}`);
   };
@@ -102,6 +135,22 @@ const AreaSelectionPage: React.FC = () => {
 
   const popularWards = TOKYO_WARDS.filter((ward) => ward.popular);
   const otherWards = TOKYO_WARDS.filter((ward) => !ward.popular);
+
+  const formatPrice = (price: number) => {
+    if (price >= 10000) {
+      return `${(price / 10000).toFixed(1)}億円`;
+    }
+    return `${price.toLocaleString()}万円`;
+  };
+
+  const formatPropertyInfo = (property: any) => {
+    const parts = [];
+    if (property.floor_number) parts.push(`${property.floor_number}階`);
+    if (property.area) parts.push(`${property.area}㎡`);
+    if (property.layout) parts.push(property.layout);
+    if (property.direction) parts.push(`${property.direction}向き`);
+    return parts.join(' / ');
+  };
 
 
   return (
@@ -158,6 +207,173 @@ const AreaSelectionPage: React.FC = () => {
           </IconButton>
         </Paper>
       </Box>
+
+      {/* 価格改定・新着物件セクション */}
+      {recentUpdates && recentUpdates.updates_by_ward.length > 0 && (
+        <Box sx={{ mb: 6 }}>
+          <Typography variant="h5" gutterBottom sx={{ mb: 3, fontWeight: 'bold' }}>
+            <UpdateIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
+            直近24時間の更新情報
+          </Typography>
+          
+          <Grid container spacing={2} sx={{ mb: 2 }}>
+            <Grid item xs={12} md={6}>
+              <Paper sx={{ p: 2, bgcolor: alpha(theme.palette.error.main, 0.05) }}>
+                <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                  <Badge badgeContent={recentUpdates.total_price_changes} color="error">
+                    <UpdateIcon sx={{ mr: 1 }} />
+                  </Badge>
+                  価格改定物件
+                </Typography>
+              </Paper>
+            </Grid>
+            <Grid item xs={12} md={6}>
+              <Paper sx={{ p: 2, bgcolor: alpha(theme.palette.success.main, 0.05) }}>
+                <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+                  <Badge badgeContent={recentUpdates.total_new_listings} color="success">
+                    <NewReleasesIcon sx={{ mr: 1 }} />
+                  </Badge>
+                  新着物件
+                </Typography>
+              </Paper>
+            </Grid>
+          </Grid>
+
+          {/* エリア別の更新情報 */}
+          <Box sx={{ maxHeight: 600, overflowY: 'auto' }}>
+            {recentUpdates.updates_by_ward
+              .filter(ward => ward.price_changes.length > 0 || ward.new_listings.length > 0)
+              .map((ward, index) => (
+                <Accordion key={ward.ward} defaultExpanded={index < 3}>
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', width: '100%', gap: 2 }}>
+                      <Typography variant="h6">{ward.ward}</Typography>
+                      <Box sx={{ display: 'flex', gap: 1, ml: 'auto', mr: 2 }}>
+                        {ward.price_changes.length > 0 && (
+                          <Chip
+                            label={`価格改定 ${ward.price_changes.length}件`}
+                            color="error"
+                            size="small"
+                          />
+                        )}
+                        {ward.new_listings.length > 0 && (
+                          <Chip
+                            label={`新着 ${ward.new_listings.length}件`}
+                            color="success"
+                            size="small"
+                          />
+                        )}
+                      </Box>
+                    </Box>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Grid container spacing={2}>
+                      {/* 価格改定物件 */}
+                      {ward.price_changes.length > 0 && (
+                        <Grid item xs={12} md={6}>
+                          <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: theme.palette.error.main }}>
+                            価格改定
+                          </Typography>
+                          <List dense>
+                            {ward.price_changes.slice(0, 5).map((property) => (
+                              <ListItem key={`price-${property.id}`} sx={{ pl: 0 }}>
+                                <ListItemText
+                                  primary={
+                                    <Link
+                                      href={`/properties/${property.id}`}
+                                      sx={{ textDecoration: 'none', color: 'inherit', '&:hover': { textDecoration: 'underline' } }}
+                                    >
+                                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                                        {property.building_name} {property.room_number && `${property.room_number}号室`}
+                                      </Typography>
+                                    </Link>
+                                  }
+                                  secondary={
+                                    <>
+                                      <Typography variant="caption" component="span" sx={{ color: theme.palette.error.main, fontWeight: 'bold' }}>
+                                        {formatPrice(property.price)}
+                                      </Typography>
+                                      <Typography variant="caption" component="span" sx={{ ml: 1 }}>
+                                        {formatPropertyInfo(property)}
+                                      </Typography>
+                                    </>
+                                  }
+                                />
+                              </ListItem>
+                            ))}
+                            {ward.price_changes.length > 5 && (
+                              <Typography variant="caption" color="text.secondary" sx={{ pl: 2 }}>
+                                他 {ward.price_changes.length - 5} 件
+                              </Typography>
+                            )}
+                          </List>
+                        </Grid>
+                      )}
+                      
+                      {/* 新着物件 */}
+                      {ward.new_listings.length > 0 && (
+                        <Grid item xs={12} md={6}>
+                          <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold', color: theme.palette.success.main }}>
+                            新着
+                          </Typography>
+                          <List dense>
+                            {ward.new_listings.slice(0, 5).map((property) => (
+                              <ListItem key={`new-${property.id}`} sx={{ pl: 0 }}>
+                                <ListItemText
+                                  primary={
+                                    <Link
+                                      href={`/properties/${property.id}`}
+                                      sx={{ textDecoration: 'none', color: 'inherit', '&:hover': { textDecoration: 'underline' } }}
+                                    >
+                                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+                                        {property.building_name} {property.room_number && `${property.room_number}号室`}
+                                      </Typography>
+                                    </Link>
+                                  }
+                                  secondary={
+                                    <>
+                                      <Typography variant="caption" component="span" sx={{ color: theme.palette.success.main, fontWeight: 'bold' }}>
+                                        {formatPrice(property.price)}
+                                      </Typography>
+                                      <Typography variant="caption" component="span" sx={{ ml: 1 }}>
+                                        {formatPropertyInfo(property)}
+                                      </Typography>
+                                    </>
+                                  }
+                                />
+                              </ListItem>
+                            ))}
+                            {ward.new_listings.length > 5 && (
+                              <Typography variant="caption" color="text.secondary" sx={{ pl: 2 }}>
+                                他 {ward.new_listings.length - 5} 件
+                              </Typography>
+                            )}
+                          </List>
+                        </Grid>
+                      )}
+                    </Grid>
+                  </AccordionDetails>
+                </Accordion>
+              ))}
+          </Box>
+        </Box>
+      )}
+
+      {/* ローディング表示 */}
+      {updatesLoading && (
+        <Box sx={{ mb: 6 }}>
+          <Skeleton variant="text" width={200} height={40} />
+          <Grid container spacing={2}>
+            {[1, 2].map((i) => (
+              <Grid item xs={12} md={6} key={i}>
+                <Skeleton variant="rectangular" height={80} />
+              </Grid>
+            ))}
+          </Grid>
+        </Box>
+      )}
+
+      <Divider sx={{ my: 4 }} />
 
       {/* 統計情報 */}
       <Box sx={{ mb: 4 }}>
