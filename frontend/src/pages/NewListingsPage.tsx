@@ -106,11 +106,10 @@ const NewListingsPage: React.FC = () => {
   const formatDate = (dateString?: string) => {
     if (!dateString) return '-';
     const date = new Date(dateString);
-    return date.toLocaleString('ja-JP', {
+    return date.toLocaleDateString('ja-JP', {
+      year: 'numeric',
       month: 'numeric',
       day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
     });
   };
 
