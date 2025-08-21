@@ -25,6 +25,7 @@ import {
   Badge,
   Link,
   Skeleton,
+  Button,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
@@ -33,6 +34,7 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import UpdateIcon from '@mui/icons-material/Update';
 import NewReleasesIcon from '@mui/icons-material/NewReleases';
+import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import { propertyApi, RecentUpdatesResponse, WardUpdates } from '../api/propertyApi';
 
 // 東京23区のリスト
@@ -218,23 +220,57 @@ const AreaSelectionPage: React.FC = () => {
           
           <Grid container spacing={2} sx={{ mb: 2 }}>
             <Grid item xs={12} md={6}>
-              <Paper sx={{ p: 2, bgcolor: alpha(theme.palette.error.main, 0.05) }}>
-                <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                  <Badge badgeContent={recentUpdates.total_price_changes} color="error">
-                    <UpdateIcon sx={{ mr: 1 }} />
-                  </Badge>
-                  価格改定物件
-                </Typography>
+              <Paper 
+                sx={{ 
+                  p: 2, 
+                  bgcolor: alpha(theme.palette.error.main, 0.05),
+                  cursor: 'pointer',
+                  transition: 'all 0.3s',
+                  '&:hover': {
+                    transform: 'translateY(-2px)',
+                    boxShadow: 3,
+                  }
+                }}
+                onClick={() => navigate('/price-changes')}
+              >
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center' }}>
+                    <Badge badgeContent={recentUpdates.total_price_changes} color="error">
+                      <UpdateIcon sx={{ mr: 1 }} />
+                    </Badge>
+                    価格改定物件
+                  </Typography>
+                  <Button size="small" color="error" endIcon={<ArrowForwardIcon />}>
+                    一覧を見る
+                  </Button>
+                </Box>
               </Paper>
             </Grid>
             <Grid item xs={12} md={6}>
-              <Paper sx={{ p: 2, bgcolor: alpha(theme.palette.success.main, 0.05) }}>
-                <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                  <Badge badgeContent={recentUpdates.total_new_listings} color="success">
-                    <NewReleasesIcon sx={{ mr: 1 }} />
-                  </Badge>
-                  新着物件
-                </Typography>
+              <Paper 
+                sx={{ 
+                  p: 2, 
+                  bgcolor: alpha(theme.palette.success.main, 0.05),
+                  cursor: 'pointer',
+                  transition: 'all 0.3s',
+                  '&:hover': {
+                    transform: 'translateY(-2px)',
+                    boxShadow: 3,
+                  }
+                }}
+                onClick={() => navigate('/new-listings')}
+              >
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center' }}>
+                    <Badge badgeContent={recentUpdates.total_new_listings} color="success">
+                      <NewReleasesIcon sx={{ mr: 1 }} />
+                    </Badge>
+                    新着物件
+                  </Typography>
+                  <Button size="small" color="success" endIcon={<ArrowForwardIcon />}>
+                    一覧を見る
+                  </Button>
+                </Box>
               </Paper>
             </Grid>
           </Grid>
@@ -292,6 +328,18 @@ const AreaSelectionPage: React.FC = () => {
                                     <>
                                       <Typography variant="caption" component="span" sx={{ color: theme.palette.error.main, fontWeight: 'bold' }}>
                                         {formatPrice(property.price)}
+                                        {property.previous_price && (
+                                          <>
+                                            {' '}
+                                            <span style={{ color: 'gray', textDecoration: 'line-through' }}>
+                                              {formatPrice(property.previous_price)}
+                                            </span>
+                                            {' '}
+                                            <span style={{ color: property.price_diff && property.price_diff < 0 ? 'blue' : 'red' }}>
+                                              ({property.price_diff && property.price_diff > 0 ? '+' : ''}{property.price_diff?.toLocaleString()}万円)
+                                            </span>
+                                          </>
+                                        )}
                                       </Typography>
                                       <Typography variant="caption" component="span" sx={{ ml: 1 }}>
                                         {formatPropertyInfo(property)}

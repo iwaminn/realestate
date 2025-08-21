@@ -52,6 +52,9 @@ export interface RecentUpdate {
   layout: string | null;
   direction: string | null;
   price: number;
+  previous_price?: number;  // 前回価格
+  price_diff?: number;       // 価格変動幅（万円）
+  price_diff_rate?: number;  // 価格変動率（%）
   title: string;
   url: string;
   source_site: string;

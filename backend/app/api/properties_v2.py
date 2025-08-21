@@ -169,7 +169,7 @@ async def get_recent_updates(
     # 対象期間の開始時刻
     cutoff_time = datetime.now() - timedelta(hours=hours)
     
-    # 価格履歴から価格改定物件を取得
+    # 価格履歴から価格改定物件を取得（変更前後の価格を含む）
     price_changes_subq = (
         db.query(
             ListingPriceHistory.property_listing_id,
@@ -180,23 +180,68 @@ async def get_recent_updates(
         .subquery()
     )
     
-    # 価格改定のあった物件を取得
-    price_changed_properties = (
-        db.query(
-            MasterProperty,
-            Building,
-            PropertyListing.current_price,
-            PropertyListing.title,
-            PropertyListing.url,
-            PropertyListing.source_site,
-            price_changes_subq.c.last_change.label('changed_at')
-        )
-        .join(PropertyListing, PropertyListing.master_property_id == MasterProperty.id)
-        .join(Building, MasterProperty.building_id == Building.id)
-        .join(price_changes_subq, price_changes_subq.c.property_listing_id == PropertyListing.id)
-        .filter(PropertyListing.is_active == True)
+    # 価格改定のあった物件を取得（変更前の価格も取得）
+    price_changed_properties = []
+    
+    # 価格改定があった物件のIDを取得
+    price_changed_listing_ids = (
+        db.query(price_changes_subq.c.property_listing_id)
         .all()
     )
+    
+    for (listing_id,) in price_changed_listing_ids:
+        # 現在の物件情報を取得
+        current_info = (
+            db.query(
+                MasterProperty,
+                Building,
+                PropertyListing.current_price,
+                PropertyListing.title,
+                PropertyListing.url,
+                PropertyListing.source_site,
+                PropertyListing.id
+            )
+            .join(PropertyListing, PropertyListing.master_property_id == MasterProperty.id)
+            .join(Building, MasterProperty.building_id == Building.id)
+            .filter(
+                PropertyListing.id == listing_id,
+                PropertyListing.is_active == True
+            )
+            .first()
+        )
+        
+        if not current_info:
+            continue
+            
+        # この物件の価格履歴を取得（最新2件）
+        price_history = (
+            db.query(
+                ListingPriceHistory.price,
+                ListingPriceHistory.recorded_at
+            )
+            .filter(ListingPriceHistory.property_listing_id == listing_id)
+            .order_by(ListingPriceHistory.recorded_at.desc())
+            .limit(2)
+            .all()
+        )
+        
+        if len(price_history) >= 2:
+            current_price_record = price_history[0]
+            previous_price_record = price_history[1]
+            
+            # 価格変更があった場合のみ追加
+            if current_price_record[0] != previous_price_record[0]:
+                price_changed_properties.append({
+                    'master_property': current_info[0],
+                    'building': current_info[1],
+                    'current_price': current_info[2],
+                    'previous_price': previous_price_record[0],
+                    'title': current_info[3],
+                    'url': current_info[4],
+                    'source_site': current_info[5],
+                    'changed_at': current_price_record[1]
+                })
+    
     
     # 新着物件を取得（created_atが期間内）
     new_properties = (
@@ -236,7 +281,15 @@ async def get_recent_updates(
     
     # 価格改定物件を処理
     for item in price_changed_properties:
-        master_property, building, price, title, url, source, changed_at = item
+        master_property = item['master_property']
+        building = item['building']
+        current_price = item['current_price']
+        previous_price = item['previous_price']
+        title = item['title']
+        url = item['url']
+        source = item['source_site']
+        changed_at = item['changed_at']
+        
         ward = get_ward(building.address)
         
         if ward not in updates_by_ward:
@@ -246,6 +299,10 @@ async def get_recent_updates(
                 'new_listings': []
             }
         
+        # 価格変動幅と変動率を計算
+        price_diff = current_price - previous_price
+        price_diff_rate = ((current_price - previous_price) / previous_price * 100) if previous_price > 0 else 0
+        
         updates_by_ward[ward]['price_changes'].append({
             'id': master_property.id,
             'building_name': building.normalized_name,
@@ -254,7 +311,10 @@ async def get_recent_updates(
             'area': master_property.area,
             'layout': master_property.layout,
             'direction': master_property.direction,
-            'price': price,
+            'price': current_price,
+            'previous_price': previous_price,
+            'price_diff': price_diff,
+            'price_diff_rate': round(price_diff_rate, 1),
             'title': title,
             'url': url,
             'source_site': source,
