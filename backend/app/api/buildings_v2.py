@@ -225,7 +225,7 @@ async def get_building_properties(
         raise HTTPException(status_code=404, detail="建物が見つかりません")
     
     # 価格の多数決を計算するサブクエリ
-    from ..utils.price_queries import create_majority_price_subquery, create_price_stats_subquery
+    from ..utils.price_queries import create_majority_price_subquery, create_price_stats_subquery, get_sold_property_final_price
     
     majority_price_query = create_majority_price_subquery(db, include_inactive)
     price_subquery = create_price_stats_subquery(db, majority_price_query, include_inactive)
@@ -265,6 +265,14 @@ async def get_building_properties(
     # 結果を整形
     properties = []
     for mp, min_price, max_price, majority_price, listing_count, source_sites, has_active, last_confirmed, delisted, station_info, earliest_published_at in results:
+        # 販売終了物件の価格を計算
+        if mp.sold_at:
+            final_price = get_sold_property_final_price(db, mp)
+            display_price = final_price
+        else:
+            display_price = majority_price
+            final_price = None
+        
         properties.append({
             "id": mp.id,
             "room_number": mp.room_number,
@@ -273,9 +281,9 @@ async def get_building_properties(
             "balcony_area": mp.balcony_area,
             "layout": mp.layout,
             "direction": mp.direction,
-            "min_price": min_price if not mp.sold_at else mp.final_price,
-            "max_price": max_price if not mp.sold_at else mp.final_price,
-            "majority_price": majority_price if not mp.sold_at else mp.final_price,
+            "min_price": min_price if not mp.sold_at else display_price,
+            "max_price": max_price if not mp.sold_at else display_price,
+            "majority_price": display_price,
             "listing_count": listing_count,
             "source_sites": source_sites.split(',') if source_sites else [],
             "has_active_listing": has_active,

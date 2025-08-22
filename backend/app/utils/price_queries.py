@@ -2,6 +2,7 @@
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, and_, distinct, String
 from typing import Optional
+from datetime import timedelta
 from ..models import PropertyListing, MasterProperty
 
 def create_majority_price_subquery(db: Session, include_inactive: bool = False):
@@ -127,3 +128,92 @@ def apply_price_filter(query, price_subquery, min_price: Optional[int], max_pric
             )
         )
     return query
+
+def calculate_final_price_for_sold_property(db: Session, master_property_id: int) -> Optional[int]:
+    """
+    販売終了物件の最終価格を計算（販売終了前1週間の価格履歴から多数決）
+    
+    Args:
+        db: データベースセッション
+        master_property_id: マスター物件ID
+    
+    Returns:
+        最終価格（万円）、データがない場合はNone
+    """
+    from datetime import timedelta
+    from ..models import ListingPriceHistory
+    
+    # マスター物件を取得
+    master_property = db.query(MasterProperty).filter(
+        MasterProperty.id == master_property_id
+    ).first()
+    
+    if not master_property or not master_property.sold_at:
+        return None
+    
+    # 販売終了前1週間の期間を計算
+    end_date = master_property.sold_at
+    start_date = end_date - timedelta(days=7)
+    
+    # 期間内の価格履歴を取得（全掲載から）
+    price_history = db.query(
+        ListingPriceHistory.price,
+        func.count(ListingPriceHistory.id).label('count')
+    ).join(
+        PropertyListing,
+        ListingPriceHistory.property_listing_id == PropertyListing.id
+    ).filter(
+        PropertyListing.master_property_id == master_property_id,
+        ListingPriceHistory.recorded_at >= start_date,
+        ListingPriceHistory.recorded_at <= end_date,
+        ListingPriceHistory.price.isnot(None)
+    ).group_by(
+        ListingPriceHistory.price
+    ).order_by(
+        func.count(ListingPriceHistory.id).desc(),
+        ListingPriceHistory.price.desc()  # 同数の場合は高い方を優先
+    ).first()
+    
+    if price_history:
+        return price_history[0]
+    
+    # 1週間以内のデータがない場合は、販売終了時点の最新価格を取得
+    latest_price = db.query(
+        PropertyListing.current_price
+    ).filter(
+        PropertyListing.master_property_id == master_property_id,
+        PropertyListing.current_price.isnot(None)
+    ).order_by(
+        PropertyListing.updated_at.desc()
+    ).first()
+    
+    if latest_price:
+        return latest_price[0]
+    
+    return None
+
+def get_sold_property_final_price(db: Session, master_property: MasterProperty) -> Optional[int]:
+    """
+    販売終了物件の最終価格を取得（キャッシュ済みならそれを使用、なければ計算）
+    
+    Args:
+        db: データベースセッション
+        master_property: マスター物件オブジェクト
+    
+    Returns:
+        最終価格（万円）
+    """
+    if not master_property.sold_at:
+        return None
+    
+    # すでに final_price が設定されていればそれを返す
+    if master_property.final_price:
+        return master_property.final_price
+    
+    # 計算して更新
+    final_price = calculate_final_price_for_sold_property(db, master_property.id)
+    if final_price:
+        master_property.final_price = final_price
+        db.commit()
+    
+    return final_price

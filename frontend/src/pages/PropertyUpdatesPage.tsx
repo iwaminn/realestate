@@ -358,8 +358,7 @@ const PropertyUpdatesPage: React.FC = () => {
                   <TableCell>エリア</TableCell>
                   <TableCell align="right">現在価格</TableCell>
                   <TableCell align="right">前回価格</TableCell>
-                  <TableCell align="right">変動幅</TableCell>
-                  <TableCell align="right">変動率</TableCell>
+                  <TableCell align="right">変動幅・変動率</TableCell>
                   <TableCell>階数</TableCell>
                   <TableCell>面積</TableCell>
                   <TableCell>間取り</TableCell>
@@ -397,26 +396,28 @@ const PropertyUpdatesPage: React.FC = () => {
                     </TableCell>
                     <TableCell align="right">
                       {property.price_diff ? (
-                        <Chip
-                          icon={property.price_diff < 0 ? <TrendingDownIcon /> : <TrendingUpIcon />}
-                          label={`${property.price_diff > 0 ? '+' : ''}${property.price_diff.toLocaleString()}万円`}
-                          color={property.price_diff < 0 ? 'primary' : 'error'}
-                          size="small"
-                        />
+                        <Box>
+                          <Chip
+                            icon={property.price_diff < 0 ? <TrendingDownIcon /> : <TrendingUpIcon />}
+                            label={`${property.price_diff > 0 ? '+' : ''}${property.price_diff.toLocaleString()}万円`}
+                            color={property.price_diff < 0 ? 'primary' : 'error'}
+                            size="small"
+                            sx={{ mb: 0.5 }}
+                          />
+                          {property.price_diff_rate && (
+                            <Typography 
+                              variant="caption" 
+                              display="block"
+                              color={property.price_diff_rate < 0 ? 'primary' : 'error'}
+                              sx={{ fontWeight: 'bold', textAlign: 'center' }}
+                            >
+                              ({property.price_diff_rate > 0 ? '+' : ''}{property.price_diff_rate}%)
+                            </Typography>
+                          )}
+                        </Box>
                       ) : '-'}
                     </TableCell>
-                    <TableCell align="right">
-                      {property.price_diff_rate ? (
-                        <Typography 
-                          variant="body2" 
-                          color={property.price_diff_rate < 0 ? 'primary' : 'error'}
-                          sx={{ fontWeight: 'bold' }}
-                        >
-                          {property.price_diff_rate > 0 ? '+' : ''}{property.price_diff_rate}%
-                        </Typography>
-                      ) : '-'}
-                    </TableCell>
-                    <TableCell>{property.floor_number ? `${property.floor_number}階` : '-'}</TableCell>
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>{property.floor_number ? `${property.floor_number}階` : '-'}</TableCell>
                     <TableCell>{property.area ? `${property.area}㎡` : '-'}</TableCell>
                     <TableCell>{property.layout || '-'}</TableCell>
                     <TableCell>{property.direction || '-'}</TableCell>
@@ -525,7 +526,7 @@ const PropertyUpdatesPage: React.FC = () => {
                         {formatPrice(property.price)}
                       </Typography>
                     </TableCell>
-                    <TableCell>{property.floor_number ? `${property.floor_number}階` : '-'}</TableCell>
+                    <TableCell sx={{ whiteSpace: 'nowrap' }}>{property.floor_number ? `${property.floor_number}階` : '-'}</TableCell>
                     <TableCell>{property.area ? `${property.area}㎡` : '-'}</TableCell>
                     <TableCell>{property.layout || '-'}</TableCell>
                     <TableCell>{property.direction || '-'}</TableCell>

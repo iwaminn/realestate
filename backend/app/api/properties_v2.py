@@ -9,7 +9,7 @@ from ..database import get_db
 from ..models import Building, MasterProperty, PropertyListing, ListingPriceHistory
 from ..schemas.property import PropertyDetailSchema, MasterPropertySchema, ListingSchema, PriceHistorySchema
 from ..schemas.building import BuildingSchema
-from ..utils.price_queries import create_majority_price_subquery, create_price_stats_subquery, apply_price_filter
+from ..utils.price_queries import create_majority_price_subquery, create_price_stats_subquery, apply_price_filter, get_sold_property_final_price
 from ..utils.building_filters import apply_building_name_filter, apply_building_filters, apply_property_filters
 from .price_analysis import create_unified_price_timeline, analyze_source_price_consistency
 
@@ -111,6 +111,14 @@ async def get_properties_v2(
     # 結果を整形
     properties = []
     for mp, building, min_price, max_price, majority_price, listing_count, source_sites, has_active, last_confirmed, delisted, station_info, earliest_published_at, latest_price_update, has_price_change in results:
+        # 販売終了物件の価格を計算
+        if mp.sold_at:
+            final_price = get_sold_property_final_price(db, mp)
+            display_price = final_price
+        else:
+            display_price = majority_price
+            final_price = mp.final_price
+        
         properties.append({
             "id": mp.id,
             "building": {
@@ -128,9 +136,9 @@ async def get_properties_v2(
             "balcony_area": mp.balcony_area,
             "layout": mp.layout,
             "direction": mp.direction,
-            "min_price": min_price if not mp.sold_at else mp.final_price,
-            "max_price": max_price if not mp.sold_at else mp.final_price,
-            "majority_price": majority_price if not mp.sold_at else mp.final_price,
+            "min_price": min_price if not mp.sold_at else display_price,
+            "max_price": max_price if not mp.sold_at else display_price,
+            "majority_price": display_price,
             "listing_count": listing_count,
             "source_sites": source_sites.split(',') if source_sites else [],
             "has_active_listing": has_active,
@@ -143,7 +151,7 @@ async def get_properties_v2(
             "latest_price_update": str(latest_price_update) if latest_price_update else None,
             "has_price_change": has_price_change if has_price_change is not None else False,
             "sold_at": mp.sold_at.isoformat() if mp.sold_at else None,
-            "last_sale_price": mp.final_price
+            "last_sale_price": final_price if mp.sold_at else None
         })
     
     return {

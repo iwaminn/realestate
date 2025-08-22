@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -26,6 +26,8 @@ import {
   Tabs,
   Tab,
   TabScrollButton,
+  Autocomplete,
+  CircularProgress,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
@@ -37,6 +39,7 @@ import NewReleasesIcon from '@mui/icons-material/NewReleases';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import { propertyApi, RecentUpdatesResponse, WardUpdates } from '../api/propertyApi';
 import { TOKYO_WARDS, sortWardsByLandPrice, getPopularWards, getOtherWards } from '../constants/wardOrder';
+import { debounce } from 'lodash';
 
 interface AreaStat {
   ward: string;
@@ -55,6 +58,9 @@ const AreaSelectionPage: React.FC = () => {
   const [selectedWardTab, setSelectedWardTab] = useState(0);
   const [selectedWardName, setSelectedWardName] = useState<string | null>(null);
   const [updateType, setUpdateType] = useState<'price_changes' | 'new_listings'>('price_changes');
+  const [buildingOptions, setBuildingOptions] = useState<Array<string | { value: string; label: string }>>([]);
+  const [loadingBuildings, setLoadingBuildings] = useState(false);
+  const [buildingInputValue, setBuildingInputValue] = useState(searchText);
 
   // 全体の物件数を取得（初回のみ）
   useEffect(() => {
@@ -97,6 +103,39 @@ const AreaSelectionPage: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
+  // 建物名候補を取得する関数（デバウンス付き）- SearchFormと同じ処理
+  const fetchBuildingSuggestions = useCallback(
+    debounce(async (query: string) => {
+      if (query.length < 1) {
+        setBuildingOptions([]);
+        return;
+      }
+      
+      setLoadingBuildings(true);
+      try {
+        const suggestions = await propertyApi.suggestBuildings(query);
+        // APIレスポンスの形式を判定（SearchFormと同じ処理）
+        if (suggestions && suggestions.length > 0) {
+          if (typeof suggestions[0] === 'object' && 'value' in suggestions[0]) {
+            // 新形式（オブジェクト配列）
+            setBuildingOptions(suggestions as Array<{ value: string; label: string }>);
+          } else {
+            // 旧形式（文字列配列）
+            setBuildingOptions(suggestions as string[]);
+          }
+        } else {
+          setBuildingOptions([]);
+        }
+      } catch (error) {
+        console.error('Failed to fetch building suggestions:', error);
+        setBuildingOptions([]);
+      } finally {
+        setLoadingBuildings(false);
+      }
+    }, 300),
+    []
+  );
+
   const handleAreaClick = (wardName: string) => {
     navigate(`/properties?wards=${encodeURIComponent(wardName)}`);
   };
@@ -108,8 +147,9 @@ const AreaSelectionPage: React.FC = () => {
     }
   };
 
+  // エリアフィルタリングは建物名検索とは独立して処理
   const filteredWards = TOKYO_WARDS.filter((ward) =>
-    ward.name.includes(searchText)
+    ward.name.includes('')  // 建物名検索時はエリア選択を表示しない
   );
 
   const popularWards = getPopularWards();
@@ -175,16 +215,71 @@ const AreaSelectionPage: React.FC = () => {
           <InputAdornment position="start" sx={{ ml: 2 }}>
             <SearchIcon color="action" />
           </InputAdornment>
-          <TextField
-            fullWidth
-            variant="standard"
-            placeholder="建物名で検索（例：タワー、パーク）"
+          <Autocomplete
+            freeSolo
+            options={buildingOptions}
             value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            InputProps={{
-              disableUnderline: true,
-              sx: { px: 2, py: 1 },
+            inputValue={buildingInputValue}
+            onInputChange={(event, newInputValue, reason) => {
+              setBuildingInputValue(newInputValue);
+              if (reason === 'input') {
+                setSearchText(newInputValue);
+                fetchBuildingSuggestions(newInputValue);
+              } else if (reason === 'clear') {
+                setSearchText('');
+                setBuildingInputValue('');
+                setBuildingOptions([]);
+              }
             }}
+            onChange={(event, newValue) => {
+              if (typeof newValue === 'string') {
+                setSearchText(newValue);
+                setBuildingInputValue(newValue);
+              } else if (newValue && typeof newValue === 'object' && 'value' in newValue) {
+                // オブジェクト形式の場合（エイリアス対応）
+                setSearchText(newValue.value);
+                setBuildingInputValue(newValue.label);
+              }
+            }}
+            getOptionLabel={(option) => {
+              // オプションのラベル表示方法
+              if (typeof option === 'string') {
+                return option;
+              } else if (typeof option === 'object' && 'label' in option) {
+                return option.label;
+              }
+              return '';
+            }}
+            isOptionEqualToValue={(option, value) => {
+              if (typeof option === 'string' && typeof value === 'string') {
+                return option === value;
+              } else if (typeof option === 'object' && typeof value === 'object') {
+                return option.value === value.value;
+              }
+              return false;
+            }}
+            loading={loadingBuildings}
+            loadingText="読み込み中..."
+            noOptionsText="候補が見つかりません"
+            sx={{ flex: 1 }}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                variant="standard"
+                placeholder="建物名で検索（例：タワー、パーク）"
+                InputProps={{
+                  ...params.InputProps,
+                  disableUnderline: true,
+                  sx: { px: 2, py: 1 },
+                  endAdornment: (
+                    <>
+                      {loadingBuildings ? <CircularProgress color="inherit" size={20} /> : null}
+                      {params.InputProps.endAdornment}
+                    </>
+                  ),
+                }}
+              />
+            )}
           />
           <IconButton type="submit" sx={{ p: '10px' }} aria-label="search">
             <SearchIcon />
@@ -592,8 +687,8 @@ const AreaSelectionPage: React.FC = () => {
         </Grid>
       </Box>
 
-      {/* エリア選択 */}
-      {searchText === '' ? (
+      {/* エリア選択 - 建物名検索中は表示しない */}
+      {(buildingInputValue === '') && (
         <>
           {/* 人気エリア */}
           <Box sx={{ mb: 6 }}>
@@ -677,41 +772,6 @@ const AreaSelectionPage: React.FC = () => {
             </Grid>
           </Box>
         </>
-      ) : (
-        /* 検索結果 */
-        <Box>
-          <Typography variant="h5" gutterBottom sx={{ mb: 3 }}>
-            「{searchText}」を含むエリア
-          </Typography>
-          <Grid container spacing={2}>
-            {filteredWards.length > 0 ? (
-              filteredWards.map((ward) => (
-                <Grid item xs={12} sm={6} md={3} key={ward.id}>
-                  <Card>
-                    <CardActionArea onClick={() => handleAreaClick(ward.name)}>
-                      <CardContent>
-                        <Typography variant="h6" gutterBottom>
-                          {ward.name}
-                        </Typography>
-                        {areaStats[ward.name] && (
-                          <Typography variant="body2" color="text.secondary">
-                            物件数: {areaStats[ward.name]}件
-                          </Typography>
-                        )}
-                      </CardContent>
-                    </CardActionArea>
-                  </Card>
-                </Grid>
-              ))
-            ) : (
-              <Grid item xs={12}>
-                <Typography color="text.secondary">
-                  該当するエリアが見つかりませんでした
-                </Typography>
-              </Grid>
-            )}
-          </Grid>
-        </Box>
       )}
     </Container>
   );
