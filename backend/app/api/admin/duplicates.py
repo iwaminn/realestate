@@ -20,6 +20,7 @@ from ...models import (
 from ...utils.enhanced_building_matcher import EnhancedBuildingMatcher
 from ...utils.majority_vote_updater import MajorityVoteUpdater
 from ...utils.building_listing_name_manager import BuildingListingNameManager
+from ...utils.property_utils import update_earliest_listing_date
 from ...scrapers.data_normalizer import normalize_layout, normalize_direction
 
 router = APIRouter(tags=["admin-duplicates"])
@@ -767,7 +768,8 @@ def get_duplicate_properties(
             WHERE is_active = true
         ),
         candidate_properties AS (
-            -- 重複候補となる物件（部屋番号なし、アクティブな掲載あり）
+            -- 重複候補となる物件（アクティブな掲載あり）
+            -- 片方のみ部屋番号がある場合も重複候補として検出
             SELECT 
                 mp.*,
                 b.normalized_name as building_name
@@ -775,17 +777,17 @@ def get_duplicate_properties(
             INNER JOIN buildings b ON mp.building_id = b.id
             WHERE 
                 mp.id IN (SELECT master_property_id FROM active_listings)
-                AND (mp.room_number IS NULL OR mp.room_number = '')
                 AND (:building_ids IS NULL OR mp.building_id = ANY(:building_ids))
         ),
         property_groups AS (
-            -- 同じ属性でグループ化（階数、面積、間取り、方角）
+            -- 同じ属性でグループ化（階数、面積、間取り）
+            -- 方角は異なっても重複候補とする
+            -- 部屋番号の有無も考慮しない
             SELECT 
                 building_id,
                 floor_number,
                 ROUND(CAST(area AS NUMERIC) * 2) / 2 as rounded_area,
                 layout,
-                direction,
                 building_name,
                 COUNT(*) as property_count,
                 ARRAY_AGG(id ORDER BY created_at) as property_ids,
@@ -799,7 +801,6 @@ def get_duplicate_properties(
                 floor_number,
                 ROUND(CAST(area AS NUMERIC) * 2) / 2,
                 layout,
-                direction,
                 building_name
             HAVING COUNT(*) > 1
             ORDER BY COUNT(*) DESC
@@ -853,10 +854,6 @@ def get_duplicate_properties(
         if has_exclusion:
             continue
         
-        # 間取りと方角を正規化
-        normalized_layout = normalize_layout(row.layout) if row.layout else None
-        normalized_direction = normalize_direction(row.direction) if row.direction else None
-        
         # property_detailsが正しくパースされているか確認
         property_details = row.property_details if row.property_details else []
         
@@ -865,8 +862,8 @@ def get_duplicate_properties(
             "property_count": row.property_count,
             "building_name": row.building_name,
             "floor_number": row.floor_number,
-            "layout": normalized_layout or row.layout,
-            "direction": normalized_direction or row.direction,
+            "layout": row.layout,
+            "direction": None,  # 方角は個別物件で異なる可能性があるため省略
             "area": float(row.rounded_area) if row.rounded_area else None,
             "properties": property_details
         })
@@ -1077,6 +1074,11 @@ def move_property_to_building(
         if target_building_obj:
             updater.update_building_by_majority(target_building_obj)
         
+        # 移動した物件の最初の掲載日と価格改定日を更新
+        from backend.app.utils.property_utils import update_earliest_listing_date, update_latest_price_change
+        update_earliest_listing_date(db, moved_property_id)
+        update_latest_price_change(db, moved_property_id)
+        
         db.commit()
         
         # 結果を返す
@@ -1226,17 +1228,8 @@ async def merge_buildings(
             
             property_ids_moved = []
             for prop in properties_to_move:
-                # PropertyMergeHistoryの参照を更新
-                db.query(PropertyMergeHistory).filter(
-                    or_(
-                        PropertyMergeHistory.primary_property_id == prop.id,
-                        PropertyMergeHistory.merged_property_id == prop.id
-                    )
-                ).update({
-                    "primary_property_id": prop.id if PropertyMergeHistory.primary_property_id == prop.id else PropertyMergeHistory.primary_property_id,
-                    "merged_property_id": prop.id if PropertyMergeHistory.merged_property_id == prop.id else PropertyMergeHistory.merged_property_id
-                })
-                
+                # PropertyMergeHistoryの参照は更新しない（履歴は保持）
+                # 物件を新しい建物に移動
                 prop.building_id = primary_id
                 moved_properties += 1
                 property_ids_moved.append(prop.id)
@@ -1441,9 +1434,23 @@ async def merge_buildings(
                         "listings_moved": listings_moved
                     })
                     
-                    # 重複物件を削除
-                    db.delete(secondary_prop)
-                    duplicate_properties_merged += 1
+                    # PropertyMergeHistoryから参照されているかチェック
+                    is_referenced = db.query(PropertyMergeHistory).filter(
+                        or_(
+                            PropertyMergeHistory.primary_property_id == secondary_prop_id,
+                            PropertyMergeHistory.direct_primary_property_id == secondary_prop_id,
+                            PropertyMergeHistory.final_primary_property_id == secondary_prop_id
+                        )
+                    ).first()
+                    
+                    if not is_referenced:
+                        # 参照されていない場合のみ削除
+                        db.delete(secondary_prop)
+                        duplicate_properties_merged += 1
+                    else:
+                        # 参照されている場合はログを出力（削除しない）
+                        import logging
+                        logging.info(f"物件ID {secondary_prop_id} はPropertyMergeHistoryから参照されているため削除をスキップ")
                     
             except Exception as e:
                 # 個別のエラーはログに記録して続行
@@ -1793,6 +1800,10 @@ async def merge_properties(
         primary_property_id=request.primary_property_id,
         secondary_property_id=request.secondary_property_id
     )
+    
+    # 両方の物件の最初の掲載日を更新
+    update_earliest_listing_date(db, request.primary_property_id)
+    # secondary_property_idの物件は削除されているが、念のため
     
     db.commit()
     

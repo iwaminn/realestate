@@ -28,6 +28,7 @@ from ..utils.building_name_normalizer import (
     get_search_key_for_building as get_search_key_for_building_common,
     extract_room_number as extract_room_number_common
 )
+from ..utils.property_utils import update_earliest_listing_date
 from ..utils.fuzzy_property_matcher import FuzzyPropertyMatcher
 from ..utils.majority_vote_updater import MajorityVoteUpdater
 # BuildingListingNameManagerは循環インポートを避けるため遅延インポート
@@ -2897,6 +2898,10 @@ class BaseScraper(ABC):
                 # 現在価格を更新
                 listing.current_price = price
                 listing.price_updated_at = get_utc_now()
+                
+                # 価格改定日を更新
+                from backend.app.utils.property_utils import update_latest_price_change
+                update_latest_price_change(self.session, master_property.id)
             
             # その他の情報を更新（変更を追跡）
             if listing.title != title:
@@ -3148,6 +3153,12 @@ class BaseScraper(ABC):
                 )
                 self.session.add(listing)
                 self.session.flush()
+                
+                # 最初の掲載日を更新
+                update_earliest_listing_date(self.session, master_property.id)
+                # 価格改定日を更新（新規なので価格履歴追加と同時）
+                from backend.app.utils.property_utils import update_latest_price_change
+                update_latest_price_change(self.session, master_property.id)
             except Exception as e:
                 # URL重複エラーまたはsite_property_id重複エラーの場合は、再度検索して既存レコードを使用
                 if "property_listings_url_key" in str(e) or "property_listings_site_property_unique" in str(e):
@@ -3175,6 +3186,13 @@ class BaseScraper(ABC):
                             listing.is_active = False
                             listing.delisted_at = get_utc_now()
                             self.session.flush()
+                            
+                            # 非アクティブ化された物件の最初の掲載日を更新
+                            if listing.master_property_id:
+                                update_earliest_listing_date(self.session, listing.master_property_id)
+                                # 価格改定日も更新（非アクティブ化により再計算が必要）
+                                from backend.app.utils.property_utils import update_latest_price_change
+                                update_latest_price_change(self.session, listing.master_property_id)
                             
                             # 新しいレコードを作成（再試行）
                             listing = PropertyListing(
@@ -3217,6 +3235,10 @@ class BaseScraper(ABC):
                 recorded_at=datetime.now()
             )
             self.session.add(price_history)
+            
+            # 価格改定日を更新（初回登録も価格設定として扱う）
+            from backend.app.utils.property_utils import update_latest_price_change
+            update_latest_price_change(self.session, master_property.id)
             
             # 新規作成の場合、update_typeを'new'に設定
             update_type = 'new'

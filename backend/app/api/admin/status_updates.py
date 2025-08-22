@@ -53,9 +53,13 @@ async def update_listing_status(
         reopened_properties = set()
         
         # 各掲載を再アクティブ化
+        from backend.app.utils.property_utils import update_earliest_listing_date
+        properties_to_update = set()
+        
         for listing in reactivate_listings:
             listing.is_active = True
             listing.updated_at = now
+            properties_to_update.add(listing.master_property_id)
             
             # その物件が販売終了となっていた場合、販売再開とする
             master_property = db.query(MasterProperty).filter(
@@ -81,6 +85,7 @@ async def update_listing_status(
         for listing in inactive_listings:
             listing.is_active = False
             listing.updated_at = now
+            properties_to_update.add(listing.master_property_id)
             
             # その物件の他のアクティブな掲載があるか確認
             active_count = db.query(PropertyListing).filter(
@@ -105,6 +110,15 @@ async def update_listing_status(
                         updater.update_final_price_by_majority(master_property.id)
                     except Exception as e:
                         print(f"最終価格の更新に失敗: property_id={master_property.id}, error={e}")
+        
+        # 影響を受けた全物件の最初の掲載日と価格改定日を更新
+        from backend.app.utils.property_utils import update_latest_price_change
+        for property_id in properties_to_update:
+            try:
+                update_earliest_listing_date(db, property_id)
+                update_latest_price_change(db, property_id)
+            except Exception as e:
+                print(f"最初の掲載日の更新に失敗: property_id={property_id}, error={e}")
         
         db.commit()
         

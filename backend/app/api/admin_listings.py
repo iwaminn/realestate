@@ -486,6 +486,10 @@ async def attach_listing_to_property(
     new_property_obj = db.query(MasterProperty).filter(MasterProperty.id == new_property_id).first()
     if new_property_obj:
         updater.update_master_property_by_majority(new_property_obj)
+        # 最初の掲載日を更新
+        from backend.app.utils.property_utils import update_earliest_listing_date, update_latest_price_change
+        update_earliest_listing_date(db, new_property_id)
+        update_latest_price_change(db, new_property_id)
     
     # 元の物件を削除（必要な場合）
     original_deleted = False
@@ -506,6 +510,9 @@ async def attach_listing_to_property(
         original_property_obj = db.query(MasterProperty).filter(MasterProperty.id == original_property_id).first()
         if original_property_obj:
             updater.update_master_property_by_majority(original_property_obj)
+            # 元の物件の最初の掲載日と価格改定日も更新
+            update_earliest_listing_date(db, original_property_id)
+            update_latest_price_change(db, original_property_id)
     
     # BuildingListingNameテーブルを更新
     # 掲載情報の移動後、その掲載情報の建物名を反映

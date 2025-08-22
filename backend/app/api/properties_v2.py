@@ -169,96 +169,137 @@ async def get_recent_updates(
     # 対象期間の開始時刻
     cutoff_time = datetime.now() - timedelta(hours=hours)
     
-    # 価格履歴から価格改定物件を取得（変更前後の価格を含む）
-    price_changes_subq = (
-        db.query(
-            ListingPriceHistory.property_listing_id,
-            func.max(ListingPriceHistory.recorded_at).label('last_change')
+    # 価格履歴から価格改定物件を取得（最適化版）
+    # ウィンドウ関数を使用して各掲載の最新2つの価格を効率的に取得
+    from sqlalchemy import text
+    
+    # 価格変更があった掲載を一度のクエリで取得（最適化版）
+    # まず latest_price_change_at で高速フィルタリング
+    price_changes_query = text("""
+        WITH price_changes AS (
+            -- latest_price_change_at を使った高速フィルタリング
+            SELECT DISTINCT ON (pl.master_property_id, lph1.property_listing_id)
+                mp.id as master_property_id,
+                mp.room_number,
+                mp.floor_number,
+                mp.area,
+                mp.layout,
+                mp.direction,
+                mp.earliest_listing_date,
+                b.id as building_id,
+                b.normalized_name as building_name,
+                b.address,
+                b.built_year,
+                b.built_month,
+                pl.id as listing_id,
+                pl.current_price,
+                pl.title,
+                pl.url,
+                pl.source_site,
+                lph1.price as current_hist_price,
+                lph2.price as previous_price,
+                lph1.recorded_at as changed_at
+            FROM master_properties mp
+            INNER JOIN buildings b ON b.id = mp.building_id
+            INNER JOIN property_listings pl ON pl.master_property_id = mp.id
+            INNER JOIN listing_price_history lph1 ON lph1.property_listing_id = pl.id
+            -- 直前の価格履歴を取得
+            LEFT JOIN LATERAL (
+                SELECT price 
+                FROM listing_price_history 
+                WHERE property_listing_id = lph1.property_listing_id 
+                AND recorded_at < lph1.recorded_at
+                ORDER BY recorded_at DESC 
+                LIMIT 1
+            ) lph2 ON true
+            WHERE mp.latest_price_change_at >= :cutoff_time  -- 高速フィルタ
+            AND lph1.recorded_at >= :cutoff_time
+            AND pl.is_active = true
+            AND lph2.price IS NOT NULL
+            AND lph1.price != lph2.price
+            ORDER BY pl.master_property_id, lph1.property_listing_id, lph1.recorded_at DESC
         )
-        .filter(ListingPriceHistory.recorded_at >= cutoff_time)
-        .group_by(ListingPriceHistory.property_listing_id)
-        .subquery()
-    )
+        SELECT * FROM price_changes
+        ORDER BY changed_at DESC
+    """)
     
-    # 価格改定のあった物件を取得（物件ごとにグループ化）
-    price_changed_properties = []
-    
-    # 価格改定があった掲載IDを取得
-    price_changed_listing_ids = (
-        db.query(price_changes_subq.c.property_listing_id)
-        .all()
-    )
+    price_changed_results = db.execute(price_changes_query, {'cutoff_time': cutoff_time}).fetchall()
     
     # 物件ごとに最新の価格変更を集約
     master_property_changes = {}
     
-    for (listing_id,) in price_changed_listing_ids:
-        # 現在の物件情報を取得
-        current_info = (
-            db.query(
-                MasterProperty,
-                Building,
-                PropertyListing.current_price,
-                PropertyListing.title,
-                PropertyListing.url,
-                PropertyListing.source_site,
-                PropertyListing.id,
-                PropertyListing.master_property_id
-            )
-            .join(PropertyListing, PropertyListing.master_property_id == MasterProperty.id)
-            .join(Building, MasterProperty.building_id == Building.id)
-            .filter(
-                PropertyListing.id == listing_id,
-                PropertyListing.is_active == True
-            )
-            .first()
-        )
+    for row in price_changed_results:
+        master_property_id = row[0]
         
-        if not current_info:
-            continue
-            
-        master_property_id = current_info[7]
-        
-        # この物件の価格履歴を取得（最新2件）
-        price_history = (
-            db.query(
-                ListingPriceHistory.price,
-                ListingPriceHistory.recorded_at
-            )
-            .filter(ListingPriceHistory.property_listing_id == listing_id)
-            .order_by(ListingPriceHistory.recorded_at.desc())
-            .limit(2)
-            .all()
-        )
-        
-        if len(price_history) >= 2:
-            current_price_record = price_history[0]
-            previous_price_record = price_history[1]
-            
-            # 価格変更があった場合のみ追加
-            if current_price_record[0] != previous_price_record[0]:
-                change_info = {
-                    'master_property': current_info[0],
-                    'building': current_info[1],
-                    'current_price': current_info[2],
-                    'previous_price': previous_price_record[0],
-                    'title': current_info[3],
-                    'url': current_info[4],
-                    'source_site': current_info[5],
-                    'changed_at': current_price_record[1]
-                }
-                
-                # 物件ごとに最新の変更のみを保持
-                if master_property_id not in master_property_changes:
-                    master_property_changes[master_property_id] = change_info
-                elif change_info['changed_at'] > master_property_changes[master_property_id]['changed_at']:
-                    master_property_changes[master_property_id] = change_info
+        # 物件ごとに最新の価格変更のみを保持
+        if master_property_id not in master_property_changes:
+            master_property_changes[master_property_id] = {
+                'master_property': MasterProperty(
+                    id=row[0],
+                    room_number=row[1],
+                    floor_number=row[2],
+                    area=row[3],
+                    layout=row[4],
+                    direction=row[5]
+                ),
+                'building': Building(
+                    id=row[7],
+                    normalized_name=row[8],
+                    address=row[9],
+                    built_year=row[10],
+                    built_month=row[11]
+                ),
+                'current_price': row[17],  # current_hist_price
+                'previous_price': row[18],
+                'title': row[14],
+                'url': row[15],
+                'source_site': row[16],
+                'changed_at': row[19],
+                'earliest_listing_date': row[6]
+            }
+        elif row[19] > master_property_changes[master_property_id]['changed_at']:
+            # より新しい価格変更がある場合は更新
+            master_property_changes[master_property_id] = {
+                'master_property': MasterProperty(
+                    id=row[0],
+                    room_number=row[1],
+                    floor_number=row[2],
+                    area=row[3],
+                    layout=row[4],
+                    direction=row[5]
+                ),
+                'building': Building(
+                    id=row[7],
+                    normalized_name=row[8],
+                    address=row[9],
+                    built_year=row[10],
+                    built_month=row[11]
+                ),
+                'current_price': row[17],
+                'previous_price': row[18],
+                'title': row[14],
+                'url': row[15],
+                'source_site': row[16],
+                'changed_at': row[19],
+                'earliest_listing_date': row[6]
+            }
     
     # 辞書から最終的なリストに変換
     price_changed_properties = list(master_property_changes.values())
     
     
-    # 新着物件を取得（物件ごとにグループ化）
+    # 新着物件を取得（MasterPropertyレベルで初めて掲載された物件のみ）
+    # まず、各MasterPropertyの最初の掲載日時を取得
+    first_listing_subq = (
+        db.query(
+            PropertyListing.master_property_id,
+            func.min(PropertyListing.created_at).label('first_created_at')
+        )
+        .group_by(PropertyListing.master_property_id)
+        .subquery()
+    )
+    
+    # 指定期間内に初めて掲載された物件を取得
     new_listings_raw = (
         db.query(
             MasterProperty,
@@ -267,15 +308,20 @@ async def get_recent_updates(
             PropertyListing.title,
             PropertyListing.url,
             PropertyListing.source_site,
-            PropertyListing.created_at.label('changed_at'),
+            first_listing_subq.c.first_created_at.label('changed_at'),
             MasterProperty.id.label('master_property_id')
         )
         .join(PropertyListing, PropertyListing.master_property_id == MasterProperty.id)
         .join(Building, MasterProperty.building_id == Building.id)
+        .join(
+            first_listing_subq,
+            first_listing_subq.c.master_property_id == MasterProperty.id
+        )
         .filter(
             PropertyListing.is_active == True,
-            PropertyListing.created_at >= cutoff_time
+            first_listing_subq.c.first_created_at >= cutoff_time
         )
+        .distinct(MasterProperty.id)
         .all()
     )
     
@@ -319,6 +365,7 @@ async def get_recent_updates(
         url = item['url']
         source = item['source_site']
         changed_at = item['changed_at']
+        earliest_listing_date = item.get('earliest_listing_date')
         
         ward = get_ward(building.address)
         
@@ -332,6 +379,11 @@ async def get_recent_updates(
         # 価格変動幅と変動率を計算
         price_diff = current_price - previous_price
         price_diff_rate = ((current_price - previous_price) / previous_price * 100) if previous_price > 0 else 0
+        
+        # 経過日数を計算
+        days_on_market = None
+        if earliest_listing_date:
+            days_on_market = (datetime.now() - earliest_listing_date).days
         
         updates_by_ward[ward]['price_changes'].append({
             'id': master_property.id,
@@ -349,7 +401,10 @@ async def get_recent_updates(
             'url': url,
             'source_site': source,
             'changed_at': changed_at.isoformat() if changed_at else None,
-            'address': building.address
+            'address': building.address,
+            'built_year': building.built_year,
+            'built_month': building.built_month,
+            'days_on_market': days_on_market
         })
     
     # 新着物件を処理
@@ -377,7 +432,9 @@ async def get_recent_updates(
             'url': url,
             'source_site': source,
             'created_at': changed_at.isoformat() if changed_at else None,
-            'address': building.address
+            'address': building.address,
+            'built_year': building.built_year,
+            'built_month': building.built_month
         })
     
     # 区名でソート

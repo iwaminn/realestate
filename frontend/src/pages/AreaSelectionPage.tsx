@@ -117,7 +117,12 @@ const AreaSelectionPage: React.FC = () => {
 
   const formatPrice = (price: number) => {
     if (price >= 10000) {
-      return `${(price / 10000).toFixed(1)}億円`;
+      const oku = Math.floor(price / 10000);
+      const man = price % 10000;
+      if (man === 0) {
+        return `${oku}億円`;
+      }
+      return `${oku}億${man.toLocaleString()}万円`;
     }
     return `${price.toLocaleString()}万円`;
   };
@@ -208,7 +213,7 @@ const AreaSelectionPage: React.FC = () => {
                     boxShadow: 3,
                   }
                 }}
-                onClick={() => navigate('/price-changes')}
+                onClick={() => navigate('/updates?tab=0')}
               >
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center' }}>
@@ -235,7 +240,7 @@ const AreaSelectionPage: React.FC = () => {
                     boxShadow: 3,
                   }
                 }}
-                onClick={() => navigate('/new-listings')}
+                onClick={() => navigate('/updates?tab=1')}
               >
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center' }}>
@@ -377,30 +382,33 @@ const AreaSelectionPage: React.FC = () => {
                             {ward.price_changes.map((property, index) => (
                               <Paper 
                                 key={`price-${property.id}`} 
+                                component={Link}
+                                href={`/properties/${property.id}`}
                                 sx={{ 
                                   p: 2, 
                                   mb: 2, 
                                   border: 1,
                                   borderColor: 'divider',
+                                  display: 'block',
+                                  textDecoration: 'none',
+                                  color: 'inherit',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.3s',
                                   '&:hover': { 
-                                    boxShadow: 2,
-                                    bgcolor: alpha(theme.palette.primary.main, 0.02)
+                                    boxShadow: 3,
+                                    bgcolor: alpha(theme.palette.primary.main, 0.02),
+                                    transform: 'translateY(-2px)'
                                   }
                                 }}
                               >
                                 <Grid container spacing={2}>
                                   <Grid item xs={12} md={8}>
-                                    <Link
-                                      href={`/properties/${property.id}`}
-                                      sx={{ textDecoration: 'none', color: 'inherit', '&:hover': { textDecoration: 'underline' } }}
-                                    >
-                                      <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 1 }}>
-                                        {property.building_name}
-                                        {property.room_number && (
-                                          <Chip label={`${property.room_number}号室`} size="small" sx={{ ml: 1 }} />
-                                        )}
-                                      </Typography>
-                                    </Link>
+                                    <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 1 }}>
+                                      {property.building_name}
+                                      {property.room_number && (
+                                        <Chip label={`${property.room_number}号室`} size="small" sx={{ ml: 1 }} />
+                                      )}
+                                    </Typography>
                                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1 }}>
                                       {property.floor_number && (
                                         <Chip icon={<LocationOnIcon />} label={`${property.floor_number}階`} size="small" variant="outlined" />
@@ -453,15 +461,23 @@ const AreaSelectionPage: React.FC = () => {
                             {ward.new_listings.map((property, index) => (
                               <Paper 
                                 key={`new-${property.id}`} 
+                                component={Link}
+                                href={`/properties/${property.id}`}
                                 sx={{ 
                                   p: 2, 
                                   mb: 2,
                                   border: 1,
                                   borderColor: 'divider',
+                                  display: 'block',
+                                  textDecoration: 'none',
+                                  color: 'inherit',
+                                  cursor: 'pointer',
+                                  transition: 'all 0.3s',
                                   background: `linear-gradient(to right, ${alpha(theme.palette.success.main, 0.03)} 0%, transparent 100%)`,
                                   '&:hover': { 
-                                    boxShadow: 2,
-                                    bgcolor: alpha(theme.palette.success.main, 0.05)
+                                    boxShadow: 3,
+                                    bgcolor: alpha(theme.palette.success.main, 0.05),
+                                    transform: 'translateY(-2px)'
                                   }
                                 }}
                               >
@@ -475,17 +491,12 @@ const AreaSelectionPage: React.FC = () => {
                                         size="small"
                                         sx={{ mr: 2 }}
                                       />
-                                      <Link
-                                        href={`/properties/${property.id}`}
-                                        sx={{ textDecoration: 'none', color: 'inherit', '&:hover': { textDecoration: 'underline' } }}
-                                      >
-                                        <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                                          {property.building_name}
-                                          {property.room_number && (
-                                            <Chip label={`${property.room_number}号室`} size="small" sx={{ ml: 1 }} />
-                                          )}
-                                        </Typography>
-                                      </Link>
+                                      <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
+                                        {property.building_name}
+                                        {property.room_number && (
+                                          <Chip label={`${property.room_number}号室`} size="small" sx={{ ml: 1 }} />
+                                        )}
+                                      </Typography>
                                     </Box>
                                     <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
                                       {property.floor_number && (

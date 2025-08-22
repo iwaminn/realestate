@@ -61,6 +61,9 @@ export interface RecentUpdate {
   changed_at?: string;
   created_at?: string;
   address: string | null;
+  built_year?: number | null;
+  built_month?: number | null;
+  days_on_market?: number | null;
 }
 
 export interface WardUpdates {

@@ -109,6 +109,8 @@ class MasterProperty(Base):
     # 販売情報
     sold_at = Column(DateTime)                                # 販売終了日（全掲載が終了した時点）
     final_price = Column(Integer)                             # 最終販売価格（販売終了前の最頻値）
+    earliest_listing_date = Column(DateTime)                  # 最初の掲載日（アクティブな掲載の中で最古）
+    latest_price_change_at = Column(DateTime)                 # 最新の価格改定日時
     
     # 管理情報
     created_at = Column(DateTime, server_default=func.now())

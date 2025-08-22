@@ -389,6 +389,11 @@ async def revert_property_merge(
         updater.update_master_property_by_majority(primary_property)
         updater.update_master_property_by_majority(restored_property)
         
+        # 最初の掲載日を更新
+        from backend.app.utils.property_utils import update_earliest_listing_date
+        update_earliest_listing_date(db, primary_property_id)
+        update_earliest_listing_date(db, restored_property.id)
+        
         # 統合履歴を削除
         db.delete(history)
         

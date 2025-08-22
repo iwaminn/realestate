@@ -30,20 +30,23 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import UpdateIcon from '@mui/icons-material/Update';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import { propertyApi, RecentUpdate } from '../api/propertyApi';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { sortWardNamesByLandPrice } from '../constants/wardOrder';
 
 const PriceChangesPage: React.FC = () => {
   const theme = useTheme();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [priceChanges, setPriceChanges] = useState<RecentUpdate[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedWard, setSelectedWard] = useState<string>('all');
-  const [selectedHours, setSelectedHours] = useState<number>(24);
-  const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(25);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [wards, setWards] = useState<string[]>([]);
+
+  // URLパラメータから初期値を取得
+  const selectedWard = searchParams.get('ward') || 'all';
+  const selectedHours = parseInt(searchParams.get('hours') || '24');
+  const page = parseInt(searchParams.get('page') || '0');
+  const rowsPerPage = parseInt(searchParams.get('rowsPerPage') || '25');
 
   const fetchPriceChanges = async () => {
     setLoading(true);
@@ -84,28 +87,47 @@ const PriceChangesPage: React.FC = () => {
     fetchPriceChanges();
   }, [selectedHours]);
 
+  // URLパラメータを更新するヘルパー関数
+  const updateSearchParams = (updates: Record<string, string>) => {
+    const newParams = new URLSearchParams(searchParams);
+    Object.entries(updates).forEach(([key, value]) => {
+      if (value === '' || (key === 'ward' && value === 'all') || 
+          (key === 'hours' && value === '24') || 
+          (key === 'page' && value === '0') ||
+          (key === 'rowsPerPage' && value === '25')) {
+        // デフォルト値の場合はパラメータを削除
+        newParams.delete(key);
+      } else {
+        newParams.set(key, value);
+      }
+    });
+    setSearchParams(newParams);
+  };
+
   const handleWardChange = (event: SelectChangeEvent) => {
-    setSelectedWard(event.target.value);
-    setPage(0);
+    updateSearchParams({ ward: event.target.value, page: '0' });
   };
 
   const handleHoursChange = (event: SelectChangeEvent<number>) => {
-    setSelectedHours(event.target.value as number);
-    setPage(0);
+    updateSearchParams({ hours: event.target.value.toString(), page: '0' });
   };
 
   const handleChangePage = (event: unknown, newPage: number) => {
-    setPage(newPage);
+    updateSearchParams({ page: newPage.toString() });
   };
 
   const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setRowsPerPage(parseInt(event.target.value, 10));
-    setPage(0);
+    updateSearchParams({ rowsPerPage: event.target.value, page: '0' });
   };
 
   const formatPrice = (price: number) => {
     if (price >= 10000) {
-      return `${(price / 10000).toFixed(1)}億円`;
+      const oku = Math.floor(price / 10000);
+      const man = price % 10000;
+      if (man === 0) {
+        return `${oku}億円`;
+      }
+      return `${oku}億${man.toLocaleString()}万円`;
     }
     return `${price.toLocaleString()}万円`;
   };
@@ -250,8 +272,8 @@ const PriceChangesPage: React.FC = () => {
                 <TableCell>面積</TableCell>
                 <TableCell>間取り</TableCell>
                 <TableCell>方角</TableCell>
-                <TableCell>更新日</TableCell>
-                <TableCell>サイト</TableCell>
+                <TableCell>築年</TableCell>
+                <TableCell>経過日数</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -306,13 +328,15 @@ const PriceChangesPage: React.FC = () => {
                   <TableCell>{property.area ? `${property.area}㎡` : '-'}</TableCell>
                   <TableCell>{property.layout || '-'}</TableCell>
                   <TableCell>{property.direction || '-'}</TableCell>
-                  <TableCell>{formatDate(property.changed_at)}</TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                    {property.built_year ? (
+                      `築${new Date().getFullYear() - property.built_year}年`
+                    ) : '-'}
+                  </TableCell>
                   <TableCell>
-                    <Tooltip title="物件詳細を見る">
-                      <Link href={property.url} target="_blank" rel="noopener">
-                        {property.source_site}
-                      </Link>
-                    </Tooltip>
+                    {property.days_on_market !== null && property.days_on_market !== undefined ? (
+                      `${property.days_on_market}日`
+                    ) : '-'}
                   </TableCell>
                 </TableRow>
               ))}

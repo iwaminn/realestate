@@ -11,8 +11,8 @@ import PropertyDetailPage from './pages/PropertyDetailPage';
 import BuildingPropertiesPage from './pages/BuildingPropertiesPage';
 import Admin from './pages/Admin';
 import AdminLogin from './components/AdminLogin';
-import PriceChangesPage from './pages/PriceChangesPage';
-import NewListingsPage from './pages/NewListingsPage';
+import PropertyUpdatesPage from './pages/PropertyUpdatesPage';
+import RedirectToUpdates from './components/RedirectToUpdates';
 import './utils/axiosConfig'; // Axiosの設定を読み込む
 
 const theme = createTheme({
@@ -53,8 +53,10 @@ function App() {
               <Route path="/properties" element={<PropertyListPage />} />
               <Route path="/properties/:id" element={<PropertyDetailPage />} />
               <Route path="/buildings/:buildingId/properties" element={<BuildingPropertiesPage />} />
-              <Route path="/price-changes" element={<PriceChangesPage />} />
-              <Route path="/new-listings" element={<NewListingsPage />} />
+              <Route path="/updates" element={<PropertyUpdatesPage />} />
+              {/* 旧URLは新しいURLにリダイレクト */}
+              <Route path="/price-changes" element={<RedirectToUpdates defaultTab={0} />} />
+              <Route path="/new-listings" element={<RedirectToUpdates defaultTab={1} />} />
               <Route path="/admin" element={<Admin />} />
               <Route path="/admin/login" element={<AdminLogin />} />
             </Routes>

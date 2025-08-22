@@ -21,6 +21,9 @@ const Header: React.FC = () => {
         <Button color="inherit" onClick={() => navigate('/')}>
           物件検索
         </Button>
+        <Button color="inherit" onClick={() => navigate('/updates')}>
+          更新情報
+        </Button>
         <Button color="inherit" onClick={() => navigate('/admin')}>
           管理画面
         </Button>
