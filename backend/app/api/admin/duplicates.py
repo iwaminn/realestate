@@ -1780,6 +1780,28 @@ async def merge_properties(
             {"candidates": json.dumps(candidate_ids), "match_id": match.id}
         )
     
+    # PropertyMergeHistoryの参照を更新（二次物件が他の統合履歴で参照されている場合）
+    # primary_property_idとして参照されている場合、主物件IDに更新
+    db.query(PropertyMergeHistory).filter(
+        PropertyMergeHistory.primary_property_id == request.secondary_property_id
+    ).update({
+        "primary_property_id": request.primary_property_id
+    })
+    
+    # direct_primary_property_idとして参照されている場合
+    db.query(PropertyMergeHistory).filter(
+        PropertyMergeHistory.direct_primary_property_id == request.secondary_property_id
+    ).update({
+        "direct_primary_property_id": request.primary_property_id
+    })
+    
+    # final_primary_property_idとして参照されている場合
+    db.query(PropertyMergeHistory).filter(
+        PropertyMergeHistory.final_primary_property_id == request.secondary_property_id
+    ).update({
+        "final_primary_property_id": request.primary_property_id
+    })
+    
     # 変更を確実に反映させる
     db.flush()
     
