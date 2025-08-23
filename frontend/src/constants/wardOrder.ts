@@ -50,39 +50,30 @@ export const sortWardNamesByLandPrice = (wardNames: string[]): string[] => {
   });
 };
 
-// 東京23区のリスト（UIで使用）
-export const TOKYO_WARDS = [
-  { name: '千代田区', id: 'chiyoda', popular: true },
-  { name: '港区', id: 'minato', popular: true },
-  { name: '中央区', id: 'chuo', popular: true },
-  { name: '渋谷区', id: 'shibuya', popular: true },
-  { name: '新宿区', id: 'shinjuku', popular: true },
-  { name: '文京区', id: 'bunkyo', popular: true },
-  { name: '目黒区', id: 'meguro', popular: true },
-  { name: '品川区', id: 'shinagawa', popular: true },
-  { name: '世田谷区', id: 'setagaya', popular: true },
-  { name: '豊島区', id: 'toshima' },
-  { name: '台東区', id: 'taito' },
-  { name: '中野区', id: 'nakano' },
-  { name: '杉並区', id: 'suginami' },
-  { name: '大田区', id: 'ota' },
-  { name: '江東区', id: 'koto' },
-  { name: '北区', id: 'kita' },
-  { name: '墨田区', id: 'sumida' },
-  { name: '板橋区', id: 'itabashi' },
-  { name: '練馬区', id: 'nerima' },
-  { name: '荒川区', id: 'arakawa' },
-  { name: '江戸川区', id: 'edogawa' },
-  { name: '足立区', id: 'adachi' },
-  { name: '葛飾区', id: 'katsushika' },
+// 対象エリア（都心6区のみを扱う）
+export const TARGET_WARDS = [
+  { name: '千代田区', id: 'chiyoda' },
+  { name: '港区', id: 'minato' },
+  { name: '中央区', id: 'chuo' },
+  { name: '渋谷区', id: 'shibuya' },
+  { name: '新宿区', id: 'shinjuku' },
+  { name: '文京区', id: 'bunkyo' },
 ];
 
-// 人気エリア（地価上位エリア）
-export const getPopularWards = () => {
-  return TOKYO_WARDS.filter(ward => ward.popular);
+// 東京23区のリスト（現在は対象6区のみ）
+export const TOKYO_WARDS = TARGET_WARDS;
+
+// 都心6区すべてを取得（人気エリア・その他の区別なし）
+export const getAllTargetWards = () => {
+  return TARGET_WARDS;
 };
 
-// その他のエリア
+// 後方互換性のため維持（すべての対象エリアを返す）
+export const getPopularWards = () => {
+  return TARGET_WARDS;
+};
+
+// 後方互換性のため維持（空配列を返す）
 export const getOtherWards = () => {
-  return TOKYO_WARDS.filter(ward => !ward.popular);
+  return [];
 };

@@ -666,10 +666,10 @@ const AreaSelectionPage: React.FC = () => {
             <Paper sx={{ p: 3, textAlign: 'center' }}>
               <LocationOnIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
               <Typography variant="h4" gutterBottom>
-                23
+                6
               </Typography>
               <Typography variant="body2" color="text.secondary">
-                対応エリア（区）
+                対応エリア（都心6区）
               </Typography>
             </Paper>
           </Grid>
@@ -690,15 +690,15 @@ const AreaSelectionPage: React.FC = () => {
       {/* エリア選択 - 建物名検索中は表示しない */}
       {(buildingInputValue === '') && (
         <>
-          {/* 人気エリア */}
+          {/* 対象エリア（都心6区） */}
           <Box sx={{ mb: 6 }}>
             <Typography variant="h5" gutterBottom sx={{ mb: 3, fontWeight: 'bold' }}>
-              <TrendingUpIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
-              人気エリア
+              <LocationOnIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
+              対象エリア
             </Typography>
             <Grid container spacing={2}>
               {popularWards.map((ward) => (
-                <Grid item xs={12} sm={6} md={3} key={ward.id}>
+                <Grid item xs={12} sm={6} md={4} key={ward.id}>
                   <Card
                     sx={{
                       height: '100%',
@@ -724,45 +724,6 @@ const AreaSelectionPage: React.FC = () => {
                             color="primary"
                             sx={{ mt: 1 }}
                           />
-                        )}
-                      </CardContent>
-                    </CardActionArea>
-                  </Card>
-                </Grid>
-              ))}
-            </Grid>
-          </Box>
-
-          <Divider sx={{ my: 4 }} />
-
-          {/* その他のエリア */}
-          <Box>
-            <Typography variant="h5" gutterBottom sx={{ mb: 3, fontWeight: 'bold' }}>
-              <LocationOnIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
-              その他のエリア
-            </Typography>
-            <Grid container spacing={2}>
-              {otherWards.map((ward) => (
-                <Grid item xs={6} sm={4} md={2} key={ward.id}>
-                  <Card
-                    sx={{
-                      transition: 'all 0.3s',
-                      '&:hover': {
-                        transform: 'translateY(-2px)',
-                        boxShadow: 3,
-                        bgcolor: alpha(theme.palette.primary.main, 0.05),
-                      },
-                    }}
-                  >
-                    <CardActionArea onClick={() => handleAreaClick(ward.name)}>
-                      <CardContent sx={{ textAlign: 'center', py: 2 }}>
-                        <Typography variant="body1" sx={{ fontWeight: 'medium' }}>
-                          {ward.name}
-                        </Typography>
-                        {areaStats[ward.name] && (
-                          <Typography variant="caption" color="text.secondary">
-                            {areaStats[ward.name]}件
-                          </Typography>
                         )}
                       </CardContent>
                     </CardActionArea>
