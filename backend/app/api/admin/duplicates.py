@@ -780,14 +780,28 @@ def get_duplicate_properties(
                 AND (:building_ids IS NULL OR mp.building_id = ANY(:building_ids))
         ),
         property_groups AS (
-            -- 同じ属性でグループ化（階数、面積、間取り）
-            -- 方角は異なっても重複候補とする
+            -- 同じ属性でグループ化（階数、面積）
+            -- 方角と間取りは類似していれば重複候補とする
             -- 部屋番号の有無も考慮しない
             SELECT 
                 building_id,
                 floor_number,
                 ROUND(CAST(area AS NUMERIC) * 2) / 2 as rounded_area,
-                layout,
+                -- 間取りの基本部分を抽出して正規化
+                -- 例: 2LDK+S → 2LDK, 3SLDK → 3LDK, 1DK → 1DK, 3LD → 3LDK
+                CASE 
+                    WHEN layout ~ '^[0-9]+S\+S$' THEN layout  -- 特殊ケース: 1S+S等はそのまま
+                    ELSE REGEXP_REPLACE(
+                        REGEXP_REPLACE(
+                            REGEXP_REPLACE(
+                                REGEXP_REPLACE(layout, '\+[A-Z]+', '', 'g'),  -- +S, +WIC等を除去
+                                '([0-9]+)S(LDK|DK|K)', '\1\2', 'g'  -- SLDK → LDK, SDK → DK
+                            ),
+                            '([0-9]+)LD$', '\1LDK', 'g'  -- LD → LDK
+                        ),
+                        '([0-9]+)K$', '\1DK', 'g'  -- K → DK
+                    )
+                END as base_layout,
                 building_name,
                 COUNT(*) as property_count,
                 ARRAY_AGG(id ORDER BY created_at) as property_ids,
@@ -800,7 +814,19 @@ def get_duplicate_properties(
                 building_id,
                 floor_number,
                 ROUND(CAST(area AS NUMERIC) * 2) / 2,
-                layout,
+                CASE 
+                    WHEN layout ~ '^[0-9]+S\+S$' THEN layout
+                    ELSE REGEXP_REPLACE(
+                        REGEXP_REPLACE(
+                            REGEXP_REPLACE(
+                                REGEXP_REPLACE(layout, '\+[A-Z]+', '', 'g'),
+                                '([0-9]+)S(LDK|DK|K)', '\1\2', 'g'
+                            ),
+                            '([0-9]+)LD$', '\1LDK', 'g'
+                        ),
+                        '([0-9]+)K$', '\1DK', 'g'
+                    )
+                END,
                 building_name
             HAVING COUNT(*) > 1
             ORDER BY COUNT(*) DESC
@@ -862,7 +888,7 @@ def get_duplicate_properties(
             "property_count": row.property_count,
             "building_name": row.building_name,
             "floor_number": row.floor_number,
-            "layout": row.layout,
+            "layout": row.base_layout if hasattr(row, 'base_layout') else None,
             "direction": None,  # 方角は個別物件で異なる可能性があるため省略
             "area": float(row.rounded_area) if row.rounded_area else None,
             "properties": property_details

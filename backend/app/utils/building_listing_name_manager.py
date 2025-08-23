@@ -9,8 +9,11 @@ import logging
 from typing import Optional, List, Set, Dict
 from datetime import datetime
 from collections import defaultdict
+import time
+import random
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
+from sqlalchemy.exc import OperationalError
 
 from ..models import (
     Building,
@@ -265,15 +268,18 @@ class BuildingListingNameManager:
         self,
         building_id: int,
         listing_name: str,
-        source_site: str
+        source_site: str,
+        max_retries: int = 3
     ) -> None:
         """
         建物名を更新（内部メソッド）
+        デッドロック回避のためリトライロジック付き
         
         Args:
             building_id: 建物ID
             listing_name: 掲載建物名
             source_site: 掲載サイト
+            max_retries: 最大リトライ回数
         """
         if not listing_name:
             return
@@ -281,35 +287,63 @@ class BuildingListingNameManager:
         # canonical_nameはスペース・記号を完全に削除
         canonical_name = canonicalize_building_name(listing_name)
         
-        # 正規化後の名前で既存レコードを確認
-        existing = self.db.query(BuildingListingName).filter(
-            BuildingListingName.building_id == building_id,
-            BuildingListingName.canonical_name == canonical_name
-        ).first()
-        
-        if existing:
-            # 更新
-            # 元のlisting_nameと異なる場合、最も一般的な表記を保持（出現回数が多い方を優先）
-            # 例：「白金ザ・スカイ　西棟」と「白金ザ・スカイ 西棟」のうち、より多く使われている方を代表名とする
-            existing.occurrence_count += 1
-            existing.last_seen_at = datetime.now()
-            
-            # サイト情報を更新
-            sites = set(existing.source_sites.split(',')) if existing.source_sites else set()
-            sites.add(source_site)
-            existing.source_sites = ','.join(sorted(sites))
-        else:
-            # 新規作成
-            new_entry = BuildingListingName(
-                building_id=building_id,
-                listing_name=listing_name,
-                canonical_name=canonical_name,
-                source_sites=source_site,
-                occurrence_count=1,
-                first_seen_at=datetime.now(),
-                last_seen_at=datetime.now()
-            )
-            self.db.add(new_entry)
+        # リトライロジック
+        for attempt in range(max_retries):
+            try:
+                # 正規化後の名前で既存レコードを確認
+                existing = self.db.query(BuildingListingName).filter(
+                    BuildingListingName.building_id == building_id,
+                    BuildingListingName.canonical_name == canonical_name
+                ).with_for_update(skip_locked=True).first()  # skip_lockedで他のトランザクションがロックしている行をスキップ
+                
+                if existing:
+                    # 更新
+                    # 元のlisting_nameと異なる場合、最も一般的な表記を保持（出現回数が多い方を優先）
+                    # 例：「白金ザ・スカイ　西棟」と「白金ザ・スカイ 西棟」のうち、より多く使われている方を代表名とする
+                    existing.occurrence_count += 1
+                    existing.last_seen_at = datetime.now()
+                    
+                    # サイト情報を更新
+                    sites = set(existing.source_sites.split(',')) if existing.source_sites else set()
+                    sites.add(source_site)
+                    existing.source_sites = ','.join(sorted(sites))
+                else:
+                    # 新規作成
+                    new_entry = BuildingListingName(
+                        building_id=building_id,
+                        listing_name=listing_name,
+                        canonical_name=canonical_name,
+                        source_sites=source_site,
+                        occurrence_count=1,
+                        first_seen_at=datetime.now(),
+                        last_seen_at=datetime.now()
+                    )
+                    self.db.add(new_entry)
+                
+                # 成功したら終了
+                break
+                
+            except OperationalError as e:
+                if "deadlock detected" in str(e).lower():
+                    logger.warning(
+                        f"デッドロック検出 (attempt {attempt + 1}/{max_retries}): "
+                        f"building_id={building_id}, listing_name={listing_name}"
+                    )
+                    if attempt < max_retries - 1:
+                        # ロールバックして少し待機してからリトライ
+                        self.db.rollback()
+                        wait_time = (0.1 + random.random() * 0.5) * (2 ** attempt)  # 指数バックオフ
+                        time.sleep(wait_time)
+                    else:
+                        # 最後の試行でも失敗した場合はエラーを再発生
+                        logger.error(
+                            f"デッドロック解決失敗: building_id={building_id}, "
+                            f"listing_name={listing_name}"
+                        )
+                        raise
+                else:
+                    # デッドロック以外のエラーは即座に再発生
+                    raise
         
         # 自動コミットはしない（呼び出し元でコミット）
     

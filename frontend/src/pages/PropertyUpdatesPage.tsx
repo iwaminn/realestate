@@ -23,6 +23,13 @@ import {
   Button,
   Tabs,
   Tab,
+  Card,
+  CardContent,
+  CardActionArea,
+  Divider,
+  useMediaQuery,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
@@ -30,6 +37,8 @@ import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import UpdateIcon from '@mui/icons-material/Update';
 import NewReleasesIcon from '@mui/icons-material/NewReleases';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import TableChartIcon from '@mui/icons-material/TableChart';
+import ViewModuleIcon from '@mui/icons-material/ViewModule';
 import { propertyApi, RecentUpdate } from '../api/propertyApi';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { sortWardNamesByLandPrice } from '../constants/wardOrder';
@@ -64,11 +73,13 @@ const PropertyUpdatesPage: React.FC = () => {
   const theme = useTheme();
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [priceChanges, setPriceChanges] = useState<RecentUpdate[]>([]);
   const [newListings, setNewListings] = useState<RecentUpdate[]>([]);
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [wards, setWards] = useState<string[]>([]);
+  const [viewMode, setViewMode] = useState<'table' | 'card'>('table');
 
   // URLパラメータから初期値を取得
   const tabValue = parseInt(searchParams.get('tab') || '0');
@@ -290,17 +301,36 @@ const PropertyUpdatesPage: React.FC = () => {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} sm={6} md={3}>
+          <Grid item xs={12} sm={6} md={2}>
             <Button
               variant="outlined"
               startIcon={<RefreshIcon />}
               onClick={fetchUpdates}
               disabled={loading}
+              fullWidth
             >
               更新
             </Button>
           </Grid>
-          <Grid item xs={12} sm={6} md={3}>
+          <Grid item xs={12} sm={6} md={2}>
+            <ToggleButtonGroup
+              value={viewMode}
+              exclusive
+              onChange={(e, newMode) => newMode && setViewMode(newMode)}
+              size="small"
+              fullWidth
+            >
+              <ToggleButton value="table" sx={{ whiteSpace: 'nowrap' }}>
+                <TableChartIcon sx={{ mr: 0.5 }} />
+                表
+              </ToggleButton>
+              <ToggleButton value="card" sx={{ whiteSpace: 'nowrap' }}>
+                <ViewModuleIcon sx={{ mr: 0.5 }} />
+                カード
+              </ToggleButton>
+            </ToggleButtonGroup>
+          </Grid>
+          <Grid item xs={12} sm={6} md={2}>
             {lastUpdated && (
               <Typography variant="caption" color="text.secondary">
                 最終更新: {lastUpdated.toLocaleTimeString('ja-JP')}
@@ -344,33 +374,33 @@ const PropertyUpdatesPage: React.FC = () => {
           </Grid>
         </Grid>
 
-        {/* テーブル */}
+        {/* テーブルまたはカード表示 */}
         {loading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
             <CircularProgress />
           </Box>
-        ) : (
+        ) : viewMode === 'table' ? (
           <TableContainer component={Paper}>
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableCell>建物名・部屋番号</TableCell>
-                  <TableCell>エリア</TableCell>
-                  <TableCell align="right">現在価格</TableCell>
-                  <TableCell align="right">前回価格</TableCell>
-                  <TableCell align="right">変動幅・変動率</TableCell>
-                  <TableCell>階数</TableCell>
-                  <TableCell>面積</TableCell>
-                  <TableCell>間取り</TableCell>
-                  <TableCell>方角</TableCell>
-                  <TableCell>築年</TableCell>
-                  <TableCell>経過日数</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 200 } : {}}>建物名・部屋番号</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 80 } : {}}>エリア</TableCell>
+                  <TableCell align="right" sx={isMobile ? { minWidth: 100 } : {}}>現在価格</TableCell>
+                  <TableCell align="right" sx={isMobile ? { minWidth: 100 } : {}}>前回価格</TableCell>
+                  <TableCell align="right" sx={isMobile ? { minWidth: 150 } : {}}>変動幅・変動率</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 60 } : {}}>階数</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 70 } : {}}>面積</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 70 } : {}}>間取り</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 60 } : {}}>方角</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 60 } : {}}>築年</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 80 } : {}}>経過日数</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {paginatedData.map((property) => (
                   <TableRow key={`${property.id}-${property.changed_at || property.created_at}`}>
-                    <TableCell>
+                    <TableCell sx={isMobile ? { minWidth: 180 } : {}}>
                       <Link
                         component="button"
                         variant="body2"
@@ -381,20 +411,20 @@ const PropertyUpdatesPage: React.FC = () => {
                         {property.room_number && ` ${property.room_number}号室`}
                       </Link>
                     </TableCell>
-                    <TableCell>{getWard(property.address)}</TableCell>
-                    <TableCell align="right">
+                    <TableCell sx={isMobile ? { minWidth: 70 } : {}}>{getWard(property.address)}</TableCell>
+                    <TableCell align="right" sx={isMobile ? { minWidth: 90, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>
                       <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
                         {formatPrice(property.price)}
                       </Typography>
                     </TableCell>
-                    <TableCell align="right">
+                    <TableCell align="right" sx={isMobile ? { minWidth: 90, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>
                       {property.previous_price ? (
                         <Typography variant="body2" sx={{ textDecoration: 'line-through', color: 'text.secondary' }}>
                           {formatPrice(property.previous_price)}
                         </Typography>
                       ) : '-'}
                     </TableCell>
-                    <TableCell align="right">
+                    <TableCell align="right" sx={isMobile ? { minWidth: 140 } : {}}>
                       {property.price_diff ? (
                         <Box>
                           <Chip
@@ -417,16 +447,16 @@ const PropertyUpdatesPage: React.FC = () => {
                         </Box>
                       ) : '-'}
                     </TableCell>
-                    <TableCell sx={{ whiteSpace: 'nowrap' }}>{property.floor_number ? `${property.floor_number}階` : '-'}</TableCell>
-                    <TableCell>{property.area ? `${property.area}㎡` : '-'}</TableCell>
-                    <TableCell>{property.layout || '-'}</TableCell>
-                    <TableCell>{property.direction || '-'}</TableCell>
-                    <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                    <TableCell sx={isMobile ? { minWidth: 50, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>{property.floor_number ? `${property.floor_number}階` : '-'}</TableCell>
+                    <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>{property.area ? `${property.area}㎡` : '-'}</TableCell>
+                    <TableCell sx={isMobile ? { minWidth: 60 } : {}}>{property.layout || '-'}</TableCell>
+                    <TableCell sx={isMobile ? { minWidth: 50 } : {}}>{property.direction || '-'}</TableCell>
+                    <TableCell sx={isMobile ? { minWidth: 50, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>
                       {property.built_year ? (
                         `築${new Date().getFullYear() - property.built_year}年`
                       ) : '-'}
                     </TableCell>
-                    <TableCell>
+                    <TableCell sx={isMobile ? { minWidth: 70, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>
                       {property.days_on_market !== null && property.days_on_market !== undefined ? (
                         `${property.days_on_market}日`
                       ) : '-'}
@@ -436,6 +466,101 @@ const PropertyUpdatesPage: React.FC = () => {
               </TableBody>
             </Table>
           </TableContainer>
+        ) : (
+          /* カード表示 */
+          <Grid container spacing={2}>
+            {paginatedData.map((property) => (
+              <Grid item xs={12} sm={6} md={4} key={`${property.id}-${property.changed_at || property.created_at}`}>
+                <Card>
+                  <CardActionArea onClick={() => navigate(`/properties/${property.id}`)}>
+                    <CardContent>
+                      <Box sx={{ mb: 2 }}>
+                        <Typography variant="h6">
+                          {property.building_name}
+                          {property.room_number && ` ${property.room_number}号室`}
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary">
+                          {getWard(property.address)}
+                        </Typography>
+                      </Box>
+
+                    <Divider sx={{ my: 1 }} />
+
+                    {/* 価格情報 */}
+                    <Box sx={{ mb: 2 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                        <Typography variant="body2" color="text.secondary">現在価格</Typography>
+                        <Typography variant="h6" color="primary">
+                          {formatPrice(property.price)}
+                        </Typography>
+                      </Box>
+                      {property.previous_price && (
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <Typography variant="body2" color="text.secondary">前回価格</Typography>
+                          <Typography variant="body2" sx={{ textDecoration: 'line-through', color: 'text.secondary' }}>
+                            {formatPrice(property.previous_price)}
+                          </Typography>
+                        </Box>
+                      )}
+                    </Box>
+
+                    {/* 価格変動 */}
+                    {property.price_diff && (
+                      <Box sx={{ mb: 2, textAlign: 'center' }}>
+                        <Chip
+                          icon={property.price_diff < 0 ? <TrendingDownIcon /> : <TrendingUpIcon />}
+                          label={`${property.price_diff > 0 ? '+' : ''}${property.price_diff.toLocaleString()}万円`}
+                          color={property.price_diff < 0 ? 'primary' : 'error'}
+                          sx={{ mb: 0.5 }}
+                        />
+                        {property.price_diff_rate && (
+                          <Typography 
+                            variant="caption" 
+                            display="block"
+                            color={property.price_diff_rate < 0 ? 'primary' : 'error'}
+                            sx={{ fontWeight: 'bold' }}
+                          >
+                            ({property.price_diff_rate > 0 ? '+' : ''}{property.price_diff_rate}%)
+                          </Typography>
+                        )}
+                      </Box>
+                    )}
+
+                    <Divider sx={{ my: 1 }} />
+
+                    {/* 物件詳細 */}
+                    <Grid container spacing={1}>
+                      <Grid item xs={6}>
+                        <Typography variant="caption" color="text.secondary">階数</Typography>
+                        <Typography variant="body2">{property.floor_number ? `${property.floor_number}階` : '-'}</Typography>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Typography variant="caption" color="text.secondary">面積</Typography>
+                        <Typography variant="body2">{property.area ? `${property.area}㎡` : '-'}</Typography>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Typography variant="caption" color="text.secondary">間取り</Typography>
+                        <Typography variant="body2">{property.layout || '-'}</Typography>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Typography variant="caption" color="text.secondary">方角</Typography>
+                        <Typography variant="body2">{property.direction || '-'}</Typography>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Typography variant="caption" color="text.secondary">築年</Typography>
+                        <Typography variant="body2">{property.built_year ? `${property.built_year}年` : '-'}</Typography>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Typography variant="caption" color="text.secondary">経過日数</Typography>
+                        <Typography variant="body2">{property.days_on_market !== null && property.days_on_market !== undefined ? `${property.days_on_market}日` : '-'}</Typography>
+                      </Grid>
+                    </Grid>
+                    </CardContent>
+                  </CardActionArea>
+                </Card>
+              </Grid>
+            ))}
+          </Grid>
         )}
       </TabPanel>
 
@@ -477,31 +602,31 @@ const PropertyUpdatesPage: React.FC = () => {
           </Grid>
         </Grid>
 
-        {/* テーブル */}
+        {/* テーブルまたはカード表示 */}
         {loading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}>
             <CircularProgress />
           </Box>
-        ) : (
+        ) : viewMode === 'table' ? (
           <TableContainer component={Paper}>
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableCell>建物名・部屋番号</TableCell>
-                  <TableCell>エリア</TableCell>
-                  <TableCell align="right">価格</TableCell>
-                  <TableCell>階数</TableCell>
-                  <TableCell>面積</TableCell>
-                  <TableCell>間取り</TableCell>
-                  <TableCell>方角</TableCell>
-                  <TableCell>築年</TableCell>
-                  <TableCell>掲載日</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 200 } : {}}>建物名・部屋番号</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 80 } : {}}>エリア</TableCell>
+                  <TableCell align="right" sx={isMobile ? { minWidth: 100 } : {}}>価格</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 60 } : {}}>階数</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 70 } : {}}>面積</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 70 } : {}}>間取り</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 60 } : {}}>方角</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 60 } : {}}>築年</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 90 } : {}}>掲載日</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {paginatedData.map((property) => (
                   <TableRow key={`${property.id}-${property.created_at}`}>
-                    <TableCell>
+                    <TableCell sx={isMobile ? { minWidth: 200 } : {}}>
                       <Link
                         component="button"
                         variant="body2"
@@ -520,27 +645,102 @@ const PropertyUpdatesPage: React.FC = () => {
                         </Box>
                       </Link>
                     </TableCell>
-                    <TableCell>{getWard(property.address)}</TableCell>
-                    <TableCell align="right">
+                    <TableCell sx={isMobile ? { minWidth: 80 } : {}}>{getWard(property.address)}</TableCell>
+                    <TableCell align="right" sx={isMobile ? { minWidth: 100, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>
                       <Typography variant="body2" sx={{ fontWeight: 'bold', color: theme.palette.success.main }}>
                         {formatPrice(property.price)}
                       </Typography>
                     </TableCell>
-                    <TableCell sx={{ whiteSpace: 'nowrap' }}>{property.floor_number ? `${property.floor_number}階` : '-'}</TableCell>
-                    <TableCell>{property.area ? `${property.area}㎡` : '-'}</TableCell>
-                    <TableCell>{property.layout || '-'}</TableCell>
-                    <TableCell>{property.direction || '-'}</TableCell>
-                    <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                    <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>{property.floor_number ? `${property.floor_number}階` : '-'}</TableCell>
+                    <TableCell sx={isMobile ? { minWidth: 70 } : {}}>{property.area ? `${property.area}㎡` : '-'}</TableCell>
+                    <TableCell sx={isMobile ? { minWidth: 70 } : {}}>{property.layout || '-'}</TableCell>
+                    <TableCell sx={isMobile ? { minWidth: 60 } : {}}>{property.direction || '-'}</TableCell>
+                    <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>
                       {property.built_year ? (
                         `築${new Date().getFullYear() - property.built_year}年`
                       ) : '-'}
                     </TableCell>
-                    <TableCell>{formatDate(property.created_at)}</TableCell>
+                    <TableCell sx={isMobile ? { minWidth: 90 } : {}}>{formatDate(property.created_at)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
           </TableContainer>
+        ) : (
+          /* カード表示 */
+          <Grid container spacing={2}>
+            {paginatedData.map((property) => (
+              <Grid item xs={12} sm={6} md={4} key={`${property.id}-${property.created_at}`}>
+                <Card>
+                  <CardActionArea onClick={() => navigate(`/properties/${property.id}`)}>
+                    <CardContent>
+                      <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Chip
+                          icon={<NewReleasesIcon />}
+                          label="NEW"
+                          color="success"
+                          size="small"
+                        />
+                        <Box sx={{ flex: 1 }}>
+                          <Typography variant="h6">
+                            {property.building_name}
+                            {property.room_number && ` ${property.room_number}号室`}
+                          </Typography>
+                          <Typography variant="body2" color="text.secondary">
+                            {getWard(property.address)}
+                          </Typography>
+                        </Box>
+                      </Box>
+
+                    <Divider sx={{ my: 1 }} />
+
+                    {/* 価格情報 */}
+                    <Box sx={{ mb: 2 }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <Typography variant="body2" color="text.secondary">価格</Typography>
+                        <Typography variant="h6" color="success.main">
+                          {formatPrice(property.price)}
+                        </Typography>
+                      </Box>
+                    </Box>
+
+                    <Divider sx={{ my: 1 }} />
+
+                    {/* 物件詳細 */}
+                    <Grid container spacing={1}>
+                      <Grid item xs={6}>
+                        <Typography variant="caption" color="text.secondary">階数</Typography>
+                        <Typography variant="body2">{property.floor_number ? `${property.floor_number}階` : '-'}</Typography>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Typography variant="caption" color="text.secondary">面積</Typography>
+                        <Typography variant="body2">{property.area ? `${property.area}㎡` : '-'}</Typography>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Typography variant="caption" color="text.secondary">間取り</Typography>
+                        <Typography variant="body2">{property.layout || '-'}</Typography>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Typography variant="caption" color="text.secondary">方角</Typography>
+                        <Typography variant="body2">{property.direction || '-'}</Typography>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Typography variant="caption" color="text.secondary">築年</Typography>
+                        <Typography variant="body2">
+                          {property.built_year ? `築${new Date().getFullYear() - property.built_year}年` : '-'}
+                        </Typography>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Typography variant="caption" color="text.secondary">掲載日</Typography>
+                        <Typography variant="body2">{formatDate(property.created_at)}</Typography>
+                      </Grid>
+                    </Grid>
+                    </CardContent>
+                  </CardActionArea>
+                </Card>
+              </Grid>
+            ))}
+          </Grid>
         )}
       </TabPanel>
 

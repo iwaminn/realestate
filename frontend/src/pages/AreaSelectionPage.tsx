@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, startTransition } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -49,7 +49,6 @@ interface AreaStat {
 const AreaSelectionPage: React.FC = () => {
   const navigate = useNavigate();
   const theme = useTheme();
-  const [searchText, setSearchText] = useState('');
   const [areaStats, setAreaStats] = useState<{[key: string]: number}>({});
   const [loading, setLoading] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
@@ -60,7 +59,8 @@ const AreaSelectionPage: React.FC = () => {
   const [updateType, setUpdateType] = useState<'price_changes' | 'new_listings'>('price_changes');
   const [buildingOptions, setBuildingOptions] = useState<Array<string | { value: string; label: string }>>([]);
   const [loadingBuildings, setLoadingBuildings] = useState(false);
-  const [buildingInputValue, setBuildingInputValue] = useState(searchText);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const searchValueRef = useRef<string>('');  // 検索値をrefで管理（レンダリングを減らす）
 
   // 全体の物件数を取得（初回のみ）
   useEffect(() => {
@@ -107,7 +107,9 @@ const AreaSelectionPage: React.FC = () => {
   const fetchBuildingSuggestions = useCallback(
     debounce(async (query: string) => {
       if (query.length < 1) {
-        setBuildingOptions([]);
+        startTransition(() => {
+          setBuildingOptions([]);
+        });
         return;
       }
       
@@ -115,24 +117,28 @@ const AreaSelectionPage: React.FC = () => {
       try {
         const suggestions = await propertyApi.suggestBuildings(query);
         // APIレスポンスの形式を判定（SearchFormと同じ処理）
-        if (suggestions && suggestions.length > 0) {
-          if (typeof suggestions[0] === 'object' && 'value' in suggestions[0]) {
-            // 新形式（オブジェクト配列）
-            setBuildingOptions(suggestions as Array<{ value: string; label: string }>);
+        startTransition(() => {
+          if (suggestions && suggestions.length > 0) {
+            if (typeof suggestions[0] === 'object' && 'value' in suggestions[0]) {
+              // 新形式（オブジェクト配列）
+              setBuildingOptions(suggestions as Array<{ value: string; label: string }>);
+            } else {
+              // 旧形式（文字列配列）
+              setBuildingOptions(suggestions as string[]);
+            }
           } else {
-            // 旧形式（文字列配列）
-            setBuildingOptions(suggestions as string[]);
+            setBuildingOptions([]);
           }
-        } else {
-          setBuildingOptions([]);
-        }
+        });
       } catch (error) {
         console.error('Failed to fetch building suggestions:', error);
-        setBuildingOptions([]);
+        startTransition(() => {
+          setBuildingOptions([]);
+        });
       } finally {
         setLoadingBuildings(false);
       }
-    }, 300),
+    }, 150),  // デバウンス時間をさらに短縮
     []
   );
 
@@ -142,8 +148,10 @@ const AreaSelectionPage: React.FC = () => {
 
   const handleSearchSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (searchText.trim()) {
-      navigate(`/properties?building_name=${encodeURIComponent(searchText.trim())}`);
+    // refから値を取得
+    const query = searchValueRef.current || inputRef.current?.value || '';
+    if (query.trim()) {
+      navigate(`/properties?building_name=${encodeURIComponent(query.trim())}`);
     }
   };
 
@@ -210,6 +218,7 @@ const AreaSelectionPage: React.FC = () => {
             maxWidth: 600,
             mx: 'auto',
             boxShadow: 3,
+            minHeight: 56,  // 高さを固定して垂直中央揃えを確実に
           }}
         >
           <InputAdornment position="start" sx={{ ml: 2 }}>
@@ -218,27 +227,25 @@ const AreaSelectionPage: React.FC = () => {
           <Autocomplete
             freeSolo
             options={buildingOptions}
-            value={searchText}
-            inputValue={buildingInputValue}
+            filterOptions={(x) => x}  // 入力遅延を防ぐため、フィルタリングを無効化
+            disableCloseOnSelect={false}
             onInputChange={(event, newInputValue, reason) => {
-              setBuildingInputValue(newInputValue);
+              // refのみ更新（状態更新しない = レンダリングを防ぐ）
               if (reason === 'input') {
-                setSearchText(newInputValue);
+                searchValueRef.current = newInputValue;
+                // サジェスト取得
                 fetchBuildingSuggestions(newInputValue);
               } else if (reason === 'clear') {
-                setSearchText('');
-                setBuildingInputValue('');
+                searchValueRef.current = '';
                 setBuildingOptions([]);
               }
             }}
             onChange={(event, newValue) => {
               if (typeof newValue === 'string') {
-                setSearchText(newValue);
-                setBuildingInputValue(newValue);
+                searchValueRef.current = newValue;
               } else if (newValue && typeof newValue === 'object' && 'value' in newValue) {
                 // オブジェクト形式の場合（エイリアス対応）
-                setSearchText(newValue.value);
-                setBuildingInputValue(newValue.label);
+                searchValueRef.current = newValue.value;  // 検索用の値を保存
               }
             }}
             getOptionLabel={(option) => {
@@ -265,12 +272,20 @@ const AreaSelectionPage: React.FC = () => {
             renderInput={(params) => (
               <TextField
                 {...params}
+                inputRef={inputRef}
                 variant="standard"
                 placeholder="建物名で検索（例：タワー、パーク）"
                 InputProps={{
                   ...params.InputProps,
                   disableUnderline: true,
-                  sx: { px: 2, py: 1 },
+                  sx: { 
+                    px: 2, 
+                    py: 0,
+                    '& input': {
+                      padding: '12px 0',  // 上下のパディングを均等に
+                      textAlign: 'left',
+                    }
+                  },
                   endAdornment: (
                     <>
                       {loadingBuildings ? <CircularProgress color="inherit" size={20} /> : null}
@@ -311,12 +326,18 @@ const AreaSelectionPage: React.FC = () => {
                 onClick={() => navigate('/updates?tab=0')}
               >
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center' }}>
-                    <Badge badgeContent={recentUpdates.total_price_changes} color="error">
-                      <UpdateIcon sx={{ mr: 1 }} />
-                    </Badge>
-                    価格改定物件
-                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <UpdateIcon color="error" />
+                    <Typography variant="h6">
+                      価格改定物件
+                    </Typography>
+                    <Chip 
+                      label={recentUpdates.total_price_changes} 
+                      color="error" 
+                      size="small"
+                      sx={{ fontWeight: 'bold' }}
+                    />
+                  </Box>
                   <Button size="small" color="error" endIcon={<ArrowForwardIcon />}>
                     一覧を見る
                   </Button>
@@ -338,12 +359,18 @@ const AreaSelectionPage: React.FC = () => {
                 onClick={() => navigate('/updates?tab=1')}
               >
                 <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center' }}>
-                    <Badge badgeContent={recentUpdates.total_new_listings} color="success">
-                      <NewReleasesIcon sx={{ mr: 1 }} />
-                    </Badge>
-                    新着物件
-                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                    <NewReleasesIcon color="success" />
+                    <Typography variant="h6">
+                      新着物件
+                    </Typography>
+                    <Chip 
+                      label={recentUpdates.total_new_listings} 
+                      color="success" 
+                      size="small"
+                      sx={{ fontWeight: 'bold' }}
+                    />
+                  </Box>
                   <Button size="small" color="success" endIcon={<ArrowForwardIcon />}>
                     一覧を見る
                   </Button>
@@ -650,8 +677,8 @@ const AreaSelectionPage: React.FC = () => {
 
       {/* 統計情報 */}
       <Box sx={{ mb: 4 }}>
-        <Grid container spacing={3}>
-          <Grid item xs={12} md={4}>
+        <Grid container spacing={3} justifyContent="center">
+          <Grid item xs={12} sm={6} md={5}>
             <Paper sx={{ p: 3, textAlign: 'center' }}>
               <ApartmentIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
               <Typography variant="h4" gutterBottom>
@@ -662,7 +689,7 @@ const AreaSelectionPage: React.FC = () => {
               </Typography>
             </Paper>
           </Grid>
-          <Grid item xs={12} md={4}>
+          <Grid item xs={12} sm={6} md={5}>
             <Paper sx={{ p: 3, textAlign: 'center' }}>
               <LocationOnIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
               <Typography variant="h4" gutterBottom>
@@ -673,22 +700,11 @@ const AreaSelectionPage: React.FC = () => {
               </Typography>
             </Paper>
           </Grid>
-          <Grid item xs={12} md={4}>
-            <Paper sx={{ p: 3, textAlign: 'center' }}>
-              <TrendingUpIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-              <Typography variant="h4" gutterBottom>
-                毎日更新
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                最新の物件情報
-              </Typography>
-            </Paper>
-          </Grid>
         </Grid>
       </Box>
 
       {/* エリア選択 - 建物名検索中は表示しない */}
-      {(buildingInputValue === '') && (
+      {(!searchValueRef.current || searchValueRef.current === '') && (
         <>
           {/* 対象エリア（都心6区） */}
           <Box sx={{ mb: 6 }}>

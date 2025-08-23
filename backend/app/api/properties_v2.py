@@ -184,15 +184,32 @@ async def get_recent_updates(
     # 価格変更があった物件を取得（改良版）
     # 掲載レベルの価格変更を検出し、物件レベルの多数決価格を計算
     price_changes_query = text("""
-        WITH daily_majority_prices AS (
-            -- 各物件の日付ごとの多数決価格を計算（全期間）
-            SELECT 
+        WITH listing_prices_expanded AS (
+            -- 各掲載の価格を日付ごとに展開（前回価格を引き継ぐ）
+            SELECT DISTINCT
                 pl.master_property_id,
-                DATE(lph.recorded_at) as price_date,
-                lph.price,
-                COUNT(*) as vote_count
+                pl.id as listing_id,
+                dates.price_date,
+                COALESCE(
+                    lph_today.price,
+                    -- その日の記録がない場合は、直近の価格を使用
+                    (SELECT price FROM listing_price_history lph_prev
+                     WHERE lph_prev.property_listing_id = pl.id
+                       AND DATE(lph_prev.recorded_at) < dates.price_date
+                     ORDER BY lph_prev.recorded_at DESC
+                     LIMIT 1),
+                    pl.current_price  -- 履歴がない場合は現在価格を使用
+                ) as price
             FROM property_listings pl
-            INNER JOIN listing_price_history lph ON lph.property_listing_id = pl.id
+            CROSS JOIN (
+                -- 対象期間内のすべての日付を生成
+                SELECT DISTINCT DATE(lph.recorded_at) as price_date
+                FROM listing_price_history lph
+                WHERE lph.recorded_at >= :cutoff_time - INTERVAL '7 days'  -- 余裕を持って取得
+            ) dates
+            LEFT JOIN listing_price_history lph_today 
+                ON lph_today.property_listing_id = pl.id 
+                AND DATE(lph_today.recorded_at) = dates.price_date
             WHERE pl.master_property_id IN (
                 -- 指定期間内に価格記録がある物件のみ対象
                 SELECT DISTINCT pl2.master_property_id
@@ -200,7 +217,18 @@ async def get_recent_updates(
                 INNER JOIN listing_price_history lph2 ON lph2.property_listing_id = pl2.id
                 WHERE lph2.recorded_at >= :cutoff_time
             )
-            GROUP BY pl.master_property_id, DATE(lph.recorded_at), lph.price
+            AND pl.is_active = true  -- アクティブな掲載のみ対象
+        ),
+        daily_majority_prices AS (
+            -- 各物件の日付ごとの多数決価格を計算
+            SELECT 
+                master_property_id,
+                price_date,
+                price,
+                COUNT(*) as vote_count
+            FROM listing_prices_expanded
+            WHERE price IS NOT NULL
+            GROUP BY master_property_id, price_date, price
         ),
         daily_majority AS (
             -- 各物件・日付の多数決価格を決定
@@ -262,6 +290,7 @@ async def get_recent_updates(
             FROM price_changes pc
             INNER JOIN master_properties mp ON mp.id = pc.master_property_id
             INNER JOIN buildings b ON b.id = mp.building_id
+            WHERE mp.sold_at IS NULL  -- 販売終了物件を除外
             ORDER BY pc.master_property_id, pc.change_date DESC
         )
         SELECT 

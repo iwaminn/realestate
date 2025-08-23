@@ -2899,6 +2899,9 @@ class BaseScraper(ABC):
                 listing.current_price = price
                 listing.price_updated_at = get_utc_now()
                 
+                # 価格履歴をデータベースに反映してから価格改定日を更新
+                self.session.flush()  # 重要: 価格履歴をDBに反映
+                
                 # 価格改定日を更新
                 from backend.app.utils.property_utils import update_latest_price_change
                 update_latest_price_change(self.session, master_property.id)
@@ -2962,9 +2965,19 @@ class BaseScraper(ABC):
                     changed_fields.append(f'建物名(新規設定: {listing_building_name})')
                     self.logger.info(f"建物名新規設定: {listing_building_name}")
             
+            # 非アクティブだった掲載を再アクティブ化
+            was_inactive = not listing.is_active
             listing.is_active = True
             listing.last_confirmed_at = get_utc_now()
             listing.detail_fetched_at = get_utc_now()  # 詳細取得時刻を更新
+            
+            # 掲載が再アクティブ化され、物件が販売終了になっていた場合は販売再開
+            if was_inactive and master_property.sold_at:
+                self.logger.info(f"掲載再開により販売終了物件を販売再開 - 物件ID: {master_property.id}, 掲載ID: {listing.id}")
+                master_property.sold_at = None
+                master_property.final_price = None
+                master_property.final_price_updated_at = None
+                self.session.flush()
             
             # 更新タイプを判定
             update_details = None
@@ -3232,9 +3245,12 @@ class BaseScraper(ABC):
             price_history = ListingPriceHistory(
                 property_listing_id=listing.id,
                 price=price,
-                recorded_at=datetime.now()
+                recorded_at=get_utc_now()  # datetime.now()ではなくget_utc_now()を使用（統一）
             )
             self.session.add(price_history)
+            
+            # 価格履歴をデータベースに反映してから価格改定日を更新
+            self.session.flush()  # 重要: 価格履歴をDBに反映
             
             # 価格改定日を更新（初回登録も価格設定として扱う）
             from backend.app.utils.property_utils import update_latest_price_change
@@ -3242,6 +3258,15 @@ class BaseScraper(ABC):
             
             # 新規作成の場合、update_typeを'new'に設定
             update_type = 'new'
+            
+            # 新規掲載追加時、物件が販売終了になっていた場合は販売再開
+            if master_property.sold_at:
+                self.logger.info(f"販売終了物件に新規掲載が追加されたため販売再開 - 物件ID: {master_property.id}")
+                master_property.sold_at = None
+                master_property.final_price = None
+                master_property.final_price_updated_at = None
+                self.session.flush()
+            
             # 物件と建物の詳細情報を含むログメッセージ
             building_name = kwargs.get('listing_building_name', '')
             if master_property and master_property.building:

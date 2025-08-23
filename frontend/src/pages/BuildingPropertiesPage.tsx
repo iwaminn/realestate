@@ -52,6 +52,7 @@ interface BuildingStats {
     max: number;
   };
   total_floors: number | null;
+  avg_price_per_tsubo?: number;
 }
 
 type ViewMode = 'card' | 'table';
@@ -167,6 +168,26 @@ const BuildingPropertiesPage: React.FC = () => {
         });
         
         if (prices.length > 0 && areas.length > 0) {
+          // 各物件の坪単価を計算
+          const pricePerTsubos = response.properties
+            .filter(p => {
+              const price = p.sold_at && p.last_sale_price 
+                ? p.last_sale_price 
+                : (p.majority_price || p.min_price);
+              return price && p.area;
+            })
+            .map(p => {
+              const price = p.sold_at && p.last_sale_price 
+                ? p.last_sale_price 
+                : (p.majority_price || p.min_price);
+              const tsubo = p.area / 3.30578;
+              return price / tsubo;
+            });
+          
+          const avgPricePerTsubo = pricePerTsubos.length > 0
+            ? pricePerTsubos.reduce((a, b) => a + b, 0) / pricePerTsubos.length
+            : 0;
+          
           setStats({
             total_units: response.properties.length,
             price_range: {
@@ -178,7 +199,8 @@ const BuildingPropertiesPage: React.FC = () => {
               min: Math.min(...areas),
               max: Math.max(...areas)
             },
-            total_floors: response.building.total_floors
+            total_floors: response.building.total_floors,
+            avg_price_per_tsubo: avgPricePerTsubo
           });
         } else {
           // 価格や面積情報がない場合でも建物情報は表示
@@ -193,7 +215,8 @@ const BuildingPropertiesPage: React.FC = () => {
               min: 0,
               max: 0
             },
-            total_floors: response.building.total_floors
+            total_floors: response.building.total_floors,
+            avg_price_per_tsubo: 0
           });
         }
       }
@@ -488,8 +511,8 @@ const BuildingPropertiesPage: React.FC = () => {
             <Grid item xs={12} sm={6} md={3}>
               <Box textAlign="center">
                 <Typography variant="h3" color="primary">
-                  {stats.price_range.avg && stats.area_range.min && stats.area_range.max 
-                    ? Math.round(stats.price_range.avg / ((stats.area_range.min + stats.area_range.max) / 2 / 3.30578)).toLocaleString()
+                  {stats.avg_price_per_tsubo 
+                    ? Math.round(stats.avg_price_per_tsubo).toLocaleString()
                     : '-'}
                 </Typography>
                 <Typography variant="body1" color="text.secondary">
