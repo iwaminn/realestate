@@ -1305,6 +1305,10 @@ class BaseScraper(ABC):
             # 価格不一致履歴でスキップすべきかチェック
             if site_id and self._should_skip_due_to_price_mismatch(site_id):
                 print("  → 価格不一致履歴のためスキップ")
+                self.logger.warning(
+                    f"価格不一致エラー履歴により詳細取得をスキップ: {property_data.get('url', '')} "
+                    f"(物件ID: {site_id})"
+                )
                 property_data['detail_fetched'] = False
                 property_data['detail_fetch_attempted'] = False
                 property_data['update_type'] = 'skipped'
@@ -1314,6 +1318,10 @@ class BaseScraper(ABC):
             # 404エラーでスキップすべきかチェック（強制詳細取得モードでない、かつエラー履歴無視モードでない場合のみ）
             if not self.force_detail_fetch and not self.ignore_error_history and self._should_skip_url_due_to_404(property_data['url']):
                 print("  → 404エラー履歴のためスキップ")
+                self.logger.warning(
+                    f"404エラー履歴により詳細取得をスキップ: {property_data.get('url', '')} "
+                    f"(物件ID: {site_id})"
+                )
                 property_data['detail_fetched'] = False
                 property_data['detail_fetch_attempted'] = False  # 404エラー履歴によるスキップは試行とみなさない
                 # 404エラー履歴によるスキップは詳細取得失敗にカウントしない
@@ -1338,6 +1346,10 @@ class BaseScraper(ABC):
             # 検証エラーでスキップすべきかチェック（強制詳細取得モードでない、かつエラー履歴無視モードでない場合のみ）
             if not self.force_detail_fetch and not self.ignore_error_history and self._should_skip_url_due_to_validation_error(property_data['url']):
                 print("  → 検証エラー履歴のためスキップ")
+                self.logger.warning(
+                    f"検証エラー履歴により詳細取得をスキップ: {property_data.get('url', '')} "
+                    f"(物件ID: {site_id})"
+                )
                 property_data['detail_fetched'] = False
                 property_data['detail_fetch_attempted'] = False  # 検証エラー履歴によるスキップは試行とみなさない
                 # 検証エラー履歴によるスキップも詳細取得失敗にカウントしない
@@ -1738,6 +1750,14 @@ class BaseScraper(ABC):
                         'site_property_id': property_data.get('site_property_id', ''),
                         'source_site': self.source_site.value
                     })
+                
+                # 検証エラーを記録
+                self._record_validation_error(
+                    url=property_data.get('url', ''),
+                    site_property_id=property_data.get('site_property_id', ''),
+                    error_type='building_name_mismatch_multi_source',
+                    error_details=f'一覧: {list_building_name}, 詳細候補: {building_names_from_detail}'
+                )
                 return False
                 
         elif list_building_name and detail_building_name:
@@ -1769,6 +1789,14 @@ class BaseScraper(ABC):
                         'site_property_id': property_data.get('site_property_id', ''),
                         'source_site': self.source_site.value
                     })
+                
+                # 検証エラーを記録
+                self._record_validation_error(
+                    url=property_data.get('url', ''),
+                    site_property_id=property_data.get('site_property_id', ''),
+                    error_type='building_name_mismatch',
+                    error_details=f'一覧: {list_building_name}, 詳細: {detail_building_name}'
+                )
                 
                 return False
             else:
@@ -3418,7 +3446,7 @@ class BaseScraper(ABC):
                 hours_since_error = (datetime.now() - retry_record.last_error_at).total_seconds() / 3600
                 
                 if hours_since_error < retry_hours:
-                    self.logger.debug(
+                    self.logger.warning(
                         f"404エラー履歴によりスキップ: {url} "
                         f"(エラー回数: {retry_record.error_count}, "
                         f"最終エラーから: {hours_since_error:.1f}時間, "
@@ -3438,34 +3466,25 @@ class BaseScraper(ABC):
     
     def _should_skip_url_due_to_validation_error(self, url: str) -> bool:
         """検証エラー履歴によりスキップすべきURLか判定"""
-        # 検証エラーテーブルが存在するか確認
         try:
-            # validation_errorsテーブルが存在するか確認
-            metadata = MetaData()
-            metadata.reflect(bind=self.session.bind)
-            if 'validation_errors' not in metadata.tables:
-                return False
+            from app.models import PropertyValidationError
             
-            # テーブルが存在する場合のみクエリ実行
-            result = self.session.execute(
-                text("""
-                    SELECT error_count, last_error_at 
-                    FROM validation_errors 
-                    WHERE url = :url AND source_site = :site
-                """),
-                {'url': url, 'site': self.source_site.value}
+            # PropertyValidationErrorテーブルから確認
+            error_record = self.session.query(PropertyValidationError).filter(
+                PropertyValidationError.url == url,
+                PropertyValidationError.source_site == self.source_site.value
             ).first()
             
-            if result:
-                error_count, last_error_at = result
+            if error_record:
                 # 再試行間隔を計算（404エラーと同じロジック）
-                retry_hours = self._calculate_retry_interval(error_count)
-                hours_since_error = (datetime.now() - last_error_at).total_seconds() / 3600
+                retry_hours = self._calculate_retry_interval(error_record.error_count)
+                hours_since_error = (datetime.now() - error_record.last_error_at).total_seconds() / 3600
                 
                 if hours_since_error < retry_hours:
-                    self.logger.debug(
+                    self.logger.warning(
                         f"検証エラー履歴によりスキップ: {url} "
-                        f"(エラー回数: {error_count}, "
+                        f"(エラータイプ: {error_record.error_type}, "
+                        f"エラー回数: {error_record.error_count}, "
                         f"最終エラーから: {hours_since_error:.1f}時間, "
                         f"再試行間隔: {retry_hours}時間)"
                     )
@@ -3478,44 +3497,49 @@ class BaseScraper(ABC):
                     return False
             return False
         except Exception as e:
-            # テーブルが存在しない場合はスキップしない
-            self.logger.debug(f"検証エラー履歴チェックスキップ: {e}")
+            self.logger.debug(f"検証エラー履歴チェック中にエラー: {e}")
             return False
     
     def _should_skip_due_to_price_mismatch(self, site_property_id: str) -> bool:
         """価格不一致履歴によりスキップすべきか判定"""
-        # price_mismatch_retriesテーブルが存在するか確認
         try:
-            metadata = MetaData()
-            metadata.reflect(bind=self.session.bind)
-            if 'price_mismatch_retries' not in metadata.tables:
-                return False
-            
-            # テーブルが存在する場合のみクエリ実行
+            # price_mismatch_historyテーブルから確認
             result = self.session.execute(
                 text("""
-                    SELECT retry_days, recorded_at 
-                    FROM price_mismatch_retries 
-                    WHERE site_property_id = :site_id AND source_site = :site
-                    ORDER BY recorded_at DESC
+                    SELECT retry_count, attempted_at
+                    FROM price_mismatch_history 
+                    WHERE site_property_id = :site_id 
+                    AND source_site = :site
+                    AND is_resolved = false
+                    ORDER BY attempted_at DESC
                     LIMIT 1
                 """),
                 {'site_id': site_property_id, 'site': self.source_site.value}
             ).first()
             
             if result:
-                retry_days, recorded_at = result
-                days_since_record = (datetime.now() - recorded_at).days
+                retry_count, attempted_at = result
                 
-                if days_since_record < retry_days:
-                    self.logger.debug(
+                # エラー回数に基づいて再試行間隔を計算（時間単位）
+                retry_hours = self._calculate_retry_interval(retry_count)
+                hours_since_error = (datetime.now() - attempted_at).total_seconds() / 3600
+                
+                if hours_since_error < retry_hours:
+                    self.logger.warning(
                         f"価格不一致履歴によりスキップ: ID={site_property_id} "
-                        f"(記録から{days_since_record}日経過, 再試行間隔: {retry_days}日)"
+                        f"(エラー回数: {retry_count}, "
+                        f"最終エラーから: {hours_since_error:.1f}時間, "
+                        f"再試行間隔: {retry_hours}時間)"
                     )
                     return True
+                else:
+                    self.logger.debug(
+                        f"価格不一致履歴ありだが再試行可能: ID={site_property_id} "
+                        f"(最終エラーから{hours_since_error:.1f}時間経過)"
+                    )
             return False
         except Exception as e:
-            self.logger.debug(f"価格不一致履歴チェックスキップ: {e}")
+            self.logger.debug(f"価格不一致履歴チェック中にエラー: {e}")
             return False
     
     def _calculate_retry_interval(self, error_count: int) -> int:
@@ -3646,7 +3670,7 @@ class BaseScraper(ABC):
             self.session.begin()
     
     
-    def _record_price_mismatch(self, site_property_id: str, url: str, list_price: int, detail_price: int, retry_days: int = 7):
+    def _record_price_mismatch(self, site_property_id: str, url: str, list_price: int, detail_price: int):
         """価格不一致を記録"""
         # エラー履歴無視モードの場合は記録しない
         if self.ignore_error_history:
@@ -3654,37 +3678,115 @@ class BaseScraper(ABC):
             return
             
         try:
+            # 既存のエラー記録を確認してエラー回数を取得
+            result = self.session.execute(
+                text("""
+                    SELECT retry_count 
+                    FROM price_mismatch_history 
+                    WHERE site_property_id = :site_id 
+                    AND source_site = :site
+                    AND is_resolved = false
+                """),
+                {'site_id': site_property_id, 'site': self.source_site.value}
+            ).first()
+            
+            if result:
+                # 既存記録がある場合はエラー回数を増やす
+                retry_count = result[0] + 1
+            else:
+                # 新規記録の場合
+                retry_count = 1
+            
+            # エラー回数に基づいて再試行間隔を計算（時間単位）
+            retry_hours = self._calculate_retry_interval(retry_count)
+            
             sql = text("""
                 INSERT INTO price_mismatch_history 
-                (source_site, site_property_id, property_url, list_price, detail_price, retry_after)
+                (source_site, site_property_id, property_url, list_price, detail_price, 
+                 retry_after, retry_count)
                 VALUES (:source_site, :site_property_id, :url, :list_price, :detail_price, 
-                        NOW() + INTERVAL ':retry_days days')
+                        NOW() + INTERVAL ':retry_hours hours', :retry_count)
                 ON CONFLICT (source_site, site_property_id) 
                 DO UPDATE SET 
                     list_price = :list_price,
                     detail_price = :detail_price,
                     attempted_at = NOW(),
-                    retry_after = NOW() + INTERVAL ':retry_days days',
+                    retry_after = NOW() + INTERVAL ':retry_hours hours',
+                    retry_count = :retry_count,
                     is_resolved = false
-            """.replace(':retry_days', str(retry_days)))
+            """.replace(':retry_hours', str(retry_hours)))
             
             self.session.execute(sql, {
                 'source_site': self.source_site.value,
                 'site_property_id': site_property_id,
                 'url': url,
                 'list_price': list_price,
-                'detail_price': detail_price
+                'detail_price': detail_price,
+                'retry_count': retry_count
             })
             self.session.commit()
             
             self.logger.warning(
                 f"価格不一致を記録 - ID: {site_property_id}, "
                 f"一覧: {list_price}万円, 詳細: {detail_price}万円, "
-                f"{retry_days}日間再取得をスキップ"
+                f"エラー回数: {retry_count}, 再試行間隔: {retry_hours}時間"
             )
             
         except Exception as e:
             self.logger.error(f"価格不一致記録中のエラー: {e}")
+            self.session.rollback()
+            # 新しいトランザクションを開始
+            self.session.begin()
+
+    def _record_validation_error(self, url: str, site_property_id: str, error_type: str, error_details: str = None):
+        """検証エラーを記録し、再試行間隔を管理"""
+        # エラー履歴無視モードの場合は記録しない
+        if self.ignore_error_history:
+            self.logger.info(f"エラー履歴無視モードのため、検証エラーを記録しません: {url}")
+            return
+            
+        try:
+            from app.models import PropertyValidationError
+            
+            # 既存のエラー記録を確認
+            error_record = self.session.query(PropertyValidationError).filter(
+                PropertyValidationError.url == url,
+                PropertyValidationError.source_site == self.source_site.value
+            ).first()
+            
+            if error_record:
+                # 既存記録を更新
+                error_record.error_count += 1
+                error_record.last_error_at = datetime.now()
+                error_record.error_details = error_details
+                error_record.site_property_id = site_property_id or error_record.site_property_id
+                
+                self.logger.warning(
+                    f"検証エラーを更新 - URL: {url}, タイプ: {error_type}, "
+                    f"エラー回数: {error_record.error_count}"
+                )
+            else:
+                # 新規記録を作成
+                error_record = PropertyValidationError(
+                    url=url,
+                    source_site=self.source_site.value,
+                    site_property_id=site_property_id,
+                    error_type=error_type,
+                    error_details=error_details,
+                    first_error_at=datetime.now(),
+                    last_error_at=datetime.now(),
+                    error_count=1
+                )
+                self.session.add(error_record)
+                
+                self.logger.warning(
+                    f"検証エラーを新規記録 - URL: {url}, タイプ: {error_type}"
+                )
+            
+            self.session.commit()
+            
+        except Exception as e:
+            self.logger.error(f"検証エラー記録中のエラー: {e}")
             self.session.rollback()
             # 新しいトランザクションを開始
             self.session.begin()

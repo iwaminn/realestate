@@ -440,6 +440,29 @@ class ScraperAlert(Base):
     )
 
 
+class PropertyValidationError(Base):
+    """物件検証エラー履歴テーブル（建物名検証失敗、必須フィールド不足など）"""
+    __tablename__ = "property_validation_errors"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    url = Column(String(512), nullable=False)
+    source_site = Column(String(50), nullable=False)
+    site_property_id = Column(String(500))                  # 物件ID（わかる場合）
+    error_type = Column(String(100), nullable=False)        # エラー種別（building_name_mismatch, missing_fields等）
+    error_details = Column(Text)                            # エラーの詳細
+    first_error_at = Column(DateTime, nullable=False, server_default=func.now())
+    last_error_at = Column(DateTime, nullable=False, server_default=func.now())
+    error_count = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('url', 'source_site', name='unique_validation_error_url_source'),
+        Index('idx_validation_errors_url_source', 'url', 'source_site'),
+        Index('idx_validation_errors_last_error', 'last_error_at'),
+        Index('idx_validation_errors_type', 'error_type'),
+    )
+
 class PriceMismatchHistory(Base):
     """価格不一致履歴テーブル"""
     __tablename__ = "price_mismatch_history"
