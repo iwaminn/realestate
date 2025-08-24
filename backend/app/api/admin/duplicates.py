@@ -25,11 +25,6 @@ from ...scrapers.data_normalizer import normalize_layout, normalize_direction
 
 router = APIRouter(tags=["admin-duplicates"])
 
-# キャッシュ用のグローバル変数（無効化）
-# _duplicate_buildings_cache = {}
-# _duplicate_buildings_cache_time = 0
-# CACHE_DURATION = 300  # 5分
-
 def clear_duplicate_buildings_cache():
     """重複建物キャッシュをクリア（無効化）"""
     # キャッシュ機能は無効化されています
@@ -163,145 +158,130 @@ async def get_duplicate_buildings(
         ).all()
         
         # 優先度2: 同じ住所・築年・階数の組み合わせを持つ建物を追加
-        if len(buildings_with_count) < limit * 3:
-            # 同じ住所前半部分、同じ築年、同じ階数を持つ建物のグループを検索
-            # これらは表記ゆれや入力ミスによる重複の可能性が高い
-            duplicate_candidates = db.query(
-                Building,
-                func.count(MasterProperty.id).label('property_count')
-            ).outerjoin(
-                MasterProperty, Building.id == MasterProperty.building_id
-            ).filter(
-                Building.id.notin_([b[0].id for b in buildings_with_count])
-            ).group_by(Building.id).having(
-                func.count(MasterProperty.id) > 0
-            )
+        # 同名建物だけでなく、属性が一致する建物も必ず含める
+        # 同じ住所前半部分、同じ築年、同じ階数を持つ建物のグループを検索
+        # これらは表記ゆれや入力ミスによる重複の可能性が高い
+        duplicate_candidates = db.query(
+            Building,
+            func.count(MasterProperty.id).label('property_count')
+        ).outerjoin(
+            MasterProperty, Building.id == MasterProperty.building_id
+        ).filter(
+            Building.id.notin_([b[0].id for b in buildings_with_count])
+        ).group_by(Building.id).having(
+            func.count(MasterProperty.id) > 0
+        )
+        
+        # サブクエリで重複の可能性が高い組み合わせを特定
+        # 総戸数、総階数がすべて一致し、築年が近い建物を優先的に検索
+        # 築年は±1年の許容範囲を考慮するため、個別に処理
+        from sqlalchemy import case
+        
+        attribute_groups = []
+        
+        # 住所、総階数、総戸数でグループ化（築年は後で個別チェック）
+        # PostgreSQL配列をPythonリストに変換する必要があるため、個別にクエリ
+        base_groups = db.query(
+            func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
+            Building.total_floors,
+            Building.total_units,
+            func.array_agg(Building.id).label('building_ids'),
+            func.array_agg(Building.built_year).label('built_years'),
+            func.count(Building.id).label('group_count')
+        ).filter(
+            Building.id.in_(
+                db.query(MasterProperty.building_id).distinct()
+            ),
+            Building.total_floors.isnot(None),
+            Building.total_units.isnot(None)  # 総戸数が存在する建物のみ
+        ).group_by(
+            func.substring(Building.normalized_address, 1, 10),
+            Building.total_floors,
+            Building.total_units
+        ).having(
+            func.count(Building.id) > 1  # 同じ属性の組み合わせが2つ以上
+        ).all()  # limitを削除して全ての重複候補を検出
+        
+        # 築年が±1年以内の建物をグループとして追加
+        for group in base_groups:
+            building_ids = group.building_ids if group.building_ids else []
+            built_years = group.built_years if group.built_years else []
             
-            # サブクエリで重複の可能性が高い組み合わせを特定
-            # 総戸数、総階数がすべて一致し、築年が近い建物を優先的に検索
-            # 築年は±1年の許容範囲を考慮するため、個別に処理
-            from sqlalchemy import case
+            # 築年が±1年以内のペアがあるかチェック
+            # 築年が完全に同じ場合も含める
+            has_close_years = False
+            if len(building_ids) > 1:  # グループに複数の建物がある
+                # 築年がすべて存在するかチェック
+                valid_years = [y for y in built_years if y is not None]
+                if len(valid_years) == len(building_ids):
+                    # すべての建物に築年がある場合
+                    for i in range(len(valid_years)):
+                        for j in range(i + 1, len(valid_years)):
+                            if abs(valid_years[i] - valid_years[j]) <= 1:
+                                has_close_years = True
+                                break
+                        if has_close_years:
+                            break
             
-            attribute_groups = []
-            
-            # 住所、総階数、総戸数でグループ化（築年は後で個別チェック）
-            # PostgreSQL配列をPythonリストに変換する必要があるため、個別にクエリ
-            base_groups = db.query(
+            if has_close_years:
+                # 仮想的なグループとして追加（後の処理で使用）
+                attribute_groups.append({
+                    'address_prefix': group.address_prefix,
+                    'total_floors': group.total_floors,
+                    'total_units': group.total_units,
+                    'building_ids': building_ids,
+                    'group_count': len(building_ids)
+                })
+        
+        # 追加: 総階数が±1階の誤差を許容するパターンも検索
+        if len(buildings_with_count) < limit * 2:
+            flexible_groups = db.query(
                 func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
-                Building.total_floors,
+                Building.built_year,
                 Building.total_units,
-                func.array_agg(Building.id).label('building_ids'),
-                func.array_agg(Building.built_year).label('built_years'),
                 func.count(Building.id).label('group_count')
             ).filter(
                 Building.id.in_(
                     db.query(MasterProperty.building_id).distinct()
                 ),
-                Building.total_floors.isnot(None),
-                Building.total_units.isnot(None)  # 総戸数が存在する建物のみ
+                Building.built_year.isnot(None),
+                Building.total_units.isnot(None)
             ).group_by(
                 func.substring(Building.normalized_address, 1, 10),
-                Building.total_floors,
+                Building.built_year,
                 Building.total_units
             ).having(
-                func.count(Building.id) > 1  # 同じ属性の組み合わせが2つ以上
-            ).limit(50).all()
+                func.count(Building.id) > 1
+            ).limit(30).all()
             
-            # 築年が±1年以内の建物をグループとして追加
-            for group in base_groups:
-                building_ids = group.building_ids if group.building_ids else []
-                built_years = group.built_years if group.built_years else []
-                
-                # デバッグ: 白金ザ・スカイグループが含まれているか確認
-                if 333 in building_ids or 3210 in building_ids:
-                    logger.info(f"[DEBUG] 白金ザ・スカイグループ発見: IDs={building_ids}, Years={built_years}")
-                
-                # 築年が±1年以内のペアがあるかチェック
-                has_close_years = False
-                for i in range(len(built_years)):
-                    for j in range(i + 1, len(built_years)):
-                        if built_years[i] and built_years[j]:
-                            if abs(built_years[i] - built_years[j]) <= 1:
-                                has_close_years = True
-                                break
-                    if has_close_years:
-                        break
-                
-                if has_close_years:
-                    # 仮想的なグループとして追加（後の処理で使用）
-                    attribute_groups.append({
-                        'address_prefix': group.address_prefix,
-                        'total_floors': group.total_floors,
-                        'total_units': group.total_units,
-                        'building_ids': building_ids,
-                        'group_count': len(building_ids)
-                    })
-                    
-                    # デバッグ: 追加されたグループを確認
-                    if 333 in building_ids or 3210 in building_ids:
-                        logger.info(f"[DEBUG] 白金ザ・スカイグループを attribute_groups に追加")
-            
-            # 追加: 総階数が±1階の誤差を許容するパターンも検索
-            if len(buildings_with_count) < limit * 2:
-                flexible_groups = db.query(
-                    func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
-                    Building.built_year,
-                    Building.total_units,
-                    func.count(Building.id).label('group_count')
-                ).filter(
-                    Building.id.in_(
-                        db.query(MasterProperty.building_id).distinct()
-                    ),
-                    Building.built_year.isnot(None),
-                    Building.total_units.isnot(None)
-                ).group_by(
-                    func.substring(Building.normalized_address, 1, 10),
-                    Building.built_year,
-                    Building.total_units
-                ).having(
-                    func.count(Building.id) > 1
-                ).limit(30).all()
-                
-                for group in flexible_groups:
-                    if len(buildings_with_count) >= limit * 3:
-                        break
-                    matching_buildings = duplicate_candidates.filter(
-                        Building.normalized_address.like(f"{group.address_prefix}%"),
-                        Building.built_year == group.built_year,
-                        Building.total_units == group.total_units
-                    ).limit(10).all()
-                    
-                    # 既に追加済みの建物は除外
-                    for building, count in matching_buildings:
-                        if not any(b[0].id == building.id for b in buildings_with_count):
-                            buildings_with_count.append((building, count))
-            
-            # 見つかった組み合わせに一致する建物を取得
-            for group in attribute_groups:
+            for group in flexible_groups:
                 if len(buildings_with_count) >= limit * 3:
                     break
+                matching_buildings = duplicate_candidates.filter(
+                    Building.normalized_address.like(f"{group.address_prefix}%"),
+                    Building.built_year == group.built_year,
+                    Building.total_units == group.total_units
+                ).limit(10).all()
                 
-                # building_idsから実際の建物を取得
-                if 'building_ids' in group and group['building_ids']:
-                    # デバッグ: 白金ザ・スカイグループの処理を確認
-                    if any(bid in [333, 3210] for bid in group['building_ids']):
-                        logger.info(f"[DEBUG] 白金ザ・スカイグループ処理中: IDs={group['building_ids']}")
-                    
-                    for building_id in group['building_ids']:
-                        building_obj = db.query(Building).filter(Building.id == building_id).first()
-                        if building_obj:
-                            property_count = db.query(func.count(MasterProperty.id)).filter(
-                                MasterProperty.building_id == building_id
-                            ).scalar()
-                            
-                            # 既に追加済みでなければ追加
-                            if not any(b[0].id == building_id for b in buildings_with_count):
-                                buildings_with_count.append((building_obj, property_count))
-                                # デバッグ: 追加を確認
-                                if building_id in [333, 3210]:
-                                    logger.info(f"[DEBUG] 建物ID {building_id} を buildings_with_count に追加")
-                            elif building_id in [333, 3210]:
-                                logger.info(f"[DEBUG] 建物ID {building_id} は既に追加済み")
+                # 既に追加済みの建物は除外
+                for building, count in matching_buildings:
+                    if not any(b[0].id == building.id for b in buildings_with_count):
+                        buildings_with_count.append((building, count))
+        
+        # 見つかった組み合わせに一致する建物を取得
+        for group in attribute_groups:
+            # building_idsから実際の建物を取得
+            if 'building_ids' in group and group['building_ids']:
+                for building_id in group['building_ids']:
+                    building_obj = db.query(Building).filter(Building.id == building_id).first()
+                    if building_obj:
+                        property_count = db.query(func.count(MasterProperty.id)).filter(
+                            MasterProperty.building_id == building_id
+                        ).scalar()
+                        
+                        # 既に追加済みでなければ追加
+                        if not any(b[0].id == building_id for b in buildings_with_count):
+                            buildings_with_count.append((building_obj, property_count))
         
         # 優先度3: まだ枠がある場合は、通常の建物を追加（フォールバック）
         # 最大30件に制限して高速化（実際の重複はほぼ優先度1,2で見つかる）
@@ -317,7 +297,7 @@ async def get_duplicate_buildings(
                 func.count(MasterProperty.id) > 0
             ).order_by(
                 Building.normalized_name
-            ).limit(30 - len(buildings_with_count)).all()
+            ).all()
             
             buildings_with_count.extend(remaining_buildings)
     
@@ -333,11 +313,7 @@ async def get_duplicate_buildings(
         excluded_pairs.add((exclusion.building1_id, exclusion.building2_id))
         excluded_pairs.add((exclusion.building2_id, exclusion.building1_id))
     
-    # デバッグ: 除外設定の確認（本番環境ではコメントアウト）
-    # if (161, 333) in excluded_pairs or (333, 161) in excluded_pairs:
-    #     print(f"[DEBUG] 白金ザ・スカイの除外設定が含まれています: (161, 333) in excluded_pairs = {(161, 333) in excluded_pairs}")
-    #     print(f"[DEBUG] 除外設定の総数: {len(excluded_pairs)}")
-    
+
     phase_times['exclusion_fetch'] = time.time() - phase_start
     
     # フェーズ4: 重複候補の検出と類似度計算（推移的グループ化対応）
@@ -551,18 +527,13 @@ async def get_duplicate_buildings(
         building_ids = list(component)
         has_exclusion = False
         
-        # デバッグ: 除外設定を確認（本番環境ではコメントアウト）
-        # if 161 in building_ids or 333 in building_ids:
-        #     print(f"[DEBUG] 白金ザ・スカイのコンポーネント: {building_ids}")
-        #     print(f"[DEBUG] 除外ペア（161, 333）: {(161, 333) in excluded_pairs}")
-        
+
         # コンポーネント内の除外ペアを収集
         component_exclusions = []
         for i in range(len(building_ids)):
             for j in range(i + 1, len(building_ids)):
                 if (building_ids[i], building_ids[j]) in excluded_pairs:
                     component_exclusions.append((building_ids[i], building_ids[j]))
-                    # print(f"[DEBUG] 除外ペア発見: ({building_ids[i]}, {building_ids[j]})")
                     has_exclusion = True
         
         # 除外設定がない場合はそのまま返す
@@ -592,10 +563,7 @@ async def get_duplicate_buildings(
                 can_join_group2 = (bid, bid2) not in excluded_pairs and (bid2, bid) not in excluded_pairs
                 connected_to_group2 = bid in similarity_graph.get(bid2, {}) or bid2 in similarity_graph.get(bid, {})
                 
-                # デバッグ（本番環境ではコメントアウト）
-                # if 161 in [bid, bid1, bid2] or 333 in [bid, bid1, bid2]:
-                #     print(f"[DEBUG] 建物{bid}: can_join_group1={can_join_group1}, connected_to_group1={connected_to_group1}, can_join_group2={can_join_group2}, connected_to_group2={connected_to_group2}")
-                
+
                 # 両方のグループに参加可能な場合は、より接続が強い方へ
                 if can_join_group1 and connected_to_group1 and can_join_group2 and connected_to_group2:
                     # 両方に接続されている場合は、グループ1を優先
@@ -617,9 +585,8 @@ async def get_duplicate_buildings(
             if len(group2) > 1:
                 result.append(group2)
             
-            # デバッグ: 分割結果を確認（本番環境ではコメントアウト）
-            # if 161 in building_ids or 333 in building_ids:
-            #     print(f"[DEBUG] 分割後のグループ: {result}")
+
+
             
             return result if result else []
         
@@ -632,8 +599,7 @@ async def get_duplicate_buildings(
         subcomponents = split_component_by_exclusions(component, excluded_pairs)
         
         for subcomponent in subcomponents:
-            if len(duplicate_groups) >= limit:
-                break
+            # limitのチェックを削除して、全グループを収集してからソート後に制限
             
             # サブコンポーネント内の建物情報を取得
             component_buildings = []
@@ -687,6 +653,85 @@ async def get_duplicate_buildings(
     phase_times['avg_candidate_fetch'] = sum(candidate_fetch_times) / len(candidate_fetch_times) if candidate_fetch_times else 0
     phase_times['avg_similarity_calc'] = sum(similarity_calc_times) / len(similarity_calc_times) if similarity_calc_times else 0
     phase_times['total_buildings_processed'] = len(candidate_fetch_times)
+    
+    # 重複グループを信頼度でソート（高信頼度のものを優先）
+    # 属性が完全に一致する建物（住所、階数、戸数、築年が同じ）を優先
+    def calculate_group_confidence(group):
+        """グループの信頼度スコアを計算"""
+        primary = group["primary"]
+        candidates = group.get("candidates", [])
+        
+        if not candidates:
+            return 0
+        
+        # 基本スコア（類似度の平均）
+        avg_similarity = sum(c.get("similarity", 0) for c in candidates) / len(candidates) if candidates else 0
+        base_score = avg_similarity
+        
+        # 属性一致ボーナス
+        attribute_bonus = 0
+        for candidate in candidates:
+            # 属性一致のカウント（住所は部分一致も考慮）
+            matches = 0
+            
+            # 住所の比較（丁目レベルまでの一致を確認）
+            primary_addr = primary.get("address", "")
+            candidate_addr = candidate.get("address", "")
+            if primary_addr and candidate_addr:
+                import re
+                # 住所から丁目部分までを抽出（例：東京都港区愛宕１ → 東京都港区愛宕）
+                # パターン: 最後の数字部分（丁目）を除去
+                def extract_district(addr):
+                    # 末尾の数字、ハイフン、漢数字等を除去
+                    # 例: "愛宕１" → "愛宕", "西新宿３-１６-３３" → "西新宿"
+                    match = re.match(r'^(.*?[区市町村][^0-9０-９一二三四五六七八九十\-－]*)', addr)
+                    if match:
+                        return match.group(1)
+                    # 区市町村が見つからない場合は、最後の数字より前を取る
+                    match = re.match(r'^(.*?)[\d０-９一二三四五六七八九十\-－]', addr)
+                    if match:
+                        return match.group(1)
+                    return addr
+                
+                primary_district = extract_district(primary_addr)
+                candidate_district = extract_district(candidate_addr)
+                
+                # 完全一致または地区レベルで一致する場合
+                if primary_addr == candidate_addr or primary_district == candidate_district:
+                    matches += 1
+            
+            # 階数の一致
+            if (primary.get("total_floors") and 
+                primary.get("total_floors") == candidate.get("total_floors")):
+                matches += 1
+            
+            # 戸数の一致
+            if (primary.get("total_units") and 
+                primary.get("total_units") == candidate.get("total_units")):
+                matches += 1
+            
+            # 築年の一致（±1年の誤差を許容）
+            if (primary.get("built_year") and candidate.get("built_year") and
+                abs(primary.get("built_year") - candidate.get("built_year")) <= 1):
+                matches += 1
+            
+            # 4つすべて一致は最高優先度
+            if matches == 4:
+                attribute_bonus = max(attribute_bonus, 1.5)  # 完全一致は最高優先度
+            # 3つの属性が一致
+            elif matches >= 3:
+                attribute_bonus = max(attribute_bonus, 0.8)
+            # 2つの属性が一致
+            elif matches >= 2:
+                attribute_bonus = max(attribute_bonus, 0.3)
+        
+        # 物件数ボーナス（多い方が信頼度高い）
+        property_bonus = min(primary.get("property_count", 0) / 100, 0.2)
+        
+        return base_score + attribute_bonus + property_bonus
+    
+    # 信頼度でソート（降順）
+    duplicate_groups.sort(key=calculate_group_confidence, reverse=True)
     
     # 結果をキャッシュに保存
     result = {
@@ -1945,3 +1990,4 @@ async def exclude_property_merge(
     db.commit()
     
     return {"message": "Exclusion added successfully"}
+
