@@ -3639,55 +3639,42 @@ class BaseScraper(ABC):
             return
             
         try:
-            # SQLAlchemyで動的にテーブルを参照
-            metadata = MetaData()
-            validation_retry_table = Table('url_validation_error_retries', metadata, autoload_with=self.session.bind)
+            from app.models import PropertyValidationError
+            import json
             
             # 既存のレコードを確認
-            result = self.session.execute(
-                validation_retry_table.select().where(
-                    and_(
-                        validation_retry_table.c.url == url,
-                        validation_retry_table.c.source_site == self.source_site.value
-                    )
-                )
+            error_record = self.session.query(PropertyValidationError).filter(
+                PropertyValidationError.url == url,
+                PropertyValidationError.source_site == self.source_site.value
             ).first()
             
-            if result:
+            if error_record:
                 # エラー回数を更新
-                self.session.execute(
-                    validation_retry_table.update().where(
-                        and_(
-                            validation_retry_table.c.url == url,
-                            validation_retry_table.c.source_site == self.source_site.value
-                        )
-                    ).values(
-                        error_count=result.error_count + 1,
-                        last_error_at=datetime.now(),
-                        error_type=error_type,
-                        error_details=json.dumps(error_details or {}, ensure_ascii=False)
-                    )
-                )
+                error_record.error_count += 1
+                error_record.last_error_at = datetime.now()
+                error_record.error_type = error_type
+                error_record.error_details = json.dumps(error_details or {}, ensure_ascii=False)
                 
                 # 再試行間隔を計算
-                retry_hours = self._calculate_retry_interval(result.error_count + 1)
+                retry_hours = self._calculate_retry_interval(error_record.error_count)
                 
                 self.logger.info(
                     f"検証エラー再発生 ({error_type}) - "
-                    f"URL: {url}, 回数: {result.error_count + 1}, "
+                    f"URL: {url}, 回数: {error_record.error_count}, "
                     f"次回再試行までの最小間隔: {retry_hours}時間"
                 )
             else:
                 # 新規レコードを作成
-                self.session.execute(
-                    validation_retry_table.insert().values(
-                        url=url,
-                        source_site=self.source_site.value,
-                        error_type=error_type,
-                        error_details=json.dumps(error_details or {}, ensure_ascii=False),
-                        error_count=1
-                    )
+                new_error = PropertyValidationError(
+                    url=url,
+                    source_site=self.source_site.value,
+                    error_type=error_type,
+                    error_details=json.dumps(error_details or {}, ensure_ascii=False),
+                    error_count=1,
+                    first_error_at=datetime.now(),
+                    last_error_at=datetime.now()
                 )
+                self.session.add(new_error)
                 self.logger.info(f"検証エラーを記録 ({error_type}) - URL: {url} (初回、次回再試行は2時間後以降)")
             
             # autoflushが有効な場合のみコミット

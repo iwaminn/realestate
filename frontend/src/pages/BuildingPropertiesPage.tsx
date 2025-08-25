@@ -285,8 +285,13 @@ const BuildingPropertiesPage: React.FC = () => {
     
     const publishedDate = new Date(dateString);
     const today = new Date();
+    
+    // 日付のみで比較（時刻を00:00:00にリセット）
+    publishedDate.setHours(0, 0, 0, 0);
+    today.setHours(0, 0, 0, 0);
+    
     const diffTime = Math.abs(today.getTime() - publishedDate.getTime());
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
     
     if (diffDays === 0) {
       return '本日';
