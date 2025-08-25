@@ -2109,15 +2109,14 @@ class BaseScraper(ABC):
                     
                     return building
         
-        # 統合履歴を確認（削除された建物名でマッチングを試みる）
-        from ..models import BuildingMergeHistory
+        # BuildingListingNameテーブルを確認（別名で登録されている建物を探す）
         
-        # まず、元の建物名（部屋番号抽出前）で統合履歴を検索
+        # まず、元の建物名（部屋番号抽出前）でBuildingListingNameを検索
         original_building_name = search_key  # search_keyは既に正規化済み
         
-        # 統合履歴から最終的な統合先を再帰的に探す
+        # BuildingListingNameから建物を検索する
         def find_ultimate_primary_building(building_name: str, max_depth: int = 10) -> Optional[Building]:
-            """統合チェインを辿って最終的な統合先を見つける"""
+            """BuildingListingNameテーブルから建物を検索"""
             if max_depth <= 0:
                 self.logger.warning(f"統合チェインが深すぎます: {building_name}")
                 return None
@@ -2154,21 +2153,10 @@ class BaseScraper(ABC):
                 )
                 return primary_building
             else:
-                # 統合先も削除されている場合は、その建物名で再帰的に検索
-                # まず統合先建物の名前を統合履歴から取得
-                next_history = self.session.query(BuildingMergeHistory).filter(
-                    BuildingMergeHistory.merged_building_id == merge_history.primary_building_id
-                ).first()
-                
-                if next_history:
-                    self.logger.info(
-                        f"統合チェインを辿っています: '{building_name}' → '{next_history.merged_building_name}' → ..."
-                    )
-                    return find_ultimate_primary_building(next_history.merged_building_name, max_depth - 1)
-                
+                # 建物が見つからない場合
                 return None
         
-        # 統合履歴から最終的な統合先を探す
+        # BuildingListingNameから建物を探す
         primary_building = find_ultimate_primary_building(original_building_name)
         
         if primary_building:
@@ -2184,7 +2172,7 @@ class BaseScraper(ABC):
                         return primary_building
                     else:
                         match_type = "完全一致" if building_normalized_addr == normalized_address else "部分一致"
-                        self.logger.debug(f"統合履歴の建物は住所が{match_type}するが、属性が一致しない")
+                        self.logger.debug(f"BuildingListingNameで見つかった建物は住所が{match_type}するが、属性が一致しない")
                         return None
         
         self.logger.debug(f"一致する建物が見つかりません: {search_key} at {address} (正規化: {normalized_address})")
@@ -2282,8 +2270,7 @@ class BaseScraper(ABC):
         # 比較用の検索キーを生成（最小限の正規化）
         search_key = self.get_search_key_for_building(clean_building_name)
         
-        # 統合履歴を先にチェック（元の建物名で）
-        from ..models import BuildingMergeHistory
+        # BuildingListingNameテーブルから建物を検索（元の建物名で）
         if address:  # 住所がある場合のみ
             from backend.app.utils.address_normalizer import AddressNormalizer
             addr_normalizer = AddressNormalizer()
@@ -2317,15 +2304,16 @@ class BaseScraper(ABC):
                                        building_normalized_addr.startswith(normalized_address) or 
                                        normalized_address.startswith(building_normalized_addr))
                     
-                    # 住所が一致した場合（完全一致・部分一致問わず）、建物属性も確認
+                    # 住所が一致した場合（完全一致・部分一致問わず）
+                    # BuildingListingNameで見つかった建物は、属性が異なっても使用する（建物名の紐付けが優先）
                     if is_address_match:
+                        # 属性の違いをログに記録するが、建物は使用する
                         if not self._verify_building_attributes(primary_building, total_floors, built_year, total_units):
                             match_type = "完全一致" if building_normalized_addr == normalized_address else "部分一致"
-                            self.logger.debug(f"統合履歴の建物は住所が{match_type}するが、属性が一致しない: {primary_building.normalized_name}")
-                            is_address_match = False
+                            self.logger.info(f"BuildingListingNameで見つかった建物（住所{match_type}）の属性が異なりますが、使用します: {primary_building.normalized_name}")
                     
                     if is_address_match:
-                        print(f"[INFO] 統合履歴から建物を発見（元の名前で）: '{original_building_name}' → '{primary_building.normalized_name}' (ID: {primary_building.id})")
+                        print(f"[INFO] BuildingListingNameから建物を発見: '{original_building_name}' → '{primary_building.normalized_name}' (ID: {primary_building.id})")
                         
                         # 建物情報を更新（より詳細な情報があれば）
                         updated = False
@@ -4146,6 +4134,7 @@ class BaseScraper(ABC):
                 built_month=property_data.get('built_month'),  # 最初の掲載情報から設定
                 total_floors=property_data.get('total_floors'),
                 basement_floors=property_data.get('basement_floors'),
+                total_units=property_data.get('total_units'),  # 総戸数を追加
                 structure=property_data.get('structure'),
                 land_rights=property_data.get('land_rights'),
                 station_info=property_data.get('station_info')  # 最初の掲載情報から設定
