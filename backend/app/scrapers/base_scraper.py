@@ -1962,29 +1962,31 @@ class BaseScraper(ABC):
         """
         return get_search_key_for_building_common(building_name)
     
-    def _verify_building_attributes(self, building: Building, total_floors: int = None, built_year: int = None) -> bool:
-        """建物の属性（総階数、築年）が一致するか確認
+    def _verify_building_attributes(self, building: Building, total_floors: int = None, 
+                                     built_year: int = None, total_units: int = None) -> bool:
+        """建物の属性（総階数、築年、総戸数）が一致するか確認
         
-        重要な変更：総階数と築年のいずれか一方でも不明な場合は自動紐付けを防ぐ
+        重要な変更：総階数、築年、総戸数のいずれか一つでも不明な場合は自動紐付けを防ぐ
         """
-        # スクレイピングした情報に総階数または築年が欠けている場合は紐付けない
-        if total_floors is None or built_year is None:
+        # スクレイピングした情報に総階数、築年、総戸数のいずれかが欠けている場合は紐付けない
+        if total_floors is None or built_year is None or total_units is None:
             self.logger.debug(
                 f"建物属性が不足しているため自動紐付けをスキップ: "
-                f"total_floors={total_floors}, built_year={built_year}"
+                f"total_floors={total_floors}, built_year={built_year}, total_units={total_units}"
             )
             return False
         
-        # 既存建物の総階数または築年が欠けている場合も紐付けない
-        if building.total_floors is None or building.built_year is None:
+        # 既存建物の総階数、築年、総戸数のいずれかが欠けている場合も紐付けない
+        if building.total_floors is None or building.built_year is None or building.total_units is None:
             self.logger.debug(
                 f"既存建物の属性が不足しているため自動紐付けをスキップ: "
                 f"building.total_floors={building.total_floors}, "
-                f"building.built_year={building.built_year}"
+                f"building.built_year={building.built_year}, "
+                f"building.total_units={building.total_units}"
             )
             return False
         
-        # 両方の属性が存在する場合のみ比較
+        # すべての属性が存在する場合のみ比較
         # 総階数の確認
         if building.total_floors != total_floors:
             self.logger.debug(
@@ -1999,10 +2001,18 @@ class BaseScraper(ABC):
             )
             return False
         
+        # 総戸数の確認
+        if building.total_units != total_units:
+            self.logger.debug(
+                f"総戸数が一致しない: 既存={building.total_units}, 新規={total_units}"
+            )
+            return False
+        
         # すべての属性が一致
         return True
     
-    def find_existing_building_by_key(self, search_key: str, address: str = None, total_floors: int = None, built_year: int = None) -> Optional[Building]:
+    def find_existing_building_by_key(self, search_key: str, address: str = None, total_floors: int = None, 
+                                      built_year: int = None, total_units: int = None) -> Optional[Building]:
         """検索キーで既存の建物を探す（canonical_nameと住所の両方が一致する必要がある）"""
         # 住所が指定されていない場合は、建物名だけでの判断は危険なのでNoneを返す
         if not address:
@@ -2024,7 +2034,7 @@ class BaseScraper(ABC):
             
             if building:
                 # 完全一致でも建物属性を確認
-                if self._verify_building_attributes(building, total_floors, built_year):
+                if self._verify_building_attributes(building, total_floors, built_year, total_units):
                     self.logger.info(f"既存建物を発見（名前と正規化住所が完全一致、属性も確認・高速検索）: {building.normalized_name} at {building.address}")
                     return building
                 else:
@@ -2049,7 +2059,7 @@ class BaseScraper(ABC):
             
             # 部分一致の場合も属性確認
             for building in partial_match_buildings:
-                if self._verify_building_attributes(building, total_floors, built_year):
+                if self._verify_building_attributes(building, total_floors, built_year, total_units):
                     self.logger.info(f"既存建物を発見（部分一致かつ属性一致・高速検索）: {building.normalized_name} at {building.address}")
                     return building
                 else:
@@ -2081,7 +2091,7 @@ class BaseScraper(ABC):
                     continue
                 
                 # 住所が一致した場合（完全一致・部分一致問わず）、建物属性も確認
-                if self._verify_building_attributes(building, total_floors, built_year):
+                if self._verify_building_attributes(building, total_floors, built_year, total_units):
                     is_match = True
                     if total_floors is not None or built_year is not None:
                         match_type += "（総階数・築年も確認）"
@@ -2170,7 +2180,7 @@ class BaseScraper(ABC):
                     building_normalized_addr.startswith(normalized_address) or 
                     normalized_address.startswith(building_normalized_addr)):
                     # 完全一致・部分一致問わず建物属性を確認
-                    if self._verify_building_attributes(primary_building, total_floors, built_year):
+                    if self._verify_building_attributes(primary_building, total_floors, built_year, total_units):
                         return primary_building
                     else:
                         match_type = "完全一致" if building_normalized_addr == normalized_address else "部分一致"
@@ -2309,7 +2319,7 @@ class BaseScraper(ABC):
                     
                     # 住所が一致した場合（完全一致・部分一致問わず）、建物属性も確認
                     if is_address_match:
-                        if not self._verify_building_attributes(primary_building, total_floors, built_year):
+                        if not self._verify_building_attributes(primary_building, total_floors, built_year, total_units):
                             match_type = "完全一致" if building_normalized_addr == normalized_address else "部分一致"
                             self.logger.debug(f"統合履歴の建物は住所が{match_type}するが、属性が一致しない: {primary_building.normalized_name}")
                             is_address_match = False
@@ -2374,7 +2384,7 @@ class BaseScraper(ABC):
         else:
             # 通常の建物名の場合
             # 既存の建物を検索
-            building = self.find_existing_building_by_key(search_key, address, total_floors, built_year)
+            building = self.find_existing_building_by_key(search_key, address, total_floors, built_year, total_units)
             
             if building:
                 print(f"[INFO] 既存建物を発見: {building.normalized_name} (ID: {building.id})")
