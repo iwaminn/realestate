@@ -93,6 +93,7 @@ app.include_router(buildings_v2.router)
 app.include_router(stats.router)
 app.include_router(grouped_properties.router)
 
+
 # 起動時の初期化
 @app.on_event("startup")
 async def startup_event():

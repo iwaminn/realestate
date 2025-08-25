@@ -1963,21 +1963,43 @@ class BaseScraper(ABC):
         return get_search_key_for_building_common(building_name)
     
     def _verify_building_attributes(self, building: Building, total_floors: int = None, built_year: int = None) -> bool:
-        """建物の属性（総階数、築年）が一致するか確認"""
-        # 両方の属性がNoneの場合は確認不要（True）
-        if total_floors is None and built_year is None:
-            return True
+        """建物の属性（総階数、築年）が一致するか確認
         
+        重要な変更：総階数と築年のいずれか一方でも不明な場合は自動紐付けを防ぐ
+        """
+        # スクレイピングした情報に総階数または築年が欠けている場合は紐付けない
+        if total_floors is None or built_year is None:
+            self.logger.debug(
+                f"建物属性が不足しているため自動紐付けをスキップ: "
+                f"total_floors={total_floors}, built_year={built_year}"
+            )
+            return False
+        
+        # 既存建物の総階数または築年が欠けている場合も紐付けない
+        if building.total_floors is None or building.built_year is None:
+            self.logger.debug(
+                f"既存建物の属性が不足しているため自動紐付けをスキップ: "
+                f"building.total_floors={building.total_floors}, "
+                f"building.built_year={building.built_year}"
+            )
+            return False
+        
+        # 両方の属性が存在する場合のみ比較
         # 総階数の確認
-        if total_floors is not None and building.total_floors is not None:
-            if building.total_floors != total_floors:
-                return False
+        if building.total_floors != total_floors:
+            self.logger.debug(
+                f"総階数が一致しない: 既存={building.total_floors}, 新規={total_floors}"
+            )
+            return False
         
         # 築年の確認
-        if built_year is not None and building.built_year is not None:
-            if building.built_year != built_year:
-                return False
+        if building.built_year != built_year:
+            self.logger.debug(
+                f"築年が一致しない: 既存={building.built_year}, 新規={built_year}"
+            )
+            return False
         
+        # すべての属性が一致
         return True
     
     def find_existing_building_by_key(self, search_key: str, address: str = None, total_floors: int = None, built_year: int = None) -> Optional[Building]:
@@ -2458,6 +2480,17 @@ class BaseScraper(ABC):
         """マスター物件を取得または作成（学習機能付き）"""
         # 同一物件の判定条件：建物、所在階、平米数、間取り、方角が一致
         # 部屋番号は両方に値がある場合のみ一致を要求（片方が未入力なら無視）
+        
+        # 階数の整合性チェック（物件の階数が建物の総階数を超えていないか）
+        if floor_number is not None and building.total_floors is not None:
+            if floor_number > building.total_floors:
+                self.logger.warning(
+                    f"物件の階数({floor_number}階)が建物の総階数({building.total_floors}階)を"
+                    f"超えています。建物ID: {building.id}, 建物名: {building.normalized_name}"
+                )
+                # この場合、建物への紐付けを中止するべきだが、
+                # 既存のロジックを大幅に変更する必要があるため、
+                # まずは警告ログを出力するに留める
         
         # デバッグログ
         self.logger.info(f"Property search: building_id={building.id}, floor={floor_number}, "
