@@ -122,7 +122,10 @@ async def get_duplicate_buildings(
             )
         )
         
-        buildings_with_count = base_query.order_by(Building.normalized_name).all()
+        buildings_with_count = base_query.order_by(
+            Building.normalized_name,
+            Building.id  # 同じ名前内でもID順で安定したソート
+        ).all()
     else:
         # 検索条件がない場合：重複の可能性が高い建物群を効率的に見つける
         
@@ -304,7 +307,8 @@ async def get_duplicate_buildings(
             ).group_by(Building.id).having(
                 func.count(MasterProperty.id) > 0
             ).order_by(
-                Building.normalized_name
+                Building.normalized_name,
+                Building.id  # 同じ名前内でもID順で安定したソート
             ).all()
             
             buildings_with_count.extend(remaining_buildings)
@@ -727,8 +731,14 @@ async def get_duplicate_buildings(
         
         return base_score + attribute_bonus + property_bonus
     
-    # 信頼度でソート（降順）
-    duplicate_groups.sort(key=calculate_group_confidence, reverse=True)
+    # 信頼度でソート（降順）、同じ信頼度の場合は建物名→建物IDで安定ソート
+    duplicate_groups.sort(
+        key=lambda g: (
+            -calculate_group_confidence(g),  # 信頼度（降順）
+            g.get("primary", {}).get("normalized_name", ""),  # 建物名（昇順）
+            g.get("primary", {}).get("id", 0)  # 建物ID（昇順）
+        )
+    )
     
     # 結果を返す
     result = {
