@@ -80,7 +80,7 @@ const PropertyExclusionHistory: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    console.log('PropertyExclusionHistory mounted');
+
     fetchExclusions();
   }, []);
 
@@ -88,11 +88,11 @@ const PropertyExclusionHistory: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      console.log('Fetching exclusions...');
+  
       const response = await axios.get('/api/admin/property-exclusions', {
         params: { limit: 100 }
       });
-      console.log('Response:', response.data);
+  
       
       // APIレスポンスが配列かオブジェクトか確認
       let exclusionData: PropertyExclusion[] = [];

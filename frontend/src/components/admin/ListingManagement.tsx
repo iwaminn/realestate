@@ -308,7 +308,7 @@ export const ListingManagement: React.FC = () => {
               label="建物名で検索"
               value={filters.building_name}
               onChange={(e) => setFilters({ ...filters, building_name: e.target.value })}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               helperText="スペース区切りでAND検索"
               InputProps={{
                 startAdornment: (

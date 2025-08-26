@@ -1,4 +1,4 @@
-"""建物関連のAPIエンドポイント v2"""
+"""建物関連のAPIエンドポイント"""
 from fastapi import APIRouter, Query, HTTPException, Depends
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -9,7 +9,7 @@ from ..database import get_db
 from ..models import Building, MasterProperty, PropertyListing
 from ..schemas.building import BuildingSchema
 
-router = APIRouter(prefix="/api/v2", tags=["buildings"])
+router = APIRouter(prefix="/api", tags=["buildings"])
 
 @router.get("/areas", response_model=List[Dict[str, Any]])
 async def get_areas(db: Session = Depends(get_db)):
@@ -56,7 +56,7 @@ async def get_areas(db: Session = Depends(get_db)):
     return area_list
 
 @router.get("/buildings", response_model=Dict[str, Any])
-async def get_buildings_v2(
+async def get_buildings(
     wards: Optional[List[str]] = Query(None, description="区名リスト（例: 港区、中央区）"),
     search: Optional[str] = Query(None, description="建物名検索"),
     min_price: Optional[int] = Query(None, description="最低価格（万円）"),

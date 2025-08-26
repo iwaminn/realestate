@@ -7,10 +7,10 @@ from sqlalchemy import func, distinct
 from ..database import get_db
 from ..models import Building, MasterProperty, PropertyListing, ListingPriceHistory
 
-router = APIRouter(prefix="/api/v2", tags=["stats"])
+router = APIRouter(prefix="/api", tags=["stats"])
 
 @router.get("/stats", response_model=Dict[str, Any])
-async def get_stats_v2(db: Session = Depends(get_db)):
+async def get_stats(db: Session = Depends(get_db)):
     """統計情報を取得"""
     
     stats = {

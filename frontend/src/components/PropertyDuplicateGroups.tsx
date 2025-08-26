@@ -150,7 +150,7 @@ const PropertyDuplicateGroups: React.FC = () => {
         params
       });
       
-      console.log('API Response:', response.data);
+
       
       // 古い形式（配列）と新しい形式（オブジェクト）の両方に対応
       if (Array.isArray(response.data)) {
@@ -323,16 +323,16 @@ const PropertyDuplicateGroups: React.FC = () => {
       const secondaryProperties = Array.from(selectedProperties)
         .filter(id => id !== primaryProperty);
 
-      console.log('Secondary properties to merge:', secondaryProperties);
+
 
       for (const secondaryId of secondaryProperties) {
-        console.log(`Merging ${secondaryId} into ${primaryProperty}...`);
+  
         try {
           const response = await axios.post('/api/admin/merge-properties', {
             primary_property_id: primaryProperty,
             secondary_property_id: secondaryId
           });
-          console.log(`Merge response:`, response.data);
+    
         } catch (error: any) {
           console.error(`Failed to merge ${secondaryId}:`, error);
           console.error('Error response:', error.response?.data);
@@ -593,7 +593,7 @@ const PropertyDuplicateGroups: React.FC = () => {
               placeholder="建物名で検索（例：白金ザスカイ）"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyPress={(e) => {
+              onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   fetchGroups(searchQuery);
                 }

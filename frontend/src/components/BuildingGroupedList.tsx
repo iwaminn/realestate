@@ -90,7 +90,7 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
       params.append('per_page', '20');
       params.append('include_inactive', includeInactive.toString());
       
-      const response = await fetch(`/api/v2/properties-grouped-by-buildings?${params.toString()}`);
+      const response = await fetch(`/api/properties-grouped-by-buildings?${params.toString()}`);
       const data = await response.json();
       setBuildingGroups(data.buildings);
       setTotalCount(data.total);
@@ -142,8 +142,9 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
   };
 
   const formatBuiltDate = (year: number | null, month: number | null) => {
-    if (!year) return '-';
-    if (month) {
+    if (!year || year === 0) return '-';
+    // monthが0の場合は表示しない（データ不正の可能性）
+    if (month && month > 0 && month <= 12) {
       return `${year}年${month}月`;
     }
     return `${year}年`;
@@ -219,7 +220,7 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
                   )}
                   <Typography variant="body2" color="text.secondary">
                     {formatBuiltDate(group.building.built_year, group.building.built_month)}
-                    {group.building.building_age && ` (築${group.building.building_age}年)`}
+                    {group.building.building_age && group.building.building_age > 0 ? ` (築${group.building.building_age}年)` : ''}
                   </Typography>
                 </Box>
               </Box>

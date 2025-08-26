@@ -64,13 +64,7 @@ const BuildingPropertiesPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
   
-  console.log('[BuildingPropertiesPage] Component mounting:', {
-    buildingId,
-    location_pathname: location.pathname,
-    location_search: location.search
-  });
-  
-  const [properties, setProperties] = useState<Property[]>([]);
+const [properties, setProperties] = useState<Property[]>([]);
   const [building, setBuilding] = useState<any | null>(null);
   const [stats, setStats] = useState<BuildingStats | null>(null);
   const [loading, setLoading] = useState(true);
@@ -85,30 +79,19 @@ const BuildingPropertiesPage: React.FC = () => {
     // まずlocation.stateから取得を試みる
     const stateIncludeInactive = (location.state as any)?.includeInactive;
     if (stateIncludeInactive !== undefined) {
-      console.log('[BuildingPropertiesPage] Using includeInactive from state:', stateIncludeInactive);
-      return stateIncludeInactive;
+    return stateIncludeInactive;
     }
     
     // 次にURLパラメータから取得
     const urlParams = new URLSearchParams(location.search);
     const result = urlParams.get('includeInactive') === 'true';
-    console.log('[BuildingPropertiesPage] getIncludeInactiveFromUrl:', {
-      search: location.search,
-      includeInactive_param: urlParams.get('includeInactive'),
-      result
-    });
-    return result;
+  return result;
   };
   
   const [includeInactive, setIncludeInactive] = useState(getIncludeInactiveFromUrl());
 
   useEffect(() => {
-    console.log('[BuildingPropertiesPage] useEffect triggered:', {
-      buildingId,
-      includeInactive,
-      location_search: location.search
-    });
-    if (buildingId) {
+  if (buildingId) {
       fetchBuildingProperties();
     }
   }, [buildingId, includeInactive]);
@@ -124,24 +107,13 @@ const BuildingPropertiesPage: React.FC = () => {
   const fetchBuildingProperties = async () => {
     try {
       setLoading(true);
-      // デバッグログ
-      console.log('[BuildingPropertiesPage] Fetching properties for building ID:', buildingId);
-      console.log('[BuildingPropertiesPage] includeInactive:', includeInactive);
-      console.log('[BuildingPropertiesPage] URL search params:', location.search);
-      
       // 建物IDで物件を取得
       const response = await propertyApi.getBuildingProperties(parseInt(buildingId!), includeInactive);
       
       setProperties(response.properties);
       setBuilding(response.building);
       
-      // デバッグ: 販売終了物件の確認
-      const soldProperties = response.properties.filter((p: any) => p.sold_at);
-      console.log('[BuildingPropertiesPage] Total properties:', response.properties.length);
-      console.log('[BuildingPropertiesPage] Sold properties:', soldProperties.length);
-      if (soldProperties.length > 0) {
-        console.log('[BuildingPropertiesPage] Sold property IDs:', soldProperties.map((p: any) => p.id));
-      }
+
       
       // 統計情報を計算
       if (response.properties.length > 0) {
@@ -159,15 +131,7 @@ const BuildingPropertiesPage: React.FC = () => {
         const maxFloor = floors.length > 0 ? Math.max(...floors) : null;
         setMaxFloorFromProperties(maxFloor);
         
-        console.log('[BuildingPropertiesPage] Stats calculation:', {
-          prices,
-          areas,
-          properties_with_price: prices.length,
-          properties_with_area: areas.length,
-          max_floor_from_properties: maxFloor
-        });
-        
-        if (prices.length > 0 && areas.length > 0) {
+      if (prices.length > 0 && areas.length > 0) {
           // 各物件の坪単価を計算
           const pricePerTsubos = response.properties
             .filter(p => {

@@ -11,7 +11,7 @@ from ..database import get_db
 from ..models import Building, MasterProperty, PropertyListing
 from ..utils.building_filters import apply_building_name_filter
 
-router = APIRouter(prefix="/api/v2", tags=["grouped-properties"])
+router = APIRouter(prefix="/api", tags=["grouped-properties"])
 
 @router.get("/properties-grouped-by-buildings", response_model=Dict[str, Any])
 async def get_properties_grouped_by_buildings(

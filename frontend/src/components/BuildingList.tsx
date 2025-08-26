@@ -133,7 +133,7 @@ const BuildingList: React.FC<BuildingListProps> = ({
   };
 
   const formatBuiltDate = (year: number | null | undefined, month: number | null | undefined) => {
-    if (!year) return '-';
+    if (!year || year === 0) return '-';
     // monthが0の場合は表示しない（データ不正の可能性）
     if (month && month > 0 && month <= 12) {
       return `${year}年${month}月`;
@@ -150,7 +150,7 @@ const BuildingList: React.FC<BuildingListProps> = ({
           placeholder="建物名で検索..."
           value={tempSearchQuery}
           onChange={(e) => setTempSearchQuery(e.target.value)}
-          onKeyPress={handleKeyPress}
+          onKeyDown={handleKeyPress}
           InputProps={{
             startAdornment: (
               <InputAdornment position="start">

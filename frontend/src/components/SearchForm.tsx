@@ -63,7 +63,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
     const fetchAreas = async () => {
       try {
         const areaList = await propertyApi.getAreas();
-        console.log('Fetched areas:', areaList);
         setAreas(areaList);
       } catch (error) {
         console.error('Failed to fetch areas:', error);
@@ -75,7 +74,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
   // 建物名サジェストAPIを呼び出す関数（デバウンス付き）- エイリアス対応
   const fetchBuildingSuggestions = useCallback(
     debounce(async (query: string) => {
-      console.log('[SearchForm] fetchBuildingSuggestions called with:', query);
       if (query.length < 1) {
         setBuildingOptions([]);
         return;
@@ -84,24 +82,18 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
       setBuildingLoading(true);
       try {
         const suggestions = await propertyApi.suggestBuildings(query);
-        console.log('[SearchForm] Received suggestions:', suggestions);
-        console.log('[SearchForm] Suggestions length:', suggestions.length);
-        console.log('[SearchForm] First suggestion:', suggestions[0]);
         // APIレスポンスの形式を判定
         if (suggestions && suggestions.length > 0) {
           if (typeof suggestions[0] === 'object' && 'value' in suggestions[0]) {
             // 新形式（オブジェクト配列）
-            console.log('[SearchForm] Setting options (new format):', suggestions);
             setBuildingOptions(suggestions as Array<{ value: string; label: string }>);
             setAutocompleteOpen(true);  // 候補がある場合は自動で開く
           } else {
             // 旧形式（文字列配列）
-            console.log('[SearchForm] Setting options (old format):', suggestions);
             setBuildingOptions(suggestions as string[]);
             setAutocompleteOpen(true);  // 候補がある場合は自動で開く
           }
         } else {
-          console.log('[SearchForm] No suggestions, clearing options');
           setBuildingOptions([]);
           setAutocompleteOpen(false);  // 候補がない場合は閉じる
         }
@@ -157,7 +149,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('[SearchForm] Submit with params:', searchParams);
     onSearch(searchParams);
   };
 
@@ -238,7 +229,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                 return <li {...props}>{option}</li>;
               }}
               onInputChange={(_, newInputValue) => {
-                console.log('[SearchForm] onInputChange:', newInputValue);
                 setBuildingInputValue(newInputValue);
                 fetchBuildingSuggestions(newInputValue);
                 // input変更時にもsearchParamsを更新

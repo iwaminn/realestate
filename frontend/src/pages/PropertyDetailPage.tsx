@@ -70,9 +70,9 @@ const PropertyDetailPage: React.FC = () => {
     try {
       setLoading(true);
       const data = await propertyApi.getPropertyDetail(propertyId);
-      console.log('Property Detail Data:', data);
-      console.log('Building Name:', data.master_property?.building?.normalized_name);
-      console.log('Room Number:', data.master_property?.room_number);
+
+
+
       setPropertyDetail(data);
     } catch (err) {
       setError('物件詳細の取得に失敗しました。');
@@ -603,16 +603,11 @@ const PropertyDetailPage: React.FC = () => {
           variant="contained"
           startIcon={<Apartment />}
           onClick={() => {
-            console.log('[PropertyDetailPage] Navigating to building properties:', {
-              building_id: building.id,
-              building_name: building.normalized_name,
-              sold_at: property.sold_at,
-              has_active_listing: property.has_active_listing
-            });
+      
             const url = `/buildings/${building.id}/properties`;
             // 販売終了物件や掲載終了物件の場合は、includeInactive=trueを追加
             if (property.sold_at || property.has_active_listing === false) {
-              console.log('[PropertyDetailPage] Adding includeInactive=true');
+        
               navigate(`${url}?includeInactive=true`);
             } else {
               navigate(url);

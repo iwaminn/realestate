@@ -180,7 +180,7 @@ const ManualPropertyMerger: React.FC = () => {
                 placeholder="物件IDまたは建物名で検索"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyPress={handleKeyPress}
+                onKeyDown={handleKeyPress}
                 InputProps={{
                   startAdornment: (
                     <InputAdornment position="start">

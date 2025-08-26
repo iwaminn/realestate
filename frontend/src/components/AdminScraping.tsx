@@ -282,7 +282,7 @@ const AdminScraping: React.FC = () => {
             threshold_minutes: 10
           });
           if (checkResponse.data.stalled_tasks > 0) {
-            console.log(`${checkResponse.data.stalled_tasks}個の停止タスクを検出してエラーステータスに変更しました`);
+      
           }
         } catch (error) {
           console.error('停止タスクチェックエラー:', error);
@@ -296,9 +296,9 @@ const AdminScraping: React.FC = () => {
       const response = await axios.get(url);
       
       // デバッグ: APIレスポンスを確認
-      console.log('fetchTasks - API response:', response.data);
+
       if (response.data && response.data.length > 0) {
-        console.log('fetchTasks - First task:', response.data[0]);
+  
       }
       
       // 実行中のタスクのみの場合
@@ -666,7 +666,7 @@ const AdminScraping: React.FC = () => {
       const progressItems = Object.values(task.progress || {});
       
       // デバッグログ
-      console.log('Parallel task progress items:', progressItems);
+
       
       // 各進捗の合計を計算
       const aggregated = progressItems.reduce((stats, progress: any) => ({
@@ -679,12 +679,12 @@ const AdminScraping: React.FC = () => {
         save_failed: stats.save_failed + (progress.errors || 0)
       }), { total: 0, new: 0, price_updated: 0, other_updates: 0, refetched_unchanged: 0, skipped: 0, save_failed: 0 });
       
-      console.log('Parallel task aggregated stats:', aggregated);
+
       
       // statisticsフィールドがある場合は優先的に使用
       const stats = (task as any).statistics;
       if (stats) {
-        console.log('Using statistics field:', stats);
+  
         return {
           total: stats.total_processed || aggregated.total,
           new: stats.total_new || aggregated.new,

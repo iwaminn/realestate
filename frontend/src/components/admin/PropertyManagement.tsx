@@ -520,7 +520,7 @@ export const PropertyManagement: React.FC = () => {
               label="物件ID"
               value={searchParams.propertyId}
               onChange={(e) => setSearchParams({ ...searchParams, propertyId: e.target.value })}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               type="number"
               helperText="物件IDで直接検索"
             />
@@ -531,7 +531,7 @@ export const PropertyManagement: React.FC = () => {
               label="建物名"
               value={searchParams.buildingName}
               onChange={(e) => setSearchParams({ ...searchParams, buildingName: e.target.value })}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               helperText="スペース区切りでAND検索"
             />
           </Grid>
@@ -541,7 +541,7 @@ export const PropertyManagement: React.FC = () => {
               label="住所"
               value={searchParams.address}
               onChange={(e) => setSearchParams({ ...searchParams, address: e.target.value })}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               helperText="スペース区切りでAND検索"
             />
           </Grid>

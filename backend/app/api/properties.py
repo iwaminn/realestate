@@ -1,4 +1,4 @@
-"""物件関連のAPIエンドポイント v2"""
+"""物件関連のAPIエンドポイント"""
 from fastapi import APIRouter, Query, HTTPException, Depends
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -13,10 +13,10 @@ from ..utils.price_queries import create_majority_price_subquery, create_price_s
 from ..utils.building_filters import apply_building_name_filter, apply_building_filters, apply_property_filters
 from .price_analysis import create_unified_price_timeline, analyze_source_price_consistency
 
-router = APIRouter(prefix="/api/v2", tags=["properties"])
+router = APIRouter(prefix="/api", tags=["properties"])
 
 @router.get("/properties", response_model=Dict[str, Any])
-async def get_properties_v2(
+async def get_properties(
     min_price: Optional[int] = Query(None, description="最低価格（万円）"),
     max_price: Optional[int] = Query(None, description="最高価格（万円）"),
     min_area: Optional[float] = Query(None, description="最低面積（㎡）"),
@@ -547,7 +547,7 @@ async def get_recent_updates(
     }
 
 @router.get("/properties/{property_id}", response_model=PropertyDetailSchema)
-async def get_property_details_v2(
+async def get_property_details(
     property_id: int,
     db: Session = Depends(get_db)
 ):

@@ -499,7 +499,7 @@ export const BuildingManagement: React.FC = () => {
               label="建物名"
               value={searchParams.name}
               onChange={(e) => setSearchParams({ ...searchParams, name: e.target.value })}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               helperText="スペース区切りでAND検索"
             />
           </Grid>
@@ -509,7 +509,7 @@ export const BuildingManagement: React.FC = () => {
               label="住所"
               value={searchParams.address}
               onChange={(e) => setSearchParams({ ...searchParams, address: e.target.value })}
-              onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
               helperText="スペース区切りでAND検索"
             />
           </Grid>

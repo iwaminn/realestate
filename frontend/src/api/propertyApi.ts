@@ -83,25 +83,25 @@ export interface RecentUpdatesResponse {
 export const propertyApi = {
   // 物件一覧検索
   searchProperties: async (params: SearchParams): Promise<ApiResponse<Property>> => {
-    const response = await api.get('/v2/properties', { params });
+    const response = await api.get('/properties', { params });
     return response.data;
   },
 
   // 物件詳細取得
   getPropertyDetail: async (id: number): Promise<PropertyDetail> => {
-    const response = await api.get(`/v2/properties/${id}`);
+    const response = await api.get(`/properties/${id}`);
     return response.data;
   },
 
   // 統計情報取得
   getStatistics: async (): Promise<Statistics> => {
-    const response = await api.get('/v2/stats');
+    const response = await api.get('/stats');
     return response.data;
   },
 
   // エリア一覧取得
   getAreas: async (): Promise<Area[]> => {
-    const response = await api.get('/v2/areas');
+    const response = await api.get('/areas');
     return response.data;
   },
 
@@ -141,7 +141,7 @@ export const propertyApi = {
     per_page: number;
     total_pages: number;
   }> => {
-    const response = await api.get('/v2/buildings', { params });
+    const response = await api.get('/buildings', { params });
     return response.data;
   },
 
@@ -151,25 +151,17 @@ export const propertyApi = {
     properties: Property[];
     total: number;
   }> => {
-    console.log('[propertyApi] getBuildingProperties called with:', {
-      buildingId,
-      includeInactive,
+    const response = await api.get(`/buildings/${buildingId}/properties`, {
       params: { include_inactive: includeInactive }
     });
-    const response = await api.get(`/v2/buildings/${buildingId}/properties`, {
-      params: { include_inactive: includeInactive }
-    });
-    console.log('[propertyApi] Response properties count:', response.data.properties?.length);
     return response.data;
   },
 
   // 建物名サジェスト取得（エイリアス対応）
   suggestBuildings: async (query: string, limit: number = 10): Promise<Array<string | { value: string; label: string }>> => {
-    console.log('[suggestBuildings] Requesting with query:', query);
-    const response = await api.get('/v2/buildings/suggest', {
+    const response = await api.get('/buildings/suggest', {
       params: { q: query, limit }
     });
-    console.log('[suggestBuildings] Response:', response.data);
     return response.data;
   },
 
@@ -206,12 +198,6 @@ export const propertyApi = {
     moved_properties: number;
     primary_building: any;
   }> => {
-    console.log('[DEBUG] API mergeBuildings called with:', {
-      primaryId,
-      secondaryIds,
-      primaryIdType: typeof primaryId,
-      secondaryIdsTypes: secondaryIds.map(id => typeof id)
-    });
     const response = await api.post('/admin/merge-buildings', {
       primary_id: primaryId,
       secondary_ids: secondaryIds
@@ -362,7 +348,7 @@ export const propertyApi = {
 
   // 直近の価格改定・新着物件を取得
   getRecentUpdates: async (hours: number = 24): Promise<RecentUpdatesResponse> => {
-    const response = await api.get('/v2/properties/recent-updates', {
+    const response = await api.get('/properties/recent-updates', {
       params: { hours }
     });
     return response.data;

@@ -18,12 +18,12 @@ from backend.app.api import admin_listings
 from backend.app.api import admin_properties
 from backend.app.api import admin_buildings
 from backend.app.api import admin_matching
-from backend.app.api import properties_v2
-from backend.app.api import buildings_v2
+from backend.app.api import properties
+from backend.app.api import buildings
 from backend.app.api import stats
 from backend.app.api import grouped_properties
 
-app = FastAPI(title="不動産横断検索API v2", version="2.0.0")
+app = FastAPI(title="不動産横断検索API", version="1.0.0")
 
 # CORS設定
 app.add_middleware(
@@ -88,8 +88,8 @@ app.include_router(admin_listings.router)
 app.include_router(admin_properties.router)
 app.include_router(admin_buildings.router)
 app.include_router(admin_matching.router)
-app.include_router(properties_v2.router)
-app.include_router(buildings_v2.router)
+app.include_router(properties.router)
+app.include_router(buildings.router)
 app.include_router(stats.router)
 app.include_router(grouped_properties.router)
 
@@ -106,16 +106,7 @@ async def health_check():
     """ヘルスチェックエンドポイント"""
     return {"status": "healthy"}
 
-# 互換性のための旧APIエンドポイント（リダイレクト）
-@app.get("/api/properties")
-async def get_properties_legacy():
-    """旧APIエンドポイント（v2にリダイレクト）"""
-    return {"message": "このエンドポイントは非推奨です。/api/v2/properties を使用してください。"}
-
-@app.get("/api/buildings")
-async def get_buildings_legacy():
-    """旧APIエンドポイント（v2にリダイレクト）"""
-    return {"message": "このエンドポイントは非推奨です。/api/v2/buildings を使用してください。"}
+# 旧エンドポイントは削除（統一されたため不要）
 
 if __name__ == "__main__":
     import uvicorn

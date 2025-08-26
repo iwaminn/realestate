@@ -89,16 +89,12 @@ const BuildingDuplicateManager: React.FC = () => {
   });
 
   useEffect(() => {
-    // console.log('BuildingDuplicateManager mounted');
+
     fetchDuplicateBuildings();
   }, []);
 
   const fetchDuplicateBuildings = async (search?: string, similarity?: number, displayLimit?: number) => {
-    console.log('Fetching duplicate buildings with params:', {
-      search,
-      similarity: similarity || minSimilarity,
-      limit: displayLimit || limit
-    });
+
     setLoading(true);
     try {
       const params: any = { 
@@ -108,9 +104,9 @@ const BuildingDuplicateManager: React.FC = () => {
       if (search) {
         params.search = search;
       }
-      console.log('API params:', params);
+  
       const response = await propertyApi.getDuplicateBuildings(params);
-      console.log('Response:', response);
+  
       setDuplicateGroups(response.duplicate_groups);
     } catch (error) {
       console.error('Failed to fetch duplicate buildings:', error);
@@ -231,7 +227,7 @@ const BuildingDuplicateManager: React.FC = () => {
               successCount++;
             } else {
               skipCount++;
-              console.log(`既に除外済み: ${allBuildings[i]} - ${allBuildings[j]}`);
+          
             }
           }
         }
@@ -262,7 +258,7 @@ const BuildingDuplicateManager: React.FC = () => {
               successCount++;
             } else {
               skipCount++;
-              console.log(`既に除外済み: ${selected} - ${unselected}`);
+          
             }
           }
         }
@@ -337,13 +333,7 @@ const BuildingDuplicateManager: React.FC = () => {
       // マスター以外の建物IDを収集
       const buildingsToMerge = validSelectedIds.filter(id => id !== selectedMasterId);
       
-      console.log('[DEBUG] Merge request:', {
-        selectedMasterId,
-        buildingsToMerge,
-        originalSelectedCandidates: selectedCandidates,
-        validSelectedIds,
-        existingBuildingIds
-      });
+  
       
       if (buildingsToMerge.length === 0) {
         throw new Error('統合する建物がありません。統合先のみが選択されています。');
@@ -485,7 +475,7 @@ const BuildingDuplicateManager: React.FC = () => {
             placeholder="建物名で検索（例：白金ザスカイ）"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            onKeyPress={handleKeyPress}
+            onKeyDown={handleKeyPress}
             InputProps={{
               startAdornment: (
                 <InputAdornment position="start">
