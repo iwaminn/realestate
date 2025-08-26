@@ -132,9 +132,10 @@ const BuildingList: React.FC<BuildingListProps> = ({
     return `${price.toLocaleString()}万円`;
   };
 
-  const formatBuiltDate = (year: number | null, month: number | null) => {
+  const formatBuiltDate = (year: number | null | undefined, month: number | null | undefined) => {
     if (!year) return '-';
-    if (month) {
+    // monthが0の場合は表示しない（データ不正の可能性）
+    if (month && month > 0 && month <= 12) {
       return `${year}年${month}月`;
     }
     return `${year}年`;
@@ -245,7 +246,9 @@ const BuildingList: React.FC<BuildingListProps> = ({
                       {formatBuiltDate(building.built_year, building.built_month)}
                     </TableCell>
                     <TableCell align="center">
-                      {building.building_age ? `${building.building_age}年` : '-'}
+                      {building.building_age !== undefined && building.building_age !== null 
+                        ? (building.building_age === 0 ? '新築' : `${building.building_age}年`)
+                        : '-'}
                     </TableCell>
                     <TableCell align="center">
                       <Chip
