@@ -4848,7 +4848,12 @@ class BaseScraper(ABC):
         
         missing_fields = []
         missing_fields_jp = []
-        required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'layout', 'built_year']
+        # HOMESとLivableではlayoutを必須から除外
+        if self.source_site in ['HOMES', 'Livable']:
+            required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'built_year']
+        else:
+            required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'layout', 'built_year']
+        
         for field in required_fields:
             if field not in property_data or property_data.get(field) is None:
                 missing_fields.append(field)
@@ -4929,7 +4934,11 @@ class BaseScraper(ABC):
         Returns:
             bool: 必須フィールドがすべて存在する場合True
         """
-        required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'layout', 'built_year']
+        # HOMESとLivableではlayoutを必須から除外
+        if self.source_site in ['HOMES', 'Livable']:
+            required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'built_year']
+        else:
+            required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'layout', 'built_year']
         missing_fields = []
         
         for field in required_fields:
