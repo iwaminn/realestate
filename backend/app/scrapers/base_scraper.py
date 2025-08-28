@@ -3591,7 +3591,7 @@ class BaseScraper(ABC):
     def _should_skip_url_due_to_validation_error(self, url: str) -> bool:
         """検証エラー履歴によりスキップすべきURLか判定"""
         try:
-            from app.models import PropertyValidationError
+            from backend.app.models import PropertyValidationError
             
             # PropertyValidationErrorテーブルから確認
             error_record = self.session.query(PropertyValidationError).filter(
@@ -3732,7 +3732,7 @@ class BaseScraper(ABC):
             return
             
         try:
-            from app.models import PropertyValidationError
+            from backend.app.models import PropertyValidationError
             import json
             
             # 既存のレコードを確認
@@ -3857,7 +3857,7 @@ class BaseScraper(ABC):
             return
             
         try:
-            from app.models import PropertyValidationError
+            from backend.app.models import PropertyValidationError
             
             # 既存のエラー記録を確認
             error_record = self.session.query(PropertyValidationError).filter(
