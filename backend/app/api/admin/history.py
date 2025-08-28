@@ -250,6 +250,11 @@ async def revert_building_merge(
     # 復元された建物の全属性も更新（建物名含む）
     updater.update_building_by_majority(restored_building)
     
+    # BuildingListingNameテーブルを再構築
+    # 復元された建物に紐付く物件の掲載情報から建物名を収集して登録
+    name_manager = BuildingListingNameManager(db)
+    name_manager.refresh_building_names(restored_building.id)
+    
     # 統合履歴を削除
     db.delete(history)
     
