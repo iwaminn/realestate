@@ -264,6 +264,25 @@ async def get_duplicate_buildings(
         # パターン2〜4の結果を処理して、canonical_nameが部分一致する建物を抽出
         partial_match_groups = []
         
+        # 建物名の部分一致判定を改善する関数
+        def is_name_match(name1: str, name2: str) -> bool:
+            """建物名の部分一致を判定（共通接頭辞も考慮）"""
+            if not name1 or not name2:
+                return False
+            # 完全一致
+            if name1 == name2:
+                return True
+            # 片方が他方に含まれる
+            if name1 in name2 or name2 in name1:
+                return True
+            # 共通接頭辞が5文字以上（棟番号などの違いを許容）
+            min_len = min(len(name1), len(name2))
+            if min_len >= 5:
+                for i in range(min_len, 4, -1):  # 5文字以上の共通部分を探す
+                    if name1[:i] == name2[:i]:
+                        return True
+            return False
+        
         # パターン2: 住所と総階数が一致し、建物名が部分一致
         for group in address_floor_groups:
             building_ids = group.building_ids if group.building_ids else []
@@ -274,9 +293,8 @@ async def get_duplicate_buildings(
             for i in range(len(building_ids)):
                 for j in range(i + 1, len(building_ids)):
                     if canonical_names[i] and canonical_names[j]:
-                        # AがBに含まれる、またはBがAに含まれる
-                        if (canonical_names[i] in canonical_names[j] or 
-                            canonical_names[j] in canonical_names[i]):
+                        # 改善された建物名マッチング
+                        if is_name_match(canonical_names[i], canonical_names[j]):
                             matched_pairs.append((building_ids[i], building_ids[j]))
             
             if matched_pairs:
@@ -301,8 +319,7 @@ async def get_duplicate_buildings(
             for i in range(len(building_ids)):
                 for j in range(i + 1, len(building_ids)):
                     if canonical_names[i] and canonical_names[j]:
-                        if (canonical_names[i] in canonical_names[j] or 
-                            canonical_names[j] in canonical_names[i]):
+                        if is_name_match(canonical_names[i], canonical_names[j]):
                             matched_pairs.append((building_ids[i], building_ids[j]))
             
             if matched_pairs:
@@ -326,8 +343,7 @@ async def get_duplicate_buildings(
             for i in range(len(building_ids)):
                 for j in range(i + 1, len(building_ids)):
                     if canonical_names[i] and canonical_names[j]:
-                        if (canonical_names[i] in canonical_names[j] or 
-                            canonical_names[j] in canonical_names[i]):
+                        if is_name_match(canonical_names[i], canonical_names[j]):
                             matched_pairs.append((building_ids[i], building_ids[j]))
             
             if matched_pairs:
@@ -349,6 +365,58 @@ async def get_duplicate_buildings(
                 'building_ids': pmg['building_ids'],
                 'group_count': len(pmg['building_ids'])
             })
+        
+        # パターン5: 特殊ケース - 階数/戸数が異なるが同じ建物の可能性
+        # 住所と築年が一致し、建物名の共通部分が長い場合
+        special_case_groups = db.query(
+            func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
+            Building.built_year,
+            func.array_agg(Building.id).label('building_ids'),
+            func.array_agg(Building.canonical_name).label('canonical_names'),
+            func.array_agg(Building.normalized_name).label('normalized_names')
+        ).filter(
+            Building.id.in_(
+                db.query(MasterProperty.building_id).distinct()
+            ),
+            Building.built_year.isnot(None),
+            Building.canonical_name.isnot(None)
+        ).group_by(
+            func.substring(Building.normalized_address, 1, 10),
+            Building.built_year
+        ).having(
+            func.count(Building.id) > 1
+        ).all()
+        
+        for group in special_case_groups:
+            building_ids = group.building_ids if group.building_ids else []
+            canonical_names = group.canonical_names if group.canonical_names else []
+            normalized_names = group.normalized_names if group.normalized_names else []
+            
+            matched_pairs = []
+            for i in range(len(building_ids)):
+                for j in range(i + 1, len(building_ids)):
+                    # 建物名の共通接頭辞が7文字以上の場合（より厳しい条件）
+                    if canonical_names[i] and canonical_names[j]:
+                        common_len = 0
+                        for k in range(min(len(canonical_names[i]), len(canonical_names[j]))):
+                            if canonical_names[i][k] == canonical_names[j][k]:
+                                common_len += 1
+                            else:
+                                break
+                        # 共通接頭辞が7文字以上（「白金ザスカイ」は7文字）
+                        if common_len >= 7:
+                            matched_pairs.append((building_ids[i], building_ids[j]))
+            
+            if matched_pairs:
+                all_ids = set()
+                for id1, id2 in matched_pairs:
+                    all_ids.add(id1)
+                    all_ids.add(id2)
+                attribute_groups.append({
+                    'type': 'special_case_long_common_name',
+                    'building_ids': list(all_ids),
+                    'group_count': len(all_ids)
+                })
         
         # 築年が±1年以内の建物をグループとして追加
         for group in base_groups:
