@@ -306,7 +306,6 @@ async def revert_property_merge(
                 area=primary_property.area,
                 layout=primary_property.layout,
                 direction=primary_property.direction,
-                property_hash=f"{primary_property.property_hash}_restored_{datetime.now().timestamp()}",
                 created_at=datetime.now(),
                 updated_at=datetime.now()
             )
@@ -350,7 +349,6 @@ async def revert_property_merge(
                 balcony_area=secondary_data.get("balcony_area"),
                 layout=secondary_data.get("layout"),
                 direction=secondary_data.get("direction"),
-                property_hash=secondary_data.get("property_hash"),
                 management_fee=secondary_data.get("management_fee"),
                 repair_fund=secondary_data.get("repair_fund"),
                 station_info=secondary_data.get("station_info"),

@@ -88,7 +88,6 @@ class MasterProperty(Base):
     
     # 物件識別情報
     room_number = Column(String(50))                          # 部屋番号
-    property_hash = Column(String(64), nullable=True)  # 物件の一意識別ハッシュ（非推奨、将来削除予定）
     
     # 物件基本情報（各掲載から集約）
     floor_number = Column(Integer)                            # 階数（所在階）
@@ -124,7 +123,6 @@ class MasterProperty(Base):
         Index('idx_master_properties_building_id', 'building_id'),
         Index('idx_master_properties_floor_number', 'floor_number'),
         Index('idx_master_properties_layout', 'layout'),
-        Index('idx_master_properties_property_hash', 'property_hash'),
     )
 
 

@@ -430,7 +430,6 @@ async def attach_listing_to_property(
             area=request.get('area') or listing.listing_area or current_property.area,
             layout=request.get('layout') or listing.listing_layout or current_property.layout,
             direction=request.get('direction') or listing.listing_direction or current_property.direction,
-            property_hash=f"detached_{listing_id}_{datetime.utcnow().timestamp()}",  # ユニークなハッシュ
             display_building_name=request.get('display_building_name') or listing.listing_building_name,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow()

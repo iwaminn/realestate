@@ -226,6 +226,16 @@ class BaseScraper(ABC):
         # 共通設定
         common_setting = os.getenv('SCRAPER_SMART_SCRAPING', 'true')
         return common_setting.lower() in ('true', '1', 'yes', 'on')
+
+    def update_stats(self, key: str, value: int = 1) -> None:
+        """統計情報を更新"""
+        if key not in self._scraping_stats:
+            self._scraping_stats[key] = 0
+        self._scraping_stats[key] += value
+    
+    def get_stats(self, key: str, default: Any = None) -> Any:
+        """統計情報を取得"""
+        return self._scraping_stats.get(key, default)
     
     def fetch_page(self, url: str) -> Optional[BeautifulSoup]:
         """ページを取得してBeautifulSoupオブジェクトを返す"""
@@ -1616,6 +1626,40 @@ class BaseScraper(ABC):
             validation_errors.append("サイト物件IDが未取得")
             self.logger.warning(f"サイト物件IDがありません: URL={url}, building_name={building_name}")
         
+        # 間取り（layout）のチェック - HOMESとLivableでは「-」を許容
+        layout = property_data.get('layout', '')
+        if layout in ['-', '－', '']:
+            # 間取りが取得できなかった場合の統計を更新
+            self.update_stats('layout_missing', 1)
+            self.update_stats('properties_with_layout_check', 1)
+            
+            # 間取りが「-」の場合は、property_dataから削除（NULLとして保存）
+            if 'layout' in property_data:
+                del property_data['layout']
+            
+            # 間取り欠損率をチェック
+            total_checked = self.get_stats('properties_with_layout_check', 0)
+            missing_count = self.get_stats('layout_missing', 0)
+            
+            if total_checked >= 10:  # 十分なサンプル数がある場合
+                missing_rate = missing_count / total_checked
+                
+                if missing_rate > 0.3:  # 30%以上の欠損率はエラー
+                    validation_errors.append(f"間取りの欠損率が異常に高い: {missing_rate:.1%}")
+                    self.logger.error(
+                        f"間取りの欠損率が異常に高い: {missing_rate:.1%} "
+                        f"({missing_count}/{total_checked}件) - "
+                        f"HTML構造が変更された可能性があります"
+                    )
+                elif missing_rate > 0.1 and total_checked >= 20:  # 10%以上は警告
+                    self.logger.warning(
+                        f"間取りの欠損率が高めです: {missing_rate:.1%} "
+                        f"({missing_count}/{total_checked}件)"
+                    )
+        else:
+            # 間取りが正常に取得できた場合もカウント
+            self.update_stats('properties_with_layout_check', 1)
+        
         # 住所は詳細ページから取得する場合があるため、一覧ページでは必須ではない
         # 詳細ページ取得後に再度チェックされる
         if not property_data.get('address') and property_data.get('detail_fetched', False):
@@ -1626,13 +1670,13 @@ class BaseScraper(ABC):
         # 価格の妥当性チェック（data_normalizerのvalidate_priceを使用）
         price = property_data.get('price', 0)
         if price and not validate_price(price):
-            validation_errors.append(f"価格が範囲外: {price}万円（許容範囲: 100万円〜100億円）")
+            validation_errors.append(f"価格が範囲外: {price}万円（許容範囲: 100万円～100億円）")
             self.logger.warning(f"価格が異常です: {price}万円, URL={url}")
         
         # 面積の妥当性チェック（data_normalizerのvalidate_areaを使用）
         area = property_data.get('area', 0)
         if area and not validate_area(area):
-            validation_errors.append(f"面積が範囲外: {area}㎡（許容範囲: 10㎡〜500㎡）")
+            validation_errors.append(f"面積が範囲外: {area}㎡（許容範囲: 10㎡～500㎡）")
             self.logger.warning(f"面積が異常です: {area}㎡, URL={url}")
             # 面積超過エラーフラグを設定
             property_data['_validation_error_type'] = 'area_exceeded'
