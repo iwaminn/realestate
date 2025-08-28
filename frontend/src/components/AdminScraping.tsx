@@ -758,6 +758,80 @@ const AdminScraping: React.FC = () => {
         </Alert>
       )}
       
+      {/* スクレイパーアラート - シンプルなデザイン */}
+      {alerts.length > 0 && (
+        <Alert 
+          severity="warning" 
+          sx={{ 
+            mb: 3,
+            '& .MuiAlert-icon': { fontSize: 28 }
+          }}
+          icon={<WarningIcon />}
+        >
+          <Box>
+            <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 2 }}>
+              スクレイパーアラート ({alerts.length}件)
+            </Typography>
+            {alerts.map((alert) => (
+              <Box 
+                key={alert.id}
+                sx={{ 
+                  pl: 2,
+                  pr: 2,
+                  py: 1.5,
+                  mb: 1.5,
+                  borderLeft: `3px solid ${
+                    (alert.severity === 'high' || alert.severity === 'critical') ? '#d32f2f' :
+                    (alert.severity === 'medium' || alert.severity === 'warning') ? '#ed6c02' : '#0288d1'
+                  }`,
+                  backgroundColor: 'rgba(255, 255, 255, 0.9)',
+                  borderRadius: '4px'
+                }}
+              >
+                <Box display="flex" justifyContent="space-between" alignItems="flex-start">
+                  <Box flex={1}>
+                    <Box display="flex" alignItems="center" gap={1} mb={0.5}>
+                      <Typography variant="subtitle2" sx={{ fontWeight: 'bold' }}>
+                        {alert.scraper_name || alert.source_site || '不明'}
+                      </Typography>
+                      <Typography variant="body2" color="text.secondary">
+                        - {alert.alert_type}
+                      </Typography>
+                    </Box>
+                    <Typography variant="body2" sx={{ mb: 0.5 }}>
+                      {alert.message}
+                    </Typography>
+                    <Box display="flex" gap={2}>
+                      {alert.details && alert.details.error_count !== undefined && (
+                        <Typography variant="caption" color="text.secondary">
+                          エラー: {alert.details.error_count}件 ({(alert.details.error_rate * 100).toFixed(0)}%)
+                        </Typography>
+                      )}
+                      <Typography variant="caption" color="text.secondary">
+                        {new Date(alert.created_at).toLocaleString('ja-JP', {
+                          month: 'numeric',
+                          day: 'numeric',
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })}
+                      </Typography>
+                    </Box>
+                  </Box>
+                  <Button
+                    size="small"
+                    variant="text"
+                    onClick={() => resolveAlert(alert.id)}
+                    sx={{ minWidth: 'auto', ml: 2 }}
+                  >
+                    解決
+                  </Button>
+                </Box>
+              </Box>
+            ))}
+          </Box>
+        </Alert>
+      )}
+      
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>
           掲載状態の手動更新
@@ -1830,73 +1904,6 @@ const AdminScraping: React.FC = () => {
         )}
       </Paper>
 
-      {/* スクレイパーアラート */}
-      {alerts.length > 0 && (
-        <Paper elevation={2} sx={{ p: 2, mt: 3 }}>
-          <Typography variant="h6" gutterBottom color="error">
-            <WarningIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
-            スクレイパーアラート
-          </Typography>
-          <List>
-            {alerts.map((alert) => (
-              <ListItem
-                key={alert.id}
-                sx={{
-                  borderLeft: `4px solid ${
-                    (alert.severity === 'high' || alert.severity === 'critical') ? '#d32f2f' :
-                    (alert.severity === 'medium' || alert.severity === 'warning') ? '#ed6c02' : '#2e7d32'
-                  }`,
-                  mb: 1,
-                  backgroundColor: 'grey.50'
-                }}
-              >
-                <ListItemText
-                  primary={
-                    <Box display="flex" alignItems="center" justifyContent="space-between">
-                      <Typography variant="subtitle1">
-                        {alert.scraper_name || alert.source_site || '不明'} - {alert.alert_type}
-                      </Typography>
-                      <Chip
-                        label={alert.severity || 'info'}
-                        size="small"
-                        color={
-                          (alert.severity === 'high' || alert.severity === 'critical') ? 'error' :
-                          (alert.severity === 'medium' || alert.severity === 'warning') ? 'warning' : 'success'
-                        }
-                      />
-                    </Box>
-                  }
-                  secondary={
-                    <Box>
-                      <Typography variant="body2" sx={{ mt: 1 }}>
-                        {alert.message}
-                      </Typography>
-                      {alert.details && alert.details.error_count !== undefined && alert.details.error_rate !== undefined && (
-                        <Typography variant="caption" color="text.secondary" component="div" sx={{ mt: 0.5 }}>
-                          エラー数: {alert.details.error_count} | 
-                          エラー率: {(alert.details.error_rate * 100).toFixed(1)}%
-                        </Typography>
-                      )}
-                      <Typography variant="caption" color="text.secondary">
-                        発生日時: {new Date(alert.created_at).toLocaleString('ja-JP')}
-                      </Typography>
-                    </Box>
-                  }
-                />
-                <ListItemSecondaryAction>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    onClick={() => resolveAlert(alert.id)}
-                  >
-                    解決済みにする
-                  </Button>
-                </ListItemSecondaryAction>
-              </ListItem>
-            ))}
-          </List>
-        </Paper>
-      )}
 
       {/* 削除確認ダイアログ */}
       <DeleteConfirmDialog

@@ -667,7 +667,7 @@ class BaseScraper(ABC):
                                         existing_listing.master_property.final_price_updated_at = None
                                         self.logger.debug(f"物件を販売再開 (HTML構造エラースキップ) - 物件ID: {existing_listing.master_property.id}")
                                 
-                                self.session.flush()
+                                self.safe_flush()
                             except Exception as e:
                                 self.log_warning(f'最終確認日時の更新に失敗: {e}',
                                                url=property_data.get('url', '不明'))
@@ -2056,6 +2056,34 @@ class BaseScraper(ABC):
         """
         return get_search_key_for_building_common(building_name)
     
+    def safe_flush(self):
+        """セッションのflushを安全に実行（エラー時は自動ロールバック）"""
+        try:
+            self.session.flush()
+            return True
+        except Exception as e:
+            self.logger.warning(f"flush中にエラーが発生したため、ロールバックします: {type(e).__name__}: {e}")
+            self.session.rollback()
+            return False
+    
+    def ensure_session_active(self):
+        """セッションがアクティブであることを確認し、必要に応じて回復"""
+        try:
+            # ダミークエリでセッション状態を確認
+            self.session.execute(text("SELECT 1"))
+        except Exception as e:
+            self.logger.warning(f"セッションエラーを検出、回復処理を実行: {type(e).__name__}")
+            try:
+                self.session.rollback()
+            except Exception:
+                pass  # 既にロールバック済みの場合があるため無視
+            
+            # 新しいトランザクションを開始
+            try:
+                self.session.begin()
+            except Exception:
+                pass  # 既にトランザクション中の場合があるため無視
+    
     def _verify_building_attributes(self, building: Building, total_floors: int = None, 
                                      built_year: int = None, total_units: int = None) -> bool:
         """建物の属性（総階数、築年、総戸数）が一致するか確認
@@ -2199,7 +2227,7 @@ class BaseScraper(ABC):
                     # normalized_addressカラムがあれば更新
                     if hasattr(building, 'normalized_address') and not building.normalized_address:
                         building.normalized_address = building_normalized_addr
-                        self.session.flush()
+                        self.safe_flush()
                     
                     return building
         
@@ -2280,6 +2308,14 @@ class BaseScraper(ABC):
         if not building_name:
             return None, None
         
+        # セッションの状態を確認し、必要に応じてロールバック
+        try:
+            # ダミークエリで状態確認
+            self.session.execute(text("SELECT 1"))
+        except Exception as e:
+            self.logger.warning(f"セッションがエラー状態のため、ロールバックを実行: {type(e).__name__}")
+            self.session.rollback()
+        
         # 元の建物名を保存
         original_building_name = building_name
         
@@ -2344,7 +2380,7 @@ class BaseScraper(ABC):
                         building.station_info = station_info
                         updated = True
                     if updated:
-                        self.session.flush()
+                        self.safe_flush()
                     
                     return building, extracted_room_number
                 else:
@@ -2353,7 +2389,7 @@ class BaseScraper(ABC):
                     print(f"[WARNING] 外部ID {external_property_id} に紐づく建物ID {orphaned_building_id} が存在しません")
                     # 孤立した外部IDレコードを削除
                     self.session.delete(existing_external)
-                    self.session.flush()
+                    self.safe_flush()
                     print(f"[INFO] 孤立した外部IDレコード（building_id={orphaned_building_id}）を削除しました")
                     # 重要: 孤立レコード削除後は新規建物作成として処理を続行
                     # existing_externalをNoneとして扱う
@@ -2438,7 +2474,7 @@ class BaseScraper(ABC):
                             updated = True
                         
                         if updated:
-                            self.session.flush()
+                            self.safe_flush()
                         
                         return primary_building, extracted_room_number
         
@@ -2500,7 +2536,7 @@ class BaseScraper(ABC):
                     updated = True
                 
                 if updated:
-                    self.session.flush()
+                    self.safe_flush()
                 
                 # 外部IDを追加（既存の建物でも、外部IDが未登録の場合は追加）
                 if external_property_id:
@@ -2540,7 +2576,7 @@ class BaseScraper(ABC):
             station_info=station_info         # 交通情報も設定
         )
         self.session.add(building)
-        self.session.flush()
+        self.safe_flush()
         
         # デバッグ: 新規作成された建物のIDを確認
         self.logger.info(f"[DEBUG] 新規建物作成後のID: {building.id}, 名前: {building.normalized_name}")
@@ -2836,7 +2872,7 @@ class BaseScraper(ABC):
                 max_retries = 3
                 for attempt in range(max_retries):
                     try:
-                        self.session.flush()
+                        self.safe_flush()
                         break
                     except Exception as e:
                         if "deadlock detected" in str(e).lower() and attempt < max_retries - 1:
@@ -2877,7 +2913,7 @@ class BaseScraper(ABC):
         self.session.add(master_property)
         
         try:
-            self.session.flush()
+            self.safe_flush()
         except Exception as e:
             # 重複エラーの場合はロールバックして再検索
             if "duplicate key value violates unique constraint" in str(e):
@@ -2959,7 +2995,7 @@ class BaseScraper(ABC):
                     self.logger.info(f"同じURLで別の物件が存在 (旧物件ID: {existing_with_same_url.master_property_id})")
                     existing_with_same_url.is_active = False
                     existing_with_same_url.delisted_at = get_utc_now()
-                    self.session.flush()
+                    self.safe_flush()
                 else:
                     # 同じ物件の場合は、既存のレコードを使用
                     listing = existing_with_same_url
@@ -3052,7 +3088,7 @@ class BaseScraper(ABC):
                 listing.price_updated_at = get_utc_now()
                 
                 # 価格履歴をデータベースに反映してから価格改定日を更新
-                self.session.flush()  # 重要: 価格履歴をDBに反映
+                self.safe_flush()  # 重要: 価格履歴をDBに反映
                 
                 # 価格改定日を更新
                 from backend.app.utils.property_utils import update_latest_price_change
@@ -3129,7 +3165,7 @@ class BaseScraper(ABC):
                 master_property.sold_at = None
                 master_property.final_price = None
                 master_property.final_price_updated_at = None
-                self.session.flush()
+                self.safe_flush()
             
             # 更新タイプを判定
             update_details = None
@@ -3317,7 +3353,7 @@ class BaseScraper(ABC):
                     **kwargs
                 )
                 self.session.add(listing)
-                self.session.flush()
+                self.safe_flush()
                 
                 # 最初の掲載日を更新
                 update_earliest_listing_date(self.session, master_property.id)
@@ -3350,7 +3386,7 @@ class BaseScraper(ABC):
                             print(f"  → 別の物件のため、古い方を非アクティブ化")
                             listing.is_active = False
                             listing.delisted_at = get_utc_now()
-                            self.session.flush()
+                            self.safe_flush()
                             
                             # 非アクティブ化された物件の最初の掲載日を更新
                             if listing.master_property_id:
@@ -3381,7 +3417,7 @@ class BaseScraper(ABC):
                                 **kwargs
                             )
                             self.session.add(listing)
-                            self.session.flush()
+                            self.safe_flush()
                         else:
                             # 同じ物件の場合は、既存のレコードを更新
                             update_type = 'existing'
@@ -3402,7 +3438,7 @@ class BaseScraper(ABC):
             self.session.add(price_history)
             
             # 価格履歴をデータベースに反映してから価格改定日を更新
-            self.session.flush()  # 重要: 価格履歴をDBに反映
+            self.safe_flush()  # 重要: 価格履歴をDBに反映
             
             # 価格改定日を更新（初回登録も価格設定として扱う）
             from backend.app.utils.property_utils import update_latest_price_change
@@ -3417,7 +3453,7 @@ class BaseScraper(ABC):
                 master_property.sold_at = None
                 master_property.final_price = None
                 master_property.final_price_updated_at = None
-                self.session.flush()
+                self.safe_flush()
             
             # 物件と建物の詳細情報を含むログメッセージ
             building_name = kwargs.get('listing_building_name', '')
@@ -3464,7 +3500,7 @@ class BaseScraper(ABC):
             try:
                 # 物件情報を多数決で更新
                 self.majority_updater.update_master_property_by_majority(master_property)
-                self.session.flush()  # 変更を確定
+                self.safe_flush()  # 変更を確定
             except Exception as e:
                 # エラーが発生しても処理は続行（ログに記録）
                 self.logger.warning(f"物件情報の更新に失敗しました (property_id={master_property.id}): {e}")
@@ -3479,7 +3515,7 @@ class BaseScraper(ABC):
                         self.majority_updater.update_building_by_majority(building)
                         # 建物名の個別更新も実行（より最新の重み付けロジックを使用）
                         self.majority_updater.update_building_name_by_majority(master_property.building_id)
-                    self.session.flush()  # 変更を確定
+                    self.safe_flush()  # 変更を確定
                 except Exception as e:
                     # エラーが発生しても処理は続行（ログに記録）
                     self.logger.warning(f"建物情報の更新に失敗しました (building_id={master_property.building_id}): {e}")
@@ -3487,7 +3523,7 @@ class BaseScraper(ABC):
                 # 物件の表示用建物名を多数決で更新
                 try:
                     self.majority_updater.update_property_building_name_by_majority(master_property.id)
-                    self.session.flush()  # 変更を確定
+                    self.safe_flush()  # 変更を確定
                 except Exception as e:
                     # エラーが発生しても処理は続行（ログに記録）
                     self.logger.warning(f"物件建物名の更新に失敗しました (property_id={master_property.id}): {e}")
@@ -3966,10 +4002,13 @@ class BaseScraper(ABC):
     def save_property_common(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
         """物件情報を保存する共通メソッド"""
         try:
+            # セッションが正常であることを確認
+            self.ensure_session_active()
+            
             # トランザクション状態のチェックと修復
             try:
                 # テスト用のクエリで現在のトランザクション状態を確認
-                self.session.execute("SELECT 1")
+                self.session.execute(text("SELECT 1"))
             except Exception as tx_error:
                 error_msg = str(tx_error)
                 if ("rolled back due to a previous exception" in error_msg or
@@ -4147,7 +4186,7 @@ class BaseScraper(ABC):
                         building.station_info = property_data.get('station_info')
                         updated = True
                     if updated:
-                        self.session.flush()
+                        self.safe_flush()
                 
                 # マスター物件の情報更新（より詳細な情報があれば）
                 updated = False
@@ -4174,7 +4213,7 @@ class BaseScraper(ABC):
                     max_retries = 3
                     for attempt in range(max_retries):
                         try:
-                            self.session.flush()
+                            self.safe_flush()
                             break
                         except Exception as e:
                             if "deadlock detected" in str(e).lower() and attempt < max_retries - 1:
@@ -4202,23 +4241,43 @@ class BaseScraper(ABC):
                 
                 # セッションの状態を確認
                 if not self.session.is_active:
-                    self.logger.warning("セッションが非アクティブです。新しいトランザクションを開始します。")
+                    self.logger.warning("セッションが非アクティブです。ロールバックしてから新しいトランザクションを開始します。")
+                    try:
+                        self.session.rollback()
+                    except Exception:
+                        pass  # 既にロールバック済みの場合があるため無視
                     self.session.begin()
                 
+                # セッションが正常であることを確認
+                self.ensure_session_active()
+                
                 # 建物を取得または作成
-                building, extracted_room_number = self.get_or_create_building(
-                building_name=property_data.get('building_name'),
-                address=property_data.get('address'),
-                external_property_id=property_data.get('site_property_id'),
-                built_year=property_data.get('built_year'),
-                built_month=property_data.get('built_month'),  # 最初の掲載情報から設定
-                total_floors=property_data.get('total_floors'),
-                basement_floors=property_data.get('basement_floors'),
-                total_units=property_data.get('total_units'),  # 総戸数を追加
-                structure=property_data.get('structure'),
-                land_rights=property_data.get('land_rights'),
-                station_info=property_data.get('station_info')  # 最初の掲載情報から設定
-            )
+                try:
+                    building, extracted_room_number = self.get_or_create_building(
+                    building_name=property_data.get('building_name'),
+                    address=property_data.get('address'),
+                    external_property_id=property_data.get('site_property_id'),
+                    built_year=property_data.get('built_year'),
+                    built_month=property_data.get('built_month'),  # 最初の掲載情報から設定
+                    total_floors=property_data.get('total_floors'),
+                    basement_floors=property_data.get('basement_floors'),
+                    total_units=property_data.get('total_units'),  # 総戸数を追加
+                    structure=property_data.get('structure'),
+                    land_rights=property_data.get('land_rights'),
+                    station_info=property_data.get('station_info')  # 最初の掲載情報から設定
+                )
+                except RuntimeError as e:
+                    # 建物作成時のデータベースエラー
+                    self.logger.error(f"建物作成時にRuntimeErrorが発生: {e}")
+                    self.session.rollback()
+                    building = None
+                    extracted_room_number = None
+                except Exception as e:
+                    # その他のエラー
+                    self.logger.error(f"建物作成時に予期しないエラーが発生: {type(e).__name__}: {e}")
+                    self.session.rollback()
+                    building = None
+                    extracted_room_number = None
             
             # 建物オブジェクトの検証
             if building:
@@ -4227,48 +4286,37 @@ class BaseScraper(ABC):
                     self.logger.warning(f"建物オブジェクトがセッションから切り離されています。再取得します。")
                     building = self.session.query(Building).filter(Building.id == building.id).first()
                     if not building:
-                        self.logger.error(f"建物ID {building.id} がデータベースに存在しません！")
+                        self.logger.error(f"建物がデータベースに存在しません！セッションから切り離された建物を再取得できませんでした。")
                         # エラーログを記録
                         if hasattr(self, '_save_error_log'):
                             self._save_error_log({
                                 'url': property_data.get('url', '不明'),
-                                'reason': f'建物ID {building.id} がデータベースに存在しません',
+                                'reason': f'建物がデータベースに存在しません（セッションから切り離された建物を再取得できませんでした）',
                                 'building_name': property_data.get('building_name', ''),
                                 'price': property_data.get('price', ''),
                                 'timestamp': datetime.now().isoformat()
                             })
                         property_data['property_saved'] = False
                         return False
-                
-                # 建物IDが実際にデータベースに存在するか再確認
-                db_building = self.session.query(Building).filter(Building.id == building.id).first()
-                if not db_building:
-                    self.logger.error(f"建物ID {building.id} がデータベースに存在しません！get_or_create_buildingからの戻り値が不正です。")
+                    else:
+                        self.logger.debug(f"建物ID {building.id} を再取得しました: {building.normalized_name}")
+            
+            if not building:
+                # 建物情報がない場合（土地物件など）または建物名が空の場合
+                building_name = property_data.get('building_name', '')
+                if not building_name:
+                    self.logger.info(f"建物名が空のため、物件をスキップします: {property_data.get('url', '不明')}")
+                else:
+                    self.logger.warning(f"建物の作成に失敗しました: {building_name}")
                     # エラーログを記録
                     if hasattr(self, '_save_error_log'):
                         self._save_error_log({
                             'url': property_data.get('url', '不明'),
-                            'reason': f'建物ID {building.id} がデータベースに存在しません（get_or_create_building戻り値不正）',
-                            'building_name': property_data.get('building_name', ''),
+                            'reason': f'建物の作成に失敗: {building_name}',
+                            'building_name': building_name,
                             'price': property_data.get('price', ''),
                             'timestamp': datetime.now().isoformat()
                         })
-                    property_data['property_saved'] = False
-                    return False
-                else:
-                    self.logger.debug(f"建物ID {building.id} の存在を確認しました: {db_building.normalized_name}")
-            
-            if not building:
-                self.logger.warning("建物の作成に失敗しました")
-                # エラーログを記録
-                if hasattr(self, '_save_error_log'):
-                    self._save_error_log({
-                        'url': property_data.get('url', '不明'),
-                        'reason': '建物の作成に失敗',
-                        'building_name': property_data.get('building_name', ''),
-                        'price': property_data.get('price', ''),
-                        'timestamp': datetime.now().isoformat()
-                    })
                 property_data['property_saved'] = False
                 # save_failedは上位の処理でカウントされるため、ここではカウントしない
                 return False
@@ -4279,6 +4327,9 @@ class BaseScraper(ABC):
             # マスター物件を取得または作成（初期化と例外処理を追加）
             master_property = None
             try:
+                # セッションが正常であることを確認
+                self.ensure_session_active()
+                
                 master_property = self.get_or_create_master_property(
                     building=building,
                     room_number=room_number,
@@ -4321,7 +4372,7 @@ class BaseScraper(ABC):
             # summary_remarksをMasterPropertyに保存
             if property_data.get('summary_remarks') and master_property and not master_property.summary_remarks:
                 master_property.summary_remarks = property_data.get('summary_remarks')
-                self.session.flush()
+                self.safe_flush()
             
             # 掲載情報を作成または更新
             listing, update_type, update_details = self.create_or_update_listing(
