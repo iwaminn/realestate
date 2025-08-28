@@ -260,10 +260,13 @@ const AdminScraping: React.FC = () => {
 
   const fetchAlerts = async () => {
     try {
-      const response = await axios.get('/api/admin/scraper-alerts');
+      // 未解決のアラートのみを取得
+      const response = await axios.get('/api/admin/scraper-alerts?resolved=false');
       // APIが配列を直接返す場合とオブジェクトでラップされた場合の両方に対応
       const alertData = Array.isArray(response.data) ? response.data : response.data.alerts || [];
-      setAlerts(alertData);
+      // 未解決のアラートのみをフィルタリング（念のため）
+      const unresolvedAlerts = alertData.filter((alert: ScraperAlert) => !alert.resolved_at);
+      setAlerts(unresolvedAlerts);
     } catch (error) {
       // エラーハンドリング済み
     }
