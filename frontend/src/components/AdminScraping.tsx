@@ -758,37 +758,6 @@ const AdminScraping: React.FC = () => {
         </Alert>
       )}
       
-      {/* スクレイパーアラート表示 */}
-      {alerts.length > 0 && (
-        <Paper sx={{ p: 2, mb: 3, backgroundColor: '#fff3e0' }}>
-          <Typography variant="h6" color="warning.main" gutterBottom>
-            ⚠️ スクレイパーアラート
-          </Typography>
-          {alerts.map(alert => (
-            <Alert 
-              key={alert.id} 
-              severity="warning" 
-              sx={{ mb: 1 }}
-              action={
-                <Button 
-                  size="small" 
-                  onClick={() => resolveAlert(alert.id)}
-                >
-                  解決済みにする
-                </Button>
-              }
-            >
-              <Typography variant="body2">
-                <strong>{alert.scraper_name || alert.source_site || '不明'}</strong>: {alert.message}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {new Date(alert.created_at).toLocaleString('ja-JP')}
-              </Typography>
-            </Alert>
-          ))}
-        </Paper>
-      )}
-
       <Paper sx={{ p: 3, mb: 3 }}>
         <Typography variant="h6" gutterBottom>
           掲載状態の手動更新
