@@ -36,6 +36,32 @@ class HomesScraper(BaseScraper):
         self.building_name_verification_mode = BuildingNameVerificationMode.MULTI_SOURCE
         self._setup_headers()
     
+    def get_optional_required_fields(self) -> List[str]:
+        """HOMESではlayoutは必須ではない（稀に取得できないため）
+        
+        Returns:
+            List[str]: オプショナルな必須フィールドのリスト（空リスト）
+        """
+        return []  # layoutを必須から除外
+
+    
+    def get_partial_required_fields(self) -> Dict[str, Dict[str, Any]]:
+        """HOMESの部分的必須フィールドの設定
+        
+        layoutはほとんどの場合取得できるが、一部の物件で取得できない。
+        30%以上の欠損率の場合にエラーとする。
+        
+        Returns:
+            Dict[str, Dict[str, Any]]: 部分的必須フィールドの設定
+        """
+        return {
+            'layout': {
+                'max_missing_rate': 0.3,  # 30%までの欠損を許容
+                'min_sample_size': 10,     # 10件以上のサンプルで評価
+                'empty_values': ['-', '－', '']  # 空とみなす値
+            }
+        }
+    
     def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
         """LIFULL HOME'Sのsite_property_idの妥当性を検証
         

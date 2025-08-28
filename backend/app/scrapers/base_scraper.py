@@ -331,6 +331,48 @@ class BaseScraper(ABC):
         """物件情報を保存（各スクレイパーで実装）"""
         pass
     
+    def get_required_detail_fields(self) -> List[str]:
+        """詳細ページで必須となるフィールドのリストを返す
+        
+        基底クラスでは共通必須フィールドを定義。
+        派生クラスでオーバーライドして、必要に応じてフィールドを除外できる。
+        
+        Returns:
+            List[str]: 必須フィールドのリスト
+        """
+        # 共通の必須フィールド（変更不可）
+        common_required = ['site_property_id', 'price', 'building_name', 'address', 'area', 'built_year']
+        
+        # オプショナルなフィールド（派生クラスで除外可能）
+        optional_required = self.get_optional_required_fields()
+        
+        return common_required + optional_required
+    
+    def get_optional_required_fields(self) -> List[str]:
+        """オプショナルな必須フィールドのリストを返す
+        
+        派生クラスでオーバーライドして、スクレイパー固有の要件に対応できる。
+        デフォルトでは間取り(layout)を必須とする。
+        
+        Returns:
+            List[str]: オプショナルな必須フィールドのリスト
+        """
+        return ['layout']  # デフォルトでは間取りを必須とする
+
+    def get_partial_required_fields(self) -> Dict[str, Dict[str, Any]]:
+        """部分的必須フィールドの設定を返す
+        
+        部分的必須フィールドは、ある程度の欠損を許容するが、
+        欠損率が閾値を超えた場合にエラーとするフィールド。
+        
+        Returns:
+            Dict[str, Dict[str, Any]]: フィールド名をキーとする設定辞書
+                - max_missing_rate: 許容する最大欠損率（0.0-1.0）
+                - min_sample_size: 統計を評価する最小サンプル数
+                - empty_values: 空とみなす値のリスト
+        """
+        return {}  # デフォルトでは部分的必須フィールドなし
+    
     def scrape_area(self, area_code: str) -> Dict[str, Any]:
         """エリアの物件をスクレイピングする共通ロジック（価格変更ベースのスマートスクレイピング対応）"""
         self.logger.info(f"スクレイピング開始: エリア={area_code}, 最大物件数={self.max_properties}")
@@ -1626,39 +1668,47 @@ class BaseScraper(ABC):
             validation_errors.append("サイト物件IDが未取得")
             self.logger.warning(f"サイト物件IDがありません: URL={url}, building_name={building_name}")
         
-        # 間取り（layout）のチェック - HOMESとLivableでは「-」を許容
-        layout = property_data.get('layout', '')
-        if layout in ['-', '－', '']:
-            # 間取りが取得できなかった場合の統計を更新
-            self.update_stats('layout_missing', 1)
-            self.update_stats('properties_with_layout_check', 1)
+        # 部分的必須フィールドのチェック
+        partial_required_fields = self.get_partial_required_fields()
+        for field_name, config in partial_required_fields.items():
+            field_value = property_data.get(field_name, '')
+            empty_values = config.get('empty_values', ['-', '－', ''])
             
-            # 間取りが「-」の場合は、property_dataから削除（NULLとして保存）
-            if 'layout' in property_data:
-                del property_data['layout']
-            
-            # 間取り欠損率をチェック
-            total_checked = self.get_stats('properties_with_layout_check', 0)
-            missing_count = self.get_stats('layout_missing', 0)
-            
-            if total_checked >= 10:  # 十分なサンプル数がある場合
-                missing_rate = missing_count / total_checked
+            if field_value in empty_values:
+                # フィールドが取得できなかった場合の統計を更新
+                self.update_stats(f'{field_name}_missing', 1)
+                self.update_stats(f'properties_with_{field_name}_check', 1)
                 
-                if missing_rate > 0.3:  # 30%以上の欠損率はエラー
-                    validation_errors.append(f"間取りの欠損率が異常に高い: {missing_rate:.1%}")
-                    self.logger.error(
-                        f"間取りの欠損率が異常に高い: {missing_rate:.1%} "
-                        f"({missing_count}/{total_checked}件) - "
-                        f"HTML構造が変更された可能性があります"
-                    )
-                elif missing_rate > 0.1 and total_checked >= 20:  # 10%以上は警告
-                    self.logger.warning(
-                        f"間取りの欠損率が高めです: {missing_rate:.1%} "
-                        f"({missing_count}/{total_checked}件)"
-                    )
-        else:
-            # 間取りが正常に取得できた場合もカウント
-            self.update_stats('properties_with_layout_check', 1)
+                # 空の値の場合は、property_dataから削除（NULLとして保存）
+                if field_name in property_data:
+                    del property_data[field_name]
+                
+                # 欠損率をチェック
+                total_checked = self.get_stats(f'properties_with_{field_name}_check', 0)
+                missing_count = self.get_stats(f'{field_name}_missing', 0)
+                min_sample_size = config.get('min_sample_size', 10)
+                
+                if total_checked >= min_sample_size:  # 十分なサンプル数がある場合
+                    missing_rate = missing_count / total_checked
+                    max_missing_rate = config.get('max_missing_rate', 0.3)
+                    
+                    if missing_rate > max_missing_rate:
+                        field_name_jp = {
+                            'layout': '間取り',
+                            'direction': '方角',
+                            'floor_number': '階数'
+                        }.get(field_name, field_name)
+                        validation_errors.append(f"{field_name_jp}の欠損率が異常に高い: {missing_rate:.1%}")
+                        self.logger.error(
+                            f"{field_name_jp}の欠損率が異常に高い: {missing_rate:.1%} "
+                            f"({missing_count}/{total_checked}件) - "
+                            f"HTML構造が変更された可能性があります"
+                        )
+                    elif missing_rate > 0.1 and total_checked >= 20:  # 10%以上は警告
+                        self.logger.warning(
+                            f"{field_name}の欠損率が高めです: {missing_rate:.1%} "
+                            f"({missing_count}/{total_checked}件)"
+                        )
         
         # 住所は詳細ページから取得する場合があるため、一覧ページでは必須ではない
         # 詳細ページ取得後に再度チェックされる
@@ -4848,11 +4898,7 @@ class BaseScraper(ABC):
         
         missing_fields = []
         missing_fields_jp = []
-        # HOMESとLivableではlayoutを必須から除外
-        if self.source_site in ['HOMES', 'Livable']:
-            required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'built_year']
-        else:
-            required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'layout', 'built_year']
+        required_fields = self.get_required_detail_fields()
         
         for field in required_fields:
             if field not in property_data or property_data.get(field) is None:
@@ -4934,11 +4980,7 @@ class BaseScraper(ABC):
         Returns:
             bool: 必須フィールドがすべて存在する場合True
         """
-        # HOMESとLivableではlayoutを必須から除外
-        if self.source_site in ['HOMES', 'Livable']:
-            required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'built_year']
-        else:
-            required_fields = ['site_property_id', 'price', 'building_name', 'address', 'area', 'layout', 'built_year']
+        required_fields = self.get_required_detail_fields()
         missing_fields = []
         
         for field in required_fields:

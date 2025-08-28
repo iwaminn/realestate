@@ -180,7 +180,6 @@ async def get_duplicate_buildings(
         attribute_groups = []
         
         # 住所、総階数、総戸数でグループ化（築年は後で個別チェック）
-        # PostgreSQL配列をPythonリストに変換する必要があるため、個別にクエリ
         base_groups = db.query(
             func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
             Building.total_floors,
@@ -201,6 +200,155 @@ async def get_duplicate_buildings(
         ).having(
             func.count(Building.id) > 1  # 同じ属性の組み合わせが2つ以上
         ).all()  # limitを削除して全ての重複候補を検出
+        
+        # パターン2: 住所と総階数が一致し、建物名が部分一致
+        # （総戸数はNULLまたは異なる）
+        address_floor_groups = db.query(
+            func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
+            Building.total_floors,
+            func.array_agg(Building.id).label('building_ids'),
+            func.array_agg(Building.canonical_name).label('canonical_names')
+        ).filter(
+            Building.id.in_(
+                db.query(MasterProperty.building_id).distinct()
+            ),
+            Building.total_floors.isnot(None),
+            Building.canonical_name.isnot(None)
+        ).group_by(
+            func.substring(Building.normalized_address, 1, 10),
+            Building.total_floors
+        ).having(
+            func.count(Building.id) > 1
+        ).all()
+        
+        # パターン3: 住所と総戸数が一致し、建物名が部分一致
+        # （総階数はNULLまたは異なる）
+        address_units_groups = db.query(
+            func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
+            Building.total_units,
+            func.array_agg(Building.id).label('building_ids'),
+            func.array_agg(Building.canonical_name).label('canonical_names')
+        ).filter(
+            Building.id.in_(
+                db.query(MasterProperty.building_id).distinct()
+            ),
+            Building.total_units.isnot(None),
+            Building.canonical_name.isnot(None)
+        ).group_by(
+            func.substring(Building.normalized_address, 1, 10),
+            Building.total_units
+        ).having(
+            func.count(Building.id) > 1
+        ).all()
+        
+        # パターン4: 住所と築年が一致し、建物名が部分一致
+        # （他はNULLまたは異なる）
+        address_year_groups = db.query(
+            func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
+            Building.built_year,
+            func.array_agg(Building.id).label('building_ids'),
+            func.array_agg(Building.canonical_name).label('canonical_names')
+        ).filter(
+            Building.id.in_(
+                db.query(MasterProperty.building_id).distinct()
+            ),
+            Building.built_year.isnot(None),
+            Building.canonical_name.isnot(None)
+        ).group_by(
+            func.substring(Building.normalized_address, 1, 10),
+            Building.built_year
+        ).having(
+            func.count(Building.id) > 1
+        ).all()
+        
+        # パターン2〜4の結果を処理して、canonical_nameが部分一致する建物を抽出
+        partial_match_groups = []
+        
+        # パターン2: 住所と総階数が一致し、建物名が部分一致
+        for group in address_floor_groups:
+            building_ids = group.building_ids if group.building_ids else []
+            canonical_names = group.canonical_names if group.canonical_names else []
+            
+            # canonical_nameが部分一致するペアを探す
+            matched_pairs = []
+            for i in range(len(building_ids)):
+                for j in range(i + 1, len(building_ids)):
+                    if canonical_names[i] and canonical_names[j]:
+                        # AがBに含まれる、またはBがAに含まれる
+                        if (canonical_names[i] in canonical_names[j] or 
+                            canonical_names[j] in canonical_names[i]):
+                            matched_pairs.append((building_ids[i], building_ids[j]))
+            
+            if matched_pairs:
+                # グループとして追加
+                all_ids = set()
+                for id1, id2 in matched_pairs:
+                    all_ids.add(id1)
+                    all_ids.add(id2)
+                partial_match_groups.append({
+                    'type': 'address_floor_name',
+                    'building_ids': list(all_ids),
+                    'address_prefix': group.address_prefix,
+                    'total_floors': group.total_floors
+                })
+        
+        # パターン3: 住所と総戸数が一致し、建物名が部分一致
+        for group in address_units_groups:
+            building_ids = group.building_ids if group.building_ids else []
+            canonical_names = group.canonical_names if group.canonical_names else []
+            
+            matched_pairs = []
+            for i in range(len(building_ids)):
+                for j in range(i + 1, len(building_ids)):
+                    if canonical_names[i] and canonical_names[j]:
+                        if (canonical_names[i] in canonical_names[j] or 
+                            canonical_names[j] in canonical_names[i]):
+                            matched_pairs.append((building_ids[i], building_ids[j]))
+            
+            if matched_pairs:
+                all_ids = set()
+                for id1, id2 in matched_pairs:
+                    all_ids.add(id1)
+                    all_ids.add(id2)
+                partial_match_groups.append({
+                    'type': 'address_units_name',
+                    'building_ids': list(all_ids),
+                    'address_prefix': group.address_prefix,
+                    'total_units': group.total_units
+                })
+        
+        # パターン4: 住所と築年が一致し、建物名が部分一致
+        for group in address_year_groups:
+            building_ids = group.building_ids if group.building_ids else []
+            canonical_names = group.canonical_names if group.canonical_names else []
+            
+            matched_pairs = []
+            for i in range(len(building_ids)):
+                for j in range(i + 1, len(building_ids)):
+                    if canonical_names[i] and canonical_names[j]:
+                        if (canonical_names[i] in canonical_names[j] or 
+                            canonical_names[j] in canonical_names[i]):
+                            matched_pairs.append((building_ids[i], building_ids[j]))
+            
+            if matched_pairs:
+                all_ids = set()
+                for id1, id2 in matched_pairs:
+                    all_ids.add(id1)
+                    all_ids.add(id2)
+                partial_match_groups.append({
+                    'type': 'address_year_name',
+                    'building_ids': list(all_ids),
+                    'address_prefix': group.address_prefix,
+                    'built_year': group.built_year
+                })
+        
+        # partial_match_groupsをattribute_groupsに追加
+        for pmg in partial_match_groups:
+            attribute_groups.append({
+                'type': pmg['type'],
+                'building_ids': pmg['building_ids'],
+                'group_count': len(pmg['building_ids'])
+            })
         
         # 築年が±1年以内の建物をグループとして追加
         for group in base_groups:
