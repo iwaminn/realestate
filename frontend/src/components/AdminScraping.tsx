@@ -55,20 +55,25 @@ interface Area {
 
 interface ScraperAlert {
   id: number;
-  source_site: string;
+  scraper_name?: string;  // 新しいAPIレスポンス用
+  source_site?: string;   // 後方互換性のため残す
   alert_type: string;
-  severity: string;
+  severity?: string;
   message: string;
   details: {
+    task_id?: string;
+    status?: string;
+    error_message?: string;
     field_name?: string;
     error_count?: number;
     error_rate?: number;
     threshold?: any;
   } | null;
-  is_active: boolean;
+  is_active?: boolean;
   resolved_at: string | null;
+  resolved_by?: string | null;
   created_at: string;
-  updated_at: string | null;
+  updated_at?: string | null;
 }
 
 interface ScrapingTask {
@@ -256,9 +261,9 @@ const AdminScraping: React.FC = () => {
   const fetchAlerts = async () => {
     try {
       const response = await axios.get('/api/admin/scraper-alerts');
-      if (response.data.alerts) {
-        setAlerts(response.data.alerts);
-      }
+      // APIが配列を直接返す場合とオブジェクトでラップされた場合の両方に対応
+      const alertData = Array.isArray(response.data) ? response.data : response.data.alerts || [];
+      setAlerts(alertData);
     } catch (error) {
       // エラーハンドリング済み
     }
@@ -771,7 +776,7 @@ const AdminScraping: React.FC = () => {
               }
             >
               <Typography variant="body2">
-                <strong>{alert.source_site}</strong>: {alert.message}
+                <strong>{alert.scraper_name || alert.source_site || '不明'}</strong>: {alert.message}
               </Typography>
               <Typography variant="caption" color="text.secondary">
                 {new Date(alert.created_at).toLocaleString('ja-JP')}
@@ -1866,8 +1871,8 @@ const AdminScraping: React.FC = () => {
                 key={alert.id}
                 sx={{
                   borderLeft: `4px solid ${
-                    alert.severity === 'high' ? '#d32f2f' :
-                    alert.severity === 'medium' ? '#ed6c02' : '#2e7d32'
+                    (alert.severity === 'high' || alert.severity === 'critical') ? '#d32f2f' :
+                    (alert.severity === 'medium' || alert.severity === 'warning') ? '#ed6c02' : '#2e7d32'
                   }`,
                   mb: 1,
                   backgroundColor: 'grey.50'
@@ -1877,14 +1882,14 @@ const AdminScraping: React.FC = () => {
                   primary={
                     <Box display="flex" alignItems="center" justifyContent="space-between">
                       <Typography variant="subtitle1">
-                        {alert.source_site} - {alert.alert_type}
+                        {alert.scraper_name || alert.source_site || '不明'} - {alert.alert_type}
                       </Typography>
                       <Chip
-                        label={alert.severity}
+                        label={alert.severity || 'info'}
                         size="small"
                         color={
-                          alert.severity === 'high' ? 'error' :
-                          alert.severity === 'medium' ? 'warning' : 'success'
+                          (alert.severity === 'high' || alert.severity === 'critical') ? 'error' :
+                          (alert.severity === 'medium' || alert.severity === 'warning') ? 'warning' : 'success'
                         }
                       />
                     </Box>

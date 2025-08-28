@@ -144,8 +144,8 @@ const [properties, setProperties] = useState<Property[]>([]);
               const price = p.sold_at && p.last_sale_price 
                 ? p.last_sale_price 
                 : (p.majority_price || p.min_price);
-              const tsubo = p.area / 3.30578;
-              return price / tsubo;
+              const tsubo = (p.area || 0) / 3.30578;
+              return tsubo > 0 && price ? price / tsubo : 0;
             });
           
           const avgPricePerTsubo = pricePerTsubos.length > 0
