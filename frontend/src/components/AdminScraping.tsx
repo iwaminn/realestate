@@ -205,7 +205,7 @@ const AdminScraping: React.FC = () => {
         await fetchTasks();
         await fetchAlerts();
       } catch (error) {
-        console.error('初期化エラー:', error);
+        // エラーは既にsetErrorで処理されている
       }
     };
     init();
@@ -243,7 +243,7 @@ const AdminScraping: React.FC = () => {
       const response = await axios.get('/api/admin/areas');
       setAreas(response.data.areas);
     } catch (error: any) {
-      console.error('Failed to fetch areas:', error);
+      // エラーは既にsetErrorで処理されている
       if (error.response?.status === 401) {
         setError('認証エラー: 管理画面にログインしてください');
         window.location.href = '/admin/login';
@@ -260,7 +260,7 @@ const AdminScraping: React.FC = () => {
         setAlerts(response.data.alerts);
       }
     } catch (error) {
-      console.error('アラート取得エラー:', error);
+      // エラーハンドリング済み
     }
   };
 
@@ -269,7 +269,7 @@ const AdminScraping: React.FC = () => {
       await axios.put(`/api/admin/scraper-alerts/${alertId}/resolve`);
       await fetchAlerts();
     } catch (error) {
-      console.error('アラート解決エラー:', error);
+      setError('アラートの解決に失敗しました');
     }
   };
 
@@ -285,7 +285,7 @@ const AdminScraping: React.FC = () => {
       
           }
         } catch (error) {
-          console.error('停止タスクチェックエラー:', error);
+          // エラーは無視（次回の定期更新で取得）
         }
       }
       
@@ -295,11 +295,6 @@ const AdminScraping: React.FC = () => {
         : '/api/admin/scraping/tasks';
       const response = await axios.get(url);
       
-      // デバッグ: APIレスポンスを確認
-
-      if (response.data && response.data.length > 0) {
-  
-      }
       
       // 実行中のタスクのみの場合
       if (activeOnly) {
@@ -322,7 +317,7 @@ const AdminScraping: React.FC = () => {
               const finalResponse = await axios.get(`/api/admin/scraping/tasks/${taskId}`);
               return finalResponse.data;
             } catch (error) {
-              console.error(`Failed to fetch final state for task ${taskId}:`, error);
+              // エラーは無視（最終状態の取得に失敗）
               return null;
             }
           })
@@ -360,7 +355,7 @@ const AdminScraping: React.FC = () => {
         setTasks(response.data);
       }
     } catch (error: any) {
-      console.error('Failed to fetch tasks:', error);
+      // エラーは既にsetErrorで処理されている
       // エラーの詳細を設定
       if (error.response?.status === 401) {
         setError('認証エラー: 管理画面にログインしてください');
@@ -418,7 +413,7 @@ const AdminScraping: React.FC = () => {
       // 展開状態に追加
       setExpandedTasks(prev => new Set([...prev, response.data.task_id]));
     } catch (error) {
-      console.error('Failed to start scraping:', error);
+      // エラーは既にsetErrorで処理されている
       alert('スクレイピングの開始に失敗しました');
     } finally {
       setLoading(false);
@@ -449,11 +444,11 @@ const AdminScraping: React.FC = () => {
       }
       
       if (attempts >= maxAttempts) {
-        console.warn(`Task ${taskId} did not pause within timeout`);
+        setError('タスクの一時停止がタイムアウトしました');
         fetchTasks(); // 最終的に一度更新
       }
     } catch (error: any) {
-      console.error('Failed to pause task:', error);
+      // エラーは既にsetErrorで処理されている
       alert(`タスクの一時停止に失敗しました: ${error.response?.data?.detail || error.message}`);
     } finally {
       setLoadingButtons(prev => ({ ...prev, [`pause-${taskId}`]: false }));
@@ -484,11 +479,11 @@ const AdminScraping: React.FC = () => {
       }
       
       if (attempts >= maxAttempts) {
-        console.warn(`Task ${taskId} did not resume within timeout`);
+        setError('タスクの再開がタイムアウトしました');
         fetchTasks(); // 最終的に一度更新
       }
     } catch (error) {
-      console.error('Failed to resume task:', error);
+      // エラーは既にsetErrorで処理されている
       alert('タスクの再開に失敗しました');
     } finally {
       setLoadingButtons(prev => ({ ...prev, [`resume-${taskId}`]: false }));
@@ -522,11 +517,11 @@ const AdminScraping: React.FC = () => {
       }
       
       if (attempts >= maxAttempts) {
-        console.warn(`Task ${taskId} did not cancel within timeout`);
+        setError('タスクのキャンセルがタイムアウトしました');
         fetchTasks(); // 最終的に一度更新
       }
     } catch (error: any) {
-      console.error('Failed to cancel task:', error);
+      // エラーは既にsetErrorで処理されている
       alert(`タスクのキャンセルに失敗しました: ${error.response?.data?.detail || error.message}`);
     } finally {
       setLoadingButtons(prev => ({ ...prev, [`cancel-${taskId}`]: false }));
@@ -548,7 +543,7 @@ const AdminScraping: React.FC = () => {
       await fetchTasks();
       
     } catch (error: any) {
-      console.error('Failed to delete task:', error);
+      // エラーは既にsetErrorで処理されている
       alert(`タスクの削除に失敗しました: ${error.response?.data?.detail || error.message}`);
     } finally {
       setLoadingButtons(prev => ({ ...prev, [`delete-${taskId}`]: false }));
@@ -578,7 +573,7 @@ const AdminScraping: React.FC = () => {
       alert(`${response.data.deleted_tasks}件のタスクと${response.data.deleted_progress}件の進捗情報を削除しました`);
       await fetchTasks();
     } catch (error: any) {
-      console.error('Failed to delete all tasks:', error);
+      // エラーは既にsetErrorで処理されている
       alert(`履歴の削除に失敗しました: ${error.response?.data?.detail || error.message}`);
     } finally {
       setLoading(false);
@@ -665,7 +660,6 @@ const AdminScraping: React.FC = () => {
       // 各進捗から集計する
       const progressItems = Object.values(task.progress || {});
       
-      // デバッグログ
 
       
       // 各進捗の合計を計算
@@ -679,12 +673,9 @@ const AdminScraping: React.FC = () => {
         save_failed: stats.save_failed + (progress.errors || 0)
       }), { total: 0, new: 0, price_updated: 0, other_updates: 0, refetched_unchanged: 0, skipped: 0, save_failed: 0 });
       
-
-      
       // statisticsフィールドがある場合は優先的に使用
       const stats = (task as any).statistics;
       if (stats) {
-  
         return {
           total: stats.total_processed || aggregated.total,
           new: stats.total_new || aggregated.new,
@@ -737,7 +728,7 @@ const AdminScraping: React.FC = () => {
         sold_properties: response.data.sold_properties,
       });
     } catch (error) {
-      console.error('Failed to update listing status:', error);
+      setError('掲載ステータスの更新に失敗しました');
       setListingUpdateResult({
         success: false,
         message: '掲載状態の更新に失敗しました',
