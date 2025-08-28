@@ -181,154 +181,158 @@ async def revert_building_merge(
 ):
     """建物統合を元に戻す"""
     
-    # 統合履歴を取得
-    history = db.query(BuildingMergeHistory).filter(
-        BuildingMergeHistory.id == history_id
-    ).first()
-    
-    if not history:
-        raise HTTPException(status_code=404, detail="統合履歴が見つかりません")
-    
-    # 主建物の存在確認
-    primary_building = db.query(Building).filter(
-        Building.id == history.primary_building_id
-    ).first()
-    
-    if not primary_building:
-        raise HTTPException(status_code=404, detail="主建物が見つかりません")
-    
-    # 元の建物を復元
-    restored_building = Building(
-        normalized_name=history.merged_building_name,
-        canonical_name=history.canonical_merged_name or history.merged_building_name,
-        address=primary_building.address,  # 主建物と同じ住所を使用
-        total_floors=primary_building.total_floors,
-        built_year=primary_building.built_year,
-        created_at=datetime.now(),
-        updated_at=datetime.now()
-    )
-    db.add(restored_building)
-    db.flush()
-    
-    # 物件を分析して適切な物件を移動
-    # ここでは簡単のため、統合履歴に記録された物件を移動
-    # 実際の実装では、より詳細な分析が必要
-    properties_to_move = []
-    
-    # 統合時期以降に追加された物件を特定
-    properties = db.query(MasterProperty).filter(
-        MasterProperty.building_id == history.primary_building_id,
-        MasterProperty.created_at >= history.merged_at
-    ).all()
-    
-    # 建物名から判断して移動
-    for prop in properties:
-        # 各掲載情報から建物名を確認
-        listings = db.query(PropertyListing).filter(
-            PropertyListing.master_property_id == prop.id
-        ).all()
-        
-        should_move = False
-        for listing in listings:
-            if listing.listing_building_name and history.merged_building_name in listing.listing_building_name:
-                should_move = True
-                break
-        
-        if should_move:
-            properties_to_move.append(prop)
-    
-    # 物件を移動
-    moved_count = 0
-    for prop in properties_to_move:
-        prop.building_id = restored_building.id
-        moved_count += 1
-    
-    # 多数決で両建物の情報を更新
-    updater = MajorityVoteUpdater(db)
-    # 主建物の全属性を更新（建物名含む）
-    primary_building = db.query(Building).filter(Building.id == history.primary_building_id).first()
-    if primary_building:
-        updater.update_building_by_majority(primary_building)
-    # 復元された建物の全属性も更新（建物名含む）
-    updater.update_building_by_majority(restored_building)
-    
-    # BuildingListingNameテーブルを再構築
-    # 先に既存のレコードを確実に削除
     try:
-        # 復元された建物に関連する既存のbuilding_listing_namesを削除
-        db.query(BuildingListingName).filter(
-            BuildingListingName.building_id == restored_building.id
-        ).delete()
-        db.flush()  # 削除を確実に実行
+        # 統合履歴を取得
+        history = db.query(BuildingMergeHistory).filter(
+            BuildingMergeHistory.id == history_id
+        ).first()
         
-        # 復元された建物に紐付く物件の掲載情報から建物名を収集
-        from sqlalchemy import func
-        listing_names = db.query(
-            PropertyListing.listing_building_name,
-            PropertyListing.source_site,
-            func.count(PropertyListing.id).label('count'),
-            func.min(PropertyListing.first_seen_at).label('first_seen'),
-            func.max(PropertyListing.last_scraped_at).label('last_seen')
-        ).join(
-            MasterProperty,
-            PropertyListing.master_property_id == MasterProperty.id
-        ).filter(
-            MasterProperty.building_id == restored_building.id,
-            PropertyListing.listing_building_name.isnot(None),
-            PropertyListing.listing_building_name != ''
-        ).group_by(
-            PropertyListing.listing_building_name,
-            PropertyListing.source_site
+        if not history:
+            raise HTTPException(status_code=404, detail="統合履歴が見つかりません")
+        
+        # 主建物の存在確認
+        primary_building = db.query(Building).filter(
+            Building.id == history.primary_building_id
+        ).first()
+        
+        if not primary_building:
+            raise HTTPException(status_code=404, detail="主建物が見つかりません")
+        
+        # 元の建物を復元
+        restored_building = Building(
+            normalized_name=history.merged_building_name,
+            canonical_name=history.canonical_merged_name or history.merged_building_name,
+            address=primary_building.address,  # 主建物と同じ住所を使用
+            total_floors=primary_building.total_floors,
+            built_year=primary_building.built_year,
+            created_at=datetime.now(),
+            updated_at=datetime.now()
+        )
+        db.add(restored_building)
+        db.flush()
+    
+        # 物件を分析して適切な物件を移動
+        # ここでは簡単のため、統合履歴に記録された物件を移動
+        # 実際の実装では、より詳細な分析が必要
+        properties_to_move = []
+        
+        # 統合時期以降に追加された物件を特定
+        properties = db.query(MasterProperty).filter(
+            MasterProperty.building_id == history.primary_building_id,
+            MasterProperty.created_at >= history.merged_at
         ).all()
         
-        # 各建物名を登録（重複チェック付き）
-        from collections import defaultdict
-        from backend.app.scrapers.data_normalizer import canonicalize_building_name
-        
-        for name, site, count, first_seen, last_seen in listing_names:
-            # 既存のエントリをチェック
-            existing = db.query(BuildingListingName).filter(
-                BuildingListingName.building_id == restored_building.id,
-                BuildingListingName.listing_name == name
-            ).first()
+        # 建物名から判断して移動
+        for prop in properties:
+            # 各掲載情報から建物名を確認
+            listings = db.query(PropertyListing).filter(
+                PropertyListing.master_property_id == prop.id
+            ).all()
             
-            if not existing:
-                canonical_name = canonicalize_building_name(name)
-                new_entry = BuildingListingName(
-                    building_id=restored_building.id,
-                    listing_name=name,
-                    canonical_name=canonical_name,
-                    source_sites=site,
-                    occurrence_count=count,
-                    first_seen_at=first_seen or datetime.now(),
-                    last_seen_at=last_seen or datetime.now()
-                )
-                db.add(new_entry)
+            should_move = False
+            for listing in listings:
+                if listing.listing_building_name and history.merged_building_name in listing.listing_building_name:
+                    should_move = True
+                    break
+            
+            if should_move:
+                properties_to_move.append(prop)
+        
+        # 物件を移動
+        moved_count = 0
+        for prop in properties_to_move:
+            prop.building_id = restored_building.id
+            moved_count += 1
+        
+        # 多数決で両建物の情報を更新
+        updater = MajorityVoteUpdater(db)
+        # 主建物の全属性を更新（建物名含む）
+        primary_building = db.query(Building).filter(Building.id == history.primary_building_id).first()
+        if primary_building:
+            updater.update_building_by_majority(primary_building)
+        # 復元された建物の全属性も更新（建物名含む）
+        updater.update_building_by_majority(restored_building)
+        
+        # BuildingListingNameテーブルを再構築
+        # 先に既存のレコードを確実に削除
+        try:
+            # 復元された建物に関連する既存のbuilding_listing_namesを削除
+            db.query(BuildingListingName).filter(
+                BuildingListingName.building_id == restored_building.id
+            ).delete()
+            db.flush()  # 削除を確実に実行
+            
+            # 復元された建物に紐付く物件の掲載情報から建物名を収集
+            from sqlalchemy import func
+            listing_names = db.query(
+                PropertyListing.listing_building_name,
+                PropertyListing.source_site,
+                func.count(PropertyListing.id).label('count'),
+                func.min(PropertyListing.first_seen_at).label('first_seen'),
+                func.max(PropertyListing.last_scraped_at).label('last_seen')
+            ).join(
+                MasterProperty,
+                PropertyListing.master_property_id == MasterProperty.id
+            ).filter(
+                MasterProperty.building_id == restored_building.id,
+                PropertyListing.listing_building_name.isnot(None),
+                PropertyListing.listing_building_name != ''
+            ).group_by(
+                PropertyListing.listing_building_name,
+                PropertyListing.source_site
+            ).all()
+            
+            # 各建物名を登録（重複チェック付き）
+            from collections import defaultdict
+            from backend.app.scrapers.data_normalizer import canonicalize_building_name
+            
+            for name, site, count, first_seen, last_seen in listing_names:
+                # 既存のエントリをチェック
+                existing = db.query(BuildingListingName).filter(
+                    BuildingListingName.building_id == restored_building.id,
+                    BuildingListingName.listing_name == name
+                ).first()
+                
+                if not existing:
+                    canonical_name = canonicalize_building_name(name)
+                    new_entry = BuildingListingName(
+                        building_id=restored_building.id,
+                        listing_name=name,
+                        canonical_name=canonical_name,
+                        source_sites=site,
+                        occurrence_count=count,
+                        first_seen_at=first_seen or datetime.now(),
+                        last_seen_at=last_seen or datetime.now()
+                    )
+                    db.add(new_entry)
+        except Exception as e:
+            logger.error(f"BuildingListingName再構築中にエラー: {e}")
+            # エラーが発生してもプロセスを続行
+        
+        # 統合履歴を削除
+        db.delete(history)
+        
+        # 除外設定を追加（再統合を防ぐ）
+        exclusion = BuildingMergeExclusion(
+            building1_id=min(history.primary_building_id, restored_building.id),
+            building2_id=max(history.primary_building_id, restored_building.id),
+            reason=f"統合取り消し（履歴ID: {history_id}）",
+            created_at=datetime.now(),
+            created_by="admin"
+        )
+        db.add(exclusion)
+        
+        db.commit()
+        
+        return {
+            "message": "建物統合を取り消しました",
+            "restored_building_id": restored_building.id,
+            "restored_building_name": restored_building.normalized_name,
+            "moved_properties": moved_count
+        }
     except Exception as e:
-        logger.error(f"BuildingListingName再構築中にエラー: {e}")
-        # エラーが発生してもプロセスを続行
-    
-    # 統合履歴を削除
-    db.delete(history)
-    
-    # 除外設定を追加（再統合を防ぐ）
-    exclusion = BuildingMergeExclusion(
-        building1_id=min(history.primary_building_id, restored_building.id),
-        building2_id=max(history.primary_building_id, restored_building.id),
-        reason=f"統合取り消し（履歴ID: {history_id}）",
-        created_at=datetime.now(),
-        created_by="admin"
-    )
-    db.add(exclusion)
-    
-    db.commit()
-    
-    return {
-        "message": "建物統合を取り消しました",
-        "restored_building_id": restored_building.id,
-        "restored_building_name": restored_building.normalized_name,
-        "moved_properties": moved_count
-    }
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"取り消し中にエラーが発生しました: {str(e)}")
 
 
 @router.post("/revert-property-merge/{history_id}")
