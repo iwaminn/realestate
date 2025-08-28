@@ -317,6 +317,16 @@ class HomesScraper(BaseScraper):
         if not text:
             return False
             
+        # 駅情報のパターンを除外（最優先）
+        # 「駅」「徒歩」「分」を含む文字列は建物名ではない
+        station_patterns = [
+            '駅', '徒歩', '分歩', 'バス',
+            '線', 'ライン', 'Line'
+        ]
+        if any(pattern in text for pattern in station_patterns):
+            self.logger.debug(f"[HOMES] 駅情報のため建物名として無効: {text}")
+            return False
+            
         # 不要な文字列を除外
         skip_patterns = [
             'ホーム', 'HOME', 'トップ', 'TOP',

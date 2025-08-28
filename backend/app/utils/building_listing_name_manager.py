@@ -284,6 +284,15 @@ class BuildingListingNameManager:
         if not listing_name:
             return
             
+        # 駅情報のパターンをチェック（建物名として無効なものを除外）
+        station_patterns = ['駅', '徒歩', '分歩', 'バス', '線', 'ライン', 'Line']
+        if any(pattern in listing_name for pattern in station_patterns):
+            logger.warning(
+                f"駅情報のため建物名として登録をスキップ: '{listing_name}' "
+                f"(building_id={building_id}, source={source_site})"
+            )
+            return
+            
         # canonical_nameはスペース・記号を完全に削除
         canonical_name = canonicalize_building_name(listing_name)
         
