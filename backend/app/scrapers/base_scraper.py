@@ -2806,7 +2806,7 @@ class BaseScraper(ABC):
             
             return master_property
         
-        # 新規作成（property_hashは一時的にNULLで作成）
+        # 新規作成
         self.logger.info(f"[DEBUG] 新規MasterProperty作成: building_id={building.id if building else 'None'}, floor={floor_number}, room={room_number}")
         
         # buildingオブジェクトの検証
@@ -2822,8 +2822,7 @@ class BaseScraper(ABC):
             area=area,
             layout=self.fuzzy_matcher.normalize_layout(layout) if layout else None,
             direction=self.fuzzy_matcher.normalize_direction(direction) if direction else None,
-            balcony_area=balcony_area,
-            property_hash=None  # 一時的にNULL
+            balcony_area=balcony_area
         )
         self.session.add(master_property)
         
