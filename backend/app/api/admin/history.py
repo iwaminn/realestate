@@ -7,16 +7,18 @@ from sqlalchemy.orm import Session, joinedload
 from typing import Optional
 from datetime import datetime
 from pydantic import BaseModel
+import logging
 
 from ...database import get_db
 from ...models import (
     Building, MasterProperty, PropertyListing,
     BuildingMergeHistory, PropertyMergeHistory,
-    BuildingMergeExclusion
+    BuildingMergeExclusion, BuildingListingName
 )
 from ...utils.majority_vote_updater import MajorityVoteUpdater
 from ...utils.building_listing_name_manager import BuildingListingNameManager
 
+logger = logging.getLogger(__name__)
 router = APIRouter(tags=["admin-history"])
 
 
@@ -251,9 +253,60 @@ async def revert_building_merge(
     updater.update_building_by_majority(restored_building)
     
     # BuildingListingNameテーブルを再構築
-    # 復元された建物に紐付く物件の掲載情報から建物名を収集して登録
-    name_manager = BuildingListingNameManager(db)
-    name_manager.refresh_building_names(restored_building.id)
+    # 先に既存のレコードを確実に削除
+    try:
+        # 復元された建物に関連する既存のbuilding_listing_namesを削除
+        db.query(BuildingListingName).filter(
+            BuildingListingName.building_id == restored_building.id
+        ).delete()
+        db.flush()  # 削除を確実に実行
+        
+        # 復元された建物に紐付く物件の掲載情報から建物名を収集
+        from sqlalchemy import func
+        listing_names = db.query(
+            PropertyListing.listing_building_name,
+            PropertyListing.source_site,
+            func.count(PropertyListing.id).label('count'),
+            func.min(PropertyListing.first_seen_at).label('first_seen'),
+            func.max(PropertyListing.last_scraped_at).label('last_seen')
+        ).join(
+            MasterProperty,
+            PropertyListing.master_property_id == MasterProperty.id
+        ).filter(
+            MasterProperty.building_id == restored_building.id,
+            PropertyListing.listing_building_name.isnot(None),
+            PropertyListing.listing_building_name != ''
+        ).group_by(
+            PropertyListing.listing_building_name,
+            PropertyListing.source_site
+        ).all()
+        
+        # 各建物名を登録（重複チェック付き）
+        from collections import defaultdict
+        from backend.app.scrapers.data_normalizer import canonicalize_building_name
+        
+        for name, site, count, first_seen, last_seen in listing_names:
+            # 既存のエントリをチェック
+            existing = db.query(BuildingListingName).filter(
+                BuildingListingName.building_id == restored_building.id,
+                BuildingListingName.listing_name == name
+            ).first()
+            
+            if not existing:
+                canonical_name = canonicalize_building_name(name)
+                new_entry = BuildingListingName(
+                    building_id=restored_building.id,
+                    listing_name=name,
+                    canonical_name=canonical_name,
+                    source_sites=site,
+                    occurrence_count=count,
+                    first_seen_at=first_seen or datetime.now(),
+                    last_seen_at=last_seen or datetime.now()
+                )
+                db.add(new_entry)
+    except Exception as e:
+        logger.error(f"BuildingListingName再構築中にエラー: {e}")
+        # エラーが発生してもプロセスを続行
     
     # 統合履歴を削除
     db.delete(history)
