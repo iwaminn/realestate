@@ -181,23 +181,32 @@ async def revert_building_merge(
 ):
     """建物統合を元に戻す"""
     
-    try:
-        # 統合履歴を取得
-        history = db.query(BuildingMergeHistory).filter(
-            BuildingMergeHistory.id == history_id
-        ).first()
-        
-        if not history:
-            raise HTTPException(status_code=404, detail="統合履歴が見つかりません")
-        
-        # 主建物の存在確認
-        primary_building = db.query(Building).filter(
-            Building.id == history.primary_building_id
-        ).first()
-        
-        if not primary_building:
-            raise HTTPException(status_code=404, detail="主建物が見つかりません")
-        
+    # Phase 1: 建物を復元（独立したトランザクション）
+    restored_building_id = None
+    restored_building_name = None
+    
+    # 統合履歴を取得
+    history = db.query(BuildingMergeHistory).filter(
+        BuildingMergeHistory.id == history_id
+    ).first()
+    
+    if not history:
+        raise HTTPException(status_code=404, detail="統合履歴が見つかりません")
+    
+    # 主建物の存在確認
+    primary_building = db.query(Building).filter(
+        Building.id == history.primary_building_id
+    ).first()
+    
+    if not primary_building:
+        raise HTTPException(status_code=404, detail="主建物が見つかりません")
+    
+    # まず建物が既に存在しないか確認
+    existing_building = db.query(Building).filter(
+        Building.normalized_name == history.merged_building_name
+    ).first()
+    
+    if not existing_building:
         # 元の建物を復元
         restored_building = Building(
             normalized_name=history.merged_building_name,
@@ -210,7 +219,27 @@ async def revert_building_merge(
         )
         db.add(restored_building)
         db.flush()
+        
+        # 建物のIDを確実に取得するため、ここでコミット（重要：エラーハンドリングの外）
+        db.commit()
+        
+        # 建物を再取得
+        restored_building = db.query(Building).filter(
+            Building.normalized_name == history.merged_building_name
+        ).order_by(Building.id.desc()).first()
+    else:
+        restored_building = existing_building
+        logger.info(f"Building already exists: ID={existing_building.id}, Name={existing_building.normalized_name}")
     
+    if not restored_building:
+        raise HTTPException(status_code=500, detail=f"建物の復元に失敗しました: {history.merged_building_name}")
+    
+    restored_building_id = restored_building.id
+    restored_building_name = restored_building.normalized_name
+    logger.info(f"Restored building ID: {restored_building_id}, Name: {restored_building_name}")
+    
+    # Phase 2: 物件の移動とその他の処理（別トランザクション）
+    try:
         # 物件を分析して適切な物件を移動
         # ここでは簡単のため、統合履歴に記録された物件を移動
         # 実際の実装では、より詳細な分析が必要
@@ -241,8 +270,41 @@ async def revert_building_merge(
         # 物件を移動
         moved_count = 0
         for prop in properties_to_move:
-            prop.building_id = restored_building.id
+            prop.building_id = restored_building_id
             moved_count += 1
+        
+        # 先にデータベースの変更をフラッシュして確定
+        db.flush()
+        
+        # BuildingListingNameテーブルを再構築（多数決更新の前に実行）
+        # 復元された建物のBuildingListingNameを更新
+        try:
+            # BuildingListingNameManagerを使用して適切に更新
+            from ...utils.building_listing_name_manager import BuildingListingNameManager
+            listing_name_manager = BuildingListingNameManager(db)
+            
+            # トランザクション内で安全に実行するため、個別にtry-exceptでラップ
+            try:
+                # 復元された建物のBuildingListingNameを再構築
+                logger.info(f"Calling refresh_building_names with restored_building_id={restored_building_id}")
+                listing_name_manager.refresh_building_names(restored_building_id)
+            except Exception as e:
+                logger.warning(f"復元された建物のBuildingListingName再構築中にエラー（継続）: {e}")
+                # エラーが発生した場合は手動で削除だけ実行
+                db.query(BuildingListingName).filter(
+                    BuildingListingName.building_id == restored_building_id
+                ).delete()
+                db.flush()
+            
+            try:
+                # 主建物のBuildingListingNameも再構築（物件が移動したため）
+                listing_name_manager.refresh_building_names(history.primary_building_id)
+            except Exception as e:
+                logger.warning(f"主建物のBuildingListingName再構築中にエラー（継続）: {e}")
+                
+        except Exception as e:
+            logger.error(f"BuildingListingName再構築中にエラー: {e}")
+            # エラーが発生してもプロセスを続行
         
         # 多数決で両建物の情報を更新
         updater = MajorityVoteUpdater(db)
@@ -251,71 +313,17 @@ async def revert_building_merge(
         if primary_building:
             updater.update_building_by_majority(primary_building)
         # 復元された建物の全属性も更新（建物名含む）
-        updater.update_building_by_majority(restored_building)
-        
-        # BuildingListingNameテーブルを再構築
-        # 先に既存のレコードを確実に削除
-        try:
-            # 復元された建物に関連する既存のbuilding_listing_namesを削除
-            db.query(BuildingListingName).filter(
-                BuildingListingName.building_id == restored_building.id
-            ).delete()
-            db.flush()  # 削除を確実に実行
-            
-            # 復元された建物に紐付く物件の掲載情報から建物名を収集
-            from sqlalchemy import func
-            listing_names = db.query(
-                PropertyListing.listing_building_name,
-                PropertyListing.source_site,
-                func.count(PropertyListing.id).label('count'),
-                func.min(PropertyListing.first_seen_at).label('first_seen'),
-                func.max(PropertyListing.last_scraped_at).label('last_seen')
-            ).join(
-                MasterProperty,
-                PropertyListing.master_property_id == MasterProperty.id
-            ).filter(
-                MasterProperty.building_id == restored_building.id,
-                PropertyListing.listing_building_name.isnot(None),
-                PropertyListing.listing_building_name != ''
-            ).group_by(
-                PropertyListing.listing_building_name,
-                PropertyListing.source_site
-            ).all()
-            
-            # 各建物名を登録（重複チェック付き）
-            from collections import defaultdict
-            from backend.app.scrapers.data_normalizer import canonicalize_building_name
-            
-            for name, site, count, first_seen, last_seen in listing_names:
-                # 既存のエントリをチェック
-                existing = db.query(BuildingListingName).filter(
-                    BuildingListingName.building_id == restored_building.id,
-                    BuildingListingName.listing_name == name
-                ).first()
-                
-                if not existing:
-                    canonical_name = canonicalize_building_name(name)
-                    new_entry = BuildingListingName(
-                        building_id=restored_building.id,
-                        listing_name=name,
-                        canonical_name=canonical_name,
-                        source_sites=site,
-                        occurrence_count=count,
-                        first_seen_at=first_seen or datetime.now(),
-                        last_seen_at=last_seen or datetime.now()
-                    )
-                    db.add(new_entry)
-        except Exception as e:
-            logger.error(f"BuildingListingName再構築中にエラー: {e}")
-            # エラーが発生してもプロセスを続行
+        restored_building_for_update = db.query(Building).filter(Building.id == restored_building_id).first()
+        if restored_building_for_update:
+            updater.update_building_by_majority(restored_building_for_update)
         
         # 統合履歴を削除
         db.delete(history)
         
         # 除外設定を追加（再統合を防ぐ）
         exclusion = BuildingMergeExclusion(
-            building1_id=min(history.primary_building_id, restored_building.id),
-            building2_id=max(history.primary_building_id, restored_building.id),
+            building1_id=min(history.primary_building_id, restored_building_id),
+            building2_id=max(history.primary_building_id, restored_building_id),
             reason=f"統合取り消し（履歴ID: {history_id}）",
             created_at=datetime.now(),
             created_by="admin"
@@ -326,13 +334,15 @@ async def revert_building_merge(
         
         return {
             "message": "建物統合を取り消しました",
-            "restored_building_id": restored_building.id,
-            "restored_building_name": restored_building.normalized_name,
+            "restored_building_id": restored_building_id,
+            "restored_building_name": restored_building_name,
             "moved_properties": moved_count
         }
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"取り消し中にエラーが発生しました: {str(e)}")
+        # 建物は既に作成済みなので、エラーメッセージに含める
+        error_msg = f"取り消し中にエラーが発生しました（建物ID {restored_building_id} は作成済み）: {str(e)}"
+        raise HTTPException(status_code=500, detail=error_msg)
 
 
 @router.post("/revert-property-merge/{history_id}")

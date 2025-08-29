@@ -56,11 +56,11 @@ def run_all_scrapers(area: str = "minato", max_properties: int = 100, force_deta
         logger.info("Force detail fetch mode is enabled")
     
     scrapers = [
-        ('SUUMO', SuumoScraper(force_detail_fetch=force_detail_fetch, max_properties=max_properties)),
-        ('REHOUSE', RehouseScraper(force_detail_fetch=force_detail_fetch, max_properties=max_properties)),
-        ('HOMES', HomesScraper(force_detail_fetch=force_detail_fetch, max_properties=max_properties)),
-        ('NOMU', NomuScraper(force_detail_fetch=force_detail_fetch, max_properties=max_properties)),
-        ('LIVABLE', LivableScraper(force_detail_fetch=force_detail_fetch, max_properties=max_properties)),
+        ('SUUMO', SuumoScraper(force_detail_fetch=force_detail_fetch, max_properties=max_properties, task_id=task_id)),
+        ('REHOUSE', RehouseScraper(force_detail_fetch=force_detail_fetch, max_properties=max_properties, task_id=task_id)),
+        ('HOMES', HomesScraper(force_detail_fetch=force_detail_fetch, max_properties=max_properties, task_id=task_id)),
+        ('NOMU', NomuScraper(force_detail_fetch=force_detail_fetch, max_properties=max_properties, task_id=task_id)),
+        ('LIVABLE', LivableScraper(force_detail_fetch=force_detail_fetch, max_properties=max_properties, task_id=task_id)),
     ]
     
     results = {
@@ -78,8 +78,7 @@ def run_all_scrapers(area: str = "minato", max_properties: int = 100, force_deta
             
         try:
             logger.info(f"Running {name} scraper...")
-            # スクレイパーにタスクIDを設定（キャンセルチェック用）
-            scraper._task_id = task_id
+
             
             # 進捗更新コールバックを設定
             def progress_callback(stats):
@@ -88,7 +87,8 @@ def run_all_scrapers(area: str = "minato", max_properties: int = 100, force_deta
             scraper.set_progress_callback(progress_callback)
             
             # エリアコードを渡す（各スクレイパーは内部で変換を行う）
-            scraper.scrape_area(area, max_properties=max_properties)
+            # max_propertiesは既に__init__で設定されている
+            scraper.scrape_area(area)
             results['success'] += 1
             logger.info(f"{name} scraper completed successfully")
             
@@ -153,10 +153,9 @@ def run_single_scraper(scraper_name: str, area: str = "minato", max_properties: 
         logger.info(f"Running {scraper_name} scraper for area: {area} (code: {area_code}) with task_id: {task_id}")
         if force_detail_fetch:
             logger.info("Force detail fetch mode is enabled")
-        scraper = scrapers[scraper_name.lower()](force_detail_fetch=force_detail_fetch, max_properties=max_properties)
+        scraper = scrapers[scraper_name.lower()](force_detail_fetch=force_detail_fetch, max_properties=max_properties, task_id=task_id)
         
-        # スクレイパーにタスクIDを設定
-        scraper._task_id = task_id
+
         
         # 進捗更新コールバックを設定
         def progress_callback(stats):
@@ -171,9 +170,10 @@ def run_single_scraper(scraper_name: str, area: str = "minato", max_properties: 
             return
             
         if hasattr(scraper, 'run'):
-            scraper.run(area, max_properties=max_properties)
+            scraper.run(area)
         else:
-            scraper.scrape_area(area, max_properties=max_properties)
+            # max_propertiesは既に__init__で設定されている
+            scraper.scrape_area(area)
             
         logger.info(f"{scraper_name} scraper completed successfully")
         

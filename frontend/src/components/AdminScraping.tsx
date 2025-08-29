@@ -46,6 +46,7 @@ import {
   Warning as WarningIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
+import '../utils/axiosConfig';
 import DeleteConfirmDialog from './DeleteConfirmDialog';
 
 interface Area {
@@ -578,7 +579,7 @@ const AdminScraping: React.FC = () => {
     
     try {
       const response = await axios.delete('/api/admin/scraping/all-tasks');
-      alert(`${response.data.deleted_tasks}件のタスクと${response.data.deleted_progress}件の進捗情報を削除しました`);
+      alert(`${response.data.deleted_count}件のタスクを削除しました`);
       await fetchTasks();
     } catch (error: any) {
       // エラーは既にsetErrorで処理されている

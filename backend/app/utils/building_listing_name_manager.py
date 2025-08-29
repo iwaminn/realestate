@@ -194,18 +194,27 @@ class BuildingListingNameManager:
         Args:
             building_id: 建物ID
         """
+        logger.info(f"refresh_building_names called for building_id={building_id}")
+        
+        # 建物が存在することを確認
+        building = self.db.query(Building).filter(Building.id == building_id).first()
+        if not building:
+            logger.error(f"Building {building_id} does not exist. Skipping refresh_building_names.")
+            return
+        
         # 既存のエントリを削除
-        self.db.query(BuildingListingName).filter(
+        deleted_count = self.db.query(BuildingListingName).filter(
             BuildingListingName.building_id == building_id
         ).delete()
+        self.db.flush()  # 削除を確実に実行
+        logger.info(f"Deleted {deleted_count} existing entries for building_id={building_id}")
         
-        # 建物に紐づく掲載情報から建物名を再集計
-        listing_names = self.db.query(
+        # 建物に紐づく掲載情報から建物名を取得（集計なし、生データ）
+        listing_data = self.db.query(
             PropertyListing.listing_building_name,
             PropertyListing.source_site,
-            func.count(PropertyListing.id).label('count'),
-            func.min(PropertyListing.first_seen_at).label('first_seen'),
-            func.max(PropertyListing.last_scraped_at).label('last_seen')
+            PropertyListing.first_seen_at,
+            PropertyListing.last_scraped_at
         ).join(
             MasterProperty,
             PropertyListing.master_property_id == MasterProperty.id
@@ -213,56 +222,94 @@ class BuildingListingNameManager:
             MasterProperty.building_id == building_id,
             PropertyListing.listing_building_name.isnot(None),
             PropertyListing.listing_building_name != ''
-        ).group_by(
-            PropertyListing.listing_building_name,
-            PropertyListing.source_site
         ).all()
         
-        # 正規化後の名前で集約
-        canonical_aggregation = defaultdict(lambda: {
-            'listing_names': {},  # {name: count} の辞書
+        logger.info(f"Found {len(listing_data)} listings for building_id={building_id}")
+        
+        # canonical_nameでグループ化して集約
+        from collections import defaultdict
+        canonical_groups = defaultdict(lambda: {
+            'names': {},  # {name: count}
             'sites': set(),
-            'total_count': 0,
             'first_seen': None,
             'last_seen': None
         })
         
-        for name, site, count, first_seen, last_seen in listing_names:
+        for name, site, first_seen, last_seen in listing_data:
             canonical_name = canonicalize_building_name(name)
-            agg = canonical_aggregation[canonical_name]
+            group = canonical_groups[canonical_name]
             
-            # 元の表記とその出現回数を記録
-            if name in agg['listing_names']:
-                agg['listing_names'][name] += count
+            # 名前の出現回数をカウント
+            if name not in group['names']:
+                group['names'][name] = 0
+            group['names'][name] += 1
+            
+            # サイトを追加
+            group['sites'].add(site)
+            
+            # 日付の更新
+            if group['first_seen'] is None or (first_seen and first_seen < group['first_seen']):
+                group['first_seen'] = first_seen
+            if group['last_seen'] is None or (last_seen and last_seen > group['last_seen']):
+                group['last_seen'] = last_seen
+        
+        logger.info(f"Grouped into {len(canonical_groups)} canonical names")
+        for canonical_name in canonical_groups:
+            logger.debug(f"  {canonical_name}: {canonical_groups[canonical_name]['names']}")
+        
+        # 各canonical_nameグループに対して1つのレコードを作成
+        for canonical_name, group_data in canonical_groups.items():
+            # 最も頻出する表記を選択
+            most_common_name = max(group_data['names'].items(), key=lambda x: x[1])[0]
+            total_count = sum(group_data['names'].values())
+            
+            logger.debug(f"Creating entry: building_id={building_id}, canonical_name={canonical_name}, listing_name={most_common_name}")
+            
+            # 既存のエントリがないことを再確認
+            existing = self.db.query(BuildingListingName).filter(
+                BuildingListingName.building_id == building_id,
+                BuildingListingName.canonical_name == canonical_name
+            ).first()
+            
+            if existing:
+                logger.warning(f"Entry already exists for building_id={building_id}, canonical_name={canonical_name}. Updating instead.")
+                existing.listing_name = most_common_name
+                existing.source_sites = ','.join(sorted(group_data['sites']))
+                existing.occurrence_count = total_count
+                existing.last_seen_at = group_data['last_seen'] or datetime.now()
             else:
-                agg['listing_names'][name] = count
-            
-            agg['sites'].add(site)
-            agg['total_count'] += count
-            
-            if agg['first_seen'] is None or (first_seen and first_seen < agg['first_seen']):
-                agg['first_seen'] = first_seen
+                # 新しいエントリを作成（直接INSERT文を実行して確実性を高める）
+                from sqlalchemy import text
+                insert_sql = text("""
+                    INSERT INTO building_listing_names 
+                    (building_id, listing_name, canonical_name, source_sites, occurrence_count, first_seen_at, last_seen_at)
+                    VALUES 
+                    (:building_id, :listing_name, :canonical_name, :source_sites, :occurrence_count, :first_seen_at, :last_seen_at)
+                    ON CONFLICT (building_id, canonical_name) 
+                    DO UPDATE SET
+                        listing_name = EXCLUDED.listing_name,
+                        source_sites = EXCLUDED.source_sites,
+                        occurrence_count = EXCLUDED.occurrence_count,
+                        last_seen_at = EXCLUDED.last_seen_at
+                """)
                 
-            if agg['last_seen'] is None or (last_seen and last_seen > agg['last_seen']):
-                agg['last_seen'] = last_seen
+                try:
+                    logger.info(f"Inserting BuildingListingName: building_id={building_id}, canonical_name={canonical_name}")
+                    self.db.execute(insert_sql, {
+                        'building_id': building_id,
+                        'listing_name': most_common_name,
+                        'canonical_name': canonical_name,
+                        'source_sites': ','.join(sorted(group_data['sites'])),
+                        'occurrence_count': total_count,
+                        'first_seen_at': group_data['first_seen'] or datetime.now(),
+                        'last_seen_at': group_data['last_seen'] or datetime.now()
+                    })
+                    self.db.flush()
+                except Exception as e:
+                    logger.error(f"Failed to insert/update entry for building_id={building_id}, canonical_name={canonical_name}: {e}")
+                    raise
         
-        # BuildingListingNameに保存
-        for canonical_name, agg_data in canonical_aggregation.items():
-            # 最も出現回数が多い表記を代表名とする
-            most_common_name = max(agg_data['listing_names'].items(), key=lambda x: x[1])[0]
-            
-            new_entry = BuildingListingName(
-                building_id=building_id,
-                listing_name=most_common_name,  # 最も一般的な表記を使用
-                canonical_name=canonical_name,
-                source_sites=','.join(sorted(agg_data['sites'])),
-                occurrence_count=agg_data['total_count'],
-                first_seen_at=agg_data['first_seen'] or datetime.now(),
-                last_seen_at=agg_data['last_seen'] or datetime.now()
-            )
-            self.db.add(new_entry)
-        
-        self.db.commit()
+        logger.info(f"refresh_building_names completed for building_id={building_id}")
     
     def _update_building_name(
         self,
@@ -282,6 +329,12 @@ class BuildingListingNameManager:
             max_retries: 最大リトライ回数
         """
         if not listing_name:
+            return
+            
+        # 建物が存在することを確認
+        building = self.db.query(Building).filter(Building.id == building_id).first()
+        if not building:
+            logger.error(f"Building {building_id} does not exist. Skipping _update_building_name for '{listing_name}'.")
             return
             
         # 駅情報のパターンをチェック（建物名として無効なものを除外）
@@ -317,17 +370,34 @@ class BuildingListingNameManager:
                     sites.add(source_site)
                     existing.source_sites = ','.join(sorted(sites))
                 else:
-                    # 新規作成
-                    new_entry = BuildingListingName(
-                        building_id=building_id,
-                        listing_name=listing_name,
-                        canonical_name=canonical_name,
-                        source_sites=source_site,
-                        occurrence_count=1,
-                        first_seen_at=datetime.now(),
-                        last_seen_at=datetime.now()
-                    )
-                    self.db.add(new_entry)
+                    # 新規作成（ON CONFLICTで安全に挿入）
+                    from sqlalchemy import text
+                    insert_sql = text("""
+                        INSERT INTO building_listing_names 
+                        (building_id, listing_name, canonical_name, source_sites, occurrence_count, first_seen_at, last_seen_at)
+                        VALUES 
+                        (:building_id, :listing_name, :canonical_name, :source_sites, :occurrence_count, :first_seen_at, :last_seen_at)
+                        ON CONFLICT (building_id, canonical_name) 
+                        DO UPDATE SET
+                            occurrence_count = building_listing_names.occurrence_count + 1,
+                            source_sites = CASE 
+                                WHEN position(:source_sites IN building_listing_names.source_sites) = 0
+                                THEN building_listing_names.source_sites || ',' || :source_sites
+                                ELSE building_listing_names.source_sites
+                            END,
+                            last_seen_at = EXCLUDED.last_seen_at
+                    """)
+                    
+                    current_time = datetime.now()
+                    self.db.execute(insert_sql, {
+                        'building_id': building_id,
+                        'listing_name': listing_name,
+                        'canonical_name': canonical_name,
+                        'source_sites': source_site,
+                        'occurrence_count': 1,
+                        'first_seen_at': current_time,
+                        'last_seen_at': current_time
+                    })
                 
                 # 成功したら終了
                 break
@@ -448,17 +518,30 @@ class BuildingListingNameManager:
                 if source_name.last_seen_at > existing.last_seen_at:
                     existing.last_seen_at = source_name.last_seen_at
             else:
-                # 新規作成（コピー）
-                new_entry = BuildingListingName(
-                    building_id=to_building_id,
-                    listing_name=source_name.listing_name,
-                    canonical_name=source_name.canonical_name,
-                    source_sites=source_name.source_sites,
-                    occurrence_count=source_name.occurrence_count,
-                    first_seen_at=source_name.first_seen_at,
-                    last_seen_at=source_name.last_seen_at
-                )
-                self.db.add(new_entry)
+                # 新規作成（コピー）- ON CONFLICTで安全に挿入
+                from sqlalchemy import text
+                insert_sql = text("""
+                    INSERT INTO building_listing_names 
+                    (building_id, listing_name, canonical_name, source_sites, occurrence_count, first_seen_at, last_seen_at)
+                    VALUES 
+                    (:building_id, :listing_name, :canonical_name, :source_sites, :occurrence_count, :first_seen_at, :last_seen_at)
+                    ON CONFLICT (building_id, canonical_name) 
+                    DO UPDATE SET
+                        listing_name = EXCLUDED.listing_name,
+                        source_sites = EXCLUDED.source_sites,
+                        occurrence_count = EXCLUDED.occurrence_count,
+                        last_seen_at = EXCLUDED.last_seen_at
+                """)
+                
+                self.db.execute(insert_sql, {
+                    'building_id': to_building_id,
+                    'listing_name': source_name.listing_name,
+                    'canonical_name': source_name.canonical_name,
+                    'source_sites': source_name.source_sites,
+                    'occurrence_count': source_name.occurrence_count,
+                    'first_seen_at': source_name.first_seen_at,
+                    'last_seen_at': source_name.last_seen_at
+                })
     
     def get_building_names(self, building_id: int) -> List[Dict]:
         """

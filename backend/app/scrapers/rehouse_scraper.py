@@ -44,8 +44,8 @@ class RehouseScraper(BaseScraper):
     # 備考から除外するキーワード
     REMARKS_EXCLUDE_KEYWORDS = ['利用規約', 'Copyright', '個人情報', 'お問い合わせ']
     
-    def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False):
-        super().__init__(self.SOURCE_SITE, force_detail_fetch, max_properties, ignore_error_history)
+    def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False, task_id=None):
+        super().__init__(self.SOURCE_SITE, force_detail_fetch, max_properties, ignore_error_history, task_id)
         self.http_session = requests.Session()
         self.http_session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',

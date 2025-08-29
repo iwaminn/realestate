@@ -95,7 +95,7 @@ class BaseScraper(ABC):
     AREA_CHANGE_THRESHOLD = 0.7  # 面積変更の閾値（70%）
     PRICE_CHANGE_THRESHOLD = 0.7  # 価格変更の閾値（70%）
     
-    def __init__(self, source_site: Union[str, SourceSite], force_detail_fetch: bool = False, max_properties: Optional[int] = None, ignore_error_history: bool = False):
+    def __init__(self, source_site: Union[str, SourceSite], force_detail_fetch: bool = False, max_properties: Optional[int] = None, ignore_error_history: bool = False, task_id: Optional[str] = None):
         # 文字列の場合はSourceSiteに変換（後方互換性）
         if isinstance(source_site, str):
             self.source_site = SourceSite.from_string(source_site)
@@ -104,6 +104,9 @@ class BaseScraper(ABC):
         self.force_detail_fetch = force_detail_fetch
         self.max_properties = max_properties
         self.ignore_error_history = ignore_error_history
+        
+        # タスクID（データベースベースの一時停止・キャンセル管理用）
+        self.task_id = task_id
         
         # 建物名の部分一致を許可するかどうか（デフォルト: False = 完全一致のみ）
         self.allow_partial_building_name_match = False
@@ -185,7 +188,41 @@ class BaseScraper(ABC):
         
         # セレクタ検証統計
         self._selector_stats = {}  # {selector: {'success': 0, 'fail': 0}}
-        self._page_structure_errors = 0  # ページ構造エラーカウント
+        self._page_structure_errors = 0  # ページ構造エラーカウント  # ページ構造エラーカウント
+
+    def _check_task_status_from_db(self) -> dict:
+        """データベースからタスクの状態を確認（セッション再利用・軽量クエリ）"""
+        if not self.task_id:
+            return {"is_paused": False, "is_cancelled": False}
+        
+        try:
+            from ..models_scraping_task import ScrapingTask
+            
+            # 既存のセッションを再利用し、必要なカラムのみ取得（軽量クエリ）
+            result = self.session.query(
+                ScrapingTask.is_paused,
+                ScrapingTask.is_cancelled,
+                ScrapingTask.status
+            ).filter(
+                ScrapingTask.task_id == self.task_id
+            ).first()
+            
+            if not result:
+                # タスクが存在しない場合
+                return {"is_paused": False, "is_cancelled": False}
+            
+            # statusがcancelledの場合もキャンセル扱い
+            is_cancelled = result.is_cancelled or result.status == 'cancelled'
+            
+            return {
+                "is_paused": result.is_paused,
+                "is_cancelled": is_cancelled
+            }
+                
+        except Exception as e:
+            self.logger.error(f"データベースからタスク状態を取得中にエラー: {e}")
+            # エラー時は安全のため停止しない
+            return {"is_paused": False, "is_cancelled": False}
     
     def _setup_logger(self) -> logging.Logger:
         """ロガーのセットアップ"""
@@ -379,7 +416,7 @@ class BaseScraper(ABC):
         self.current_area_code = area_code  # 現在スクレイピング中のエリアを記録
         
         # デバッグ：フラグの状態を確認
-        self._debug_pause_flag_state()
+
         
         total_properties = 0
         detail_fetched = 0
@@ -977,17 +1014,7 @@ class BaseScraper(ABC):
         
         return result
     
-    def _debug_pause_flag_state(self):
-        """一時停止フラグの状態をデバッグ出力"""
-        if hasattr(self, 'pause_flag'):
-            self.logger.info(f"[DEBUG] scrape_area開始時 - pause_flag exists: {self.pause_flag is not None}")
-            debug_log(f"[{self.source_site}] scrape_area開始 - pause_flag exists: {self.pause_flag is not None}")
-            if self.pause_flag:
-                self.logger.info(f"[DEBUG] pause_flag ID: {id(self.pause_flag)}, is_set: {self.pause_flag.is_set()}")
-                debug_log(f"[{self.source_site}] pause_flag ID: {id(self.pause_flag)}, is_set: {self.pause_flag.is_set()}")
-        else:
-            self.logger.info("[DEBUG] pause_flag attribute not found!")
-            debug_log(f"[{self.source_site}] pause_flag attribute not found!")
+
     
     def _check_resume_state(self) -> Tuple[List[Dict[str, Any]], int, bool]:
         """再開時の状態をチェックし、適切な状態を返す"""
@@ -1034,40 +1061,45 @@ class BaseScraper(ABC):
         }
     
     def _handle_pause_if_needed(self, all_properties: List[Dict[str, Any]], page: int, phase_name: str):
-        """一時停止フラグをチェックし、必要に応じて待機"""
-        if hasattr(self, 'pause_flag'):
-            self.logger.info(f"[DEBUG] pause_flag exists: {self.pause_flag is not None}, ID: {id(self.pause_flag) if self.pause_flag else 'None'}")
-            debug_log(f"[{self.source_site}] pause_flag exists: {self.pause_flag is not None}")
-            if self.pause_flag:
-                self.logger.info(f"[DEBUG] pause_flag is_set: {self.pause_flag.is_set()}")
-                debug_log(f"[{self.source_site}] pause_flag is_set: {self.pause_flag.is_set()}")
+        """一時停止フラグをチェックし、必要に応じて待機（データベースベース）"""
+        task_status = self._check_task_status_from_db()
         
-        if hasattr(self, 'pause_flag') and self.pause_flag and self.pause_flag.is_set():
+        if task_status["is_cancelled"]:
+            raise TaskCancelledException("Task cancelled")
+        
+        if task_status["is_paused"]:
             self.logger.info(f"タスクが一時停止されました（{phase_name}）")
             # 現在の状態を保存
             self._collected_properties = all_properties
             self._current_page = page
             
             # 一時停止フラグがクリアされるまで待機
-            self.logger.info(f"一時停止フラグがクリアされるまで待機中（{phase_name}）... フラグID: {id(self.pause_flag)}")
-            debug_log(f"[{self.source_site}] 一時停止フラグがクリアされるまで待機中（{phase_name}）... フラグID: {id(self.pause_flag)}")
+            self.logger.info(f"一時停止フラグがクリアされるまで待機中（{phase_name}）...")
+            debug_log(f"[{self.source_site}] 一時停止フラグがクリアされるまで待機中（{phase_name}）...")
             
             wait_count = 0
-            initial_flag_state = self.pause_flag.is_set()
-            self.logger.info(f"[DEBUG] Initial pause flag state: {initial_flag_state}")
-            debug_log(f"[{self.source_site}] Initial pause flag state: {initial_flag_state}")
-            
             # タイムアウト設定
             pause_timeout = PAUSE_TIMEOUT_SECONDS
-            while self.pause_flag.is_set():
-                # キャンセルチェック
-                if self._is_cancelled():
-                    raise TaskCancelledException("Task cancelled during pause")
+            
+            while True:
                 time_module.sleep(self.PAUSE_CHECK_INTERVAL)
                 wait_count += 1
+                
+                # 定期的にデータベースの状態を確認
+                task_status = self._check_task_status_from_db()
+                
+                # キャンセルチェック
+                if task_status["is_cancelled"]:
+                    raise TaskCancelledException("Task cancelled during pause")
+                
+                if not task_status["is_paused"]:
+                    break
+                
+                # ログ出力は5秒ごと
                 if wait_count % self.PAUSE_LOG_INTERVAL == 0:  # 5秒ごとにログ出力
-                    self.logger.info(f"{phase_name}待機中... {wait_count/10}秒経過。フラグ状態: {self.pause_flag.is_set()}")
-                    debug_log(f"[{self.source_site}] {phase_name}待機中... {wait_count/10}秒経過。フラグ状態: {self.pause_flag.is_set()}")
+                    self.logger.info(f"{phase_name}待機中... {wait_count/10}秒経過")
+                    debug_log(f"[{self.source_site}] {phase_name}待機中... {wait_count/10}秒経過")
+                
                 # タイムアウトチェック
                 if wait_count >= pause_timeout * 10:  # wait_countは0.1秒単位
                     self.logger.warning(f"一時停止タイムアウト: {pause_timeout}秒（{pause_timeout/60:.0f}分）を超えたため処理を中断")
@@ -1147,28 +1179,44 @@ class BaseScraper(ABC):
         return False
     
     def _handle_processing_pause_if_needed(self, all_properties: List[Dict[str, Any]], index: int):
-        """処理フェーズ中の一時停止チェック"""
-        if hasattr(self, 'pause_flag') and self.pause_flag and self.pause_flag.is_set():
+        """処理フェーズ中の一時停止チェック（データベースベース）"""
+        task_status = self._check_task_status_from_db()
+        
+        if task_status["is_cancelled"]:
+            raise TaskCancelledException("Task cancelled")
+        
+        if task_status["is_paused"]:
             self.logger.info(f"[{self.source_site}] タスクが一時停止されました（処理フェーズ）")
             # 現在の処理状態を保存
             self._processed_count = index
             self._collected_properties = all_properties  # 収集済み物件も保存
             
             # 一時停止フラグがクリアされるまで待機
-            self.logger.info(f"一時停止フラグがクリアされるまで待機中（処理フェーズ）... フラグID: {id(self.pause_flag)}")
-            debug_log(f"[{self.source_site}] 処理フェーズで一時停止検出。待機開始... フラグID: {id(self.pause_flag)}, is_set: {self.pause_flag.is_set()}")
+            self.logger.info(f"一時停止フラグがクリアされるまで待機中（処理フェーズ）...")
+            debug_log(f"[{self.source_site}] 処理フェーズで一時停止検出。待機開始...")
             
             wait_count = 0
             pause_timeout = 300  # 5分
-            while self.pause_flag.is_set():
-                # キャンセルチェック
-                if self._is_cancelled():
-                    raise TaskCancelledException("Task cancelled during pause")
+            
+            while True:
                 time_module.sleep(self.PAUSE_CHECK_INTERVAL)
                 wait_count += 1
+                
+                # 定期的にデータベースの状態を確認
+                task_status = self._check_task_status_from_db()
+                
+                # キャンセルチェック
+                if task_status["is_cancelled"]:
+                    raise TaskCancelledException("Task cancelled during pause")
+                
+                if not task_status["is_paused"]:
+                    break
+                
+                # ログ出力は5秒ごと
                 if wait_count % self.PAUSE_LOG_INTERVAL == 0:  # 5秒ごとにログ出力
-                    self.logger.info(f"処理フェーズ待機中... {wait_count/10}秒経過。フラグ状態: {self.pause_flag.is_set()}")
-                    debug_log(f"[{self.source_site}] 処理フェーズ待機中... {wait_count/10}秒経過。フラグ状態: {self.pause_flag.is_set()}")
+                    self.logger.info(f"処理フェーズ待機中... {wait_count/10}秒経過")
+                    debug_log(f"[{self.source_site}] 処理フェーズ待機中... {wait_count/10}秒経過")
+                
                 # タイムアウトチェック
                 if wait_count >= pause_timeout * 10:
                     self.logger.warning(f"一時停止タイムアウト: {pause_timeout}秒を超えたため処理を中断")
@@ -1180,10 +1228,12 @@ class BaseScraper(ABC):
     def set_progress_callback(self, callback):
         """進捗更新コールバックを設定"""
         self._progress_callback = callback
+        self.logger.info(f"進捗コールバックが設定されました (task_id={self.task_id})")
     
     def _update_progress(self):
         """進捗をコールバックに通知"""
         if hasattr(self, '_progress_callback') and self._progress_callback:
+            self.logger.info(f"進捗コールバックを呼び出します (task_id={self.task_id})")
             stats = {
                 'properties_found': self._scraping_stats.get('properties_found', 0),
                 'properties_processed': self._scraping_stats.get('properties_processed', 0),  # 処理予定数を追加
@@ -1205,10 +1255,17 @@ class BaseScraper(ABC):
                 self._progress_callback(stats)
             except Exception as e:
                 self.logger.warning(f"進捗コールバックエラー: {e}")
+        else:
+            self.logger.info(f"進捗コールバックが設定されていません (task_id={self.task_id}, has_callback={hasattr(self, '_progress_callback')}, callback_value={getattr(self, '_progress_callback', None)})")
     
     def _check_pause_flag(self):
-        """一時停止フラグをチェックし、必要に応じて待機（内部メソッド）"""
-        if hasattr(self, 'pause_flag') and self.pause_flag and self.pause_flag.is_set():
+        """一時停止フラグをチェックし、必要に応じて待機（データベースベース）"""
+        task_status = self._check_task_status_from_db()
+        
+        if task_status["is_cancelled"]:
+            raise TaskCancelledException("Task cancelled")
+        
+        if task_status["is_paused"]:
             self.logger.info(f"[{self.source_site}] タスクが一時停止されました（詳細処理中）")
             debug_log(f"[{self.source_site}] 詳細処理中に一時停止検出。待機開始...")
             
@@ -1216,14 +1273,25 @@ class BaseScraper(ABC):
             wait_count = 0
             # タイムアウト設定（300秒 = 5分）
             pause_timeout = 300
-            while self.pause_flag.is_set():
-                if hasattr(self, 'cancel_flag') and self.cancel_flag and self.cancel_flag.is_set():
-                    raise TaskCancelledException("Task cancelled during pause")
+            
+            while True:
                 time_module.sleep(0.1)
                 wait_count += 1
+                
+                # 定期的にデータベースの状態を確認
+                task_status = self._check_task_status_from_db()
+                
+                if task_status["is_cancelled"]:
+                    raise TaskCancelledException("Task cancelled during pause")
+                
+                if not task_status["is_paused"]:
+                    break
+                
+                # ログ出力は5秒ごと
                 if wait_count % 50 == 0:  # 5秒ごとにログ出力
                     self.logger.info(f"詳細処理待機中... {wait_count/10}秒経過")
                     debug_log(f"[{self.source_site}] 詳細処理待機中... {wait_count/10}秒経過")
+                
                 # タイムアウトチェック
                 if wait_count >= pause_timeout * 10:
                     self.logger.warning(f"一時停止タイムアウト: {pause_timeout}秒を超えたため処理を中断")
@@ -3984,57 +4052,35 @@ class BaseScraper(ABC):
     
     
     def _is_paused(self) -> bool:
-        """一時停止状態かどうかを確認（ファイルベースとメモリベース両方）"""
-        # メモリベースのフラグチェック
-        if hasattr(self, 'pause_flag') and self.pause_flag and self.pause_flag.is_set():
-            return True
-        
-        # ファイルベースのフラグチェック
-        if hasattr(self, '_task_id') and self._task_id:
-            pause_flags_dir = '/app/data/pause_flags'
-            # タスク全体の一時停止ファイル
-            task_pause_file = os.path.join(pause_flags_dir, f"{self._task_id}.pause")
-            # スクレイパー個別の一時停止ファイル
-            scraper_key = self.source_site.value.lower().replace(' ', '_').replace("'s", '')
-            scraper_pause_file = os.path.join(pause_flags_dir, f"{self._task_id}_{scraper_key}.pause")
-            
-            if os.path.exists(task_pause_file) or os.path.exists(scraper_pause_file):
-                return True
-        
-        return False
+        """一時停止状態かどうかを確認（データベースベース）"""
+        task_status = self._check_task_status_from_db()
+        return task_status["is_paused"]
     
     def _is_cancelled(self) -> bool:
-        """キャンセル状態かどうかを確認（メモリベースとデータベース両方）"""
-        # メモリベースのフラグチェック
-        if hasattr(self, 'cancel_flag') and self.cancel_flag and self.cancel_flag.is_set():
-            return True
-        
-        # データベースベースのチェック（タスクIDがある場合）
-        if hasattr(self, '_task_id') and self._task_id:
+        """キャンセル状態かどうかを確認（データベースベース）"""
+        # データベースベースのチェック
+        if self.task_id:
             try:
                 from ..models_scraping_task import ScrapingTask
                 task = self.session.query(ScrapingTask).filter(
-                    ScrapingTask.task_id == self._task_id
+                    ScrapingTask.task_id == self.task_id
                 ).first()
                 
                 # タスクが存在しない場合は即座に停止
                 if not task:
-                    self.logger.error(f"タスク {self._task_id} がデータベースに存在しません。スクレイピングを停止します。")
+                    self.logger.error(f"タスク {self.task_id} がデータベースに存在しません。スクレイピングを停止します。")
                     return True
                 
                 # タスクの状態をチェック
-                if task.status == 'cancelled':
-                    self.logger.warning(f"タスク {self._task_id} がキャンセルされました。スクレイピングを停止します。")
+                if task.status == 'cancelled' or task.is_cancelled:
+                    self.logger.warning(f"タスク {self.task_id} がキャンセルされました。スクレイピングを停止します。")
                     return True
-                elif task.status == 'paused':
-                    # 一時停止状態の場合は停止しない（一時停止処理は別途実行される）
-                    return False
                 elif task.status in ['completed', 'error']:
-                    self.logger.warning(f"タスク {self._task_id} の状態が '{task.status}' です。スクレイピングを停止します。")
+                    self.logger.warning(f"タスク {self.task_id} の状態が '{task.status}' です。スクレイピングを停止します。")
                     return True
-                elif task.status != 'running':
+                elif task.status not in ['running', 'paused']:
                     # その他の未知の状態
-                    self.logger.warning(f"タスク {self._task_id} の状態が不正です: '{task.status}'。スクレイピングを停止します。")
+                    self.logger.warning(f"タスク {self.task_id} の状態が不正です: '{task.status}'。スクレイピングを停止します。")
                     return True
                     
             except Exception as e:

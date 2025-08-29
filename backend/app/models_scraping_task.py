@@ -35,9 +35,7 @@ class ScrapingTask(Base):
     
     # 詳細な進捗情報（JSON形式）
     progress_detail = Column(JSON, nullable=True)  # 各スクレイパー・エリアごとの進捗
-    error_logs = Column(JSON, nullable=True)  # エラーログ
-    warning_logs = Column(JSON, nullable=True)  # 警告ログ（重複物件など）
-    logs = Column(JSON, nullable=True)  # 物件処理ログ（新規登録・更新など）
+    # ログはScrapingTaskLogテーブルで管理するため、ここでは削除
     
     # 追加の統計情報
     properties_found = Column(Integer, nullable=False, default=0)
@@ -70,9 +68,6 @@ class ScrapingTask(Base):
             'total_errors': self.total_errors,
             'elapsed_time': self.elapsed_time,
             'progress_detail': self.progress_detail,
-            'error_logs': self.error_logs,
-            'warning_logs': self.warning_logs,
-            'logs': self.logs,
             'properties_found': self.properties_found,
             'detail_fetched': self.detail_fetched,
             'detail_skipped': self.detail_skipped,
@@ -147,3 +142,17 @@ class ScrapingTaskProgress(Base):
             'price_missing': self.price_missing,
             'building_info_missing': self.building_info_missing
         }
+
+
+class ScrapingTaskLog(Base):
+    """スクレイピングタスクのログを管理するテーブル"""
+    __tablename__ = "scraping_task_logs"
+    
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(50), nullable=False, index=True)
+    log_type = Column(String(20), nullable=False)  # property_update, error, warning
+    timestamp = Column(DateTime, nullable=False, default=datetime.now)
+    message = Column(Text, nullable=True)
+    details = Column(JSON, nullable=True)  # 詳細情報（辞書形式）
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+

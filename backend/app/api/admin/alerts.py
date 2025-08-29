@@ -58,36 +58,51 @@ async def get_scraper_alerts(
         offset: オフセット
     """
     
-    # 注: 現在はダミーデータを返す
-    # 実際の実装では、scraper_alertsテーブルまたは
-    # ScrapingTaskテーブルからアラート情報を取得する
+    # 実際のscrapingタスクから失敗したタスクを取得
+    from ...models_scraping_task import ScrapingTask
     
-    alerts = []
+    # 失敗したタスクを検索
+    query = db.query(ScrapingTask).filter(ScrapingTask.status == "failed")
     
-    # ダミーアラートを返す（テスト用）
-    dummy_alert_id = 1
-    is_resolved = dummy_alert_id in _resolved_alerts
+    # スクレイパー名でフィルタ
+    if scraper_name:
+        # ScrapingTaskのscrapersフィールドはJSON配列なので、特殊な処理が必要
+        from sqlalchemy import func
+        query = query.filter(
+            func.json_array_length(ScrapingTask.scrapers) > 0
+        )
     
     # 解決済みフィルタの処理
-    if resolved is not None:
-        # resolved=Trueの場合は解決済みのみ、resolved=Falseの場合は未解決のみ
-        if resolved != is_resolved:
-            return alerts
+    # ScrapingTaskには解決済みフラグがないので、failedステータスのタスクを未解決として扱う
+    if resolved == True:
+        # 解決済みのアラートはない
+        return []
     
-    alerts.append(ScraperAlert(
-        id=dummy_alert_id,
-        scraper_name=scraper_name or "suumo",
-        alert_type="task_failed",
-        message="スクレイピングタスクが失敗しました",
-        details={
-            "task_id": "dummy-task-1",
-            "status": "failed",
-            "error_message": "Connection timeout"
-        },
-        created_at=datetime.now() - timedelta(minutes=30),  # 30分前に発生したことにする
-        resolved_at=datetime.now() if is_resolved else None,
-        resolved_by="admin" if is_resolved else None
-    ))
+    # limitとoffsetを適用
+    failed_tasks = query.order_by(ScrapingTask.created_at.desc()).offset(offset).limit(limit).all()
+    
+    alerts = []
+    for task in failed_tasks:
+        # ScrapingTaskからScraperAlertに変換
+        scrapers_list = task.scrapers if isinstance(task.scrapers, list) else []
+        scraper_name_str = scrapers_list[0] if scrapers_list else "unknown"
+        
+        alerts.append(ScraperAlert(
+            id=hash(task.task_id) % 1000000,  # task_idからIDを生成
+            scraper_name=scraper_name_str,
+            alert_type="task_failed",
+            message="スクレイピングタスクが失敗しました",
+            details={
+                "task_id": task.task_id,
+                "status": task.status,
+                "scrapers": scrapers_list,
+                "created_at": task.created_at.isoformat() if task.created_at else None,
+                "total_errors": task.total_errors
+            },
+            created_at=task.created_at,
+            resolved_at=None,  # ScrapingTaskには解決済みフラグがない
+            resolved_by=None
+        ))
     
     return alerts
 

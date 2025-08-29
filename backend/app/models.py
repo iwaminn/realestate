@@ -482,4 +482,4 @@ class PriceMismatchHistory(Base):
 
 # 他のモデルをインポート（循環参照を避けるため最後にインポート）
 from .models_property_matching import AmbiguousPropertyMatch
-from .models_scraping_task import ScrapingTask, ScrapingTaskProgress
+# from .models_scraping_task import ScrapingTask, ScrapingTaskProgress  # 循環インポート回避のためコメントアウト

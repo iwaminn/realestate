@@ -34,11 +34,11 @@ class LivableScraper(BaseScraper):
     # デバッグ対象の物件ID
     DEBUG_PROPERTY_IDS = ['C13252J13', 'C13249B30']
     
-    def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False):
-        super().__init__(SourceSite.LIVABLE, force_detail_fetch, max_properties, ignore_error_history)
+    def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False, task_id=None):
+        super().__init__(SourceSite.LIVABLE, force_detail_fetch, max_properties, ignore_error_history, task_id)
         # 東急リバブルも一覧ページと詳細ページで建物名の表記が異なることがあるため、部分一致を許可
         self.allow_partial_building_name_match = True
-        self.building_name_match_threshold = 0.6  # 東急リバブルは詳細ページの建物名が長い傾向があるため閾値を下げる
+        self.building_name_match_threshold = 0.6  # 東急リバブルは詳細ページの建物名が長い傾向があるため閾値を下げる  # 東急リバブルは詳細ページの建物名が長い傾向があるため閾値を下げる
     
     def get_optional_required_fields(self) -> List[str]:
         """Livableではlayoutは必須ではない（稀に取得できないため）

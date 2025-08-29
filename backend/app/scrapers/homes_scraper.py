@@ -27,8 +27,8 @@ class HomesScraper(BaseScraper):
     BASE_URL = "https://www.homes.co.jp"
     SOURCE_SITE = SourceSite.HOMES
     
-    def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False):
-        super().__init__(self.SOURCE_SITE, force_detail_fetch, max_properties, ignore_error_history)
+    def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False, task_id=None):
+        super().__init__(self.SOURCE_SITE, force_detail_fetch, max_properties, ignore_error_history, task_id)
         # HOMESは一覧ページと詳細ページで建物名の表記が異なることがあるため、部分一致を許可
         self.allow_partial_building_name_match = True
         # MULTI_SOURCEモードを使用（詳細ページの複数箇所から建物名を取得して検証）
