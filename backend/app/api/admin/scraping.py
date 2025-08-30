@@ -157,6 +157,39 @@ def update_task_progress_in_db(task_id: str, progress_key: str, progress_data: d
     finally:
         db.close()
 
+def format_error_message(exception: Exception) -> tuple[str, str]:
+    """例外メッセージを分かりやすい形式に変換
+    
+    Args:
+        exception: 発生した例外
+    
+    Returns:
+        tuple[str, str]: (分かりやすいエラー理由, 詳細メッセージ)
+    """
+    error_detail = str(exception)
+    
+    # よくあるエラーを分かりやすいメッセージに変換
+    if "SessionLocal" in error_detail and "referenced before assignment" in error_detail:
+        friendly_reason = "データベース接続の初期化エラー"
+        formatted_detail = f"{friendly_reason}: モジュールのインポートまたは初期化に失敗しました"
+    elif "No module named" in error_detail:
+        friendly_reason = "モジュールインポートエラー"
+        formatted_detail = f"{friendly_reason}: {error_detail}"
+    elif "Connection refused" in error_detail:
+        friendly_reason = "接続エラー"
+        formatted_detail = f"{friendly_reason}: サイトへの接続が拒否されました"
+    elif "timeout" in error_detail.lower():
+        friendly_reason = "タイムアウトエラー"
+        formatted_detail = f"{friendly_reason}: 処理が時間内に完了しませんでした"
+    elif "permission denied" in error_detail.lower():
+        friendly_reason = "権限エラー"
+        formatted_detail = f"{friendly_reason}: 必要な権限がありません"
+    else:
+        friendly_reason = "実行エラー"
+        formatted_detail = error_detail
+    
+    return friendly_reason, formatted_detail
+
 def save_log_to_db(task_id: str, log_type: str, log_entry: dict):
     """データベースにログを保存"""
     db = SessionLocal()
@@ -184,8 +217,8 @@ def get_task_from_db(task_id: str):
 
 def check_task_status_from_db(task_id: str) -> dict:
     """データベースからタスクの状態を確認"""
-    from backend.app.database import SessionLocal
-    from backend.app.models_scraping_task import ScrapingTask
+    from ...database import SessionLocal
+    from ...models_scraping_task import ScrapingTask
     
     db = SessionLocal()
     try:
@@ -223,8 +256,8 @@ def check_pause_timeout(task_id: str) -> bool:
         print(f"[{task_id}] Pause timeout ({elapsed:.0f}s > {PAUSE_TIMEOUT_SECONDS}s), cancelling task")
         
         # データベースでタスクをキャンセル
-        from backend.app.database import SessionLocal
-        from backend.app.models_scraping_task import ScrapingTask
+        from ...database import SessionLocal
+        from ...models_scraping_task import ScrapingTask
         
         db = SessionLocal()
         try:
@@ -311,8 +344,8 @@ def setup_logging_handlers(scraper, task_id: str, scraper_name: str, area_name: 
             price = args[3] if len(args) > 3 else kwargs.get('price')
             
             # 既存の掲載情報があるか確認（サイトIDから直接検索）
-            from backend.app.database import SessionLocal
-            from backend.app.models import PropertyListing
+            from ...database import SessionLocal
+            from ...models import PropertyListing
             
             # URLからサイト固有のIDを抽出
             import re
@@ -471,15 +504,38 @@ def setup_logging_handlers(scraper, task_id: str, scraper_name: str, area_name: 
     # エラーログ記録用のメソッドを追加（常にオーバーライド）
     if True:  # 常にオーバーライド
         def save_error_log(error_info):
+            # エラーメッセージの詳細を構築
+            reason = error_info.get('reason', '不明なエラー')
+            url = error_info.get('url', '')
+            building_name = error_info.get('building_name', '')
+            price = error_info.get('price', '')
+            
+            # わかりやすいメッセージを作成
+            message_parts = []
+            if reason:
+                message_parts.append(reason)
+            if url:
+                message_parts.append(f"URL: {url}")
+            if building_name:
+                message_parts.append(f"建物: {building_name}")
+            if price:
+                message_parts.append(f"価格: {price}")
+            
+            display_message = " - ".join(message_parts) if message_parts else "エラーが発生しました"
+            
             error_log = {
                 "timestamp": error_info.get('timestamp', datetime.now().isoformat()),
                 "scraper": scraper_name,
                 "area": area_name,
-                "url": error_info.get('url', ''),
-                "building_name": error_info.get('building_name', ''),
-                "price": error_info.get('price', ''),
-                "reason": error_info.get('reason', ''),
-                "message": f"保存失敗: {error_info.get('reason', '不明')} - URL: {error_info.get('url', '不明')}"
+                "url": url,
+                "building_name": building_name,
+                "price": price,
+                "reason": reason,
+                "message": display_message,
+                # 追加の詳細情報
+                "site_property_id": error_info.get('site_property_id', ''),
+                "error_type": error_info.get('error_type', ''),
+                "error_detail": error_info.get('error_detail', '')
             }
             
             # データベースにエラーログを保存
@@ -721,8 +777,8 @@ def run_single_scraper_for_areas(
                     
                     # セッションがクローズされている場合は新しいセッションを作成
                     if hasattr(scraper, 'session'):
-                        from backend.app.database import SessionLocal
-                        scraper.session = SessionLocal()
+                        from ...database import SessionLocal as LocalSessionLocal
+                        scraper.session = LocalSessionLocal()
                     if hasattr(scraper, 'http_session') and scraper.http_session is None:
                         import requests
                         scraper.http_session = requests.Session()
@@ -872,13 +928,19 @@ def run_single_scraper_for_areas(
         except TaskPausedException:
             raise
         except Exception as e:
-            error_msg = f"{scraper_name} - {area_code}: {str(e)}"
+            # エラーメッセージをより分かりやすく整形
+            friendly_reason, formatted_detail = format_error_message(e)
+            error_msg = f"{scraper_name} - {area_code}: {formatted_detail}"
+            
             # エラーログをデータベースに保存
             save_log_to_db(task_id, 'error', {
                 "message": error_msg,
                 "scraper": scraper_name,
                 "area_code": area_code,
-                "timestamp": datetime.now().isoformat()
+                "area": area_name,
+                "reason": friendly_reason,
+                "timestamp": datetime.now().isoformat(),
+                "error_detail": str(e)  # 元のエラーメッセージも保存
             })
             # 進捗をエラー状態に更新
             progress_data.update({
@@ -914,8 +976,8 @@ def execute_scraping_strategy(
     # タスクステータスを更新（データベースのみ更新すればよい）
     
     # データベースのタスクステータスも更新
-    from backend.app.database import SessionLocal
-    from backend.app.models_scraping_task import ScrapingTask
+    from ...database import SessionLocal
+    from ...models_scraping_task import ScrapingTask
     
     db = SessionLocal()
     try:
@@ -999,11 +1061,16 @@ def execute_scraping_strategy(
                         raise
                     except Exception as e:
                         print(f"[{task_id}] Scraper {scraper_name} failed: {e}")
+                        # エラーメッセージをより分かりやすく整形
+                        friendly_reason, formatted_detail = format_error_message(e)
+                        
                         # エラーログをデータベースに保存
                         save_log_to_db(task_id, 'error', {
-                            "message": f"{scraper_name}: {str(e)}",
+                            "message": f"{scraper_name}: {formatted_detail}",
                             "scraper": scraper_name,
-                            "timestamp": datetime.now().isoformat()
+                            "reason": friendly_reason,
+                            "timestamp": datetime.now().isoformat(),
+                            "error_detail": str(e)
                         })
                         
                         # 並列実行時のエラー時も進捗ステータスを更新
@@ -1039,11 +1106,11 @@ def execute_scraping_strategy(
             if backend_path not in sys.path:
                 sys.path.insert(0, backend_path)
             
-            from backend.app.scrapers.suumo_scraper import SuumoScraper
-            from backend.app.scrapers.homes_scraper import HomesScraper
-            from backend.app.scrapers.rehouse_scraper import RehouseScraper
-            from backend.app.scrapers.nomu_scraper import NomuScraper
-            from backend.app.scrapers.livable_scraper import LivableScraper
+            from ...scrapers.suumo_scraper import SuumoScraper
+            from ...scrapers.homes_scraper import HomesScraper
+            from ...scrapers.rehouse_scraper import RehouseScraper
+            from ...scrapers.nomu_scraper import NomuScraper
+            from ...scrapers.livable_scraper import LivableScraper
             
             scraper_index = 0
             
@@ -1135,8 +1202,8 @@ def execute_scraping_strategy(
                             
                             # セッションがクローズされている場合は新しいセッションを作成
                             if hasattr(scraper, 'session'):
-                                from backend.app.database import SessionLocal
-                                scraper.session = SessionLocal()
+                                from ...database import SessionLocal as DBSessionLocal
+                                scraper.session = DBSessionLocal()
                             if hasattr(scraper, 'http_session') and scraper.http_session is None:
                                 import requests
                                 scraper.http_session = requests.Session()
@@ -1260,12 +1327,18 @@ def execute_scraping_strategy(
                 except Exception as e:
                     # エラーを記録
                     error_msg = f"{scraper_name} - {area_code}: {str(e)}"
+                    # エラーメッセージをより分かりやすく整形
+                    friendly_reason, formatted_detail = format_error_message(e)
+                    
                     # エラーログをデータベースに保存
                     save_log_to_db(task_id, 'error', {
                         "message": error_msg,
                         "scraper": scraper_name,
                         "area_code": area_code,
-                        "timestamp": datetime.now().isoformat()
+                        "area": area_name,
+                        "reason": friendly_reason,
+                        "timestamp": datetime.now().isoformat(),
+                        "error_detail": str(e)
                     })
                     # 進捗をエラー状態に更新
                     progress_data.update({
@@ -1336,10 +1409,19 @@ def execute_scraping_strategy(
                 db.commit()
         finally:
             db.close()
+        # エラーメッセージをより分かりやすく整形
+        friendly_reason, formatted_detail = format_error_message(e)
+        
+        # 予期しないエラーの場合は理由を調整
+        if friendly_reason == "実行エラー":
+            friendly_reason = "予期しないエラー"
+        
         # エラーログを保存
         save_log_to_db(task_id, 'error', {
-            "message": f"Unexpected error: {str(e)}",
-            "timestamp": datetime.now().isoformat()
+            "message": f"Unexpected error: {formatted_detail}",
+            "reason": friendly_reason,
+            "timestamp": datetime.now().isoformat(),
+            "error_detail": str(e)
         })
         print(f"[{task_id}] Unexpected Error: {e}")
         return

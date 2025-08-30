@@ -736,15 +736,14 @@ async def get_duplicate_buildings(
     def split_component_by_exclusions(component, excluded_pairs):
         """除外設定に基づいてコンポーネントを分割
         
-        除外ペアがある場合、そのペアを含まないサブグループに分割する。
-        例: [A, B, C, D]で(A, B)が除外ペアの場合、
-        可能な組み合わせを作る（Aを含むグループとBを含むグループは別になる）
+        除外ペアがある場合、類似度の高い組み合わせを優先してサブグループを作成する。
+        例: [A, B, C]で(A, B)が除外ペアだが、AとCの類似度が高い場合、
+        [A, C]のグループを優先的に作成する。
         """
         # コンポーネント内で除外されているペアがあるかチェック
         building_ids = list(component)
         has_exclusion = False
         
-
         # コンポーネント内の除外ペアを収集
         component_exclusions = []
         for i in range(len(building_ids)):
@@ -757,57 +756,101 @@ async def get_duplicate_buildings(
         if not has_exclusion:
             return [component]
         
-        # 除外ペアがある場合、それぞれを別のグループに分ける
-        # 簡単な実装：最初の除外ペアで2つのグループに分ける
-        if component_exclusions:
-            excluded_pair = component_exclusions[0]
-            bid1, bid2 = excluded_pair
+        # 除外ペアがある場合、類似度を考慮してグループを作成
+        # 各建物から最も類似度の高い候補を選んでグループを作る
+        used_buildings = set()
+        subgroups = []
+        
+        # 類似度の高い順に建物ペアをソート
+        building_pairs_with_similarity = []
+        for i in range(len(building_ids)):
+            for j in range(i + 1, len(building_ids)):
+                bid1, bid2 = building_ids[i], building_ids[j]
+                # 除外ペアは除く
+                if (bid1, bid2) not in excluded_pairs and (bid2, bid1) not in excluded_pairs:
+                    # 類似度を取得
+                    sim = similarity_graph.get(bid1, {}).get(bid2, 0)
+                    if sim > 0:  # 類似度がある場合のみ
+                        building_pairs_with_similarity.append((sim, bid1, bid2))
+        
+        # 類似度の高い順にソート
+        building_pairs_with_similarity.sort(reverse=True)
+        
+        # 類似度の高いペアから順にグループを作成
+        for sim, bid1, bid2 in building_pairs_with_similarity:
+            if bid1 in used_buildings or bid2 in used_buildings:
+                continue  # すでに使用済みの建物はスキップ
             
-            # bid1を含むグループとbid2を含むグループを作成
-            group1 = {bid1}
-            group2 = {bid2}
+            # 新しいグループを作成
+            new_group = {bid1, bid2}
             
-            # 残りの建物を適切なグループに割り当て
+            # このグループに追加できる建物を探す
             for bid in building_ids:
-                if bid == bid1 or bid == bid2:
+                if bid in new_group or bid in used_buildings:
                     continue
                 
-                # bid1と除外関係にない かつ similarity_graphで接続されている場合はgroup1へ
-                can_join_group1 = (bid, bid1) not in excluded_pairs and (bid1, bid) not in excluded_pairs
-                connected_to_group1 = bid in similarity_graph.get(bid1, {}) or bid1 in similarity_graph.get(bid, {})
+                # 新グループのすべてのメンバーと除外関係にないかチェック
+                can_add = True
+                for member in new_group:
+                    if (bid, member) in excluded_pairs or (member, bid) in excluded_pairs:
+                        can_add = False
+                        break
                 
-                # bid2と除外関係にない かつ similarity_graphで接続されている場合はgroup2へ
-                can_join_group2 = (bid, bid2) not in excluded_pairs and (bid2, bid) not in excluded_pairs
-                connected_to_group2 = bid in similarity_graph.get(bid2, {}) or bid2 in similarity_graph.get(bid, {})
-                
-
-                # 両方のグループに参加可能な場合は、より接続が強い方へ
-                if can_join_group1 and connected_to_group1 and can_join_group2 and connected_to_group2:
-                    # 両方に接続されている場合は、グループ1を優先
-                    group1.add(bid)
-                elif can_join_group1 and connected_to_group1:
-                    group1.add(bid)
-                elif can_join_group2 and connected_to_group2:
-                    group2.add(bid)
-                # どちらにも接続されていない場合は、除外関係がない方へ
-                elif can_join_group1:
-                    group1.add(bid)
-                elif can_join_group2:
-                    group2.add(bid)
+                # 追加可能で、かつ類似度がある場合は追加
+                if can_add:
+                    # グループ内の少なくとも1つの建物と類似度がある場合のみ追加
+                    has_similarity = False
+                    for member in new_group:
+                        if bid in similarity_graph.get(member, {}) or member in similarity_graph.get(bid, {}):
+                            has_similarity = True
+                            break
+                    
+                    if has_similarity:
+                        new_group.add(bid)
             
-            # 結果を作成
-            result = []
-            if len(group1) > 1:
-                result.append(group1)
-            if len(group2) > 1:
-                result.append(group2)
-            
-
-
-            
-            return result if result else []
+            # グループが2つ以上の建物を含む場合のみ追加
+            if len(new_group) > 1:
+                subgroups.append(new_group)
+                used_buildings.update(new_group)
         
-        return [component]
+        # まだグループに入っていない建物を処理
+        remaining_buildings = set(building_ids) - used_buildings
+        if remaining_buildings:
+            # 残りの建物で可能なグループを作成
+            for bid in remaining_buildings:
+                if bid in used_buildings:
+                    continue
+                
+                # この建物と組める建物を探す
+                group = {bid}
+                for other_bid in remaining_buildings:
+                    if other_bid == bid or other_bid in used_buildings:
+                        continue
+                    
+                    # 除外関係をチェック
+                    can_add = True
+                    for member in group:
+                        if (other_bid, member) in excluded_pairs or (member, other_bid) in excluded_pairs:
+                            can_add = False
+                            break
+                    
+                    if can_add:
+                        # 類似度があるかチェック
+                        has_similarity = False
+                        for member in group:
+                            if other_bid in similarity_graph.get(member, {}) or member in similarity_graph.get(other_bid, {}):
+                                has_similarity = True
+                                break
+                        
+                        if has_similarity:
+                            group.add(other_bid)
+                            used_buildings.add(other_bid)
+                
+                if len(group) > 1:
+                    subgroups.append(group)
+                    used_buildings.update(group)
+        
+        return subgroups if subgroups else []
     
     # 各連結成分を除外設定で分割してからグループを構築
     duplicate_groups = []
@@ -841,20 +884,48 @@ async def get_duplicate_buildings(
                     })
             
             if len(component_buildings) > 1:
-                # 物件数が最も多い建物をprimaryとする
-                component_buildings.sort(key=lambda x: x["property_count"], reverse=True)
-                primary = component_buildings[0]
+                # 類似度マトリックスを作成して最適なプライマリを選択
+                # 他のすべての建物との平均類似度が最も高い建物をプライマリとする
+                best_primary_id = None
+                best_avg_similarity = -1
+                
+                for building in component_buildings:
+                    total_sim = 0
+                    count = 0
+                    for other_building in component_buildings:
+                        if building["id"] != other_building["id"]:
+                            sim = similarity_graph.get(building["id"], {}).get(other_building["id"], 0)
+                            total_sim += sim
+                            count += 1
+                    
+                    if count > 0:
+                        avg_sim = total_sim / count
+                        # 平均類似度が同じ場合は物件数を考慮
+                        if avg_sim > best_avg_similarity or (avg_sim == best_avg_similarity and building["property_count"] > component_buildings[0]["property_count"]):
+                            best_avg_similarity = avg_sim
+                            best_primary_id = building["id"]
+                
+                # 最適なプライマリを設定（見つからない場合は物件数が最多のものを使用）
+                if best_primary_id:
+                    primary = next(b for b in component_buildings if b["id"] == best_primary_id)
+                    other_buildings = [b for b in component_buildings if b["id"] != best_primary_id]
+                else:
+                    # 物件数が最も多い建物をprimaryとする（フォールバック）
+                    component_buildings.sort(key=lambda x: x["property_count"], reverse=True)
+                    primary = component_buildings[0]
+                    other_buildings = component_buildings[1:]
+                
                 candidates = []
                 
-                # 他の建物をcandidatesとして追加（similarityも含める）
-                for building in component_buildings[1:]:
+                # 他の建物をcandidatesとして追加（類似度の高い順）
+                for building in other_buildings:
                     # グラフから類似度を取得
                     similarity = similarity_graph.get(primary["id"], {}).get(building["id"], 0)
                     building["similarity"] = round(similarity, 3)
                     building["is_excluded"] = False
                     candidates.append(building)
                 
-                # 類似度でソート
+                # 類似度でソート（高い順）
                 candidates.sort(key=lambda x: -x["similarity"])
                 
                 duplicate_groups.append({
