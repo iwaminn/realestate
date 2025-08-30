@@ -113,7 +113,10 @@ def update_task_progress_in_db(task_id: str, progress_key: str, progress_data: d
     from sqlalchemy.orm.attributes import flag_modified
     db = SessionLocal()
     try:
-        db_task = db.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
+        # 行レベルロックを取得（FOR UPDATE）
+        db_task = db.query(ScrapingTask).filter(
+            ScrapingTask.task_id == task_id
+        ).with_for_update().first()
         if db_task:
             if not db_task.progress_detail:
                 db_task.progress_detail = {}
@@ -533,71 +536,85 @@ def create_stats_update_thread(scraper, task_id: str, progress_key: str) -> Tupl
                 
                 # 統計が存在する場合のみ更新
                 if current_stats:
-                    # 現在の進捗を取得
-                    db_task = get_task_from_db(task_id)
-                    if db_task and db_task.progress_detail and progress_key in db_task.progress_detail:
-                        current_progress = db_task.progress_detail[progress_key].copy()
-                    else:
-                        current_progress = {}
-                    
-                    # 初期データが不完全な場合（scraper名やarea_nameがない場合）はスキップ
-                    if not current_progress.get('scraper') or not current_progress.get('area_name'):
-                        # 初期進捗データがまだ保存されていない場合はスキップ
-                        continue
-                    
-                    # 重要: statusフィールドは変更しない（completedまたはfailedの場合は更新しない）
-                    if current_progress.get('status') in ['completed', 'failed']:
-                        # 完了またはエラー状態の場合は更新をスキップ
-                        continue
-                    
-                    # scraper名とarea情報を抽出（progress_keyから）
-                    parts = progress_key.split('_')
-                    if len(parts) >= 2:
-                        scraper_name = parts[0]
-                        area_code = parts[-1]
-                        # エリア名を取得
-                        area_names = {code: name for name, code in AREA_CODES.items()}
-                        area_name = area_names.get(area_code, area_code)
-                    else:
-                        scraper_name = "unknown"
-                        area_code = "unknown"
-                        area_name = "unknown"
-                    
-                    # scraperとarea情報が既存データにない場合は追加
-                    if 'scraper' not in current_progress:
-                        current_progress['scraper'] = scraper_name
-                    if 'area_code' not in current_progress:
-                        current_progress['area_code'] = area_code
-                    if 'area_name' not in current_progress:
-                        current_progress['area_name'] = area_name
-                    
-                    # 重要: 最終更新済みの場合は統計更新をスキップ
-                    if current_progress.get('_is_final'):
-                        print(f"[{task_id}] Skipping stats update for {progress_key} - already finalized")
-                        continue
-                    
-                    # 統計情報を更新（statusフィールドは保持）
-                    # 重要: statusフィールドは更新データから除外
-                    update_data = {
-                        "properties_found": current_stats.get('properties_found', 0),
-                        "properties_processed": current_stats.get('properties_processed', 0),
-                        "properties_attempted": current_stats.get('properties_attempted', 0),
-                        "properties_scraped": current_stats.get('properties_processed', 0),
-                        "detail_fetched": current_stats.get('detail_fetched', 0),
-                        "new_listings": current_stats.get('new_listings', 0),
-                        "price_updated": current_stats.get('price_updated', 0),
-                        "other_updates": current_stats.get('other_updates', 0),
-                        "refetched_unchanged": current_stats.get('refetched_unchanged', 0),
-                        "skipped_listings": current_stats.get('detail_skipped', 0),
-                        "detail_fetch_failed": current_stats.get('detail_fetch_failed', 0),
-                        "save_failed": current_stats.get('save_failed', 0),
-                        "price_missing": current_stats.get('price_missing', 0),
-                        "building_info_missing": current_stats.get('building_info_missing', 0),
-                        "other_errors": current_stats.get('other_errors', 0)
-                    }
-                    
-                    # statusを除外した更新データのみを送信
-                    update_task_progress_in_db(task_id, progress_key, update_data)
+                    # 重要: データベースから最新状態を取得してチェック（ロック付き）
+                    # これにより、完了状態の確認と更新が原子的に実行される
+                    db = SessionLocal()
+                    try:
+                        # 行レベルロックを取得
+                        db_task = db.query(ScrapingTask).filter(
+                            ScrapingTask.task_id == task_id
+                        ).with_for_update().first()
+                        
+                        if not db_task or not db_task.progress_detail:
+                            continue
+                            
+                        current_progress = db_task.progress_detail.get(progress_key, {})
+                        
+                        # 初期データが不完全な場合（scraperやarea_nameがない場合）はスキップ
+                        if not current_progress.get('scraper') or not current_progress.get('area_name'):
+                            continue
+                        
+                        # 重要: 最終更新済みの場合は統計更新をスキップ
+                        if current_progress.get('_is_final'):
+                            print(f"[{task_id}] Skipping stats update for {progress_key} - already finalized")
+                            continue
+                        
+                        # 重要: statusフィールドは変更しない（completedまたはfailedの場合は更新しない）
+                        if current_progress.get('status') in ['completed', 'failed']:
+                            # 完了またはエラー状態の場合は更新をスキップ
+                            continue
+                        
+                        # scraperとarea情報を抽出（progress_keyから）
+                        parts = progress_key.split('_')
+                        if len(parts) >= 2:
+                            scraper_name = parts[0]
+                            area_code = parts[-1]
+                            # エリア名を取得
+                            area_names = {code: name for name, code in AREA_CODES.items()}
+                            area_name = area_names.get(area_code, area_code)
+                        else:
+                            scraper_name = "unknown"
+                            area_code = "unknown"
+                            area_name = "unknown"
+                        
+                        # scraperとarea情報が既存データにない場合は追加
+                        if 'scraper' not in current_progress:
+                            current_progress['scraper'] = scraper_name
+                        if 'area_code' not in current_progress:
+                            current_progress['area_code'] = area_code
+                        if 'area_name' not in current_progress:
+                            current_progress['area_name'] = area_name
+                        
+                        # 統計情報を更新（statusフィールドは保持）
+                        # 重要: statusフィールドは更新データから除外
+                        update_data = {
+                            "properties_found": current_stats.get('properties_found', 0),
+                            "properties_processed": current_stats.get('properties_processed', 0),
+                            "properties_attempted": current_stats.get('properties_attempted', 0),
+                            "properties_scraped": current_stats.get('properties_processed', 0),
+                            "detail_fetched": current_stats.get('detail_fetched', 0),
+                            "new_listings": current_stats.get('new_listings', 0),
+                            "price_updated": current_stats.get('price_updated', 0),
+                            "other_updates": current_stats.get('other_updates', 0),
+                            "refetched_unchanged": current_stats.get('refetched_unchanged', 0),
+                            "skipped_listings": current_stats.get('detail_skipped', 0),
+                            "detail_fetch_failed": current_stats.get('detail_fetch_failed', 0),
+                            "save_failed": current_stats.get('save_failed', 0),
+                            "price_missing": current_stats.get('price_missing', 0),
+                            "building_info_missing": current_stats.get('building_info_missing', 0),
+                            "other_errors": current_stats.get('other_errors', 0)
+                        }
+                        
+                        # 同じトランザクション内で更新
+                        from sqlalchemy.orm.attributes import flag_modified
+                        merged_data = {**current_progress, **update_data}
+                        db_task.progress_detail[progress_key] = merged_data
+                        flag_modified(db_task, 'progress_detail')
+                        db.commit()
+                        
+                    finally:
+                        db.close()
+                        
             except Exception as e:
                 print(f"[{task_id}] Error updating stats: {e}")
             
@@ -803,16 +820,27 @@ def run_single_scraper_for_areas(
             update_task_progress_in_db(task_id, progress_key, progress_data)
             
             # 重要: 最終ステータスが確実に保存されるよう、再度確認して必要なら再更新
-            db_task = get_task_from_db(task_id)
-            if db_task and db_task.progress_detail and progress_key in db_task.progress_detail:
-                if db_task.progress_detail[progress_key].get('status') != 'completed':
-                    print(f"[{task_id}] Warning: Final status not saved correctly for {progress_key}, retrying...")
-                    # ステータスのみを再更新（_is_finalフラグ付き）
-                    update_task_progress_in_db(task_id, progress_key, {
-                        'status': 'completed', 
-                        'completed_at': final_progress['completed_at'],
-                        '_is_final': True  # 最終更新フラグ
-                    })
+            # トランザクション内で確認
+            db = SessionLocal()
+            try:
+                db_task = db.query(ScrapingTask).filter(
+                    ScrapingTask.task_id == task_id
+                ).with_for_update().first()
+                if db_task and db_task.progress_detail and progress_key in db_task.progress_detail:
+                    if db_task.progress_detail[progress_key].get('status') != 'completed':
+                        print(f"[{task_id}] Warning: Final status not saved correctly for {progress_key}, retrying...")
+                        # ステータスのみを再更新（_is_finalフラグ付き）
+                        # 同じトランザクション内で更新
+                        from sqlalchemy.orm.attributes import flag_modified
+                        db_task.progress_detail[progress_key].update({
+                            'status': 'completed', 
+                            'completed_at': final_progress['completed_at'],
+                            '_is_final': True  # 最終更新フラグ
+                        })
+                        flag_modified(db_task, 'progress_detail')
+                        db.commit()
+            finally:
+                db.close()
             
             total_processed += final_stats.get('properties_found', 0)
             
@@ -936,25 +964,38 @@ def execute_scraping_strategy(
                                 f.cancel()
                         
                         # すべてのスクレイパーの進捗状態をcancelledに更新
-                        for scraper in scrapers:
-                            for area in area_codes:
-                                progress_key = f"{scraper}_{area}"
-                                # 既に完了していないスクレイパーのみ更新
-                                db_task = get_task_from_db(task_id)
-                                if db_task and db_task.progress_detail and progress_key in db_task.progress_detail:
-                                    current_status = db_task.progress_detail[progress_key].get('status')
-                                    if current_status not in ['completed', 'failed', 'cancelled']:
-                                        area_names = {code: name for name, code in AREA_CODES.items()}
-                                        area_name = area_names.get(area, area)
-                                        cancel_progress = {
-                                            "scraper": scraper,
-                                            "area_code": area,
-                                            "area_name": area_name,
-                                            "status": "cancelled",
-                                            "_is_final": True,
-                                            "completed_at": datetime.now().isoformat()
-                                        }
-                                        update_task_progress_in_db(task_id, progress_key, cancel_progress)
+                        # トランザクション内で一括更新
+                        db = SessionLocal()
+                        try:
+                            db_task = db.query(ScrapingTask).filter(
+                                ScrapingTask.task_id == task_id
+                            ).with_for_update().first()
+                            
+                            if db_task and db_task.progress_detail:
+                                from sqlalchemy.orm.attributes import flag_modified
+                                area_names = {code: name for name, code in AREA_CODES.items()}
+                                
+                                for scraper in scrapers:
+                                    for area in area_codes:
+                                        progress_key = f"{scraper}_{area}"
+                                        # 既に完了していないスクレイパーのみ更新
+                                        if progress_key in db_task.progress_detail:
+                                            current_status = db_task.progress_detail[progress_key].get('status')
+                                            if current_status not in ['completed', 'failed', 'cancelled']:
+                                                area_name = area_names.get(area, area)
+                                                db_task.progress_detail[progress_key].update({
+                                                    "scraper": scraper,
+                                                    "area_code": area,
+                                                    "area_name": area_name,
+                                                    "status": "cancelled",
+                                                    "_is_final": True,
+                                                    "completed_at": datetime.now().isoformat()
+                                                })
+                                
+                                flag_modified(db_task, 'progress_detail')
+                                db.commit()
+                        finally:
+                            db.close()
                         raise
                     except Exception as e:
                         print(f"[{task_id}] Scraper {scraper_name} failed: {e}")
