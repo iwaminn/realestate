@@ -39,6 +39,8 @@ import {
   History as HistoryIcon,
   Refresh as RefreshIcon,
   Clear as ClearIcon,
+  CheckBox as CheckBoxIcon,
+  CheckBoxOutlineBlank as CheckBoxOutlineBlankIcon,
 } from '@mui/icons-material';
 import { propertyApi } from '../api/propertyApi';
 
@@ -178,6 +180,22 @@ const BuildingDuplicateManager: React.FC = () => {
       
       return newSelection;
     });
+  };
+
+  // 一括チェック・解除のハンドラー
+  const handleSelectAll = () => {
+    if (selectedGroup) {
+      const allBuildingIds = [
+        selectedGroup.primary.id,
+        ...selectedGroup.candidates.map(c => c.id)
+      ];
+      setSelectedCandidates(allBuildingIds);
+    }
+  };
+
+  const handleDeselectAll = () => {
+    setSelectedCandidates([]);
+    setSelectedMasterId(null); // 統合先もクリア
   };
 
   const handleSeparateFromGroup = async () => {
@@ -760,7 +778,20 @@ const BuildingDuplicateManager: React.FC = () => {
                 <Table size="small">
                   <TableHead>
                     <TableRow>
-                      <TableCell width={50} align="center">選択</TableCell>
+                      <TableCell width={80} align="center">
+                        <Box display="flex" alignItems="center" justifyContent="center" gap={0.5}>
+                          <Tooltip title="全選択">
+                            <IconButton size="small" onClick={handleSelectAll}>
+                              <CheckBoxIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                          <Tooltip title="全解除">
+                            <IconButton size="small" onClick={handleDeselectAll}>
+                              <CheckBoxOutlineBlankIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                      </TableCell>
                       <TableCell width={50} align="center">統合先</TableCell>
                       <TableCell>建物名</TableCell>
                       <TableCell>住所</TableCell>
