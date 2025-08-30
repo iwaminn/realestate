@@ -14,12 +14,20 @@ import {
   IconButton,
   Tooltip,
   Chip,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
 } from '@mui/material';
 import {
   Undo as UndoIcon,
   Refresh as RefreshIcon,
+  DeleteSweep as DeleteSweepIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
+import Pagination from './common/Pagination';
 
 interface PropertyInfo {
   id: number;
@@ -78,36 +86,47 @@ const PropertyExclusionHistory: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [reverting, setReverting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [bulkDeleteConfirmText, setBulkDeleteConfirmText] = useState('');
 
   useEffect(() => {
-
     fetchExclusions();
-  }, []);
+  }, [page, pageSize]);
 
   const fetchExclusions = async () => {
     setLoading(true);
     setError(null);
     try {
-  
       const response = await axios.get('/api/admin/property-exclusions', {
-        params: { limit: 100 }
+        params: {
+          limit: pageSize,
+          offset: (page - 1) * pageSize
+        }
       });
   
       
       // APIレスポンスが配列かオブジェクトか確認
       let exclusionData: PropertyExclusion[] = [];
+      let total = 0;
       if (Array.isArray(response.data)) {
         exclusionData = response.data;
+        total = response.data.length;
       } else if (response.data && Array.isArray(response.data.exclusions)) {
         exclusionData = response.data.exclusions;
+        total = response.data.total || exclusionData.length;
       } else if (response.data && Array.isArray(response.data.data)) {
         exclusionData = response.data.data;
+        total = response.data.total || exclusionData.length;
       } else {
         console.warn('Unexpected response format:', response.data);
         exclusionData = [];
       }
       
       setExclusions(exclusionData);
+      setTotalCount(total);
     } catch (error) {
       console.error('Failed to fetch property exclusions:', error);
       setError('除外履歴の取得に失敗しました');
@@ -132,6 +151,25 @@ const PropertyExclusionHistory: React.FC = () => {
       alert('取り消しに失敗しました');
     } finally {
       setReverting(false);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (bulkDeleteConfirmText !== '削除') {
+      alert('確認文字列が正しくありません');
+      return;
+    }
+
+    try {
+      const result = await axios.delete('/api/admin/property-exclusions/bulk');
+      alert(result.data.message);
+      setBulkDeleteDialogOpen(false);
+      setBulkDeleteConfirmText('');
+      fetchExclusions();
+    } catch (error: any) {
+      console.error('Failed to bulk delete property exclusions:', error);
+      const errorMessage = error.response?.data?.detail || '一括削除に失敗しました';
+      alert(errorMessage);
     }
   };
 
@@ -182,15 +220,26 @@ const PropertyExclusionHistory: React.FC = () => {
       <Paper sx={{ p: 3, mb: 3 }}>
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
           <Typography variant="h6">物件除外履歴</Typography>
-          <IconButton 
-            onClick={fetchExclusions}
-            disabled={loading}
-            color="primary"
-          >
-            <Tooltip title="リロード">
-              <RefreshIcon />
-            </Tooltip>
-          </IconButton>
+          <Box display="flex" gap={1}>
+            <Button
+              variant="outlined"
+              color="error"
+              startIcon={<DeleteSweepIcon />}
+              onClick={() => setBulkDeleteDialogOpen(true)}
+              disabled={exclusions.length === 0}
+            >
+              一括削除
+            </Button>
+            <IconButton 
+              onClick={fetchExclusions}
+              disabled={loading}
+              color="primary"
+            >
+              <Tooltip title="リロード">
+                <RefreshIcon />
+              </Tooltip>
+            </IconButton>
+          </Box>
         </Box>
         
         {exclusions.length === 0 ? (
@@ -257,7 +306,62 @@ const PropertyExclusionHistory: React.FC = () => {
           </Table>
         </TableContainer>
       )}
+      
+      <Pagination
+        totalCount={totalCount}
+        page={page}
+        pageSize={pageSize}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+      />
       </Paper>
+
+      <Dialog
+        open={bulkDeleteDialogOpen}
+        onClose={() => {
+          setBulkDeleteDialogOpen(false);
+          setBulkDeleteConfirmText('');
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>物件除外履歴の一括削除</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            すべての物件除外履歴を削除します。この操作は取り消せません。
+            削除後、除外していた物件ペアが再び重複候補として表示される可能性があります。
+          </Alert>
+          <Typography variant="body2" gutterBottom>
+            削除を実行するには、下のフィールドに「削除」と入力してください。
+          </Typography>
+          <TextField
+            fullWidth
+            value={bulkDeleteConfirmText}
+            onChange={(e) => setBulkDeleteConfirmText(e.target.value)}
+            placeholder="削除"
+            variant="outlined"
+            sx={{ mt: 2 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => {
+              setBulkDeleteDialogOpen(false);
+              setBulkDeleteConfirmText('');
+            }}
+          >
+            キャンセル
+          </Button>
+          <Button 
+            onClick={handleBulkDelete}
+            color="error"
+            variant="contained"
+            disabled={bulkDeleteConfirmText !== '削除'}
+          >
+            一括削除
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

@@ -267,6 +267,64 @@ export const propertyApi = {
     return response.data;
   },
 
+  // 建物統合履歴を削除（履歴のみ削除、統合は維持）
+  deleteBuildingMergeHistory: async (historyId: number): Promise<{
+    success: boolean;
+    message: string;
+  }> => {
+    const response = await api.delete(`/admin/building-merge-history/${historyId}`);
+    return response.data;
+  },
+
+  // 物件統合履歴を削除（履歴のみ削除、統合は維持）
+  deletePropertyMergeHistory: async (historyId: number): Promise<{
+    success: boolean;
+    message: string;
+  }> => {
+    const response = await api.delete(`/admin/property-merge-history/${historyId}`);
+    return response.data;
+  },
+
+  // 建物統合履歴を一括削除
+  bulkDeleteBuildingMergeHistory: async (): Promise<{
+    success: boolean;
+    message: string;
+    deleted_count: number;
+  }> => {
+    const response = await api.delete(`/admin/building-merge-history/bulk`);
+    return response.data;
+  },
+
+  // 物件統合履歴を一括削除
+  bulkDeletePropertyMergeHistory: async (): Promise<{
+    success: boolean;
+    message: string;
+    deleted_count: number;
+  }> => {
+    const response = await api.delete(`/admin/property-merge-history/bulk`);
+    return response.data;
+  },
+
+  // 建物除外履歴を一括削除
+  bulkDeleteBuildingExclusions: async (): Promise<{
+    success: boolean;
+    message: string;
+    deleted_count: number;
+  }> => {
+    const response = await api.delete(`/admin/building-exclusions/bulk`);
+    return response.data;
+  },
+
+  // 物件除外履歴を一括削除
+  bulkDeletePropertyExclusions: async (): Promise<{
+    success: boolean;
+    message: string;
+    deleted_count: number;
+  }> => {
+    const response = await api.delete(`/admin/property-exclusions/bulk`);
+    return response.data;
+  },
+
   // 建物検索（統合用）
   searchBuildingsForMerge: async (query: string, limit: number = 20): Promise<{
     buildings: Array<{

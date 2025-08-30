@@ -124,6 +124,9 @@ async def get_property_exclusions(
 ):
     """物件の除外設定一覧を取得"""
     
+    # 全体の件数を取得
+    total_count = db.query(PropertyMergeExclusion).count()
+    
     exclusions = db.query(PropertyMergeExclusion).order_by(
         PropertyMergeExclusion.created_at.desc()
     ).offset(offset).limit(limit).all()
@@ -197,7 +200,7 @@ async def get_property_exclusions(
             "created_at": exc.created_at
         })
     
-    return {"exclusions": results, "total": len(results)}
+    return {"exclusions": results, "total": total_count}
 
 
 @router.post("/exclude-buildings")
@@ -275,14 +278,18 @@ async def delete_building_exclusion(
 @router.get("/building-exclusions")
 async def get_building_exclusions(
     limit: int = 50,
+    offset: int = 0,
     db: Session = Depends(get_db)
 ):
     """建物除外リストを取得"""
     from ...utils.datetime_utils import to_jst_string
     
+    # 全体の件数を取得
+    total_count = db.query(BuildingMergeExclusion).count()
+    
     exclusions = db.query(BuildingMergeExclusion).order_by(
         BuildingMergeExclusion.created_at.desc()
-    ).limit(limit).all()
+    ).offset(offset).limit(limit).all()
     
     result = []
     for exclusion in exclusions:
@@ -321,4 +328,36 @@ async def get_building_exclusions(
             "created_at": to_jst_string(exclusion.created_at) if exclusion.created_at else None
         })
     
-    return {"exclusions": result, "total": len(result)}
+    return {"exclusions": result, "total": total_count}
+
+
+@router.delete("/building-exclusions/bulk")
+async def bulk_delete_building_exclusions(
+    db: Session = Depends(get_db)
+):
+    """建物除外履歴を一括削除"""
+    
+    # すべての除外履歴を削除
+    count = db.query(BuildingMergeExclusion).count()
+    db.query(BuildingMergeExclusion).delete()
+    db.commit()
+    
+    # キャッシュをクリア
+    from .duplicates import clear_duplicate_buildings_cache
+    clear_duplicate_buildings_cache()
+    
+    return {"success": True, "message": f"{count}件の建物除外履歴を削除しました", "deleted_count": count}
+
+
+@router.delete("/property-exclusions/bulk")
+async def bulk_delete_property_exclusions(
+    db: Session = Depends(get_db)
+):
+    """物件除外履歴を一括削除"""
+    
+    # すべての除外履歴を削除
+    count = db.query(PropertyMergeExclusion).count()
+    db.query(PropertyMergeExclusion).delete()
+    db.commit()
+    
+    return {"success": True, "message": f"{count}件の物件除外履歴を削除しました", "deleted_count": count}

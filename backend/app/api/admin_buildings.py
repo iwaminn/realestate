@@ -504,6 +504,19 @@ async def delete_building(
             BuildingExternalId.building_id == building_id
         ).delete()
         
+        # 建物統合履歴の削除（この建物が関わる履歴）
+        from ..models import BuildingMergeHistory, BuildingMergeExclusion
+        db.query(BuildingMergeHistory).filter(
+            (BuildingMergeHistory.primary_building_id == building_id) |
+            (BuildingMergeHistory.merged_building_id == building_id)
+        ).delete()
+        
+        # 建物除外履歴の削除（この建物が関わる除外）
+        db.query(BuildingMergeExclusion).filter(
+            (BuildingMergeExclusion.building1_id == building_id) |
+            (BuildingMergeExclusion.building2_id == building_id)
+        ).delete()
+        
         # 建物を削除
         db.delete(building)
         db.commit()
@@ -513,7 +526,37 @@ async def delete_building(
         }
     except Exception as e:
         db.rollback()
-        raise HTTPException(status_code=500, detail=f"削除に失敗しました: {str(e)}")
+        import re
+        error_message = str(e)
+        
+        # 外部キー制約エラーの場合、より分かりやすいメッセージを返す
+        if "building_merge_history" in error_message:
+            raise HTTPException(
+                status_code=400,
+                detail="この建物は統合履歴に記録されています。先に統合履歴を削除してください。"
+            )
+        elif "building_merge_exclusions" in error_message:
+            raise HTTPException(
+                status_code=400, 
+                detail="この建物は除外設定に含まれています。先に除外設定を削除してください。"
+            )
+        elif "ForeignKeyViolation" in error_message or "foreign key" in error_message.lower():
+            # その他の外部キー制約エラー
+            # テーブル名を抽出しようとする
+            table_match = re.search(r'table "(\w+)"', error_message)
+            if table_match:
+                table_name = table_match.group(1)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"この建物は{table_name}テーブルから参照されています。関連データを先に削除してください。"
+                )
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="この建物は他のデータから参照されています。関連データを先に削除してください。"
+                )
+        else:
+            raise HTTPException(status_code=500, detail=f"削除に失敗しました: {error_message}")
 
 
 @router.post("/properties/{property_id}/detach-candidates")

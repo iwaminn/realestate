@@ -19,12 +19,16 @@ import {
   DialogActions,
   IconButton,
   Tooltip,
+  TextField,
 } from '@mui/material';
 import {
   Undo as UndoIcon,
   Info as InfoIcon,
+  Delete as DeleteIcon,
+  DeleteSweep as DeleteSweepIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
+import Pagination from './common/Pagination';
 
 interface PropertyMergeHistory {
   id: number;
@@ -54,20 +58,27 @@ const PropertyMergeHistory: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [selectedHistory, setSelectedHistory] = useState<PropertyMergeHistory | null>(null);
   const [reverting, setReverting] = useState(false);
+  const [totalCount, setTotalCount] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
+  const [bulkDeleteConfirmText, setBulkDeleteConfirmText] = useState('');
 
   useEffect(() => {
     fetchHistories();
-  }, []);
+  }, [page, pageSize]);
 
   const fetchHistories = async () => {
     setLoading(true);
     try {
       const response = await axios.get('/api/admin/property-merge-history', {
         params: {
-          limit: 50
+          limit: pageSize,
+          offset: (page - 1) * pageSize
         }
       });
       setHistories(response.data.histories);
+      setTotalCount(response.data.total || 0);
     } catch (error) {
       console.error('Failed to fetch property merge history:', error);
     } finally {
@@ -91,6 +102,41 @@ const PropertyMergeHistory: React.FC = () => {
     } finally {
       setReverting(false);
       setSelectedHistory(null);
+    }
+  };
+
+  const handleDelete = async (historyId: number) => {
+    if (!confirm('この統合履歴を削除しますか？\n（統合自体は維持され、履歴のみが削除されます）')) {
+      return;
+    }
+
+    try {
+      await axios.delete(`/api/admin/property-merge-history/${historyId}`);
+      alert('統合履歴を削除しました');
+      fetchHistories();
+    } catch (error: any) {
+      console.error('Failed to delete property merge history:', error);
+      const errorMessage = error.response?.data?.detail || '削除に失敗しました';
+      alert(errorMessage);
+    }
+  };
+
+  const handleBulkDelete = async () => {
+    if (bulkDeleteConfirmText !== '削除') {
+      alert('確認文字列が正しくありません');
+      return;
+    }
+
+    try {
+      const result = await axios.delete('/api/admin/property-merge-history/bulk');
+      alert(result.data.message);
+      setBulkDeleteDialogOpen(false);
+      setBulkDeleteConfirmText('');
+      fetchHistories();
+    } catch (error: any) {
+      console.error('Failed to bulk delete property merge history:', error);
+      const errorMessage = error.response?.data?.detail || '一括削除に失敗しました';
+      alert(errorMessage);
     }
   };
 
@@ -121,6 +167,15 @@ const PropertyMergeHistory: React.FC = () => {
       <Paper sx={{ p: 3, mb: 3 }}>
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
           <Typography variant="h6">物件統合履歴</Typography>
+          <Button
+            variant="outlined"
+            color="error"
+            startIcon={<DeleteSweepIcon />}
+            onClick={() => setBulkDeleteDialogOpen(true)}
+            disabled={histories.length === 0}
+          >
+            一括削除
+          </Button>
         </Box>
 
         {histories.length === 0 ? (
@@ -173,24 +228,35 @@ const PropertyMergeHistory: React.FC = () => {
                     <Chip label="有効" size="small" color="primary" />
                   </TableCell>
                   <TableCell align="center">
-                    <Tooltip title="詳細を表示">
-                      <IconButton
-                        size="small"
-                        onClick={() => setSelectedHistory(history)}
-                      >
-                        <InfoIcon />
-                      </IconButton>
-                    </Tooltip>
-                    <Tooltip title="統合を取り消す">
-                      <IconButton
-                        size="small"
-                        color="warning"
-                        onClick={() => handleRevert(history.id)}
-                        disabled={reverting}
-                      >
-                        <UndoIcon />
-                      </IconButton>
-                    </Tooltip>
+                    <Box display="flex" justifyContent="center" gap={0.5}>
+                      <Tooltip title="詳細を表示">
+                        <IconButton
+                          size="small"
+                          onClick={() => setSelectedHistory(history)}
+                        >
+                          <InfoIcon />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="統合を取り消す">
+                        <IconButton
+                          size="small"
+                          color="warning"
+                          onClick={() => handleRevert(history.id)}
+                          disabled={reverting}
+                        >
+                          <UndoIcon />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="履歴を削除">
+                        <IconButton
+                          size="small"
+                          color="error"
+                          onClick={() => handleDelete(history.id)}
+                        >
+                          <DeleteIcon />
+                        </IconButton>
+                      </Tooltip>
+                    </Box>
                   </TableCell>
                 </TableRow>
               ))}
@@ -198,6 +264,14 @@ const PropertyMergeHistory: React.FC = () => {
           </Table>
         </TableContainer>
         )}
+        
+        <Pagination
+          totalCount={totalCount}
+          page={page}
+          pageSize={pageSize}
+          onPageChange={setPage}
+          onPageSizeChange={setPageSize}
+        />
       </Paper>
 
       <Dialog
@@ -267,6 +341,53 @@ const PropertyMergeHistory: React.FC = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setSelectedHistory(null)}>閉じる</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={bulkDeleteDialogOpen}
+        onClose={() => {
+          setBulkDeleteDialogOpen(false);
+          setBulkDeleteConfirmText('');
+        }}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>物件統合履歴の一括削除</DialogTitle>
+        <DialogContent>
+          <Alert severity="warning" sx={{ mb: 2 }}>
+            すべての物件統合履歴を削除します。この操作は取り消せません。
+            統合自体は維持され、履歴のみが削除されます。
+          </Alert>
+          <Typography variant="body2" gutterBottom>
+            削除を実行するには、下のフィールドに「削除」と入力してください。
+          </Typography>
+          <TextField
+            fullWidth
+            value={bulkDeleteConfirmText}
+            onChange={(e) => setBulkDeleteConfirmText(e.target.value)}
+            placeholder="削除"
+            variant="outlined"
+            sx={{ mt: 2 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button 
+            onClick={() => {
+              setBulkDeleteDialogOpen(false);
+              setBulkDeleteConfirmText('');
+            }}
+          >
+            キャンセル
+          </Button>
+          <Button 
+            onClick={handleBulkDelete}
+            color="error"
+            variant="contained"
+            disabled={bulkDeleteConfirmText !== '削除'}
+          >
+            一括削除
+          </Button>
         </DialogActions>
       </Dialog>
     </Box>

@@ -105,6 +105,9 @@ async def get_property_merge_history(
 ):
     """物件統合履歴を取得"""
     
+    # 全体の件数を取得
+    total_count = db.query(PropertyMergeHistory).count()
+    
     histories = db.query(PropertyMergeHistory).order_by(
         PropertyMergeHistory.merged_at.desc()
     ).offset(offset).limit(limit).all()
@@ -171,7 +174,7 @@ async def get_property_merge_history(
             "merged_at": history.merged_at.isoformat() if history.merged_at else None
         })
     
-    return {"histories": results}
+    return {"histories": results, "total": total_count}
 
 
 @router.post("/revert-building-merge/{history_id}")
@@ -478,3 +481,73 @@ async def revert_property_merge(
     except Exception as e:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"取り消し中にエラーが発生しました: {str(e)}")
+
+
+@router.delete("/building-merge-history/{history_id}")
+async def delete_building_merge_history(
+    history_id: int,
+    db: Session = Depends(get_db)
+):
+    """建物統合履歴を削除（履歴のみ削除、統合は維持）"""
+    
+    history = db.query(BuildingMergeHistory).filter(
+        BuildingMergeHistory.id == history_id
+    ).first()
+    
+    if not history:
+        raise HTTPException(status_code=404, detail="統合履歴が見つかりません")
+    
+    # 履歴を削除
+    db.delete(history)
+    db.commit()
+    
+    return {"success": True, "message": "統合履歴を削除しました"}
+
+
+@router.delete("/property-merge-history/{history_id}")
+async def delete_property_merge_history(
+    history_id: int,
+    db: Session = Depends(get_db)
+):
+    """物件統合履歴を削除（履歴のみ削除、統合は維持）"""
+    
+    history = db.query(PropertyMergeHistory).filter(
+        PropertyMergeHistory.id == history_id
+    ).first()
+    
+    if not history:
+        raise HTTPException(status_code=404, detail="統合履歴が見つかりません")
+    
+    # 履歴を削除
+    db.delete(history)
+    db.commit()
+    
+    return {"success": True, "message": "統合履歴を削除しました"}
+
+
+@router.delete("/building-merge-history/bulk")
+async def bulk_delete_building_merge_history(
+    db: Session = Depends(get_db)
+):
+    """建物統合履歴を一括削除"""
+    
+    # すべての履歴を削除
+    count = db.query(BuildingMergeHistory).count()
+    db.query(BuildingMergeHistory).delete()
+    db.commit()
+    
+    return {"success": True, "message": f"{count}件の建物統合履歴を削除しました", "deleted_count": count}
+
+
+@router.delete("/property-merge-history/bulk")
+async def bulk_delete_property_merge_history(
+    db: Session = Depends(get_db)
+):
+    """物件統合履歴を一括削除"""
+    
+    # すべての履歴を削除
+    count = db.query(PropertyMergeHistory).count()
+    db.query(PropertyMergeHistory).delete()
+    db.commit()
+    
+    return {"success": True, "message": f"{count}件の物件統合履歴を削除しました", "deleted_count": count}
