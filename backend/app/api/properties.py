@@ -162,6 +162,118 @@ async def get_properties(
         "total_pages": (total_count + per_page - 1) // per_page
     }
 
+@router.get("/recent-updates-count", response_model=Dict[str, Any])
+async def get_recent_updates_count(
+    hours: int = Query(24, ge=1, le=168, description="過去N時間以内の更新"),
+    db: Session = Depends(get_db)
+):
+    """
+    直近N時間以内の価格改定物件と新着物件の件数のみを高速取得
+    """
+    from datetime import datetime, timedelta
+    from sqlalchemy import func
+    
+    # 対象期間の開始時刻
+    cutoff_time = datetime.now() - timedelta(hours=hours)
+    
+    # 価格変更があった物件の件数を取得（Full APIと同じロジック）
+    from sqlalchemy import text
+    
+    price_changes_query = text("""
+        WITH listing_prices_expanded AS (
+            -- 各掲載の価格を日付ごとに展開（前回価格を引き継ぐ）
+            SELECT DISTINCT
+                pl.master_property_id,
+                pl.id as listing_id,
+                dates.price_date,
+                COALESCE(
+                    lph_today.price,
+                    -- その日の記録がない場合は、直近の価格を使用
+                    (SELECT price FROM listing_price_history lph_prev
+                     WHERE lph_prev.property_listing_id = pl.id
+                       AND DATE(lph_prev.recorded_at) < dates.price_date
+                     ORDER BY lph_prev.recorded_at DESC
+                     LIMIT 1),
+                    pl.current_price  -- 履歴がない場合は現在価格を使用
+                ) as price
+            FROM property_listings pl
+            CROSS JOIN (
+                -- 対象期間内のすべての日付を生成
+                SELECT DISTINCT DATE(lph.recorded_at) as price_date
+                FROM listing_price_history lph
+                WHERE lph.recorded_at >= :cutoff_time - INTERVAL '7 days'  -- 余裕を持って取得
+            ) dates
+            LEFT JOIN listing_price_history lph_today 
+                ON lph_today.property_listing_id = pl.id 
+                AND DATE(lph_today.recorded_at) = dates.price_date
+            WHERE pl.master_property_id IN (
+                -- 指定期間内に価格記録がある物件のみ対象
+                SELECT DISTINCT pl2.master_property_id
+                FROM property_listings pl2
+                INNER JOIN listing_price_history lph2 ON lph2.property_listing_id = pl2.id
+                WHERE lph2.recorded_at >= :cutoff_time
+            )
+            AND pl.is_active = true  -- アクティブな掲載のみ対象
+        ),
+        daily_majority_prices AS (
+            -- 各物件の日付ごとの多数決価格を計算
+            SELECT 
+                master_property_id,
+                price_date,
+                price,
+                COUNT(*) as vote_count
+            FROM listing_prices_expanded
+            WHERE price IS NOT NULL
+            GROUP BY master_property_id, price_date, price
+        ),
+        daily_majority AS (
+            -- 各物件・日付の多数決価格を決定
+            SELECT DISTINCT ON (master_property_id, price_date)
+                master_property_id,
+                price_date,
+                price as majority_price
+            FROM daily_majority_prices
+            ORDER BY master_property_id, price_date, vote_count DESC, price ASC
+        ),
+        price_changes AS (
+            -- 多数決価格の変動を検出
+            SELECT 
+                dm1.master_property_id,
+                dm1.price_date as change_date,
+                dm1.majority_price as new_price,
+                dm2.majority_price as old_price
+            FROM daily_majority dm1
+            LEFT JOIN LATERAL (
+                SELECT majority_price
+                FROM daily_majority dm2
+                WHERE dm2.master_property_id = dm1.master_property_id
+                  AND dm2.price_date < dm1.price_date
+                ORDER BY dm2.price_date DESC
+                LIMIT 1
+            ) dm2 ON true
+            WHERE dm2.majority_price IS NOT NULL
+              AND dm1.majority_price != dm2.majority_price
+              AND dm1.price_date >= DATE(:cutoff_time)  -- 変更日が指定期間内
+        )
+        SELECT COUNT(DISTINCT master_property_id) FROM price_changes
+    """)
+    
+    price_changes_count = db.execute(price_changes_query, {"cutoff_time": cutoff_time}).scalar() or 0
+    
+    # 新着物件の件数を取得
+    new_listings_count = db.query(func.count(MasterProperty.id))\
+        .filter(
+            MasterProperty.created_at >= cutoff_time,
+            MasterProperty.sold_at.is_(None)
+        ).scalar() or 0
+    
+    return {
+        "total_price_changes": price_changes_count,
+        "total_new_listings": new_listings_count,
+        "hours": hours,
+        "updated_at": datetime.now().isoformat()
+    }
+
 @router.get("/properties/recent-updates", response_model=Dict[str, Any])
 async def get_recent_updates(
     hours: int = Query(24, ge=1, le=168, description="過去N時間以内の更新"),

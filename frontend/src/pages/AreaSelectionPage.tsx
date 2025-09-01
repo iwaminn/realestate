@@ -31,13 +31,16 @@ import {
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
+import LocationCityIcon from '@mui/icons-material/LocationCity';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import UpdateIcon from '@mui/icons-material/Update';
 import NewReleasesIcon from '@mui/icons-material/NewReleases';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
-import { propertyApi, RecentUpdatesResponse, WardUpdates } from '../api/propertyApi';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import { propertyApi } from '../api/propertyApi';
 import { TOKYO_WARDS, sortWardsByLandPrice, getPopularWards, getOtherWards } from '../constants/wardOrder';
 import { debounce } from 'lodash';
 
@@ -52,11 +55,16 @@ const AreaSelectionPage: React.FC = () => {
   const [areaStats, setAreaStats] = useState<{[key: string]: number}>({});
   const [loading, setLoading] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
-  const [recentUpdates, setRecentUpdates] = useState<RecentUpdatesResponse | null>(null);
+  const [updatesCounts, setUpdatesCounts] = useState<{
+    total_price_changes: number;
+    total_new_listings: number;
+  } | null>(null);
+  const [wardCounts, setWardCounts] = useState<{
+    [key: string]: { price_changes: number; new_listings: number };
+  }>({});
   const [updatesLoading, setUpdatesLoading] = useState(true);
-  const [selectedWardTab, setSelectedWardTab] = useState(0);
-  const [selectedWardName, setSelectedWardName] = useState<string | null>(null);
-  const [updateType, setUpdateType] = useState<'price_changes' | 'new_listings'>('price_changes');
+  const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
+  const [, forceUpdate] = useState({});
   const [buildingOptions, setBuildingOptions] = useState<Array<string | { value: string; label: string }>>([]);
   const [loadingBuildings, setLoadingBuildings] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -84,24 +92,123 @@ const AreaSelectionPage: React.FC = () => {
     fetchTotalStats();
   }, []);
 
-  // 価格改定・新着物件を取得
-  useEffect(() => {
-    const fetchRecentUpdates = async () => {
+  // キャッシュ設定
+  const CACHE_KEY = 'recentUpdatesCache';
+  const CACHE_DURATION = 10 * 60 * 1000; // 10分
+
+  // 価格改定・新着物件の件数を取得する関数
+  const fetchUpdatesCounts = useCallback(async (forceRefresh = false) => {
+      // キャッシュをチェック
+      if (!forceRefresh) {
+        const cachedData = localStorage.getItem(CACHE_KEY);
+        if (cachedData) {
+          try {
+            const parsed = JSON.parse(cachedData);
+            const cacheAge = Date.now() - parsed.timestamp;
+            
+            // キャッシュが有効期限内なら使用
+            if (cacheAge < CACHE_DURATION) {
+              setUpdatesCounts({
+                total_price_changes: parsed.totalPriceChanges,
+                total_new_listings: parsed.totalNewListings
+              });
+              setWardCounts(parsed.wardCounts);
+              setLastFetchTime(new Date(parsed.timestamp));
+              setUpdatesLoading(false);
+              
+              // バックグラウンドで更新（キャッシュが5分以上古い場合）
+              if (cacheAge > 5 * 60 * 1000) {
+                fetchUpdatesCounts(true);
+              }
+              return;
+            }
+          } catch (e) {
+            console.error('Failed to parse cache:', e);
+          }
+        }
+      }
+
       setUpdatesLoading(true);
       try {
-        const updates = await propertyApi.getRecentUpdates(24);
-        setRecentUpdates(updates);
+        // 1回のAPIリクエストで全データを取得
+        const details = await propertyApi.getRecentUpdates(24);
+        
+        // 全体の合計を計算
+        let totalPriceChanges = 0;
+        let totalNewListings = 0;
+        const wardCountsMap: { [key: string]: { price_changes: number; new_listings: number } } = {};
+        
+        details.updates_by_ward.forEach(ward => {
+          const priceChangeCount = ward.price_changes.length;
+          const newListingCount = ward.new_listings.length;
+          
+          totalPriceChanges += priceChangeCount;
+          totalNewListings += newListingCount;
+          
+          wardCountsMap[ward.ward] = {
+            price_changes: priceChangeCount,
+            new_listings: newListingCount
+          };
+        });
+        
+        // 状態を更新
+        setUpdatesCounts({
+          total_price_changes: totalPriceChanges,
+          total_new_listings: totalNewListings
+        });
+        setWardCounts(wardCountsMap);
+        setLastFetchTime(new Date());
+        
+        // キャッシュに保存
+        const cacheData = {
+          timestamp: Date.now(),
+          totalPriceChanges,
+          totalNewListings,
+          wardCounts: wardCountsMap
+        };
+        localStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
+        
       } catch (error) {
-        console.error('Failed to fetch recent updates:', error);
+        console.error('Failed to fetch updates counts:', error);
       }
       setUpdatesLoading(false);
-    };
+  }, [CACHE_KEY, CACHE_DURATION]);
 
-    fetchRecentUpdates();
-    // 5分ごとに更新
-    const interval = setInterval(fetchRecentUpdates, 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, []);
+  // 価格改定・新着物件の件数を取得（初回とイベント時）
+  useEffect(() => {
+    fetchUpdatesCounts();
+    
+    // 10分ごとにキャッシュを更新
+    const interval = setInterval(() => fetchUpdatesCounts(true), CACHE_DURATION);
+    
+    // 1分ごとに「○分前」の表示を更新
+    const updateTimeInterval = setInterval(() => {
+      if (lastFetchTime) {
+        forceUpdate({});
+      }
+    }, 60000); // 1分ごと
+    
+    // ページがフォーカスされた時にキャッシュの古さをチェック
+    const handleFocus = () => {
+      const cachedData = localStorage.getItem(CACHE_KEY);
+      if (cachedData) {
+        const parsed = JSON.parse(cachedData);
+        const cacheAge = Date.now() - parsed.timestamp;
+        // キャッシュが10分以上古い場合は更新
+        if (cacheAge >= CACHE_DURATION) {
+          fetchUpdatesCounts(true);
+        }
+      }
+    };
+    
+    window.addEventListener('focus', handleFocus);
+    
+    return () => {
+      clearInterval(interval);
+      clearInterval(updateTimeInterval);
+      window.removeEventListener('focus', handleFocus);
+    };
+  }, [fetchUpdatesCounts, CACHE_KEY, CACHE_DURATION, lastFetchTime]);
 
   // 建物名候補を取得する関数（デバウンス付き）- SearchFormと同じ処理
   const fetchBuildingSuggestions = useCallback(
@@ -303,12 +410,37 @@ const AreaSelectionPage: React.FC = () => {
       </Box>
 
       {/* 価格改定・新着物件セクション */}
-      {recentUpdates && recentUpdates.updates_by_ward.length > 0 && (
+      {updatesCounts && (updatesCounts.total_price_changes > 0 || updatesCounts.total_new_listings > 0) && (
         <Box sx={{ mb: 6 }}>
-          <Typography variant="h5" gutterBottom sx={{ mb: 3, fontWeight: 'bold' }}>
-            <UpdateIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
-            直近24時間の更新情報
-          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+            <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
+              <UpdateIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
+              直近24時間の更新情報
+            </Typography>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+              {lastFetchTime && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <AccessTimeIcon sx={{ fontSize: 14 }} />
+                  {(() => {
+                    const now = new Date();
+                    const diff = Math.floor((now.getTime() - lastFetchTime.getTime()) / 1000);
+                    if (diff < 60) return '1分未満前';
+                    if (diff < 3600) return `${Math.floor(diff / 60)}分前`;
+                    return `${Math.floor(diff / 3600)}時間前`;
+                  })()}
+                </Typography>
+              )}
+              <Button
+                size="small"
+                startIcon={<RefreshIcon />}
+                onClick={() => fetchUpdatesCounts(true)}
+                disabled={updatesLoading}
+                sx={{ minWidth: 'auto' }}
+              >
+                更新
+              </Button>
+            </Box>
+          </Box>
           
           <Grid container spacing={2} sx={{ mb: 2 }}>
             <Grid item xs={12} md={6}>
@@ -332,7 +464,7 @@ const AreaSelectionPage: React.FC = () => {
                       価格改定物件
                     </Typography>
                     <Chip 
-                      label={recentUpdates.total_price_changes} 
+                      label={updatesCounts.total_price_changes} 
                       color="error" 
                       size="small"
                       sx={{ fontWeight: 'bold' }}
@@ -341,6 +473,56 @@ const AreaSelectionPage: React.FC = () => {
                   <Button size="small" color="error" endIcon={<ArrowForwardIcon />}>
                     一覧を見る
                   </Button>
+                </Box>
+                {/* エリア別ショートカット */}
+                <Divider sx={{ my: 1.5 }} />
+                <Box>
+                  <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <LocationCityIcon sx={{ fontSize: 16 }} />
+                    エリア別に見る：
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
+                    {popularWards.map((ward) => (
+                      <Button
+                        key={ward.id}
+                        size="small"
+                        variant="contained"
+                        color="error"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/updates?tab=0&ward=${encodeURIComponent(ward.name)}`);
+                        }}
+                        sx={{ 
+                          minWidth: 'auto',
+                          px: 1.5,
+                          py: 0.5,
+                          fontSize: '0.8rem',
+                          fontWeight: 'medium',
+                          bgcolor: alpha(theme.palette.error.main, 0.9),
+                          '&:hover': {
+                            bgcolor: theme.palette.error.main,
+                            transform: 'scale(1.05)',
+                          }
+                        }}
+                      >
+                        {ward.name}
+                        {wardCounts[ward.name]?.price_changes > 0 && (
+                          <Chip 
+                            label={wardCounts[ward.name].price_changes} 
+                            size="small" 
+                            sx={{ 
+                              ml: 0.5, 
+                              height: 16,
+                              fontSize: '0.7rem',
+                              bgcolor: 'white',
+                              color: theme.palette.error.main,
+                              '& .MuiChip-label': { px: 0.5 }
+                            }} 
+                          />
+                        )}
+                      </Button>
+                    ))}
+                  </Box>
                 </Box>
               </Paper>
             </Grid>
@@ -365,7 +547,7 @@ const AreaSelectionPage: React.FC = () => {
                       新着物件
                     </Typography>
                     <Chip 
-                      label={recentUpdates.total_new_listings} 
+                      label={updatesCounts.total_new_listings} 
                       color="success" 
                       size="small"
                       sx={{ fontWeight: 'bold' }}
@@ -375,287 +557,59 @@ const AreaSelectionPage: React.FC = () => {
                     一覧を見る
                   </Button>
                 </Box>
+                {/* エリア別ショートカット */}
+                <Divider sx={{ my: 1.5 }} />
+                <Box>
+                  <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                    <LocationCityIcon sx={{ fontSize: 16 }} />
+                    エリア別に見る：
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
+                    {popularWards.map((ward) => (
+                      <Button
+                        key={ward.id}
+                        size="small"
+                        variant="contained"
+                        color="success"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          navigate(`/updates?tab=1&ward=${encodeURIComponent(ward.name)}`);
+                        }}
+                        sx={{ 
+                          minWidth: 'auto',
+                          px: 1.5,
+                          py: 0.5,
+                          fontSize: '0.8rem',
+                          fontWeight: 'medium',
+                          bgcolor: alpha(theme.palette.success.main, 0.9),
+                          '&:hover': {
+                            bgcolor: theme.palette.success.main,
+                            transform: 'scale(1.05)',
+                          }
+                        }}
+                      >
+                        {ward.name}
+                        {wardCounts[ward.name]?.new_listings > 0 && (
+                          <Chip 
+                            label={wardCounts[ward.name].new_listings} 
+                            size="small" 
+                            sx={{ 
+                              ml: 0.5, 
+                              height: 16,
+                              fontSize: '0.7rem',
+                              bgcolor: 'white',
+                              color: theme.palette.success.main,
+                              '& .MuiChip-label': { px: 0.5 }
+                            }} 
+                          />
+                        )}
+                      </Button>
+                    ))}
+                  </Box>
+                </Box>
               </Paper>
             </Grid>
           </Grid>
-
-          {/* タブで価格改定/新着を切り替え */}
-          <Paper sx={{ p: 2 }}>
-            <Tabs 
-              value={updateType} 
-              onChange={(e, newValue) => {
-                setUpdateType(newValue);
-                // 選択中のエリアを保持して、新しいタブでそのエリアを探す
-                if (selectedWardName && recentUpdates) {
-                  const newWards = sortWardsByLandPrice(
-                    recentUpdates.updates_by_ward.filter(ward => 
-                      newValue === 'price_changes' 
-                        ? ward.price_changes.length > 0 
-                        : ward.new_listings.length > 0
-                    )
-                  );
-                  const wardIndex = newWards.findIndex(w => w.ward === selectedWardName);
-                  setSelectedWardTab(wardIndex >= 0 ? wardIndex : 0);
-                } else {
-                  setSelectedWardTab(0);
-                }
-              }}
-              sx={{ mb: 2, borderBottom: 1, borderColor: 'divider' }}
-            >
-              <Tab 
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <UpdateIcon />
-                    価格改定物件
-                    <Chip label={recentUpdates.total_price_changes} size="small" color="error" />
-                  </Box>
-                } 
-                value="price_changes" 
-              />
-              <Tab 
-                label={
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <NewReleasesIcon />
-                    新着物件
-                    <Chip label={recentUpdates.total_new_listings} size="small" color="success" />
-                  </Box>
-                } 
-                value="new_listings" 
-              />
-            </Tabs>
-
-            {/* エリア別タブ */}
-            {sortWardsByLandPrice(
-              recentUpdates.updates_by_ward
-                .filter(ward => 
-                  updateType === 'price_changes' 
-                    ? ward.price_changes.length > 0 
-                    : ward.new_listings.length > 0
-                )
-            ).length > 0 && (
-              <>
-                <Tabs
-                  value={selectedWardTab}
-                  onChange={(e, newValue) => {
-                    setSelectedWardTab(newValue);
-                    // 選択されたエリア名を保存
-                    const wards = sortWardsByLandPrice(
-                      recentUpdates.updates_by_ward.filter(ward => 
-                        updateType === 'price_changes' 
-                          ? ward.price_changes.length > 0 
-                          : ward.new_listings.length > 0
-                      )
-                    );
-                    if (wards[newValue]) {
-                      setSelectedWardName(wards[newValue].ward);
-                    }
-                  }}
-                  variant="scrollable"
-                  scrollButtons="auto"
-                  sx={{ borderBottom: 1, borderColor: 'divider', mb: 2 }}
-                >
-                  {sortWardsByLandPrice(
-                    recentUpdates.updates_by_ward
-                      .filter(ward => 
-                        updateType === 'price_changes' 
-                          ? ward.price_changes.length > 0 
-                          : ward.new_listings.length > 0
-                      )
-                  )
-                    .map((ward, index) => (
-                      <Tab 
-                        key={ward.ward} 
-                        label={
-                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                            {ward.ward}
-                            <Chip 
-                              label={
-                                updateType === 'price_changes' 
-                                  ? ward.price_changes.length 
-                                  : ward.new_listings.length
-                              } 
-                              size="small" 
-                              color={updateType === 'price_changes' ? 'error' : 'success'}
-                            />
-                          </Box>
-                        }
-                      />
-                    ))}
-                </Tabs>
-
-                {/* タブコンテンツ */}
-                <Box sx={{ minHeight: 300, maxHeight: 500, overflowY: 'auto' }}>
-                  {sortWardsByLandPrice(
-                    recentUpdates.updates_by_ward
-                      .filter(ward => 
-                        updateType === 'price_changes' 
-                          ? ward.price_changes.length > 0 
-                          : ward.new_listings.length > 0
-                      )
-                  )
-                    .map((ward, index) => (
-                      <Box
-                        key={ward.ward}
-                        hidden={selectedWardTab !== index}
-                        sx={{ p: 2 }}
-                      >
-                        {updateType === 'price_changes' ? (
-                          <Box>
-                            {ward.price_changes.map((property, index) => (
-                              <Paper 
-                                key={`price-${property.id}`} 
-                                component={Link}
-                                href={`/properties/${property.id}`}
-                                sx={{ 
-                                  p: 2, 
-                                  mb: 2, 
-                                  border: 1,
-                                  borderColor: 'divider',
-                                  display: 'block',
-                                  textDecoration: 'none',
-                                  color: 'inherit',
-                                  cursor: 'pointer',
-                                  transition: 'all 0.3s',
-                                  '&:hover': { 
-                                    boxShadow: 3,
-                                    bgcolor: alpha(theme.palette.primary.main, 0.02),
-                                    transform: 'translateY(-2px)'
-                                  }
-                                }}
-                              >
-                                <Grid container spacing={2}>
-                                  <Grid item xs={12} md={8}>
-                                    <Typography variant="h6" sx={{ fontWeight: 'bold', mb: 1 }}>
-                                      {property.building_name}
-                                      {property.room_number && (
-                                        <Chip label={`${property.room_number}号室`} size="small" sx={{ ml: 1 }} />
-                                      )}
-                                    </Typography>
-                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 1 }}>
-                                      {property.floor_number && (
-                                        <Chip icon={<LocationOnIcon />} label={`${property.floor_number}階`} size="small" variant="outlined" />
-                                      )}
-                                      {property.area && (
-                                        <Chip label={`${property.area}㎡`} size="small" variant="outlined" />
-                                      )}
-                                      {property.layout && (
-                                        <Chip label={property.layout} size="small" variant="outlined" />
-                                      )}
-                                      {property.direction && (
-                                        <Chip label={`${property.direction}向き`} size="small" variant="outlined" />
-                                      )}
-                                    </Box>
-                                  </Grid>
-                                  <Grid item xs={12} md={4}>
-                                    <Box sx={{ textAlign: { xs: 'left', md: 'right' } }}>
-                                      <Typography variant="h5" sx={{ color: theme.palette.error.main, fontWeight: 'bold' }}>
-                                        {formatPrice(property.price)}
-                                      </Typography>
-                                      {property.previous_price && (
-                                        <Box sx={{ mt: 1 }}>
-                                          <Typography variant="body2" sx={{ color: 'text.secondary', textDecoration: 'line-through' }}>
-                                            {formatPrice(property.previous_price)}
-                                          </Typography>
-                                          <Box sx={{ display: 'flex', gap: 1, justifyContent: { xs: 'flex-start', md: 'flex-end' }, mt: 0.5 }}>
-                                            <Chip
-                                              icon={property.price_diff && property.price_diff < 0 ? <TrendingDownIcon /> : <TrendingUpIcon />}
-                                              label={`${property.price_diff && property.price_diff > 0 ? '+' : ''}${property.price_diff?.toLocaleString()}万円`}
-                                              size="small"
-                                              color={property.price_diff && property.price_diff < 0 ? 'primary' : 'error'}
-                                            />
-                                            <Chip
-                                              label={`${property.price_diff_rate && property.price_diff_rate > 0 ? '+' : ''}${property.price_diff_rate}%`}
-                                              size="small"
-                                              variant="outlined"
-                                              color={property.price_diff && property.price_diff < 0 ? 'primary' : 'error'}
-                                            />
-                                          </Box>
-                                        </Box>
-                                      )}
-                                    </Box>
-                                  </Grid>
-                                </Grid>
-                              </Paper>
-                            ))}
-                          </Box>
-                        ) : (
-                          <Box>
-                            {ward.new_listings.map((property, index) => (
-                              <Paper 
-                                key={`new-${property.id}`} 
-                                component={Link}
-                                href={`/properties/${property.id}`}
-                                sx={{ 
-                                  p: 2, 
-                                  mb: 2,
-                                  border: 1,
-                                  borderColor: 'divider',
-                                  display: 'block',
-                                  textDecoration: 'none',
-                                  color: 'inherit',
-                                  cursor: 'pointer',
-                                  transition: 'all 0.3s',
-                                  background: `linear-gradient(to right, ${alpha(theme.palette.success.main, 0.03)} 0%, transparent 100%)`,
-                                  '&:hover': { 
-                                    boxShadow: 3,
-                                    bgcolor: alpha(theme.palette.success.main, 0.05),
-                                    transform: 'translateY(-2px)'
-                                  }
-                                }}
-                              >
-                                <Grid container spacing={2}>
-                                  <Grid item xs={12} md={8}>
-                                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                                      <Chip
-                                        icon={<NewReleasesIcon />}
-                                        label="NEW"
-                                        color="success"
-                                        size="small"
-                                        sx={{ mr: 2 }}
-                                      />
-                                      <Typography variant="h6" sx={{ fontWeight: 'bold' }}>
-                                        {property.building_name}
-                                        {property.room_number && (
-                                          <Chip label={`${property.room_number}号室`} size="small" sx={{ ml: 1 }} />
-                                        )}
-                                      </Typography>
-                                    </Box>
-                                    <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
-                                      {property.floor_number && (
-                                        <Chip icon={<LocationOnIcon />} label={`${property.floor_number}階`} size="small" variant="outlined" />
-                                      )}
-                                      {property.area && (
-                                        <Chip label={`${property.area}㎡`} size="small" variant="outlined" />
-                                      )}
-                                      {property.layout && (
-                                        <Chip label={property.layout} size="small" variant="outlined" />
-                                      )}
-                                      {property.direction && (
-                                        <Chip label={`${property.direction}向き`} size="small" variant="outlined" />
-                                      )}
-                                    </Box>
-                                  </Grid>
-                                  <Grid item xs={12} md={4}>
-                                    <Box sx={{ textAlign: { xs: 'left', md: 'right' } }}>
-                                      <Typography variant="h5" sx={{ color: theme.palette.success.main, fontWeight: 'bold' }}>
-                                        {formatPrice(property.price)}
-                                      </Typography>
-                                      <Typography variant="body2" sx={{ mt: 1, color: 'text.secondary' }}>
-                                        {property.created_at && `掲載: ${new Date(property.created_at).toLocaleDateString('ja-JP')}`}
-                                      </Typography>
-                                    </Box>
-                                  </Grid>
-                                </Grid>
-                              </Paper>
-                            ))}
-                          </Box>
-                        )}
-                      </Box>
-                    ))}
-                </Box>
-              </>
-            )}
-          </Paper>
         </Box>
       )}
 

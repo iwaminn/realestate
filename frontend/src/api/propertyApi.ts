@@ -411,4 +411,17 @@ export const propertyApi = {
     });
     return response.data;
   },
+
+  // 直近の価格改定・新着物件の件数のみを高速取得
+  getRecentUpdatesCount: async (hours: number = 24): Promise<{
+    total_price_changes: number;
+    total_new_listings: number;
+    hours: number;
+    updated_at: string;
+  }> => {
+    const response = await api.get('/recent-updates-count', {
+      params: { hours }
+    });
+    return response.data;
+  },
 };
