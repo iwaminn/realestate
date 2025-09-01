@@ -15,7 +15,7 @@ router = APIRouter(tags=["admin-alerts"])
 
 # メモリ内でアラートの解決状態を管理（開発用の簡易実装）
 # 本番では実際のデータベースを使用すべき
-_resolved_alerts = set()
+# メモリ内のアラート管理は削除（データベースのみ使用）
 
 
 class ScraperAlert(BaseModel):
@@ -57,51 +57,39 @@ async def get_scraper_alerts(
         limit: 取得件数
         offset: オフセット
     """
+    from ...models import ScraperAlert as DBScraperAlert
     
-    # 実際のscrapingタスクから失敗したタスクを取得
-    from ...models_scraping_task import ScrapingTask
+    # scraper_alertsテーブルから取得
+    query = db.query(DBScraperAlert)
     
-    # 失敗したタスクを検索
-    query = db.query(ScrapingTask).filter(ScrapingTask.status == "failed")
+    # 解決状態でフィルタ
+    if resolved is not None:
+        if resolved:
+            # 解決済み（is_active = False）
+            query = query.filter(DBScraperAlert.is_active == False)
+        else:
+            # 未解決（is_active = True）
+            query = query.filter(DBScraperAlert.is_active == True)
     
     # スクレイパー名でフィルタ
     if scraper_name:
-        # ScrapingTaskのscrapersフィールドはJSON配列なので、特殊な処理が必要
-        from sqlalchemy import func
-        query = query.filter(
-            func.json_array_length(ScrapingTask.scrapers) > 0
-        )
+        query = query.filter(DBScraperAlert.source_site == scraper_name)
     
-    # 解決済みフィルタの処理
-    # ScrapingTaskには解決済みフラグがないので、failedステータスのタスクを未解決として扱う
-    if resolved == True:
-        # 解決済みのアラートはない
-        return []
+    # 新しい順にソートして取得
+    db_alerts = query.order_by(DBScraperAlert.created_at.desc()).offset(offset).limit(limit).all()
     
-    # limitとoffsetを適用
-    failed_tasks = query.order_by(ScrapingTask.created_at.desc()).offset(offset).limit(limit).all()
-    
+    # DBモデルからAPIレスポンスモデルに変換
     alerts = []
-    for task in failed_tasks:
-        # ScrapingTaskからScraperAlertに変換
-        scrapers_list = task.scrapers if isinstance(task.scrapers, list) else []
-        scraper_name_str = scrapers_list[0] if scrapers_list else "unknown"
-        
+    for db_alert in db_alerts:
         alerts.append(ScraperAlert(
-            id=hash(task.task_id) % 1000000,  # task_idからIDを生成
-            scraper_name=scraper_name_str,
-            alert_type="task_failed",
-            message="スクレイピングタスクが失敗しました",
-            details={
-                "task_id": task.task_id,
-                "status": task.status,
-                "scrapers": scrapers_list,
-                "created_at": task.created_at.isoformat() if task.created_at else None,
-                "total_errors": task.total_errors
-            },
-            created_at=task.created_at,
-            resolved_at=None,  # ScrapingTaskには解決済みフラグがない
-            resolved_by=None
+            id=db_alert.id,
+            scraper_name=db_alert.source_site,
+            alert_type=db_alert.alert_type,
+            message=db_alert.message,
+            details=db_alert.details if db_alert.details else {},
+            created_at=db_alert.created_at,
+            resolved_at=db_alert.resolved_at,
+            resolved_by="admin" if db_alert.resolved_at else None
         ))
     
     return alerts
@@ -114,18 +102,26 @@ async def resolve_scraper_alert(
     db: Session = Depends(get_db)
 ):
     """スクレイパーアラートを解決済みにする"""
+    from ...models import ScraperAlert as DBScraperAlert
     
-    # 簡易実装: メモリ内で解決状態を管理
-    # 実際の実装では、scraper_alertsテーブルまたは
-    # ScrapingTaskテーブルのステータスを更新する
+    # データベースからアラートを取得
+    alert = db.query(DBScraperAlert).filter(DBScraperAlert.id == alert_id).first()
     
-    _resolved_alerts.add(alert_id)
+    if not alert:
+        raise HTTPException(status_code=404, detail="アラートが見つかりません")
+    
+    # アラートを解決済みに更新
+    alert.is_active = False
+    alert.resolved_at = datetime.now()
+    
+    # データベースに保存
+    db.commit()
     
     return {
         "message": "アラートを解決済みにしました",
         "alert_id": alert_id,
         "resolved_by": resolved_by,
-        "resolved_at": datetime.now().isoformat()
+        "resolved_at": alert.resolved_at.isoformat()
     }
 
 
@@ -135,9 +131,20 @@ async def unresolve_scraper_alert(
     db: Session = Depends(get_db)
 ):
     """スクレイパーアラートを未解決に戻す"""
+    from ...models import ScraperAlert as DBScraperAlert
     
-    # 簡易実装: メモリ内から解決状態を削除
-    _resolved_alerts.discard(alert_id)
+    # データベースからアラートを取得
+    alert = db.query(DBScraperAlert).filter(DBScraperAlert.id == alert_id).first()
+    
+    if not alert:
+        raise HTTPException(status_code=404, detail="アラートが見つかりません")
+    
+    # アラートを未解決に戻す
+    alert.is_active = True
+    alert.resolved_at = None
+    
+    # データベースに保存
+    db.commit()
     
     return {
         "message": "アラートを未解決に戻しました",

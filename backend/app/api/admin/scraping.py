@@ -1515,6 +1515,66 @@ def get_scraping_status(task_id: str, db: Session = Depends(get_db)):
     )
 
 
+def cleanup_stale_tasks(db: Session):
+    """
+    停滞したタスクを自動的にクリーンアップする
+    - 30分以上更新がないrunning状態のタスクをfailedに変更
+    - プロセスが存在しないタスクをfailedに変更
+    """
+    from ...models_scraping_task import ScrapingTask, ScrapingTaskLog
+    
+    cleaned_count = 0
+    now = datetime.now()
+    
+    # running状態のタスクを取得
+    running_tasks = db.query(ScrapingTask).filter(ScrapingTask.status == "running").all()
+    
+    for task in running_tasks:
+        should_cleanup = False
+        reason = ""
+        
+        # 1. 最終更新から30分以上経過しているかチェック
+        if task.started_at:
+            elapsed = (now - task.started_at).total_seconds()
+            # タスクの progress_detail から最終更新時刻を取得
+            last_update = task.started_at
+            if task.progress_detail and isinstance(task.progress_detail, dict):
+                for scraper_data in task.progress_detail.values():
+                    if isinstance(scraper_data, dict) and 'last_updated' in scraper_data:
+                        update_time = datetime.fromisoformat(scraper_data['last_updated'].replace('Z', '+00:00'))
+                        if update_time > last_update:
+                            last_update = update_time
+            
+            # 最終更新から30分以上経過
+            if (now - last_update).total_seconds() > 1800:
+                should_cleanup = True
+                reason = f"最終更新から{int((now - last_update).total_seconds() / 60)}分経過"
+        
+        # 2. プロセスの存在チェックは、サーバー再起動後は正確でないため削除
+        # 代わりに、最終更新時刻のみで判断する
+        
+        if should_cleanup:
+            task.status = "failed"
+            task.completed_at = now
+            cleaned_count += 1
+            
+            # ログを記録
+            log_entry = ScrapingTaskLog(
+                task_id=task.task_id,
+                log_type="error",
+                message=f"タスクが異常終了しました: {reason}",
+                details={"reason": reason, "auto_cleanup": True},
+                timestamp=now
+            )
+            db.add(log_entry)
+    
+    if cleaned_count > 0:
+        db.commit()
+        # ログ出力（管理画面のコンソールには別途表示される）
+        print(f"[AUTO-CLEANUP] {cleaned_count}個の停滞したタスクをfailedに変更")
+    
+    return cleaned_count
+
 @router.get("/scraping/tasks", response_model=List[ScrapingTaskStatus])
 def get_all_scraping_tasks(
     active_only: bool = False,
@@ -1522,6 +1582,9 @@ def get_all_scraping_tasks(
 ):
     """全スクレイピングタスクの一覧を取得（データベースから）"""
     from ...models_scraping_task import ScrapingTask
+    
+    # 停滞したタスクを自動的にクリーンアップ
+    cleanup_stale_tasks(db)
     
     # データベースからタスクを取得
     query = db.query(ScrapingTask)

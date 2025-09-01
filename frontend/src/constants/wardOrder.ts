@@ -50,7 +50,7 @@ export const sortWardNamesByLandPrice = (wardNames: string[]): string[] => {
   });
 };
 
-// 対象エリア（都心6区のみを扱う）
+// 対象エリア（都心8区を扱う）
 export const TARGET_WARDS = [
   { name: '千代田区', id: 'chiyoda' },
   { name: '港区', id: 'minato' },
@@ -58,12 +58,14 @@ export const TARGET_WARDS = [
   { name: '渋谷区', id: 'shibuya' },
   { name: '新宿区', id: 'shinjuku' },
   { name: '文京区', id: 'bunkyo' },
+  { name: '目黒区', id: 'meguro' },
+  { name: '品川区', id: 'shinagawa' },
 ];
 
-// 東京23区のリスト（現在は対象6区のみ）
+// 東京23区のリスト（現在は対象8区）
 export const TOKYO_WARDS = TARGET_WARDS;
 
-// 都心6区すべてを取得（人気エリア・その他の区別なし）
+// 都心8区すべてを取得（人気エリア・その他の区別なし）
 export const getAllTargetWards = () => {
   return TARGET_WARDS;
 };

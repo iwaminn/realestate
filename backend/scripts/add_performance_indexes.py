@@ -1,85 +1,111 @@
 #!/usr/bin/env python3
 """
-建物重複管理の高速化用インデックスを追加するスクリプト
+物件更新情報APIのパフォーマンス改善用インデックスを追加
 """
 
-import os
 import sys
-from pathlib import Path
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-# プロジェクトルートをパスに追加
-project_root = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(project_root))
-
-from sqlalchemy import text
-from backend.app.database import engine
+from sqlalchemy import create_engine, text
+from app.database import DATABASE_URL
 import logging
 
-# ロギング設定
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def add_indexes():
-    """パフォーマンス向上のためのインデックスを追加"""
+    """パフォーマンス改善用のインデックスを追加"""
+    
+    engine = create_engine(DATABASE_URL)
+    
+    indexes = [
+        # 価格履歴検索の高速化
+        {
+            "name": "idx_listing_price_history_composite",
+            "sql": """
+                CREATE INDEX IF NOT EXISTS idx_listing_price_history_composite 
+                ON listing_price_history(recorded_at DESC, property_listing_id, price)
+            """
+        },
+        {
+            "name": "idx_listing_price_history_listing_date",
+            "sql": """
+                CREATE INDEX IF NOT EXISTS idx_listing_price_history_listing_date 
+                ON listing_price_history(property_listing_id, recorded_at DESC)
+            """
+        },
+        
+        # 新着物件検索の高速化
+        {
+            "name": "idx_property_listings_created_composite",
+            "sql": """
+                CREATE INDEX IF NOT EXISTS idx_property_listings_created_composite 
+                ON property_listings(created_at DESC, master_property_id, is_active)
+            """
+        },
+        {
+            "name": "idx_property_listings_master_created",
+            "sql": """
+                CREATE INDEX IF NOT EXISTS idx_property_listings_master_created 
+                ON property_listings(master_property_id, created_at DESC)
+                WHERE is_active = true
+            """
+        },
+        
+        # 物件マスターの検索高速化
+        {
+            "name": "idx_master_properties_building_sold",
+            "sql": """
+                CREATE INDEX IF NOT EXISTS idx_master_properties_building_sold 
+                ON master_properties(building_id, sold_at)
+                WHERE sold_at IS NULL
+            """
+        },
+        
+        # 日付範囲検索の高速化
+        {
+            "name": "idx_listing_price_history_date_range",
+            "sql": """
+                CREATE INDEX IF NOT EXISTS idx_listing_price_history_date_range 
+                ON listing_price_history(DATE(recorded_at), property_listing_id)
+            """
+        },
+        
+        # アクティブな掲載の価格取得高速化
+        {
+            "name": "idx_property_listings_active_price",
+            "sql": """
+                CREATE INDEX IF NOT EXISTS idx_property_listings_active_price 
+                ON property_listings(master_property_id, current_price)
+                WHERE is_active = true
+            """
+        }
+    ]
     
     with engine.connect() as conn:
-        # 既存のインデックスをチェック
-        result = conn.execute(text("""
-            SELECT indexname 
-            FROM pg_indexes 
-            WHERE schemaname = 'public' 
-            AND tablename = 'buildings'
-        """))
-        existing_indexes = {row[0] for row in result}
-        
-        # 新しいインデックスを追加
-        indexes_to_add = [
-            # 重複検出の高速化用複合インデックス
-            ("idx_buildings_duplicate_detection", 
-             "CREATE INDEX IF NOT EXISTS idx_buildings_duplicate_detection ON buildings(normalized_name, built_year, total_floors)"),
-            
-            # 属性ベースの検索用インデックス
-            ("idx_buildings_attributes", 
-             "CREATE INDEX IF NOT EXISTS idx_buildings_attributes ON buildings(built_year, total_floors, total_units)"),
-            
-            # 住所前方一致検索用インデックス
-            ("idx_buildings_normalized_address_text", 
-             "CREATE INDEX IF NOT EXISTS idx_buildings_normalized_address_text ON buildings(normalized_address text_pattern_ops)"),
-        ]
-        
-        for index_name, create_sql in indexes_to_add:
-            if index_name not in existing_indexes:
-                logger.info(f"インデックス {index_name} を作成中...")
-                conn.execute(text(create_sql))
+        for index in indexes:
+            try:
+                logger.info(f"Creating index: {index['name']}")
+                conn.execute(text(index['sql']))
                 conn.commit()
-                logger.info(f"インデックス {index_name} を作成しました")
-            else:
-                logger.info(f"インデックス {index_name} は既に存在します")
-        
-        # BuildingListingNameテーブルのインデックスも最適化
-        result = conn.execute(text("""
-            SELECT indexname 
-            FROM pg_indexes 
-            WHERE schemaname = 'public' 
-            AND tablename = 'building_listing_names'
-        """))
-        existing_listing_indexes = {row[0] for row in result}
-        
-        listing_indexes = [
-            ("idx_building_listing_names_building_batch",
-             "CREATE INDEX IF NOT EXISTS idx_building_listing_names_building_batch ON building_listing_names(building_id, canonical_name)"),
-        ]
-        
-        for index_name, create_sql in listing_indexes:
-            if index_name not in existing_listing_indexes:
-                logger.info(f"インデックス {index_name} を作成中...")
-                conn.execute(text(create_sql))
-                conn.commit()
-                logger.info(f"インデックス {index_name} を作成しました")
-            else:
-                logger.info(f"インデックス {index_name} は既に存在します")
-        
-        logger.info("すべてのインデックスの追加が完了しました")
+                logger.info(f"✓ Index {index['name']} created successfully")
+            except Exception as e:
+                logger.error(f"✗ Failed to create index {index['name']}: {e}")
+    
+    # 統計情報を更新
+    logger.info("Updating table statistics...")
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ANALYZE listing_price_history"))
+            conn.execute(text("ANALYZE property_listings"))
+            conn.execute(text("ANALYZE master_properties"))
+            conn.commit()
+            logger.info("✓ Table statistics updated")
+        except Exception as e:
+            logger.error(f"✗ Failed to update statistics: {e}")
+    
+    logger.info("Index creation completed!")
 
 if __name__ == "__main__":
     add_indexes()

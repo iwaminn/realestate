@@ -519,7 +519,8 @@ class LivableScraper(BaseScraper):
             for dt, dd in zip(dt_elements, dd_elements):
                 dt_text = dt.get_text(strip=True)
                 if '所在地' in dt_text or '住所' in dt_text:
-                    address_text = dd.get_text(strip=True)
+                    # 共通メソッドを使用して住所を抽出
+                    address_text = self.extract_address_from_element(dd)
                     if address_text and address_text != '-':
                         address_from_html = address_text
                         self.logger.debug(f"HTMLテーブルから住所を取得: {address_from_html}")
@@ -536,7 +537,7 @@ class LivableScraper(BaseScraper):
             # "address":"東京都港区白金２丁目1-8" のパターンを探す
             address_match = re.search(r'"address"\s*:\s*"([^"]+)"', script_content)
             if address_match:
-                address_from_datalayer = address_match.group(1)
+                address_from_datalayer = self.clean_address(address_match.group(1))
                 self.logger.debug(f"dataLayerから住所を取得: {address_from_datalayer}")
                 break
         
@@ -549,7 +550,7 @@ class LivableScraper(BaseScraper):
                 # address: '東京都港区白金２丁目1-8' のパターンを探す
                 address_match = re.search(r"address\s*:\s*['\"]([^'\"]+)['\"]", script_content)
                 if address_match:
-                    address_from_datalayer = address_match.group(1)
+                    address_from_datalayer = self.clean_address(address_match.group(1))
                     self.logger.debug(f"gmapParmsから住所を取得: {address_from_datalayer}")
                     break
         
@@ -572,7 +573,7 @@ class LivableScraper(BaseScraper):
             # 最終手段: metaタグから取得
             meta_address = soup.find('meta', {'name': 'address'})
             if meta_address and meta_address.get('content'):
-                property_data['address'] = meta_address.get('content')
+                property_data['address'] = self.clean_address(meta_address.get('content'))
                 self.logger.info(f"metaタグから住所を取得: {property_data['address']}")
             else:
                 self.logger.warning(f"住所を取得できませんでした")
@@ -787,7 +788,7 @@ class LivableScraper(BaseScraper):
                 # すでに住所が設定されている場合は、より完全な住所のみで上書き
                 current_address = property_data.get('address', '')
                 if not current_address or len(value) > len(current_address):
-                    property_data['address'] = value
+                    property_data['address'] = self.clean_address(value)
         
         # 階数（所在階）
         elif ('階数' in label or '所在階' in label) and '総階数' not in label:
@@ -1008,7 +1009,7 @@ class LivableScraper(BaseScraper):
                 script_content = script.string
                 address_match = re.search(r'"address"\s*:\s*"([^"]+)"', script_content)
                 if address_match:
-                    property_data['address'] = address_match.group(1)
+                    property_data['address'] = self.clean_address(address_match.group(1))
                     break
             
             # gmapParmsからも試す
@@ -1018,7 +1019,7 @@ class LivableScraper(BaseScraper):
                     script_content = script.string
                     address_match = re.search(r"address\s*:\s*['\"]([^'\"]+)['\"]", script_content)
                     if address_match:
-                        property_data['address'] = address_match.group(1)
+                        property_data['address'] = self.clean_address(address_match.group(1))
                         break
     
     def _validate_grantact_required_fields(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
@@ -1051,7 +1052,7 @@ class LivableScraper(BaseScraper):
                 # すでに住所が設定されている場合は、より完全な住所のみで上書き
                 current_address = property_data.get('address', '')
                 if not current_address or len(value) > len(current_address):
-                    property_data['address'] = value
+                    property_data['address'] = self.clean_address(value)
         
         # 交通
         elif '交通' in label or '駅徒歩' in label:
