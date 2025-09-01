@@ -4,7 +4,7 @@
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from backend.app.models import MasterProperty, PropertyListing
+from ..models import MasterProperty, PropertyListing
 import logging
 
 logger = logging.getLogger(__name__)

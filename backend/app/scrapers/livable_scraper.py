@@ -519,12 +519,36 @@ class LivableScraper(BaseScraper):
             for dt, dd in zip(dt_elements, dd_elements):
                 dt_text = dt.get_text(strip=True)
                 if '所在地' in dt_text or '住所' in dt_text:
-                    # 共通メソッドを使用して住所を抽出
-                    address_text = self.extract_address_from_element(dd)
+                    # 住所を抽出（一時的な回避策）
+                    import copy
+                    dd_copy = copy.copy(dd)
+                    # リンクなどのUI要素を削除
+                    for tag in dd_copy.find_all(['a', 'button', 'img', 'input', 'svg', 'iframe']):
+                        tag.decompose()
+                    address_text = dd_copy.get_text(strip=True)
+                    
+                    # 住所をクリーニング
                     if address_text and address_text != '-':
-                        address_from_html = address_text
-                        self.logger.debug(f"HTMLテーブルから住所を取得: {address_from_html}")
-                        break
+                        # 不要なUI要素のテキストを除去
+                        ui_patterns = [
+                            r'地図を見る',
+                            r'マップを見る',
+                            r'地図で確認',
+                            r'周辺地図',
+                            r'Google\s*Map',
+                            r'詳細を見る',
+                            r'詳しく見る',
+                        ]
+                        for pattern in ui_patterns:
+                            address_text = re.sub(pattern, '', address_text, flags=re.IGNORECASE)
+                        
+                        # 余分な空白を正規化
+                        address_text = re.sub(r'\s+', ' ', address_text).strip()
+                        
+                        if address_text:
+                            address_from_html = address_text
+                            self.logger.debug(f"HTMLテーブルから住所を取得: {address_from_html}")
+                            break
             if address_from_html:
                 break
         

@@ -1829,7 +1829,7 @@ class BaseScraper(ABC):
             return ""
         
         # 広告文でないものを優先
-        non_ad_names = [name for name in candidates if not is_advertising_text(name)]
+        non_ad_names = [name for name in candidates if not self.is_advertising_text(name)]
         if non_ad_names:
             candidates = non_ad_names
         
@@ -2232,7 +2232,7 @@ class BaseScraper(ABC):
             return None
         
         # 住所を正規化（表記ゆれを吸収）
-        from backend.app.utils.address_normalizer import AddressNormalizer
+        from ..utils.address_normalizer import AddressNormalizer
         normalizer = AddressNormalizer()
         normalized_address = normalizer.normalize_for_comparison(address)
         
@@ -2336,7 +2336,7 @@ class BaseScraper(ABC):
             # BuildingListingNameから検索
             from sqlalchemy import or_
             from ..models import BuildingListingName
-            from ..scrapers.data_normalizer import canonicalize_building_name
+            from .data_normalizer import canonicalize_building_name
             
             # 検索語を正規化
             canonical_search = canonicalize_building_name(building_name)
@@ -2440,7 +2440,7 @@ class BaseScraper(ABC):
                         building.address = address
                         # 正規化住所も更新
                         if hasattr(building, 'normalized_address'):
-                            from backend.app.utils.address_normalizer import AddressNormalizer
+                            from ..utils.address_normalizer import AddressNormalizer
                             addr_normalizer = AddressNormalizer()
                             building.normalized_address = addr_normalizer.normalize_for_comparison(address)
                         updated = True
@@ -2492,14 +2492,14 @@ class BaseScraper(ABC):
         
         # BuildingListingNameテーブルから建物を検索（元の建物名で）
         if address:  # 住所がある場合のみ
-            from backend.app.utils.address_normalizer import AddressNormalizer
+            from ..utils.address_normalizer import AddressNormalizer
             addr_normalizer = AddressNormalizer()
             normalized_address = addr_normalizer.normalize_for_comparison(address)
             
             # 元の建物名でBuildingListingNameから検索
             from sqlalchemy import or_
             from ..models import BuildingListingName
-            from ..scrapers.data_normalizer import canonicalize_building_name
+            from .data_normalizer import canonicalize_building_name
             
             # 検索語を正規化
             canonical_search = canonicalize_building_name(original_building_name)
@@ -2591,7 +2591,7 @@ class BaseScraper(ABC):
         
         
         # 広告文の場合は特別な処理
-        if is_advertising_text(building_name):
+        if self.is_advertising_text(building_name):
             # 広告文の場合は、住所が必須
             if not address:
                 print(f"[WARNING] 広告文タイトルで住所がない: {building_name}")
@@ -2669,7 +2669,7 @@ class BaseScraper(ABC):
         # 住所を正規化
         normalized_addr = None
         if address:
-            from backend.app.utils.address_normalizer import AddressNormalizer
+            from ..utils.address_normalizer import AddressNormalizer
             addr_normalizer = AddressNormalizer()
             normalized_addr = addr_normalizer.normalize_for_comparison(address)
         
@@ -3202,7 +3202,7 @@ class BaseScraper(ABC):
                 self.safe_flush()  # 重要: 価格履歴をDBに反映
                 
                 # 価格改定日を更新
-                from backend.app.utils.property_utils import update_latest_price_change
+                from ..utils.property_utils import update_latest_price_change
                 update_latest_price_change(self.session, master_property.id)
             
             # その他の情報を更新（変更を追跡）
@@ -3469,7 +3469,7 @@ class BaseScraper(ABC):
                 # 最初の掲載日を更新
                 update_earliest_listing_date(self.session, master_property.id)
                 # 価格改定日を更新（新規なので価格履歴追加と同時）
-                from backend.app.utils.property_utils import update_latest_price_change
+                from ..utils.property_utils import update_latest_price_change
                 update_latest_price_change(self.session, master_property.id)
             except Exception as e:
                 # URL重複エラーまたはsite_property_id重複エラーの場合は、再度検索して既存レコードを使用
@@ -3503,7 +3503,7 @@ class BaseScraper(ABC):
                             if listing.master_property_id:
                                 update_earliest_listing_date(self.session, listing.master_property_id)
                                 # 価格改定日も更新（非アクティブ化により再計算が必要）
-                                from backend.app.utils.property_utils import update_latest_price_change
+                                from ..utils.property_utils import update_latest_price_change
                                 update_latest_price_change(self.session, listing.master_property_id)
                             
                             # 新しいレコードを作成（再試行）
@@ -3552,7 +3552,7 @@ class BaseScraper(ABC):
             self.safe_flush()  # 重要: 価格履歴をDBに反映
             
             # 価格改定日を更新（初回登録も価格設定として扱う）
-            from backend.app.utils.property_utils import update_latest_price_change
+            from ..utils.property_utils import update_latest_price_change
             update_latest_price_change(self.session, master_property.id)
             
             # 新規作成の場合、update_typeを'new'に設定
@@ -3738,7 +3738,7 @@ class BaseScraper(ABC):
     def _should_skip_url_due_to_validation_error(self, url: str) -> bool:
         """検証エラー履歴によりスキップすべきURLか判定"""
         try:
-            from backend.app.models import PropertyValidationError
+            from ..models import PropertyValidationError
             
             # PropertyValidationErrorテーブルから確認
             error_record = self.session.query(PropertyValidationError).filter(
@@ -3879,7 +3879,7 @@ class BaseScraper(ABC):
             return
             
         try:
-            from backend.app.models import PropertyValidationError
+            from ..models import PropertyValidationError
             import json
             
             # 既存のレコードを確認
@@ -4004,7 +4004,7 @@ class BaseScraper(ABC):
             return
             
         try:
-            from backend.app.models import PropertyValidationError
+            from ..models import PropertyValidationError
             
             # 既存のエラー記録を確認
             error_record = self.session.query(PropertyValidationError).filter(
@@ -4267,7 +4267,7 @@ class BaseScraper(ABC):
                         building.address = property_data.get('address')
                         # 正規化住所も更新
                         if hasattr(building, 'normalized_address'):
-                            from backend.app.utils.address_normalizer import AddressNormalizer
+                            from ..utils.address_normalizer import AddressNormalizer
                             addr_normalizer = AddressNormalizer()
                             building.normalized_address = addr_normalizer.normalize_for_comparison(property_data.get('address'))
                         updated = True
@@ -5294,37 +5294,6 @@ class BaseScraper(ABC):
         if hasattr(self, 'http_session'):
             self.http_session.close()
 
-
-def is_advertising_text(text: str) -> bool:
-    """広告的なテキストかどうかを判定"""
-    if not text:
-        return False
-    
-    # 広告的なパターン
-    ad_patterns = [
-        r'徒歩\d+分',
-        r'駅.*\d+分',
-        r'の中古マンション',
-        r'新築',
-        r'分譲',
-        r'賃貸',
-        r'[0-9,]+万円',
-        r'\d+LDK',
-        r'\d+階建',
-        r'築\d+年',
-    ]
-    
-    # いずれかのパターンにマッチしたら広告文と判定
-    for pattern in ad_patterns:
-        if re.search(pattern, text):
-            return True
-    
-    # 建物名として短すぎる場合も広告文と判定
-    if len(text) < 3:
-        return True
-    
-    return False
-    
     def clean_address(self, address: str) -> str:
         """
         住所文字列をクリーニングする共通メソッド
@@ -5444,3 +5413,34 @@ def is_advertising_text(text: str) -> bool:
         # 念のため、残っている可能性のあるUIテキストをクリーニング
         # （JavaScriptで動的に追加される場合などに対応）
         return self.clean_address(address_text)
+
+
+    def is_advertising_text(self, text: str) -> bool:
+        """広告的なテキストかどうかを判定"""
+        if not text:
+            return False
+    
+        # 広告的なパターン
+        ad_patterns = [
+            r'徒歩\d+分',
+            r'駅.*\d+分',
+            r'の中古マンション',
+            r'新築',
+            r'分譲',
+            r'賃貸',
+            r'[0-9,]+万円',
+            r'\d+LDK',
+            r'\d+階建',
+            r'築\d+年',
+        ]
+        
+        # いずれかのパターンにマッチしたら広告文と判定
+        for pattern in ad_patterns:
+            if re.search(pattern, text):
+                return True
+        
+        # 建物名として短すぎる場合も広告文と判定
+        if len(text) < 3:
+            return True
+        
+        return False

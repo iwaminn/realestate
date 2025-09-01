@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import {
   Box,
   Paper,
@@ -12,12 +12,10 @@ import {
   Grid,
   Divider,
   Button,
-  Collapse,
-  IconButton,
+  FormControlLabel,
+  Checkbox,
 } from '@mui/material';
 import {
-  ExpandMore as ExpandMoreIcon,
-  ExpandLess as ExpandLessIcon,
   Apartment as ApartmentIcon,
   LocationOn as LocationIcon,
 } from '@mui/icons-material';
@@ -55,19 +53,24 @@ interface BuildingGroup {
 interface BuildingGroupedListProps {
   searchParams: SearchParams;
   includeInactive: boolean;
+  onIncludeInactiveChange?: (value: boolean) => void;
 }
 
 const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
   searchParams,
   includeInactive,
+  onIncludeInactiveChange,
 }) => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const [urlSearchParams, setUrlSearchParams] = useSearchParams();
   const [buildingGroups, setBuildingGroups] = useState<BuildingGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
-  const [page, setPage] = useState(1);
+  // URLパラメータからページ番号を取得
+  const initialPage = parseInt(urlSearchParams.get('page') || '1');
+  const [page, setPage] = useState(initialPage);
   const [totalPages, setTotalPages] = useState(0);
-  const [expandedBuildings, setExpandedBuildings] = useState<Set<number>>(new Set());
 
   const fetchBuildingGroups = async () => {
     setLoading(true);
@@ -106,20 +109,27 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
     fetchBuildingGroups();
   }, [page, searchParams, includeInactive]);
 
+  // URLパラメータが外部から変更された場合（ブラウザの戻る/進むボタンなど）
+  useEffect(() => {
+    const pageFromUrl = parseInt(urlSearchParams.get('page') || '1');
+    if (pageFromUrl !== page) {
+      setPage(pageFromUrl);
+    }
+  }, [location.search]); // URLの変更を監視
+
   const handlePageChange = (_: React.ChangeEvent<unknown>, value: number) => {
     setPage(value);
+    // URLパラメータを更新
+    const newParams = new URLSearchParams(urlSearchParams);
+    if (value > 1) {
+      newParams.set('page', value.toString());
+    } else {
+      newParams.delete('page'); // 1ページ目の場合はパラメータから削除
+    }
+    setUrlSearchParams(newParams);
     window.scrollTo(0, 0);
   };
 
-  const toggleBuildingExpand = (buildingId: number) => {
-    const newExpanded = new Set(expandedBuildings);
-    if (newExpanded.has(buildingId)) {
-      newExpanded.delete(buildingId);
-    } else {
-      newExpanded.add(buildingId);
-    }
-    setExpandedBuildings(newExpanded);
-  };
 
   const handleBuildingClick = (buildingId: number, buildingName: string) => {
     navigate(`/buildings/${buildingId}/properties`, { 
@@ -170,10 +180,23 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
 
   return (
     <Box>
-      <Box sx={{ mb: 2 }}>
+      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <Typography variant="body1" color="text.secondary">
           検索結果: {totalCount}棟
         </Typography>
+        <FormControlLabel
+          control={
+            <Checkbox
+              checked={includeInactive}
+              onChange={(e) => {
+                if (onIncludeInactiveChange) {
+                  onIncludeInactiveChange(e.target.checked);
+                }
+              }}
+            />
+          }
+          label="販売終了物件を含む"
+        />
       </Box>
 
       {buildingGroups.map((group) => (
@@ -224,13 +247,6 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
                   </Typography>
                 </Box>
               </Box>
-
-              <IconButton
-                onClick={() => toggleBuildingExpand(group.building.id)}
-                aria-label="expand"
-              >
-                {expandedBuildings.has(group.building.id) ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-              </IconButton>
             </Box>
 
             <Divider sx={{ my: 2 }} />

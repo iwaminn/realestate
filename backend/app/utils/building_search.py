@@ -3,7 +3,7 @@
 from typing import List, Dict, Optional, Tuple
 from sqlalchemy import or_, and_
 from sqlalchemy.orm import Query
-from backend.app.utils.search_normalizer import (
+from .search_normalizer import (
     create_search_patterns, normalize_search_text
 )
 
@@ -196,7 +196,7 @@ def apply_building_name_filter_with_alias(
         return query
     
     # BuildingListingNameテーブルを使用
-    from backend.app.models import BuildingListingName
+    from ..models import BuildingListingName
     
     # スペース区切りでAND検索
     search_terms = search_text.strip().split()
@@ -205,7 +205,7 @@ def apply_building_name_filter_with_alias(
         return query
     
     # 検索語の正規化
-    from backend.app.scrapers.data_normalizer import normalize_building_name
+    from ..scrapers.data_normalizer import normalize_building_name
     import re
     
     # 検索文字列を正規化して分割
@@ -262,7 +262,7 @@ def apply_building_name_filter_with_alias(
         # 掲載情報の建物名での検索（BuildingListingNameテーブル使用）
         if search_aliases:
             # 検索語をcanonical形式に変換
-            from backend.app.scrapers.data_normalizer import canonicalize_building_name
+            from ..scrapers.data_normalizer import canonicalize_building_name
             canonical_term = canonicalize_building_name(term)
             
             listing_building_ids = db_session.query(

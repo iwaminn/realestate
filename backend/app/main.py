@@ -9,19 +9,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import time
 
-from backend.app.database import init_db
-from backend.app.utils.logger import api_logger, error_logger
+from .database import init_db
+from .utils.logger import api_logger, error_logger
 
 # APIルーターのインポート
-from backend.app.api.admin import router as admin_router
-from backend.app.api import admin_listings
-from backend.app.api import admin_properties
-from backend.app.api import admin_buildings
-from backend.app.api import admin_matching
-from backend.app.api import properties
-from backend.app.api import buildings
-from backend.app.api import stats
-from backend.app.api import grouped_properties
+from .api.admin import router as admin_router
+from .api import admin_listings
+from .api import admin_properties
+from .api import admin_buildings
+from .api import admin_matching
+from .api import properties
+from .api import buildings
+from .api import stats
+from .api import grouped_properties
 
 app = FastAPI(title="不動産横断検索API", version="1.0.0")
 

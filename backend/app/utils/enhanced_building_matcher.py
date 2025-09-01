@@ -44,7 +44,7 @@ class EnhancedBuildingMatcher:
             return []
             
         try:
-            from backend.app.models import BuildingListingName
+            from ..models import BuildingListingName
             
             # この建物の掲載名をすべて取得
             listing_names = session.query(BuildingListingName).filter(

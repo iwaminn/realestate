@@ -118,7 +118,7 @@ def create_search_patterns(search: str) -> list[str]:
     
     # canonicalize形式（すべてのスペース・記号を削除、小文字化）も追加
     # これにより「白金ざ　すかい」→「白金ザスカイ」のようなcanonical形式でも検索可能
-    from backend.app.scrapers.data_normalizer import canonicalize_building_name
+    from ..scrapers.data_normalizer import canonicalize_building_name
     canonical = canonicalize_building_name(search)
     if canonical not in patterns:
         patterns.append(canonical)

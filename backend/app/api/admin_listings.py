@@ -486,7 +486,7 @@ async def attach_listing_to_property(
     if new_property_obj:
         updater.update_master_property_by_majority(new_property_obj)
         # 最初の掲載日を更新
-        from backend.app.utils.property_utils import update_earliest_listing_date, update_latest_price_change
+        from .utils.property_utils import update_earliest_listing_date, update_latest_price_change
         update_earliest_listing_date(db, new_property_id)
         update_latest_price_change(db, new_property_id)
     

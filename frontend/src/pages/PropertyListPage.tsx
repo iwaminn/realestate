@@ -270,6 +270,12 @@ const PropertyListPage: React.FC = () => {
         <BuildingGroupedList
           searchParams={searchParams}
           includeInactive={includeInactive}
+          onIncludeInactiveChange={(newValue) => {
+            setIncludeInactive(newValue);
+            setCurrentPage(1);
+            // 新しい値を直接渡す
+            fetchPropertiesWithIncludeInactive(searchParams, 1, true, newValue);
+          }}
         />
       ) : (
         // 物件一覧表示

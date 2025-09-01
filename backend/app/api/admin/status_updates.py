@@ -53,7 +53,7 @@ async def update_listing_status(
         reopened_properties = set()
         
         # 各掲載を再アクティブ化
-        from backend.app.utils.property_utils import update_earliest_listing_date
+        from ...utils.property_utils import update_earliest_listing_date
         properties_to_update = set()
         
         for listing in reactivate_listings:
@@ -112,7 +112,7 @@ async def update_listing_status(
                         print(f"最終価格の更新に失敗: property_id={master_property.id}, error={e}")
         
         # 影響を受けた全物件の最初の掲載日と価格改定日を更新
-        from backend.app.utils.property_utils import update_latest_price_change
+        from ...utils.property_utils import update_latest_price_change
         for property_id in properties_to_update:
             try:
                 update_earliest_listing_date(db, property_id)

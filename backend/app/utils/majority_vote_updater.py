@@ -55,7 +55,7 @@ class MajorityVoteUpdater:
         
         if value_type == 'address':
             # 住所の正規化
-            from backend.app.utils.address_normalizer import AddressNormalizer
+            from .address_normalizer import AddressNormalizer
             normalizer = AddressNormalizer()
             for value, source in valid_items:
                 normalized = normalizer.normalize_for_comparison(value)
@@ -65,7 +65,7 @@ class MajorityVoteUpdater:
                 
         elif value_type == 'layout':
             # 間取りの正規化
-            from backend.app.scrapers import normalize_layout
+            from ..scrapers import normalize_layout
             for value, source in valid_items:
                 normalized = normalize_layout(value) or value  # 正規化失敗時は元の値
                 if normalized not in normalized_groups:
@@ -74,7 +74,7 @@ class MajorityVoteUpdater:
                 
         elif value_type == 'direction':
             # 方角の正規化
-            from backend.app.scrapers import normalize_direction
+            from ..scrapers import normalize_direction
             for value, source in valid_items:
                 normalized = normalize_direction(value) or value  # 正規化失敗時は元の値
                 if normalized not in normalized_groups:
@@ -451,7 +451,7 @@ class MajorityVoteUpdater:
                 
                 # 正規化住所も更新
                 if hasattr(building, 'normalized_address'):
-                    from backend.app.utils.address_normalizer import AddressNormalizer
+                    from .address_normalizer import AddressNormalizer
                     normalizer = AddressNormalizer()
                     building.normalized_address = normalizer.normalize_for_comparison(majority_address)
                 
@@ -691,7 +691,7 @@ class MajorityVoteUpdater:
         
         # 建物名を正規化してグループ化
         # SUUMOスクレイパーを使用（正規化関数のため）
-        from backend.app.scrapers.suumo_scraper import SuumoScraper
+        from ..scrapers.suumo_scraper import SuumoScraper
         scraper = SuumoScraper()
         
         for building_name, source_site, count in building_name_votes:
@@ -775,7 +775,7 @@ class MajorityVoteUpdater:
         normalized_groups = {}  # {正規化名: {元の名前: 重み}}
         
         # 共通の建物名正規化関数を使用
-        from backend.app.utils.building_name_normalizer import normalize_building_name
+        from .building_name_normalizer import normalize_building_name
         
         # アクティブな掲載情報があるかチェック
         active_listings = self.session.query(PropertyListing).filter(

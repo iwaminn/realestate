@@ -70,7 +70,7 @@ async def get_duplicate_buildings(
     """建物の重複候補を取得（改善版）"""
     import re
     import time
-    from backend.app.utils.enhanced_building_matcher import EnhancedBuildingMatcher
+    from ...utils.enhanced_building_matcher import EnhancedBuildingMatcher
     
     # 処理時間測定開始
     start_time = time.time()
@@ -103,8 +103,8 @@ async def get_duplicate_buildings(
         )
         
         # BuildingListingNameを使用した検索
-        from backend.app.models import BuildingListingName
-        from backend.app.scrapers.data_normalizer import canonicalize_building_name
+        from ...models import BuildingListingName
+        from ...scrapers.data_normalizer import canonicalize_building_name
         
         # 検索語を正規化
         canonical_search = canonicalize_building_name(search)
@@ -1070,8 +1070,8 @@ def get_duplicate_properties(
     building_ids = None
     if building_name:
         # BuildingListingNameを使用した検索
-        from backend.app.models import BuildingListingName
-        from backend.app.scrapers.data_normalizer import canonicalize_building_name
+        from ...models import BuildingListingName
+        from ...scrapers.data_normalizer import canonicalize_building_name
         
         # 検索語を正規化
         canonical_search = canonicalize_building_name(building_name)
@@ -1297,8 +1297,8 @@ def search_properties_for_merge(
             })
     
     # 建物名で検索（BuildingListingName対応）
-    from backend.app.models import BuildingListingName
-    from backend.app.scrapers.data_normalizer import canonicalize_building_name
+    from ...models import BuildingListingName
+    from ...scrapers.data_normalizer import canonicalize_building_name
     
     # 検索語を正規化
     canonical_search = canonicalize_building_name(query)
@@ -1439,7 +1439,7 @@ def move_property_to_building(
             updater.update_building_by_majority(target_building_obj)
         
         # 移動した物件の最初の掲載日と価格改定日を更新
-        from backend.app.utils.property_utils import update_earliest_listing_date, update_latest_price_change
+        from ...utils.property_utils import update_earliest_listing_date, update_latest_price_change
         update_earliest_listing_date(db, moved_property_id)
         update_latest_price_change(db, moved_property_id)
         
