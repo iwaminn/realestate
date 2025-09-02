@@ -83,8 +83,8 @@ async def get_duplicate_buildings(
     import logging
     logger = logging.getLogger(__name__)
     
-    # EnhancedBuildingMatcherのインスタンスを作成
-    matcher = EnhancedBuildingMatcher()
+    # EnhancedBuildingMatcherのインスタンスを作成（まだキャッシュなし）
+    matcher = None  # 後で建物リスト取得後に初期化
     phase_times['matcher_init'] = time.time() - phase_start
     
     # フェーズ2: 建物データの取得
@@ -531,7 +531,43 @@ async def get_duplicate_buildings(
     
     phase_times['building_fetch'] = time.time() - phase_start
     
-    # フェーズ3: 除外ペアの取得
+    # フェーズ3: 掲載履歴の一括取得とキャッシュ作成
+    phase_start = time.time()
+    
+    # 全建物IDを収集
+    all_building_ids = [b[0].id for b in buildings_with_count]
+    
+    # BuildingListingNameを一括取得
+    from ...models import BuildingListingName
+    all_listing_names = db.query(BuildingListingName).filter(
+        BuildingListingName.building_id.in_(all_building_ids)
+    ).all()
+    
+    # 建物IDごとにエイリアスをグループ化してキャッシュを作成
+    aliases_cache = {}
+    for listing in all_listing_names:
+        building_id = listing.building_id
+        if building_id not in aliases_cache:
+            aliases_cache[building_id] = []
+        
+        # 重複を避けながら追加
+        if listing.listing_name and listing.listing_name not in aliases_cache[building_id]:
+            aliases_cache[building_id].append(listing.listing_name)
+    
+    # ログ出力
+    logger.info(f"掲載履歴キャッシュ作成: {len(all_building_ids)}件の建物, {len(all_listing_names)}件の掲載名")
+    
+    phase_times['aliases_cache_build'] = time.time() - phase_start
+    
+    # フェーズ4: Matcherの初期化（キャッシュ付き）
+    phase_start = time.time()
+    
+    # キャッシュを渡してMatcherを初期化
+    matcher = EnhancedBuildingMatcher(aliases_cache=aliases_cache)
+    
+    phase_times['matcher_init_with_cache'] = time.time() - phase_start
+    
+    # フェーズ5: 除外ペアの取得
     phase_start = time.time()
     
     # 除外ペアを取得
@@ -544,7 +580,7 @@ async def get_duplicate_buildings(
 
     phase_times['exclusion_fetch'] = time.time() - phase_start
     
-    # フェーズ4: 重複候補の検出と類似度計算（推移的グループ化対応）
+    # フェーズ6: 重複候補の検出と類似度計算（推移的グループ化対応）
     phase_start = time.time()
     
     duplicate_groups = []
@@ -705,7 +741,7 @@ async def get_duplicate_buildings(
     
     phase_times['similarity_graph_build'] = time.time() - phase_start
     
-    # フェーズ4-2: 連結成分を見つけて推移的グループを構築
+    # フェーズ7: 連結成分を見つけて推移的グループを構築
     phase_start = time.time()
     
     def find_connected_components(graph):

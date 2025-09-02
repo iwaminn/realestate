@@ -130,21 +130,27 @@ class BuildingNameNormalizer:
         # まず部屋番号を抽出・除去
         name, room_number = self.extract_room_number(name)
         
-        # 1. 全角英数字を半角に変換
+        # 1. 漢数字を算用数字に変換（全角変換の前に実行）
+        name = self.convert_japanese_numbers(name)
+        
+        # 2. ローマ数字を算用数字に変換
+        name = self.convert_roman_numerals(name)
+        
+        # 3. 全角英数字を半角に変換
         name = jaconv.z2h(name, kana=False, ascii=True, digit=True)
         
-        # 2. カタカナの正規化（半角カナを全角に）
+        # 4. カタカナの正規化（半角カナを全角に）
         name = jaconv.h2z(name, kana=True, ascii=False, digit=False)
         
-        # 2.5. 英字の大文字統一（建物名では通常大文字が使われる）
+        # 5. 英字の大文字統一（建物名では通常大文字が使われる）
         # ただし、棟表記（E棟、W棟など）は後で処理するので、ここでは建物名部分のみ
         # 例: "n's" → "N'S", "N´s" → "N'S"
         name = self.normalize_english_case(name)
         
-        # 3. スペースの正規化
+        # 6. スペースの正規化
         name = re.sub(r'[\s　]+', ' ', name).strip()
         
-        # 4. 特殊文字の正規化
+        # 7. 特殊文字の正規化
         replacements = {
             '〜': '～',
             '－': '-',
@@ -157,19 +163,19 @@ class BuildingNameNormalizer:
         for old, new in replacements.items():
             name = name.replace(old, new)
         
-        # 5. 不要なパターンを削除
+        # 8. 不要なパターンを削除
         for pattern in self.REMOVE_PATTERNS:
             name = re.sub(pattern, '', name, flags=re.IGNORECASE)
         
-        # 6. 建物タイプの正規化
+        # 9. 建物タイプの正規化
         for variant, standard in self.BUILDING_TYPE_MAP.items():
             if variant in name:
                 name = name.replace(variant, standard)
         
-        # 7. 棟表記の正規化
+        # 10. 棟表記の正規化
         name = self.normalize_building_unit(name)
         
-        # 8. 中黒（・）の有無を統一（重要な建物名の区切りでない場合は削除）
+        # 11. 中黒（・）の有無を統一（重要な建物名の区切りでない場合は削除）
         # 例: "白金ザ・スカイ" → "白金ザスカイ"
         # ただし、明確に別の単語を区切る場合は保持
         # カタカナ同士の間の中黒は削除
@@ -222,6 +228,155 @@ class BuildingNameNormalizer:
             name = re.sub(pattern, replacement, name)
         
         return name.strip()
+    
+    def convert_japanese_numbers(self, text: str) -> str:
+        """漢数字を算用数字に変換
+        
+        例：
+        - 第一棟 → 第1棟
+        - 二号館 → 2号館
+        - 十五階建 → 15階建
+        """
+        if not text:
+            return text
+        
+        # 基本的な漢数字マップ
+        basic_map = {
+            '〇': '0', '○': '0', '零': '0',
+            '一': '1', '二': '2', '三': '3', '四': '4', '五': '5',
+            '六': '6', '七': '7', '八': '8', '九': '9',
+            '壱': '1', '弐': '2', '参': '3',  # 旧字体
+        }
+        
+        # 十の位の処理
+        ten_map = {
+            '十': '10', '二十': '20', '三十': '30', '四十': '40', '五十': '50',
+            '六十': '60', '七十': '70', '八十': '80', '九十': '90',
+        }
+        
+        result = text
+        
+        # パターン1: 第X棟、X号館などの単純な置換
+        # 第一棟 → 第1棟
+        for pattern in [r'第([一二三四五六七八九十]+)([棟館号])', 
+                       r'([一二三四五六七八九十]+)([棟館号])']:
+            def replace_func(match):
+                num_str = match.group(1)
+                suffix = match.group(2) if len(match.groups()) > 1 else ''
+                prefix = '第' if '第' in match.group(0) else ''
+                
+                # 「十」を含む場合の処理
+                if '十' in num_str:
+                    if num_str == '十':
+                        converted = '10'
+                    elif num_str.startswith('十'):
+                        # 十X → 1X
+                        rest = num_str[1:]
+                        if rest in basic_map:
+                            converted = '1' + basic_map[rest]
+                        else:
+                            converted = num_str
+                    elif num_str.endswith('十'):
+                        # X十 → X0
+                        first = num_str[:-1]
+                        if first in basic_map:
+                            converted = basic_map[first] + '0'
+                        else:
+                            converted = num_str
+                    elif len(num_str) == 3 and num_str[1] == '十':
+                        # X十Y → XY
+                        first = num_str[0]
+                        last = num_str[2]
+                        if first in basic_map and last in basic_map:
+                            converted = basic_map[first] + basic_map[last]
+                        else:
+                            converted = num_str
+                    else:
+                        converted = num_str
+                else:
+                    # 単純な置換
+                    converted = num_str
+                    for kanji, num in basic_map.items():
+                        converted = converted.replace(kanji, num)
+                
+                return prefix + converted + suffix
+            
+            result = re.sub(pattern, replace_func, result)
+        
+        # パターン2: 残った独立した漢数字を処理
+        # 「二十三」のような複合数字を処理
+        def convert_compound_number(match):
+            text = match.group(0)
+            # 十の位と一の位を処理
+            if '十' in text:
+                parts = text.split('十')
+                if len(parts) == 2:
+                    tens = basic_map.get(parts[0], parts[0]) if parts[0] else '1'
+                    ones = basic_map.get(parts[1], '0') if parts[1] else '0'
+                    if tens.isdigit() and ones.isdigit():
+                        return str(int(tens) * 10 + int(ones))
+                elif text == '十':
+                    return '10'
+            # 単純な一桁の数字
+            return basic_map.get(text, text)
+        
+        # 漢数字のパターンにマッチする部分を変換
+        result = re.sub(r'[一二三四五六七八九十]+', convert_compound_number, result)
+        
+        return result
+    
+    def convert_roman_numerals(self, text: str) -> str:
+        """ローマ数字を算用数字に変換
+        
+        例：
+        - タワーⅡ → タワー2
+        - 第Ⅲ期 → 第3期
+        """
+        if not text:
+            return text
+        
+        # ローマ数字マップ（大文字と小文字の両方）
+        # 複合文字を先に処理するため、長い組み合わせから順に並べる
+        roman_patterns = [
+            # 2文字の組み合わせ（全角）
+            ('ⅩⅡ', '12'),  # Ⅹ + Ⅱ
+            ('ⅩⅠ', '11'),  # Ⅹ + Ⅰ
+            # 単一文字（全角）
+            ('Ⅰ', '1'), ('Ⅱ', '2'), ('Ⅲ', '3'), ('Ⅳ', '4'), ('Ⅴ', '5'),
+            ('Ⅵ', '6'), ('Ⅶ', '7'), ('Ⅷ', '8'), ('Ⅸ', '9'), ('Ⅹ', '10'),
+            ('Ⅺ', '11'), ('Ⅻ', '12'),
+            # 小文字ローマ数字（全角）
+            ('ⅰ', '1'), ('ⅱ', '2'), ('ⅲ', '3'), ('ⅳ', '4'), ('ⅴ', '5'),
+            ('ⅵ', '6'), ('ⅶ', '7'), ('ⅷ', '8'), ('ⅸ', '9'), ('ⅹ', '10'),
+        ]
+        
+        result = text
+        
+        # 全角ローマ数字を変換（長い組み合わせから処理）
+        for roman, num in roman_patterns:
+            result = result.replace(roman, num)
+        
+        # 半角ローマ数字パターン（慎重に処理）
+        # 「タワーIII」「第II期」のようなパターンのみ変換
+        patterns = [
+            # より複雑な組み合わせから先に処理
+            (r'(タワー|Tower|TOWER|棟|期|第)\s*XII\b', r'\g<1>12'),
+            (r'(タワー|Tower|TOWER|棟|期|第)\s*XI\b', r'\g<1>11'),
+            (r'(タワー|Tower|TOWER|棟|期|第)\s*IX\b', r'\g<1>9'),
+            (r'(タワー|Tower|TOWER|棟|期|第)\s*VIII\b', r'\g<1>8'),
+            (r'(タワー|Tower|TOWER|棟|期|第)\s*VII\b', r'\g<1>7'),
+            (r'(タワー|Tower|TOWER|棟|期|第)\s*VI\b', r'\g<1>6'),
+            (r'(タワー|Tower|TOWER|棟|期|第)\s*IV\b', r'\g<1>4'),
+            (r'(タワー|Tower|TOWER|棟|期|第)\s*V\b', r'\g<1>5'),
+            (r'(タワー|Tower|TOWER|棟|期|第)\s*III\b', r'\g<1>3'),
+            (r'(タワー|Tower|TOWER|棟|期|第)\s*II\b', r'\g<1>2'),
+            (r'(タワー|Tower|TOWER|棟|期|第)\s*I\b', r'\g<1>1'),
+        ]
+        
+        for pattern, replacement in patterns:
+            result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+        
+        return result
     
     def normalize_english_case(self, name: str) -> str:
         """英字の大文字小文字を統一（建物名では通常大文字を使用）"""
