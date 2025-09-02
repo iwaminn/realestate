@@ -137,7 +137,13 @@ const ManualBuildingMerger: React.FC = () => {
                 fullWidth
                 placeholder="建物名または建物IDで検索"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  // 入力テキストが空になったら検索結果もクリア
+                  if (e.target.value === '') {
+                    setSearchResults([]);
+                  }
+                }}
                 onKeyDown={handleKeyPress}
                 InputProps={{
                   startAdornment: (
@@ -150,7 +156,10 @@ const ManualBuildingMerger: React.FC = () => {
                       {searchQuery && (
                         <IconButton
                           size="small"
-                          onClick={() => setSearchQuery('')}
+                          onClick={() => {
+                            setSearchQuery('');
+                            setSearchResults([]);
+                          }}
                           sx={{ mr: 1 }}
                         >
                           <ClearIcon />

@@ -142,8 +142,10 @@ const PropertyDuplicateGroups: React.FC = () => {
         min_similarity: minSimilarity, 
         limit: displayLimit || limit
       };
-      if (search || searchQuery) {
-        params.building_name = search || searchQuery;
+      // searchが明示的に指定されている場合はそれを使用、そうでなければsearchQueryを使用
+      const searchTerm = search !== undefined ? search : searchQuery;
+      if (searchTerm) {
+        params.building_name = searchTerm;
       }
       
       const response = await axios.get('/api/admin/duplicate-properties', {
@@ -592,7 +594,13 @@ const PropertyDuplicateGroups: React.FC = () => {
               fullWidth
               placeholder="建物名で検索（例：白金ザスカイ）"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                // 入力テキストが空になったら検索結果もクリア
+                if (e.target.value === '') {
+                  fetchGroups('');
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') {
                   fetchGroups(searchQuery);

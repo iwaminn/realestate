@@ -31,6 +31,7 @@ import {
   Square as SquareIcon,
   Stairs as StairsIcon,
   Explore as ExploreIcon,
+  Clear as ClearIcon,
 } from '@mui/icons-material';
 import { propertyApi } from '../api/propertyApi';
 
@@ -179,7 +180,13 @@ const ManualPropertyMerger: React.FC = () => {
                 fullWidth
                 placeholder="物件IDまたは建物名で検索"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  // 入力テキストが空になったら検索結果もクリア
+                  if (e.target.value === '') {
+                    setSearchResults([]);
+                  }
+                }}
                 onKeyDown={handleKeyPress}
                 InputProps={{
                   startAdornment: (
@@ -189,6 +196,18 @@ const ManualPropertyMerger: React.FC = () => {
                   ),
                   endAdornment: (
                     <InputAdornment position="end">
+                      {searchQuery && (
+                        <IconButton
+                          size="small"
+                          onClick={() => {
+                            setSearchQuery('');
+                            setSearchResults([]);
+                          }}
+                          sx={{ mr: 1 }}
+                        >
+                          <ClearIcon />
+                        </IconButton>
+                      )}
                       <Button
                         variant="contained"
                         onClick={handleSearch}

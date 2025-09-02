@@ -492,7 +492,13 @@ const BuildingDuplicateManager: React.FC = () => {
             fullWidth
             placeholder="建物名で検索（例：白金ザスカイ）"
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              // 入力テキストが空になったら検索結果もクリア
+              if (e.target.value === '') {
+                fetchDuplicateBuildings('', minSimilarity, limit);
+              }
+            }}
             onKeyDown={handleKeyPress}
             InputProps={{
               startAdornment: (

@@ -603,6 +603,7 @@ class MajorityVoteUpdater:
     def update_building_name_by_majority(self, building_or_id) -> bool:
         """
         建物名を関連する掲載情報から直接多数決で決定
+        2段階投票アルゴリズムを使用して票の分散を防ぐ
         
         Args:
             building_or_id: 建物オブジェクトまたは建物ID
@@ -685,14 +686,14 @@ class MajorityVoteUpdater:
             # 掲載情報から建物名が取得できない場合
             return False
         
-        # 重み付け投票の準備
-        # 正規化してグループ化するための辞書
-        normalized_groups = {}  # {正規化名: {元の名前: 重み}}
+        # 2段階投票アルゴリズムの実装
+        # 1. BuildingNameGrouperを使用してグループ化
+        from .building_name_grouper import get_grouper
+        grouper = get_grouper()
         
-        # 建物名を正規化してグループ化
-        # SUUMOスクレイパーを使用（正規化関数のため）
-        from ..scrapers.suumo_scraper import SuumoScraper
-        scraper = SuumoScraper()
+        # 投票データを準備（建物名のリストと重み）
+        all_building_names = []
+        name_weights = {}  # {建物名: 重み}
         
         for building_name, source_site, count in building_name_votes:
             # 基本的な重み（出現回数）
@@ -708,48 +709,57 @@ class MajorityVoteUpdater:
             if self._is_advertising_text(building_name):
                 weight *= 0.1
             
-            # 建物名を正規化
-            normalized_name = scraper.normalize_building_name(building_name)
-            
-            # グループ化して集計
-            if normalized_name not in normalized_groups:
-                normalized_groups[normalized_name] = {}
-            
-            if building_name in normalized_groups[normalized_name]:
-                normalized_groups[normalized_name][building_name] += weight
+            all_building_names.append(building_name)
+            if building_name in name_weights:
+                name_weights[building_name] += weight
             else:
-                normalized_groups[normalized_name][building_name] = weight
+                name_weights[building_name] = weight
         
-        # 最も重みの高い正規化グループを選択
-        if normalized_groups:
-            # 各グループの合計重みを計算
-            group_weights = {}
-            for normalized_name, original_names in normalized_groups.items():
-                group_weights[normalized_name] = sum(original_names.values())
+        # 建物名をグループ化（基本版：スペース正規化のみ使用）
+        # 物件関係を考慮した類似度ベースのグループ化は、
+        # 「白金ザ・スカイ」と「白金ザ・スカイ東棟」のような
+        # 異なる棟表記を適切に分離できないため、基本版を使用
+        grouped_names = grouper.group_building_names(all_building_names)
+        
+        # 2. 各グループの合計重みを計算（第1段階投票）
+        group_weights = {}
+        for group_key, names in grouped_names.items():
+            # 重複を除いてユニークな名前のみの重みを合計
+            unique_names = list(set(names))
+            total_weight = sum(name_weights.get(name, 0) for name in unique_names)
+            group_weights[group_key] = total_weight
+        
+        # 最も重みの高いグループを選択
+        if group_weights:
+            best_group_key = max(group_weights.items(), key=lambda x: x[1])[0]
+            best_group_names = grouped_names[best_group_key]
             
-            # 最も重みの高いグループを選択
-            best_normalized = max(group_weights.items(), key=lambda x: x[1])[0]
+            # 3. 選択されたグループ内で最適な表記を選択（第2段階投票）
+            # 重み情報を渡して最頻出の表記を選択
+            best_name = grouper.find_best_representation(best_group_names, name_weights)
             
-            # そのグループ内で最も使用頻度の高い元の表記を選択
-            best_name = max(normalized_groups[best_normalized].items(), key=lambda x: x[1])[0]
-            
-            # デバッグ用：正規化による集約効果をログ出力
-            if len(normalized_groups[best_normalized]) > 1:
+            # デバッグ用：グループ化の効果をログ出力
+            if len(grouped_names) != len(all_building_names):
                 logger.debug(
-                    f"建物名の正規化により表記ゆれを集約: {list(normalized_groups[best_normalized].keys())} → '{best_name}'"
+                    f"建物名のグループ化: {len(all_building_names)}個の表記 → {len(grouped_names)}グループ"
+                )
+            
+            if len(best_group_names) > 1:
+                logger.debug(
+                    f"グループ '{best_group_key}' の表記ゆれを統合: {best_group_names[:5]} → '{best_name}'"
                 )
             
             # 現在の名前と異なる場合は更新
             if best_name != building.normalized_name:
                 # ログ出力用に投票結果を整形
                 vote_summary = {}
-                for orig_names in normalized_groups.values():
-                    for name, weight in orig_names.items():
-                        vote_summary[name] = vote_summary.get(name, 0) + weight
+                for name, weight in name_weights.items():
+                    vote_summary[name] = weight
                 
                 logger.info(
                     f"建物名更新: '{building.normalized_name}' → '{best_name}' "
-                    f"(ID: {building_id}, 正規化グループ数: {len(normalized_groups)}, "
+                    f"(ID: {building_id}, グループ数: {len(grouped_names)}, "
+                    f"選択グループ: '{best_group_key}', "
                     f"votes: {dict(sorted(vote_summary.items(), key=lambda x: x[1], reverse=True)[:5])})"
                 )
                 building.normalized_name = best_name
@@ -760,6 +770,7 @@ class MajorityVoteUpdater:
     def update_property_building_name_by_majority(self, property_id: int) -> bool:
         """
         物件の表示用建物名を関連する掲載情報から多数決で決定
+        スペース正規化によるグループ化を使用して表記ゆれを吸収
         
         Args:
             property_id: 物件ID
@@ -771,11 +782,13 @@ class MajorityVoteUpdater:
         if not property_obj:
             return False
         
-        # 正規化してグループ化するための辞書
-        normalized_groups = {}  # {正規化名: {元の名前: 重み}}
+        # BuildingNameGrouperを使用
+        from .building_name_grouper import get_grouper
+        grouper = get_grouper()
         
-        # 共通の建物名正規化関数を使用
-        from .building_name_normalizer import normalize_building_name
+        # 建物名と重みを収集
+        all_building_names = []
+        name_weights = {}  # {建物名: 重み}
         
         # アクティブな掲載情報があるかチェック
         active_listings = self.session.query(PropertyListing).filter(
@@ -794,17 +807,12 @@ class MajorityVoteUpdater:
                     if self._is_advertising_text(listing.listing_building_name):
                         weight *= 0.1
                     
-                    # 建物名を正規化
-                    normalized_name = normalize_building_name(listing.listing_building_name)
+                    all_building_names.append(listing.listing_building_name)
                     
-                    # グループ化して集計
-                    if normalized_name not in normalized_groups:
-                        normalized_groups[normalized_name] = {}
-                    
-                    if listing.listing_building_name in normalized_groups[normalized_name]:
-                        normalized_groups[normalized_name][listing.listing_building_name] += weight
+                    if listing.listing_building_name in name_weights:
+                        name_weights[listing.listing_building_name] += weight
                     else:
-                        normalized_groups[normalized_name][listing.listing_building_name] = weight
+                        name_weights[listing.listing_building_name] = weight
         else:
             # すべて非アクティブの場合、最近の掲載情報を使用
             recent_listings = self.session.query(PropertyListing).filter(
@@ -821,49 +829,51 @@ class MajorityVoteUpdater:
                     if self._is_advertising_text(listing.listing_building_name):
                         weight *= 0.1
                     
-                    # 建物名を正規化
-                    normalized_name = normalize_building_name(listing.listing_building_name)
+                    all_building_names.append(listing.listing_building_name)
                     
-                    # グループ化して集計
-                    if normalized_name not in normalized_groups:
-                        normalized_groups[normalized_name] = {}
-                    
-                    if listing.listing_building_name in normalized_groups[normalized_name]:
-                        normalized_groups[normalized_name][listing.listing_building_name] += weight
+                    if listing.listing_building_name in name_weights:
+                        name_weights[listing.listing_building_name] += weight
                     else:
-                        normalized_groups[normalized_name][listing.listing_building_name] = weight
+                        name_weights[listing.listing_building_name] = weight
         
-        # 最も重みの高い正規化グループを選択
-        if normalized_groups:
+        if all_building_names:
+            # 建物名をグループ化（スペース正規化）
+            grouped_names = grouper.group_building_names(all_building_names)
+            
             # 各グループの合計重みを計算
             group_weights = {}
-            for normalized_name, original_names in normalized_groups.items():
-                group_weights[normalized_name] = sum(original_names.values())
+            for group_key, names in grouped_names.items():
+                total_weight = sum(name_weights.get(name, 0) for name in names)
+                group_weights[group_key] = total_weight
             
             # 最も重みの高いグループを選択
-            best_normalized = max(group_weights.items(), key=lambda x: x[1])[0]
+            best_group_key = max(group_weights.items(), key=lambda x: x[1])[0]
+            best_group_names = grouped_names[best_group_key]
             
-            # そのグループ内で最も使用頻度の高い元の表記を選択
-            best_name = max(normalized_groups[best_normalized].items(), key=lambda x: x[1])[0]
+            # そのグループ内で最も適切な表記を選択
+            best_name = grouper.find_best_representation(
+                list(best_group_names),
+                name_weights=name_weights
+            )
             
-            # デバッグ用：正規化による集約効果をログ出力
-            if len(normalized_groups[best_normalized]) > 1:
+            # デバッグ用：グループ化の効果をログ出力
+            if len(grouped_names) < len(set(all_building_names)):
                 logger.debug(
-                    f"物件建物名の正規化により表記ゆれを集約: {list(normalized_groups[best_normalized].keys())} → '{best_name}'"
+                    f"物件建物名のグループ化: {len(set(all_building_names))}個の表記 → {len(grouped_names)}グループ"
+                )
+            
+            if len(best_group_names) > 1:
+                logger.debug(
+                    f"グループ '{best_group_key}' の表記ゆれを統合: {list(best_group_names)[:5]} → '{best_name}'"
                 )
             
             # 現在の名前と異なる場合、またはNoneの場合は更新
             if property_obj.display_building_name != best_name:
-                # ログ出力用に投票結果を整形
-                vote_summary = {}
-                for orig_names in normalized_groups.values():
-                    for name, weight in orig_names.items():
-                        vote_summary[name] = vote_summary.get(name, 0) + weight
-                
                 logger.info(
                     f"物件建物名更新: '{property_obj.display_building_name}' → '{best_name}' "
-                    f"(物件ID: {property_id}, 正規化グループ数: {len(normalized_groups)}, "
-                    f"votes: {dict(sorted(vote_summary.items(), key=lambda x: x[1], reverse=True)[:3])})"
+                    f"(物件ID: {property_id}, グループ数: {len(grouped_names)}, "
+                    f"選択グループ: '{best_group_key}', "
+                    f"votes: {dict(sorted(name_weights.items(), key=lambda x: x[1], reverse=True)[:3])})"
                 )
                 property_obj.display_building_name = best_name
                 self.session.flush()  # 変更を即座に反映

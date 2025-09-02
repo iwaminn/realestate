@@ -15,6 +15,7 @@ import {
   MenuItem,
   FormControl,
   InputLabel,
+  InputAdornment,
   Button,
   Chip,
   IconButton,
@@ -156,6 +157,9 @@ export const BuildingManagement: React.FC = () => {
   const [detachCandidates, setDetachCandidates] = useState<any>(null);
   const [selectedBuildingId, setSelectedBuildingId] = useState<number | null>(null);
   const [createNewBuilding, setCreateNewBuilding] = useState(false);
+  const [buildingSearchQuery, setBuildingSearchQuery] = useState('');
+  const [buildingSearchResults, setBuildingSearchResults] = useState<any[]>([]);
+  const [searchingBuildings, setSearchingBuildings] = useState(false);
   const [newBuildingForm, setNewBuildingForm] = useState({
     name: '',
     address: '',
@@ -328,6 +332,24 @@ export const BuildingManagement: React.FC = () => {
     }
   };
 
+  // 建物検索（物件分離用）
+  const searchBuildingsForDetach = async () => {
+    if (!buildingSearchQuery.trim()) return;
+    
+    setSearchingBuildings(true);
+    try {
+      const response = await axios.get('/api/admin/buildings/search', {
+        params: { query: buildingSearchQuery, limit: 20 }
+      });
+      setBuildingSearchResults(response.data.buildings || []);
+    } catch (error) {
+      console.error('建物検索エラー:', error);
+      alert('建物の検索に失敗しました');
+    } finally {
+      setSearchingBuildings(false);
+    }
+  };
+
   // 物件を建物から分離
   // 物件分離候補を取得
   const fetchDetachCandidates = async (propertyId: number) => {
@@ -415,6 +437,8 @@ export const BuildingManagement: React.FC = () => {
       setDetachCandidates(null);
       setDetachingPropertyId(null);
       setDetachTargetPropertyId(null);
+      setBuildingSearchQuery('');
+      setBuildingSearchResults([]);
       
       // 詳細を再取得
       if (selectedBuilding) {
@@ -1117,6 +1141,8 @@ export const BuildingManagement: React.FC = () => {
           setDetachDialogOpen(false);
           setDetachingPropertyId(null);  // ローディング状態をクリア
           setDetachCandidates(null);
+          setBuildingSearchQuery('');
+          setBuildingSearchResults([]);
         }}
         maxWidth="md"
         fullWidth
@@ -1191,7 +1217,66 @@ export const BuildingManagement: React.FC = () => {
                 {!createNewBuilding ? (
                   // 既存建物の選択
                   <Box>
-                    {detachCandidates.candidates.length > 0 ? (
+                    {/* 建物検索フィールド */}
+                    <Box sx={{ mb: 2 }}>
+                      <TextField
+                        fullWidth
+                        placeholder="建物名または建物IDで検索"
+                        value={buildingSearchQuery}
+                        onChange={(e) => {
+                          setBuildingSearchQuery(e.target.value);
+                          // 入力テキストが空になったら検索結果もクリア
+                          if (e.target.value === '') {
+                            setBuildingSearchResults([]);
+                          }
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            searchBuildingsForDetach();
+                          }
+                        }}
+                        InputProps={{
+                          startAdornment: (
+                            <InputAdornment position="start">
+                              <SearchIcon />
+                            </InputAdornment>
+                          ),
+                          endAdornment: (
+                            <InputAdornment position="end">
+                              {buildingSearchQuery && (
+                                <IconButton
+                                  size="small"
+                                  onClick={() => {
+                                    setBuildingSearchQuery('');
+                                    setBuildingSearchResults([]);
+                                  }}
+                                  sx={{ mr: 1 }}
+                                >
+                                  <ClearIcon />
+                                </IconButton>
+                              )}
+                              <Button
+                                variant="contained"
+                                size="small"
+                                onClick={searchBuildingsForDetach}
+                                disabled={searchingBuildings || !buildingSearchQuery.trim()}
+                              >
+                                検索
+                              </Button>
+                            </InputAdornment>
+                          ),
+                        }}
+                      />
+                    </Box>
+
+                    {searchingBuildings && (
+                      <Box display="flex" justifyContent="center" p={2}>
+                        <CircularProgress size={24} />
+                      </Box>
+                    )}
+
+                    {/* 検索結果または候補の表示 */}
+                    {(buildingSearchResults.length > 0 || detachCandidates.candidates.length > 0) ? (
                       <TableContainer sx={{ maxHeight: 300 }}>
                         <Table size="small">
                           <TableHead>
@@ -1201,12 +1286,17 @@ export const BuildingManagement: React.FC = () => {
                               <TableCell>住所</TableCell>
                               <TableCell align="center">築年</TableCell>
                               <TableCell align="center">階数</TableCell>
-                              <TableCell align="center">スコア</TableCell>
-                              <TableCell>一致項目</TableCell>
+                              {buildingSearchResults.length === 0 && (
+                                <>
+                                  <TableCell align="center">スコア</TableCell>
+                                  <TableCell>一致項目</TableCell>
+                                </>
+                              )}
                             </TableRow>
                           </TableHead>
                           <TableBody>
-                            {detachCandidates.candidates.map((candidate: any) => (
+                            {/* 検索結果を優先表示 */}
+                            {(buildingSearchResults.length > 0 ? buildingSearchResults : detachCandidates.candidates).map((candidate: any) => (
                               <TableRow 
                                 key={candidate.id}
                                 selected={selectedBuildingId === candidate.id}
@@ -1222,7 +1312,14 @@ export const BuildingManagement: React.FC = () => {
                                 </TableCell>
                                 <TableCell>
                                   {candidate.normalized_name}
-                                  {(candidate.match_type === 'alias' || candidate.match_type === 'listing') && (
+                                  {buildingSearchResults.length > 0 && (
+                                    <Chip 
+                                      label={`ID: ${candidate.id}`} 
+                                      size="small" 
+                                      sx={{ ml: 1 }}
+                                    />
+                                  )}
+                                  {buildingSearchResults.length === 0 && (candidate.match_type === 'alias' || candidate.match_type === 'listing') && (
                                     <Chip
                                       label={`別名: ${candidate.alias_name || candidate.matched_alias}`}
                                       size="small"
@@ -1234,16 +1331,20 @@ export const BuildingManagement: React.FC = () => {
                                 <TableCell>{candidate.address || '-'}</TableCell>
                                 <TableCell align="center">{candidate.built_year || '-'}</TableCell>
                                 <TableCell align="center">{candidate.total_floors || '-'}</TableCell>
-                                <TableCell align="center">
-                                  <Chip
-                                    label={candidate.score}
-                                    size="small"
-                                    color={candidate.score >= 20 ? 'success' : candidate.score >= 15 ? 'warning' : 'default'}
-                                  />
-                                </TableCell>
-                                <TableCell>
-                                  {candidate.match_details.join(', ')}
-                                </TableCell>
+                                {buildingSearchResults.length === 0 && (
+                                  <>
+                                    <TableCell align="center">
+                                      <Chip
+                                        label={candidate.score}
+                                        size="small"
+                                        color={candidate.score >= 20 ? 'success' : candidate.score >= 15 ? 'warning' : 'default'}
+                                      />
+                                    </TableCell>
+                                    <TableCell>
+                                      {candidate.match_details.join(', ')}
+                                    </TableCell>
+                                  </>
+                                )}
                               </TableRow>
                             ))}
                           </TableBody>
@@ -1251,7 +1352,10 @@ export const BuildingManagement: React.FC = () => {
                       </TableContainer>
                     ) : (
                       <Typography color="text.secondary" sx={{ p: 2, textAlign: 'center' }}>
-                        候補となる建物が見つかりません。新規建物を作成してください。
+                        {buildingSearchQuery ? 
+                          '検索結果がありません。別のキーワードで検索するか、新規建物を作成してください。' :
+                          '候補となる建物が見つかりません。建物を検索するか、新規建物を作成してください。'
+                        }
                       </Typography>
                     )}
                   </Box>
@@ -1311,6 +1415,8 @@ export const BuildingManagement: React.FC = () => {
             setDetachingPropertyId(null);  // ローディング状態をクリア
             setDetachTargetPropertyId(null);  // 分離対象IDもクリア
             setDetachCandidates(null);
+            setBuildingSearchQuery('');
+            setBuildingSearchResults([]);
           }}>キャンセル</Button>
           <Button
             variant="contained"
