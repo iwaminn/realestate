@@ -297,7 +297,7 @@ class BuildingNameNormalizer:
         return components
     
     def calculate_similarity(self, name1: str, name2: str) -> float:
-        """2つの建物名の類似度を計算（構造化アプローチ）"""
+        """2つの建物名の類似度を計算（汎用的なアプローチ）"""
         # 正規化
         norm1 = self.normalize(name1)
         norm2 = self.normalize(name2)
@@ -306,47 +306,29 @@ class BuildingNameNormalizer:
         if norm1 == norm2:
             return 1.0
         
-        # 構成要素を抽出
-        comp1 = self.extract_building_components(norm1)
-        comp2 = self.extract_building_components(norm2)
+        # 基本的な文字列類似度を計算
+        basic_sim = SequenceMatcher(None, norm1, norm2).ratio()
         
-        # 地域名が異なる場合は低い類似度
-        if comp1['area'] and comp2['area'] and comp1['area'] != comp2['area']:
-            return SequenceMatcher(None, norm1, norm2).ratio() * 0.5
+        # スペースを除去した場合の類似度も計算
+        no_space1 = norm1.replace(' ', '').replace('　', '')
+        no_space2 = norm2.replace(' ', '').replace('　', '')
+        no_space_sim = SequenceMatcher(None, no_space1, no_space2).ratio()
         
-        # メイン名称の類似度（最重要）
-        main_sim = SequenceMatcher(None, comp1['main'], comp2['main']).ratio()
+        # より高い類似度を採用（スペースの違いを吸収）
+        similarity = max(basic_sim, no_space_sim * 0.95)  # スペース除去版は若干減点
         
-        # 建物タイプの一致度
-        type_sim = 1.0 if comp1['type'] == comp2['type'] else 0.0
+        # 部分一致のチェック（短い方が長い方に完全に含まれる場合）
+        if len(norm1) != len(norm2):
+            shorter = norm1 if len(norm1) < len(norm2) else norm2
+            longer = norm2 if len(norm1) < len(norm2) else norm1
+            
+            if shorter in longer:
+                # 短い方が長い方に含まれる場合、長さの比率に応じて類似度を計算
+                length_ratio = len(shorter) / len(longer)
+                # 長さの比率が高いほど高い類似度
+                similarity = max(similarity, 0.6 + length_ratio * 0.35)
         
-        # 棟情報の扱い
-        unit_penalty = 0
-        if comp1['unit'] and comp2['unit']:
-            if comp1['unit'] != comp2['unit']:
-                # 棟が明示的に異なる場合は別建物として扱う
-                return 0.3  # 低い類似度を返す
-        elif comp1['unit'] or comp2['unit']:
-            # 片方だけ棟情報がある場合
-            # 単独の「棟」は建物全体を指す可能性があるため、ペナルティを軽減
-            if comp1['unit'] == '棟' or comp2['unit'] == '棟':
-                unit_penalty = 0.05  # 軽微なペナルティ
-            else:
-                # 明確な棟情報（E棟など）がある場合は、やや重いペナルティ
-                unit_penalty = 0.2
-        
-        # 重み付け計算
-        weighted_sim = (
-            main_sim * 0.7 +      # メイン名称が最重要
-            type_sim * 0.2 +      # 建物タイプ
-            0.1                   # ベースボーナス
-        ) - unit_penalty
-        
-        # 文字列全体の類似度も考慮（安全網として）
-        overall_sim = SequenceMatcher(None, norm1, norm2).ratio()
-        
-        # より保守的な値を採用
-        return min(max(weighted_sim, overall_sim * 0.8), 1.0)
+        return min(similarity, 1.0)
     
     def is_same_building(self, name1: str, name2: str, 
                         address1: Optional[str] = None, 

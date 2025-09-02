@@ -67,55 +67,6 @@ class EnhancedBuildingMatcher:
             logger.warning(f"掲載履歴の取得中にエラー: {e}")
             return []
 
-    def _is_likely_same_building(self, b1: Any, b2: Any, session = None) -> bool:
-        """2つの建物が同一の可能性が高いか判定
-        
-        【アルゴリズム改善版】高速判定に特化
-        
-        築年、総階数、建物名から同一建物の可能性を評価。
-        
-        Args:
-            b1: 建物1
-            b2: 建物2
-            session: データベースセッション（統合履歴取得用、オプション）
-            
-        Returns:
-            同一建物の可能性が高い場合True
-        """
-        # 高速判定1: 築年が完全一致（最も確実な指標）
-        if b1.built_year and b2.built_year:
-            if abs(b1.built_year - b2.built_year) > 1:
-                return False  # 2年以上異なれば別建物
-        
-        # 高速判定2: 総階数が完全一致
-        if b1.total_floors and b2.total_floors:
-            if abs(b1.total_floors - b2.total_floors) > 1:
-                return False  # 2階以上異なれば別建物
-        
-        # 高速判定3: 建物名の類似度（最も重要）
-        if b1.normalized_name and b2.normalized_name:
-            name_similarity = self.building_normalizer.calculate_similarity(
-                b1.normalized_name, b2.normalized_name
-            )
-            
-            # 名前が高い類似度なら同一建物と判定
-            if name_similarity >= 0.8:
-                return True
-            
-            # 名前が低い類似度なら別建物と判定
-            if name_similarity < 0.5:
-                return False
-            
-            # 中間的な場合は築年・階数で判定
-            # 両方とも一致なら同一建物の可能性高い
-            if b1.built_year and b2.built_year and b1.built_year == b2.built_year:
-                if b1.total_floors and b2.total_floors and b1.total_floors == b2.total_floors:
-                    return True
-        
-        return False
-    
-
-    
     def calculate_comprehensive_similarity(self, building1: Any, building2: Any, session = None) -> float:
         """総合的な類似度を計算
         
@@ -134,11 +85,8 @@ class EnhancedBuildingMatcher:
             if year_diff > 2:
                 return 0.3  # 類似度閾値（0.7）以下を返す
         
-        # 総階数が3階以上異なる場合は即座に低スコアを返す
-        if building1.total_floors and building2.total_floors:
-            floor_diff = abs(building1.total_floors - building2.total_floors)
-            if floor_diff > 2:
-                return 0.3  # 類似度閾値（0.7）以下を返す
+        # 総階数の判定を緩和：同じ建物群では棟により階数が大きく異なることがある
+        # 階数差だけでは早期リターンしない（築年と建物名で判定）
         
         # デバッグ情報をリセット
         self.last_debug_info = {
@@ -434,20 +382,24 @@ class EnhancedBuildingMatcher:
             
             weights.append(2.0)  # 築年月は重要度高
         
-        # 総階数の一致（段階的な類似度判定）
+        # 総階数の一致（段階的な類似度判定、大きな差も許容）
         if building1.total_floors and building2.total_floors:
             floor_diff = abs(building1.total_floors - building2.total_floors)
             
             if floor_diff == 0:
                 scores.append(1.0)  # 完全一致
             elif floor_diff == 1:
-                scores.append(0.5)  # 1階差は中程度の類似度（完全一致に比べて可能性が下がる）
-            elif floor_diff == 2:
-                scores.append(0.3)  # 2階差は低い類似度
+                scores.append(0.8)  # 1階差は高い類似度
+            elif floor_diff <= 5:
+                scores.append(0.5)  # 5階以内の差は中程度の類似度
+            elif floor_diff <= 10:
+                scores.append(0.3)  # 10階以内の差は低い類似度
+            elif floor_diff <= 20:
+                scores.append(0.2)  # 20階以内の差は非常に低い類似度
             else:
-                scores.append(0.0)  # 3階以上の差は別建物とみなす
+                scores.append(0.1)  # 20階以上の差でも完全に否定はしない
             
-            weights.append(1.5)  # 階数も重要
+            weights.append(0.8)  # 階数の重要度を下げる（同じ建物群で差があるため）
         
         # 構造の一致（もしあれば）
         if (hasattr(building1, 'construction_type') and 
