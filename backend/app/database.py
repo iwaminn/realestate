@@ -20,7 +20,16 @@ if DATABASE_URL.startswith("sqlite"):
     engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 else:
     # PostgreSQLの場合
-    engine = create_engine(DATABASE_URL)
+    # 並列スクレイピング用に接続プールサイズを増やす
+    # pool_size: 常時保持する接続数
+    # max_overflow: pool_sizeを超えて作成可能な追加接続数
+    # pool_pre_ping: 接続の有効性を事前にチェック
+    engine = create_engine(
+        DATABASE_URL,
+        pool_size=20,  # デフォルト5から増加
+        max_overflow=30,  # デフォルト10から増加
+        pool_pre_ping=True  # 接続の有効性をチェック
+    )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

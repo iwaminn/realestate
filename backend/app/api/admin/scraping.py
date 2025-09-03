@@ -1518,10 +1518,11 @@ def get_scraping_status(task_id: str, db: Session = Depends(get_db)):
 def cleanup_stale_tasks(db: Session):
     """
     停滞したタスクを自動的にクリーンアップする
-    - 30分以上更新がないrunning状態のタスクをfailedに変更
+    - 設定値以上更新がないrunning状態のタスクをfailedに変更
     - プロセスが存在しないタスクをfailedに変更
     """
     from ...models_scraping_task import ScrapingTask, ScrapingTaskLog
+    from ...config.scraping_config import STALLED_TASK_THRESHOLD_MINUTES
     
     cleaned_count = 0
     now = datetime.now()
@@ -1533,20 +1534,23 @@ def cleanup_stale_tasks(db: Session):
         should_cleanup = False
         reason = ""
         
-        # 1. 最終更新から30分以上経過しているかチェック
+        # 1. 最終更新から設定値以上経過しているかチェック
         if task.started_at:
-            elapsed = (now - task.started_at).total_seconds()
-            # タスクの progress_detail から最終更新時刻を取得
-            last_update = task.started_at
-            if task.progress_detail and isinstance(task.progress_detail, dict):
-                for scraper_data in task.progress_detail.values():
-                    if isinstance(scraper_data, dict) and 'last_updated' in scraper_data:
-                        update_time = datetime.fromisoformat(scraper_data['last_updated'].replace('Z', '+00:00'))
-                        if update_time > last_update:
-                            last_update = update_time
+            # ScrapingTaskProgressテーブルから最新の進捗を取得
+            from ...models_scraping_task import ScrapingTaskProgress
+            latest_progress = db.query(ScrapingTaskProgress).filter(
+                ScrapingTaskProgress.task_id == task.task_id
+            ).order_by(
+                ScrapingTaskProgress.last_updated.desc()
+            ).first()
             
-            # 最終更新から30分以上経過
-            if (now - last_update).total_seconds() > 1800:
+            if latest_progress and latest_progress.last_updated:
+                last_update = latest_progress.last_updated
+            else:
+                last_update = task.started_at
+            
+            # 最終更新から設定値以上経過
+            if (now - last_update).total_seconds() > (STALLED_TASK_THRESHOLD_MINUTES * 60):
                 should_cleanup = True
                 reason = f"最終更新から{int((now - last_update).total_seconds() / 60)}分経過"
         
@@ -1564,7 +1568,8 @@ def cleanup_stale_tasks(db: Session):
                 log_type="error",
                 message=f"タスクが異常終了しました: {reason}",
                 details={"reason": reason, "auto_cleanup": True},
-                timestamp=now
+                timestamp=now,
+                created_at=now  # created_atフィールドも必要
             )
             db.add(log_entry)
     

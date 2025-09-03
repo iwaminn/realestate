@@ -296,7 +296,13 @@ class ParallelScrapingManagerDB:
         try:
             task = db.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
             if task:
+                # デバッグログを追加
+                if task.is_cancelled:
+                    logger.warning(f"タスク {task_id} のis_cancelledフラグがTrueです: "
+                                 f"cancel_requested_at={task.cancel_requested_at}")
                 return task.is_paused, task.is_cancelled
+            else:
+                logger.error(f"タスク {task_id} がデータベースに見つかりません")
             return False, False
         finally:
             db.close()
@@ -683,7 +689,7 @@ class ParallelScrapingManagerDB:
                 for future in as_completed(futures):
                     scraper_key = futures[future]
                     try:
-                        processed, errors = future.result(timeout=300)  # 5分のタイムアウト
+                        processed, errors = future.result(timeout=7200)  # 2時間のタイムアウト（スクレイピングには時間がかかる）
                         total_processed += processed
                         total_errors += errors
                     except TaskCancelledException as e:
