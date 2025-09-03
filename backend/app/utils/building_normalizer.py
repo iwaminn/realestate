@@ -452,7 +452,7 @@ class BuildingNameNormalizer:
         return components
     
     def calculate_similarity(self, name1: str, name2: str) -> float:
-        """2つの建物名の類似度を計算（汎用的なアプローチ）"""
+        """2つの建物名の類似度を計算（末尾の識別子を重視した汎用的アプローチ）"""
         # 正規化
         norm1 = self.normalize(name1)
         norm2 = self.normalize(name2)
@@ -461,29 +461,72 @@ class BuildingNameNormalizer:
         if norm1 == norm2:
             return 1.0
         
-        # 基本的な文字列類似度を計算
-        basic_sim = SequenceMatcher(None, norm1, norm2).ratio()
+        # 建物名を単語単位に分割
+        def tokenize(name):
+            """建物名を意味のある単位に分割"""
+            # スペース、中黒、ハイフンなどで分割
+            tokens = re.split(r'[\s　・\-－]+', name)
+            # 空の要素を除去
+            return [t for t in tokens if t]
         
-        # スペースを除去した場合の類似度も計算
-        no_space1 = norm1.replace(' ', '').replace('　', '')
-        no_space2 = norm2.replace(' ', '').replace('　', '')
-        no_space_sim = SequenceMatcher(None, no_space1, no_space2).ratio()
+        tokens1 = tokenize(norm1)
+        tokens2 = tokenize(norm2)
         
-        # より高い類似度を採用（スペースの違いを吸収）
-        similarity = max(basic_sim, no_space_sim * 0.95)  # スペース除去版は若干減点
+        # トークンが存在しない場合は基本的な文字列比較
+        if not tokens1 or not tokens2:
+            return SequenceMatcher(None, norm1, norm2).ratio()
         
-        # 部分一致のチェック（短い方が長い方に完全に含まれる場合）
-        if len(norm1) != len(norm2):
-            shorter = norm1 if len(norm1) < len(norm2) else norm2
-            longer = norm2 if len(norm1) < len(norm2) else norm1
+        # 共通接頭辞と異なる部分を分析
+        def find_common_prefix_and_suffix(t1, t2):
+            """共通の接頭辞と、それぞれの異なる部分を見つける"""
+            # 共通接頭辞を見つける
+            common_prefix = []
+            min_len = min(len(t1), len(t2))
             
-            if shorter in longer:
-                # 短い方が長い方に含まれる場合、長さの比率に応じて類似度を計算
-                length_ratio = len(shorter) / len(longer)
-                # 長さの比率が高いほど高い類似度
-                similarity = max(similarity, 0.6 + length_ratio * 0.35)
+            for i in range(min_len):
+                if t1[i] == t2[i]:
+                    common_prefix.append(t1[i])
+                else:
+                    break
+            
+            # 残りの部分（識別子部分）
+            suffix1 = t1[len(common_prefix):]
+            suffix2 = t2[len(common_prefix):]
+            
+            return common_prefix, suffix1, suffix2
         
-        return min(similarity, 1.0)
+        common, suffix1, suffix2 = find_common_prefix_and_suffix(tokens1, tokens2)
+        
+        # ケース1: 完全に異なる建物名（共通部分がない）
+        if not common:
+            # 基本的な文字列類似度
+            return SequenceMatcher(None, norm1, norm2).ratio()
+        
+        # ケース2: 共通部分はあるが、末尾（識別子）が異なる
+        if suffix1 or suffix2:
+            # 共通部分の割合を計算
+            total_tokens = max(len(tokens1), len(tokens2))
+            common_ratio = len(common) / total_tokens
+            
+            # 末尾が異なる場合の類似度計算
+            # 末尾の違いが重要な識別子である可能性が高いため、大きく減点
+            if suffix1 and suffix2:
+                # 両方に末尾がある（例：SEA VILLAGE B棟 vs SUN VILLAGE F棟）
+                # 末尾の類似度も考慮
+                suffix_sim = SequenceMatcher(None, ' '.join(suffix1), ' '.join(suffix2)).ratio()
+                # 共通部分が多くても、末尾が異なれば低い類似度
+                return min(0.6, common_ratio * 0.5 + suffix_sim * 0.1)
+            else:
+                # 片方のみ末尾がある（例：HARUMI FLAG vs HARUMI FLAG B棟）
+                # これも異なる建物の可能性が高い
+                return min(0.65, common_ratio * 0.7)
+        
+        # ケース3: 末尾まで同じ（トークンが完全一致）
+        # この場合は正規化の違いのみ
+        return 0.95
+        
+        # 以下は到達しないが、念のため基本的な類似度を返す
+        return SequenceMatcher(None, norm1, norm2).ratio()
     
     def is_same_building(self, name1: str, name2: str, 
                         address1: Optional[str] = None, 

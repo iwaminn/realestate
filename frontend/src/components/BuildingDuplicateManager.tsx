@@ -606,6 +606,7 @@ const BuildingDuplicateManager: React.FC = () => {
             <TableHead>
               <TableRow>
                 <TableCell width={50}></TableCell>
+                <TableCell>建物ID</TableCell>
                 <TableCell>建物名</TableCell>
                 <TableCell>住所</TableCell>
                 <TableCell align="center">階数</TableCell>
@@ -626,6 +627,11 @@ const BuildingDuplicateManager: React.FC = () => {
                     >
                       {expandedGroups.includes(index) ? <ExpandLessIcon /> : <ExpandMoreIcon />}
                     </IconButton>
+                  </TableCell>
+                  <TableCell>
+                    <Typography variant="body2" color="text.secondary">
+                      {group.primary.id}
+                    </Typography>
                   </TableCell>
                   <TableCell>
                     <Typography variant="body1" fontWeight="bold">
@@ -672,6 +678,7 @@ const BuildingDuplicateManager: React.FC = () => {
                         <Table size="small">
                           <TableHead>
                             <TableRow>
+                              <TableCell>建物ID</TableCell>
                               <TableCell>建物名</TableCell>
                               <TableCell>住所</TableCell>
                               <TableCell align="center">階数</TableCell>
@@ -683,6 +690,7 @@ const BuildingDuplicateManager: React.FC = () => {
                           <TableBody>
                             {group.candidates.map((candidate) => (
                               <TableRow key={candidate.id}>
+                                <TableCell>{candidate.id}</TableCell>
                                 <TableCell>{candidate.normalized_name}</TableCell>
                                 <TableCell>{candidate.address || '-'}</TableCell>
                                 <TableCell align="center">
@@ -799,6 +807,7 @@ const BuildingDuplicateManager: React.FC = () => {
                         </Box>
                       </TableCell>
                       <TableCell width={50} align="center">統合先</TableCell>
+                      <TableCell>建物ID</TableCell>
                       <TableCell>建物名</TableCell>
                       <TableCell>住所</TableCell>
                       <TableCell align="center" width={80}>階数</TableCell>
@@ -838,6 +847,11 @@ const BuildingDuplicateManager: React.FC = () => {
                                 onChange={() => setSelectedMasterId(building.id)}
                                 color="primary"
                               />
+                            </TableCell>
+                            <TableCell>
+                              <Typography variant="body2" color="text.secondary">
+                                {building.id}
+                              </Typography>
                             </TableCell>
                             <TableCell>
                               <Typography fontWeight={selectedMasterId === building.id ? 'bold' : 'normal'}>
