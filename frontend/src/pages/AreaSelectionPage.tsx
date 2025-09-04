@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef, startTransition } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   Box,
@@ -15,6 +15,7 @@ import {
   Paper,
   Divider,
   useTheme,
+  useMediaQuery,
   alpha,
   List,
   ListItem,
@@ -41,7 +42,7 @@ import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import { propertyApi } from '../api/propertyApi';
-import { TOKYO_WARDS, sortWardsByLandPrice, getPopularWards, getOtherWards } from '../constants/wardOrder';
+import { getPopularWards } from '../constants/wardOrder';
 import { debounce } from 'lodash';
 
 interface AreaStat {
@@ -52,6 +53,7 @@ interface AreaStat {
 const AreaSelectionPage: React.FC = () => {
   const navigate = useNavigate();
   const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [areaStats, setAreaStats] = useState<{[key: string]: number}>({});
   const [loading, setLoading] = useState(false);
   const [totalCount, setTotalCount] = useState(0);
@@ -67,8 +69,10 @@ const AreaSelectionPage: React.FC = () => {
   const [, forceUpdate] = useState({});
   const [buildingOptions, setBuildingOptions] = useState<Array<string | { value: string; label: string }>>([]);
   const [loadingBuildings, setLoadingBuildings] = useState(false);
+  const [autocompleteOpen, setAutocompleteOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const searchValueRef = useRef<string>('');  // 検索値をrefで管理（レンダリングを減らす）
+
 
   // 全体の物件数を取得（初回のみ）
   useEffect(() => {
@@ -94,7 +98,7 @@ const AreaSelectionPage: React.FC = () => {
 
   // キャッシュ設定
   const CACHE_KEY = 'recentUpdatesCache';
-  const CACHE_DURATION = 10 * 60 * 1000; // 10分
+  const CACHE_DURATION = 30 * 60 * 1000; // 30分（リクエスト頻度を削減）
 
   // 価格改定・新着物件の件数を取得する関数
   const fetchUpdatesCounts = useCallback(async (forceRefresh = false) => {
@@ -116,10 +120,7 @@ const AreaSelectionPage: React.FC = () => {
               setLastFetchTime(new Date(parsed.timestamp));
               setUpdatesLoading(false);
               
-              // バックグラウンドで更新（キャッシュが5分以上古い場合）
-              if (cacheAge > 5 * 60 * 1000) {
-                fetchUpdatesCounts(true);
-              }
+              // バックグラウンド更新は削除（無限ループの原因）
               return;
             }
           } catch (e) {
@@ -208,40 +209,39 @@ const AreaSelectionPage: React.FC = () => {
       clearInterval(updateTimeInterval);
       window.removeEventListener('focus', handleFocus);
     };
-  }, [fetchUpdatesCounts, CACHE_KEY, CACHE_DURATION, lastFetchTime]);
+  }, [fetchUpdatesCounts, CACHE_KEY, CACHE_DURATION]);
 
   // 建物名候補を取得する関数（デバウンス付き）- SearchFormと同じ処理
   const fetchBuildingSuggestions = useCallback(
     debounce(async (query: string) => {
       if (query.length < 1) {
-        startTransition(() => {
-          setBuildingOptions([]);
-        });
+        setBuildingOptions([]);
+        setAutocompleteOpen(false);
         return;
       }
       
       setLoadingBuildings(true);
       try {
         const suggestions = await propertyApi.suggestBuildings(query);
+        
         // APIレスポンスの形式を判定（SearchFormと同じ処理）
-        startTransition(() => {
-          if (suggestions && suggestions.length > 0) {
-            if (typeof suggestions[0] === 'object' && 'value' in suggestions[0]) {
-              // 新形式（オブジェクト配列）
-              setBuildingOptions(suggestions as Array<{ value: string; label: string }>);
-            } else {
-              // 旧形式（文字列配列）
-              setBuildingOptions(suggestions as string[]);
-            }
+        if (suggestions && suggestions.length > 0) {
+          if (typeof suggestions[0] === 'object' && 'value' in suggestions[0]) {
+            // 新形式（オブジェクト配列）
+            setBuildingOptions(suggestions as Array<{ value: string; label: string }>);
           } else {
-            setBuildingOptions([]);
+            // 旧形式（文字列配列）
+            setBuildingOptions(suggestions as string[]);
           }
-        });
+          setAutocompleteOpen(true);  // サジェストを表示
+        } else {
+          setBuildingOptions([]);
+          setAutocompleteOpen(false);
+        }
       } catch (error) {
         console.error('Failed to fetch building suggestions:', error);
-        startTransition(() => {
-          setBuildingOptions([]);
-        });
+        setBuildingOptions([]);
+        setAutocompleteOpen(false);
       } finally {
         setLoadingBuildings(false);
       }
@@ -262,34 +262,7 @@ const AreaSelectionPage: React.FC = () => {
     }
   };
 
-  // エリアフィルタリングは建物名検索とは独立して処理
-  const filteredWards = TOKYO_WARDS.filter((ward) =>
-    ward.name.includes('')  // 建物名検索時はエリア選択を表示しない
-  );
-
   const popularWards = getPopularWards();
-  const otherWards = getOtherWards();
-
-  const formatPrice = (price: number) => {
-    if (price >= 10000) {
-      const oku = Math.floor(price / 10000);
-      const man = price % 10000;
-      if (man === 0) {
-        return `${oku}億円`;
-      }
-      return `${oku}億${man.toLocaleString()}万円`;
-    }
-    return `${price.toLocaleString()}万円`;
-  };
-
-  const formatPropertyInfo = (property: any) => {
-    const parts = [];
-    if (property.floor_number) parts.push(`${property.floor_number}階`);
-    if (property.area) parts.push(`${property.area}㎡`);
-    if (property.layout) parts.push(property.layout);
-    if (property.direction) parts.push(`${property.direction}向き`);
-    return parts.join(' / ');
-  };
 
 
   return (
@@ -334,9 +307,16 @@ const AreaSelectionPage: React.FC = () => {
           <Autocomplete
             freeSolo
             options={buildingOptions}
+            open={autocompleteOpen && buildingOptions.length > 0}
+            onOpen={() => {
+              if (buildingOptions.length > 0) {
+                setAutocompleteOpen(true);
+              }
+            }}
+            onClose={() => setAutocompleteOpen(false)}
             filterOptions={(x) => x}  // 入力遅延を防ぐため、フィルタリングを無効化
             disableCloseOnSelect={false}
-            onInputChange={(event, newInputValue, reason) => {
+            onInputChange={(_, newInputValue, reason) => {
               // refのみ更新（状態更新しない = レンダリングを防ぐ）
               if (reason === 'input') {
                 searchValueRef.current = newInputValue;
@@ -347,7 +327,7 @@ const AreaSelectionPage: React.FC = () => {
                 setBuildingOptions([]);
               }
             }}
-            onChange={(event, newValue) => {
+            onChange={(_, newValue) => {
               if (typeof newValue === 'string') {
                 searchValueRef.current = newValue;
               } else if (newValue && typeof newValue === 'object' && 'value' in newValue) {
@@ -412,34 +392,11 @@ const AreaSelectionPage: React.FC = () => {
       {/* 価格改定・新着物件セクション */}
       {updatesCounts && (updatesCounts.total_price_changes > 0 || updatesCounts.total_new_listings > 0) && (
         <Box sx={{ mb: 6 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
+          <Box sx={{ mb: 3 }}>
             <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
               <UpdateIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
               直近24時間の更新情報
             </Typography>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              {lastFetchTime && (
-                <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  <AccessTimeIcon sx={{ fontSize: 14 }} />
-                  {(() => {
-                    const now = new Date();
-                    const diff = Math.floor((now.getTime() - lastFetchTime.getTime()) / 1000);
-                    if (diff < 60) return '1分未満前';
-                    if (diff < 3600) return `${Math.floor(diff / 60)}分前`;
-                    return `${Math.floor(diff / 3600)}時間前`;
-                  })()}
-                </Typography>
-              )}
-              <Button
-                size="small"
-                startIcon={<RefreshIcon />}
-                onClick={() => fetchUpdatesCounts(true)}
-                disabled={updatesLoading}
-                sx={{ minWidth: 'auto' }}
-              >
-                更新
-              </Button>
-            </Box>
           </Box>
           
           <Grid container spacing={2} sx={{ mb: 2 }}>
@@ -457,7 +414,13 @@ const AreaSelectionPage: React.FC = () => {
                 }}
                 onClick={() => navigate('/updates?tab=0')}
               >
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Box sx={{ 
+                  display: 'flex', 
+                  flexDirection: { xs: 'column', sm: 'row' },
+                  justifyContent: 'space-between', 
+                  alignItems: { xs: 'flex-start', sm: 'center' },
+                  gap: { xs: 1, sm: 0 }
+                }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                     <UpdateIcon color="error" />
                     <Typography variant="h6">
@@ -540,7 +503,13 @@ const AreaSelectionPage: React.FC = () => {
                 }}
                 onClick={() => navigate('/updates?tab=1')}
               >
-                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <Box sx={{ 
+                  display: 'flex', 
+                  flexDirection: { xs: 'column', sm: 'row' },
+                  justifyContent: 'space-between', 
+                  alignItems: { xs: 'flex-start', sm: 'center' },
+                  gap: { xs: 1, sm: 0 }
+                }}>
                   <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
                     <NewReleasesIcon color="success" />
                     <Typography variant="h6">
@@ -657,10 +626,9 @@ const AreaSelectionPage: React.FC = () => {
         </Grid>
       </Box>
 
-      {/* エリア選択 - 建物名検索中は表示しない */}
-      {(!searchValueRef.current || searchValueRef.current === '') && (
-        <>
-          {/* 対象エリア（都心6区） */}
+      {/* エリア選択 */}
+      <>
+        {/* 対象エリア（都心6区） */}
           <Box sx={{ mb: 6 }}>
             <Typography variant="h5" gutterBottom sx={{ mb: 3, fontWeight: 'bold' }}>
               <LocationOnIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
@@ -702,8 +670,7 @@ const AreaSelectionPage: React.FC = () => {
               ))}
             </Grid>
           </Box>
-        </>
-      )}
+      </>
     </Container>
   );
 };

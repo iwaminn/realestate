@@ -30,6 +30,7 @@ import {
   useMediaQuery,
   ToggleButton,
   ToggleButtonGroup,
+  TableSortLabel,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import TrendingDownIcon from '@mui/icons-material/TrendingDown';
@@ -80,6 +81,12 @@ const PropertyUpdatesPage: React.FC = () => {
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [wards, setWards] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<'table' | 'card'>('table');
+  
+  // 並び替えの状態管理
+  type SortField = 'building_name' | 'price' | 'price_diff' | 'area' | 'floor_number' | 'built_year' | 'days_on_market' | 'changed_at' | 'created_at';
+  type SortOrder = 'asc' | 'desc';
+  const [sortField, setSortField] = useState<SortField>('price_diff');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
 
   // URLパラメータから初期値を取得
   const tabValue = parseInt(searchParams.get('tab') || '0');
@@ -164,6 +171,17 @@ const PropertyUpdatesPage: React.FC = () => {
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     updateSearchParams({ tab: newValue.toString(), page: '0' });
+    
+    // タブ変更時にデフォルトの並び替えを設定
+    if (newValue === 0) {
+      // 価格改定履歴タブ：価格変動幅の降順
+      setSortField('price_diff');
+      setSortOrder('desc');
+    } else {
+      // 新規掲載物件タブ：価格の降順
+      setSortField('price');
+      setSortOrder('desc');
+    }
   };
 
   const handleWardChange = (event: SelectChangeEvent) => {
@@ -180,6 +198,15 @@ const PropertyUpdatesPage: React.FC = () => {
 
   const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
     updateSearchParams({ rowsPerPage: event.target.value, page: '0' });
+  };
+
+  // 並び替えハンドラー
+  const handleSort = (field: SortField) => {
+    const isCurrentField = sortField === field;
+    const newOrder: SortOrder = isCurrentField && sortOrder === 'desc' ? 'asc' : 'desc';
+    setSortField(field);
+    setSortOrder(newOrder);
+    updateSearchParams({ page: '0' }); // ページを最初に戻す
   };
 
   const formatPrice = (price: number) => {
@@ -222,11 +249,48 @@ const PropertyUpdatesPage: React.FC = () => {
     ? newListings 
     : newListings.filter(property => getWard(property.address) === selectedWard);
 
+  // 並び替え処理
+  const sortData = (data: RecentUpdate[], field: SortField, order: SortOrder): RecentUpdate[] => {
+    return [...data].sort((a, b) => {
+      let aValue: any = a[field];
+      let bValue: any = b[field];
+      
+      // 特別な処理が必要なフィールド
+      if (field === 'building_name') {
+        aValue = a.building_name?.toLowerCase() || '';
+        bValue = b.building_name?.toLowerCase() || '';
+      } else if (field === 'built_year') {
+        aValue = a.built_year || 0;
+        bValue = b.built_year || 0;
+      } else if (field === 'price_diff') {
+        // 価格改定タブでのみ有効、値下げ幅の大きさで比較
+        aValue = Math.abs(a.price_diff || 0);
+        bValue = Math.abs(b.price_diff || 0);
+      } else if (field === 'changed_at' || field === 'created_at') {
+        aValue = new Date(aValue || 0).getTime();
+        bValue = new Date(bValue || 0).getTime();
+      }
+      
+      // null/undefinedの処理
+      if (aValue == null && bValue == null) return 0;
+      if (aValue == null) return order === 'asc' ? -1 : 1;
+      if (bValue == null) return order === 'asc' ? 1 : -1;
+      
+      // 比較
+      if (aValue < bValue) return order === 'asc' ? -1 : 1;
+      if (aValue > bValue) return order === 'asc' ? 1 : -1;
+      return 0;
+    });
+  };
+
   // 現在のタブに応じたデータを選択
   const currentData = tabValue === 0 ? filteredPriceChanges : filteredNewListings;
+  
+  // 並び替えを適用
+  const sortedData = sortData(currentData, sortField, sortOrder);
 
   // ページネーション
-  const paginatedData = currentData.slice(
+  const paginatedData = sortedData.slice(
     page * rowsPerPage,
     page * rowsPerPage + rowsPerPage
   );
@@ -240,7 +304,10 @@ const PropertyUpdatesPage: React.FC = () => {
   };
 
   return (
-    <Container maxWidth="xl" sx={{ py: 4 }}>
+    <Container maxWidth="xl" sx={{ 
+      py: 4, 
+      px: isMobile ? 1 : 3  // スマートフォンでは左右余白を狭く
+    }}>
       {/* ヘッダー */}
       <Box sx={{ mb: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom sx={{ fontWeight: 'bold' }}>
@@ -277,7 +344,10 @@ const PropertyUpdatesPage: React.FC = () => {
       </Paper>
 
       {/* フィルター */}
-      <Paper sx={{ p: 3, mb: 3 }}>
+      <Paper sx={{ 
+        p: isMobile ? 2 : 3, 
+        mb: 3 
+      }}>
         <Grid container spacing={2} alignItems="center">
           <Grid item xs={12} sm={6} md={3}>
             <FormControl fullWidth size="small">
@@ -345,15 +415,21 @@ const PropertyUpdatesPage: React.FC = () => {
         {/* 統計情報 */}
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={12} md={4}>
-            <Paper sx={{ p: 2, textAlign: 'center' }}>
-              <Typography variant="h6">{filteredPriceChanges.length}</Typography>
+            <Paper sx={{ 
+              p: isMobile ? 1.5 : 2, 
+              textAlign: 'center' 
+            }}>
+              <Typography variant="h6">{filteredPriceChanges.filter(p => p.price_diff !== null && p.price_diff !== undefined).length}</Typography>
               <Typography variant="body2" color="text.secondary">
                 価格改定物件数
               </Typography>
             </Paper>
           </Grid>
           <Grid item xs={12} md={4}>
-            <Paper sx={{ p: 2, textAlign: 'center' }}>
+            <Paper sx={{ 
+              p: isMobile ? 1.5 : 2, 
+              textAlign: 'center' 
+            }}>
               <Typography variant="h6" color="primary">
                 {filteredPriceChanges.filter(p => p.price_diff && p.price_diff < 0).length}
               </Typography>
@@ -363,7 +439,10 @@ const PropertyUpdatesPage: React.FC = () => {
             </Paper>
           </Grid>
           <Grid item xs={12} md={4}>
-            <Paper sx={{ p: 2, textAlign: 'center' }}>
+            <Paper sx={{ 
+              p: isMobile ? 1.5 : 2, 
+              textAlign: 'center' 
+            }}>
               <Typography variant="h6" color="error">
                 {filteredPriceChanges.filter(p => p.price_diff && p.price_diff > 0).length}
               </Typography>
@@ -373,6 +452,15 @@ const PropertyUpdatesPage: React.FC = () => {
             </Paper>
           </Grid>
         </Grid>
+
+        {/* モバイル時のスクロールヒント */}
+        {viewMode === 'table' && (
+          <Box sx={{ display: { xs: 'block', md: 'none' }, mb: 1 }}>
+            <Typography variant="caption" color="text.secondary">
+              ← 左右にスクロールできます →
+            </Typography>
+          </Box>
+        )}
 
         {/* テーブルまたはカード表示 */}
         {loading ? (
@@ -384,34 +472,91 @@ const PropertyUpdatesPage: React.FC = () => {
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableCell sx={isMobile ? { minWidth: 200 } : {}}>建物名・部屋番号</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 80 } : {}}>エリア</TableCell>
-                  <TableCell align="right" sx={isMobile ? { minWidth: 100 } : {}}>現在価格</TableCell>
-                  <TableCell align="right" sx={isMobile ? { minWidth: 100 } : {}}>前回価格</TableCell>
-                  <TableCell align="right" sx={isMobile ? { minWidth: 150 } : {}}>変動幅・変動率</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 60 } : {}}>階数</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 70 } : {}}>面積</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 70 } : {}}>間取り</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 60 } : {}}>方角</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 60 } : {}}>築年</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 80 } : {}}>経過日数</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 250, whiteSpace: 'nowrap' } : {}}>
+                    <TableSortLabel
+                      active={sortField === 'building_name'}
+                      direction={sortField === 'building_name' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('building_name')}
+                    >
+                      {isMobile ? '建物名・エリア' : '建物名・部屋番号・エリア'}
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell align="right" sx={isMobile ? { minWidth: 100, whiteSpace: 'nowrap' } : {}}>
+                    <TableSortLabel
+                      active={sortField === 'price'}
+                      direction={sortField === 'price' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('price')}
+                    >
+                      {isMobile ? '現在' : '現在価格'}
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell align="right" sx={isMobile ? { minWidth: 100, whiteSpace: 'nowrap' } : {}}>{isMobile ? '前回' : '前回価格'}</TableCell>
+                  <TableCell align="right" sx={isMobile ? { minWidth: 150, whiteSpace: 'nowrap' } : {}}>
+                    <TableSortLabel
+                      active={sortField === 'price_diff'}
+                      direction={sortField === 'price_diff' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('price_diff')}
+                    >
+                      {isMobile ? '変動' : '変動幅・変動率'}
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : {}}>
+                    <TableSortLabel
+                      active={sortField === 'floor_number'}
+                      direction={sortField === 'floor_number' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('floor_number')}
+                    >
+                      階数
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 70, whiteSpace: 'nowrap' } : {}}>
+                    <TableSortLabel
+                      active={sortField === 'area'}
+                      direction={sortField === 'area' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('area')}
+                    >
+                      面積
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 70, whiteSpace: 'nowrap' } : {}}>間取り</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : {}}>方角</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : {}}>
+                    <TableSortLabel
+                      active={sortField === 'built_year'}
+                      direction={sortField === 'built_year' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('built_year')}
+                    >
+                      築年
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 80, whiteSpace: 'nowrap' } : {}}>
+                    <TableSortLabel
+                      active={sortField === 'days_on_market'}
+                      direction={sortField === 'days_on_market' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('days_on_market')}
+                    >
+                      {isMobile ? '日数' : '経過日数'}
+                    </TableSortLabel>
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {paginatedData.map((property) => (
-                  <TableRow key={`${property.id}-${property.changed_at || property.created_at}`}>
-                    <TableCell sx={isMobile ? { minWidth: 180 } : {}}>
-                      <Link
-                        component="button"
-                        variant="body2"
-                        onClick={() => navigate(`/properties/${property.id}`)}
-                        sx={{ textAlign: 'left' }}
-                      >
+                  <TableRow 
+                    key={`${property.id}-${property.changed_at || property.created_at}`}
+                    hover
+                    onClick={() => navigate(`/properties/${property.id}`)}
+                    sx={{ cursor: 'pointer' }}
+                  >
+                    <TableCell sx={isMobile ? { minWidth: 240 } : {}}>
+                      <Box>
                         {property.building_name}
                         {property.room_number && ` ${property.room_number}号室`}
-                      </Link>
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          {getWard(property.address)}
+                        </Typography>
+                      </Box>
                     </TableCell>
-                    <TableCell sx={isMobile ? { minWidth: 70 } : {}}>{getWard(property.address)}</TableCell>
                     <TableCell align="right" sx={isMobile ? { minWidth: 90, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>
                       <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
                         {formatPrice(property.price)}
@@ -468,7 +613,7 @@ const PropertyUpdatesPage: React.FC = () => {
           </TableContainer>
         ) : (
           /* カード表示 */
-          <Grid container spacing={2}>
+          <Grid container spacing={isMobile ? 1 : 2}>
             {paginatedData.map((property) => (
               <Grid item xs={12} sm={6} md={4} key={`${property.id}-${property.changed_at || property.created_at}`}>
                 <Card>
@@ -569,7 +714,10 @@ const PropertyUpdatesPage: React.FC = () => {
         {/* 統計情報 */}
         <Grid container spacing={2} sx={{ mb: 3 }}>
           <Grid item xs={12} md={3}>
-            <Paper sx={{ p: 2, textAlign: 'center' }}>
+            <Paper sx={{ 
+              p: isMobile ? 1.5 : 2, 
+              textAlign: 'center' 
+            }}>
               <Typography variant="h6">{filteredNewListings.length}</Typography>
               <Typography variant="body2" color="text.secondary">
                 新規掲載物件数
@@ -577,7 +725,10 @@ const PropertyUpdatesPage: React.FC = () => {
             </Paper>
           </Grid>
           <Grid item xs={12} md={3}>
-            <Paper sx={{ p: 2, textAlign: 'center' }}>
+            <Paper sx={{ 
+              p: isMobile ? 1.5 : 2, 
+              textAlign: 'center' 
+            }}>
               <Typography variant="h6">{priceRangeStats.under5000}</Typography>
               <Typography variant="body2" color="text.secondary">
                 5,000万円未満
@@ -585,7 +736,10 @@ const PropertyUpdatesPage: React.FC = () => {
             </Paper>
           </Grid>
           <Grid item xs={12} md={3}>
-            <Paper sx={{ p: 2, textAlign: 'center' }}>
+            <Paper sx={{ 
+              p: isMobile ? 1.5 : 2, 
+              textAlign: 'center' 
+            }}>
               <Typography variant="h6">{priceRangeStats.under10000}</Typography>
               <Typography variant="body2" color="text.secondary">
                 5,000万円〜1億円
@@ -593,7 +747,10 @@ const PropertyUpdatesPage: React.FC = () => {
             </Paper>
           </Grid>
           <Grid item xs={12} md={3}>
-            <Paper sx={{ p: 2, textAlign: 'center' }}>
+            <Paper sx={{ 
+              p: isMobile ? 1.5 : 2, 
+              textAlign: 'center' 
+            }}>
               <Typography variant="h6">{priceRangeStats.over20000}</Typography>
               <Typography variant="body2" color="text.secondary">
                 2億円以上
@@ -601,6 +758,15 @@ const PropertyUpdatesPage: React.FC = () => {
             </Paper>
           </Grid>
         </Grid>
+
+        {/* モバイル時のスクロールヒント */}
+        {viewMode === 'table' && (
+          <Box sx={{ display: { xs: 'block', md: 'none' }, mb: 1 }}>
+            <Typography variant="caption" color="text.secondary">
+              ← 左右にスクロールできます →
+            </Typography>
+          </Box>
+        )}
 
         {/* テーブルまたはカード表示 */}
         {loading ? (
@@ -612,40 +778,89 @@ const PropertyUpdatesPage: React.FC = () => {
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableCell sx={isMobile ? { minWidth: 200 } : {}}>建物名・部屋番号</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 80 } : {}}>エリア</TableCell>
-                  <TableCell align="right" sx={isMobile ? { minWidth: 100 } : {}}>価格</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 60 } : {}}>階数</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 70 } : {}}>面積</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 70 } : {}}>間取り</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 60 } : {}}>方角</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 60 } : {}}>築年</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 90 } : {}}>掲載日</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 250, whiteSpace: 'nowrap' } : {}}>
+                    <TableSortLabel
+                      active={sortField === 'building_name'}
+                      direction={sortField === 'building_name' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('building_name')}
+                    >
+                      {isMobile ? '建物名・エリア' : '建物名・部屋番号・エリア'}
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell align="right" sx={isMobile ? { minWidth: 100, whiteSpace: 'nowrap' } : {}}>
+                    <TableSortLabel
+                      active={sortField === 'price'}
+                      direction={sortField === 'price' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('price')}
+                    >
+                      価格
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : {}}>
+                    <TableSortLabel
+                      active={sortField === 'floor_number'}
+                      direction={sortField === 'floor_number' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('floor_number')}
+                    >
+                      階数
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 70, whiteSpace: 'nowrap' } : {}}>
+                    <TableSortLabel
+                      active={sortField === 'area'}
+                      direction={sortField === 'area' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('area')}
+                    >
+                      面積
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 70, whiteSpace: 'nowrap' } : {}}>間取り</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : {}}>方角</TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : {}}>
+                    <TableSortLabel
+                      active={sortField === 'built_year'}
+                      direction={sortField === 'built_year' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('built_year')}
+                    >
+                      築年
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell sx={isMobile ? { minWidth: 90, whiteSpace: 'nowrap' } : {}}>
+                    <TableSortLabel
+                      active={sortField === 'created_at'}
+                      direction={sortField === 'created_at' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('created_at')}
+                    >
+                      {isMobile ? '掲載日' : '掲載日'}
+                    </TableSortLabel>
+                  </TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
                 {paginatedData.map((property) => (
-                  <TableRow key={`${property.id}-${property.created_at}`}>
-                    <TableCell sx={isMobile ? { minWidth: 200 } : {}}>
-                      <Link
-                        component="button"
-                        variant="body2"
-                        onClick={() => navigate(`/properties/${property.id}`)}
-                        sx={{ textAlign: 'left' }}
-                      >
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                          <Chip
-                            icon={<NewReleasesIcon />}
-                            label="NEW"
-                            color="success"
-                            size="small"
-                          />
+                  <TableRow 
+                    key={`${property.id}-${property.created_at}`}
+                    hover
+                    onClick={() => navigate(`/properties/${property.id}`)}
+                    sx={{ cursor: 'pointer' }}
+                  >
+                    <TableCell sx={isMobile ? { minWidth: 240 } : {}}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                        <Chip
+                          icon={<NewReleasesIcon />}
+                          label="NEW"
+                          color="success"
+                          size="small"
+                        />
+                        <Box>
                           {property.building_name}
                           {property.room_number && ` ${property.room_number}号室`}
+                          <Typography variant="caption" color="text.secondary" display="block">
+                            {getWard(property.address)}
+                          </Typography>
                         </Box>
-                      </Link>
+                      </Box>
                     </TableCell>
-                    <TableCell sx={isMobile ? { minWidth: 80 } : {}}>{getWard(property.address)}</TableCell>
                     <TableCell align="right" sx={isMobile ? { minWidth: 100, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>
                       <Typography variant="body2" sx={{ fontWeight: 'bold', color: theme.palette.success.main }}>
                         {formatPrice(property.price)}
@@ -668,7 +883,7 @@ const PropertyUpdatesPage: React.FC = () => {
           </TableContainer>
         ) : (
           /* カード表示 */
-          <Grid container spacing={2}>
+          <Grid container spacing={isMobile ? 1 : 2}>
             {paginatedData.map((property) => (
               <Grid item xs={12} sm={6} md={4} key={`${property.id}-${property.created_at}`}>
                 <Card>
@@ -749,7 +964,7 @@ const PropertyUpdatesPage: React.FC = () => {
         <TablePagination
           rowsPerPageOptions={[25, 50, 100]}
           component="div"
-          count={currentData.length}
+          count={sortedData.length}
           rowsPerPage={rowsPerPage}
           page={page}
           onPageChange={handleChangePage}
@@ -758,6 +973,8 @@ const PropertyUpdatesPage: React.FC = () => {
           labelDisplayedRows={({ from, to, count }) => `${from}-${to} / ${count}件`}
         />
       )}
+
+
     </Container>
   );
 };

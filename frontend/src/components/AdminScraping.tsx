@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Box,
   Paper,
@@ -184,6 +184,7 @@ const AdminScraping: React.FC = () => {
   const [useCustomRefetch, setUseCustomRefetch] = useState(false);
   const [ignoreErrorHistory, setIgnoreErrorHistory] = useState(false); // 404/検証エラー履歴を無視するオプション
   const [tasks, setTasks] = useState<ScrapingTask[]>([]);
+  const [showAllTasks, setShowAllTasks] = useState(false); // タスク表示数制限用
   const [loading, setLoading] = useState(false);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [selectedTaskLog, setSelectedTaskLog] = useState<string | null>(null);
@@ -231,12 +232,12 @@ const AdminScraping: React.FC = () => {
       );
       
       if (hasRunningTasks) {
-        // 実行中のタスクのみを更新（5秒ごと）
-        const interval = setInterval(() => fetchTasks(true), 5000);
+        // 実行中のタスクのみを更新（10秒ごとに変更し、頻度を削減）
+        const interval = setInterval(() => fetchTasks(true), 10000);
         return () => clearInterval(interval);
       }
     }
-  }, [autoRefreshEnabled, tasks, deleteDialogOpen]);
+  }, [autoRefreshEnabled, tasks.length, deleteDialogOpen]);
 
   // ボタン操作中は自動更新を停止
   useEffect(() => {
@@ -617,20 +618,22 @@ const AdminScraping: React.FC = () => {
     }
   };
 
-  const getAreaName = (areaCode: string) => {
+  // エリア名取得をメモ化（パフォーマンス最適化）
+  const getAreaName = useCallback((areaCode: string) => {
     // 詳細再取得タスクの特別な識別子
     if (areaCode === 'single_url') {
       return '詳細再取得';
     }
     const area = areas.find(a => a.code === areaCode);
     return area ? area.name : areaCode;
-  };
+  }, [areas]);
   
-  const getAreaNames = (areaCodes: string[]) => {
+  const getAreaNames = useCallback((areaCodes: string[]) => {
     return areaCodes.map(code => getAreaName(code)).join('、');
-  };
+  }, [getAreaName]);
 
-  const calculateProgress = (task: ScrapingTask) => {
+  // 進捗計算をメモ化（パフォーマンス最適化）
+  const calculateProgress = useCallback((task: ScrapingTask) => {
     // 並列タスクの場合、統計情報から進捗を計算
     if (task.type === 'parallel' && (task as any).statistics) {
       const stats = (task as any).statistics;
@@ -661,15 +664,38 @@ const AdminScraping: React.FC = () => {
     }, 0);
 
     return totalProgress / expectedTotal;
-  };
+  }, []);
   
-  const getTaskStats = (task: ScrapingTask) => {
+  // 表示するタスクリストをメモ化（パフォーマンス最適化）
+  const displayTasks = useMemo(() => {
+    const MAX_DISPLAY_TASKS = 20; // 表示制限数
+    
+    if (showAllTasks) {
+      return tasks;
+    }
+    
+    // 実行中・一時停止中のタスクを優先表示
+    const activeTasks = tasks.filter(task => 
+      task.status === 'running' || task.status === 'pending' || task.status === 'paused' || task.status === 'initializing'
+    );
+    const otherTasks = tasks.filter(task => 
+      !(task.status === 'running' || task.status === 'pending' || task.status === 'paused' || task.status === 'initializing')
+    );
+    
+    const displayList = [
+      ...activeTasks,
+      ...otherTasks.slice(0, Math.max(0, MAX_DISPLAY_TASKS - activeTasks.length))
+    ];
+    
+    return displayList;
+  }, [tasks, showAllTasks]);
+
+  // タスク統計計算をメモ化（パフォーマンス最適化）
+  const getTaskStats = useCallback((task: ScrapingTask) => {
     // 並列タスクの場合
     if (task.type === 'parallel') {
       // 各進捗から集計する
       const progressItems = Object.values(task.progress || {});
-      
-
       
       // 各進捗の合計を計算
       const aggregated = progressItems.reduce((stats, progress: any) => ({
@@ -710,7 +736,7 @@ const AdminScraping: React.FC = () => {
       skipped: stats.skipped + (progress.skipped_listings || 0),
       save_failed: stats.save_failed + (progress.save_failed || 0)
     }), { total: 0, new: 0, price_updated: 0, other_updates: 0, refetched_unchanged: 0, skipped: 0, save_failed: 0 });
-  };
+  }, []);
 
   const [updatingListingStatus, setUpdatingListingStatus] = useState(false);
   const [listingUpdateResult, setListingUpdateResult] = useState<{
@@ -1112,8 +1138,24 @@ const AdminScraping: React.FC = () => {
 
       <Paper sx={{ p: 3 }}>
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
-          <Typography variant="h6">実行中のタスク</Typography>
+          <Typography variant="h6">
+            実行中のタスク
+            {!showAllTasks && tasks.length > displayTasks.length && (
+              <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
+                ({displayTasks.length}/{tasks.length}件表示)
+              </Typography>
+            )}
+          </Typography>
           <Box display="flex" alignItems="center" gap={1}>
+            {tasks.length > 20 && (
+              <Button
+                variant="outlined"
+                size="small"
+                onClick={() => setShowAllTasks(!showAllTasks)}
+              >
+                {showAllTasks ? '最新20件のみ表示' : 'すべて表示'}
+              </Button>
+            )}
             <Button
               variant="outlined"
               color="error"
@@ -1135,7 +1177,7 @@ const AdminScraping: React.FC = () => {
           </Box>
         </Box>
 
-        {tasks.length === 0 ? (
+        {displayTasks.length === 0 ? (
           <Alert severity="info">実行中のタスクはありません</Alert>
         ) : (
           <TableContainer>
@@ -1153,7 +1195,14 @@ const AdminScraping: React.FC = () => {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {tasks.map(task => {
+                {displayTasks.map(task => {
+                  // タスクごとの計算結果をメモ化
+                  const progress = calculateProgress(task);
+                  const stats = getTaskStats(task);
+                  const areaNames = task.area_codes && task.area_codes.length > 2 ? 
+                    getAreaName(task.area_codes[0]) + ` 他${task.area_codes.length - 1}件` :
+                    task.area_codes ? getAreaNames(task.area_codes) : 'N/A';
+                  
                   return (
                   <React.Fragment key={task.task_id}>
                     <TableRow>
@@ -1170,12 +1219,12 @@ const AdminScraping: React.FC = () => {
                           {task.area_codes && task.area_codes.length > 2 ? (
                             <Tooltip title={getAreaNames(task.area_codes)}>
                               <span>
-                                {getAreaName(task.area_codes[0])} 他{task.area_codes.length - 1}件
+                                {areaNames}
                               </span>
                             </Tooltip>
                           ) : (
                             <span>
-                              {task.area_codes ? getAreaNames(task.area_codes) : 'N/A'}
+                              {areaNames}
                             </span>
                           )}
                         </Box>
@@ -1200,39 +1249,31 @@ const AdminScraping: React.FC = () => {
                           <Box display="flex" alignItems="center" mb={0.5}>
                             <LinearProgress
                               variant="determinate"
-                              value={calculateProgress(task)}
+                              value={progress}
                               sx={{ flexGrow: 1, mr: 1 }}
                             />
                             <Typography variant="caption">
-                              {Math.round(calculateProgress(task))}%
+                              {Math.round(progress)}%
                             </Typography>
                           </Box>
                           <Box display="flex" gap={1} flexWrap="wrap">
-                            {(() => {
-                              const stats = getTaskStats(task);
-                              
-                              return (
-                                <>
-                                  <Typography variant="caption" color="success.main">
-                                    新規: {stats.new}
-                                  </Typography>
-                                  <Typography variant="caption" color="info.main">
-                                    価格更新: {stats.price_updated}
-                                  </Typography>
-                                  <Typography variant="caption" color="primary.main">
-                                    その他: {stats.other_updates}
-                                  </Typography>
-                                  <Typography variant="caption" color="text.secondary">
-                                    変更なし: {stats.refetched_unchanged}
-                                  </Typography>
-                                  {stats.save_failed > 0 && (
-                                    <Typography variant="caption" color="error.main">
-                                      保存失敗: {stats.save_failed}
-                                    </Typography>
-                                  )}
-                                </>
-                              );
-                            })()}
+                            <Typography variant="caption" color="success.main">
+                              新規: {stats.new}
+                            </Typography>
+                            <Typography variant="caption" color="info.main">
+                              価格更新: {stats.price_updated}
+                            </Typography>
+                            <Typography variant="caption" color="primary.main">
+                              その他: {stats.other_updates}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              変更なし: {stats.refetched_unchanged}
+                            </Typography>
+                            {stats.save_failed > 0 && (
+                              <Typography variant="caption" color="error.main">
+                                保存失敗: {stats.save_failed}
+                              </Typography>
+                            )}
                           </Box>
                         </Box>
                       </TableCell>

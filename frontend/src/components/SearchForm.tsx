@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Paper,
   Grid,
@@ -58,6 +58,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
   // エリア一覧の状態
   const [areas, setAreas] = useState<Area[]>([]);
 
+
   // エリア一覧を取得
   useEffect(() => {
     const fetchAreas = async () => {
@@ -72,27 +73,29 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
   }, []);
 
   // 建物名サジェストAPIを呼び出す関数（デバウンス付き）- エイリアス対応
-  const fetchBuildingSuggestions = useCallback(
-    debounce(async (query: string) => {
+  // 建物名サジェストAPIを呼び出す関数（デバウンス付き）
+  const fetchBuildingSuggestions = React.useMemo(
+    () => debounce(async (query: string) => {
       if (query.length < 1) {
         setBuildingOptions([]);
+        setAutocompleteOpen(false);
         return;
       }
 
       setBuildingLoading(true);
       try {
         const suggestions = await propertyApi.suggestBuildings(query);
+        
         // APIレスポンスの形式を判定
         if (suggestions && suggestions.length > 0) {
           if (typeof suggestions[0] === 'object' && 'value' in suggestions[0]) {
             // 新形式（オブジェクト配列）
             setBuildingOptions(suggestions as Array<{ value: string; label: string }>);
-            setAutocompleteOpen(true);  // 候補がある場合は自動で開く
           } else {
             // 旧形式（文字列配列）
             setBuildingOptions(suggestions as string[]);
-            setAutocompleteOpen(true);  // 候補がある場合は自動で開く
           }
+          setAutocompleteOpen(true);  // 候補がある場合は自動で開く
         } else {
           setBuildingOptions([]);
           setAutocompleteOpen(false);  // 候補がない場合は閉じる
@@ -100,10 +103,11 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
       } catch (error) {
         console.error('Failed to fetch building suggestions:', error);
         setBuildingOptions([]);
+        setAutocompleteOpen(false);
       } finally {
         setBuildingLoading(false);
       }
-    }, 200),  // デバウンス時間を300msから200msに短縮
+    }, 200),  // デバウンス時間を200ms
     []
   );
 
@@ -192,10 +196,10 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
               freeSolo
               options={buildingOptions}
               loading={buildingLoading}
-              value={searchParams.building_name || ''}
+              value={null}
               inputValue={buildingInputValue}
               filterOptions={(x) => x}
-              open={autocompleteOpen}
+              open={autocompleteOpen && buildingOptions.length > 0}
               onOpen={() => {
                 if (buildingOptions.length > 0) {
                   setAutocompleteOpen(true);
@@ -231,11 +235,11 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
               onInputChange={(_, newInputValue) => {
                 setBuildingInputValue(newInputValue);
                 fetchBuildingSuggestions(newInputValue);
-                // input変更時にもsearchParamsを更新
-                setSearchParams({
-                  ...searchParams,
-                  building_name: newInputValue || undefined,
-                });
+                // input変更時にもsearchParamsを更新（prev stateを使用）
+                setSearchParams(prev => ({
+                  ...prev,
+                  building_name: newInputValue || '',
+                }));
               }}
               onChange={(_, newValue) => {
                 let buildingName = '';
@@ -244,10 +248,10 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                 } else if (typeof newValue === 'string') {
                   buildingName = newValue;
                 }
-                setSearchParams({
-                  ...searchParams,
-                  building_name: buildingName || undefined,
-                });
+                setSearchParams(prev => ({
+                  ...prev,
+                  building_name: buildingName || '',
+                }));
                 setBuildingInputValue(buildingName);
               }}
               renderInput={(params) => (

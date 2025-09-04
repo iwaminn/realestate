@@ -25,7 +25,9 @@ import {
   FormControlLabel,
   Checkbox,
   Tooltip,
+  useMediaQuery,
 } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
 import { 
   Apartment as ApartmentIcon,
   Home as HomeIcon,
@@ -63,6 +65,8 @@ const BuildingPropertiesPage: React.FC = () => {
   const { buildingId } = useParams<{ buildingId: string }>();
   const location = useLocation();
   const navigate = useNavigate();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   
 const [properties, setProperties] = useState<Property[]>([]);
   const [building, setBuilding] = useState<any | null>(null);
@@ -336,7 +340,10 @@ const [properties, setProperties] = useState<Property[]>([]);
 
   if (loading) {
     return (
-      <Container maxWidth="lg" sx={{ py: 4 }}>
+      <Container maxWidth="xl" sx={{ 
+        py: 4, 
+        px: isMobile ? 1 : 3
+      }}>
         <Box display="flex" justifyContent="center">
           <CircularProgress />
         </Box>
@@ -346,7 +353,10 @@ const [properties, setProperties] = useState<Property[]>([]);
   
   if (error) {
     return (
-      <Container maxWidth="lg" sx={{ py: 4 }}>
+      <Container maxWidth="xl" sx={{ 
+        py: 4, 
+        px: isMobile ? 1 : 3
+      }}>
         <Alert severity="error">{error}</Alert>
       </Container>
     );
@@ -354,7 +364,10 @@ const [properties, setProperties] = useState<Property[]>([]);
   
   if (!building) {
     return (
-      <Container maxWidth="lg" sx={{ py: 4 }}>
+      <Container maxWidth="xl" sx={{ 
+        py: 4, 
+        px: isMobile ? 1 : 3
+      }}>
         <Alert severity="info">
           建物情報が見つかりません
         </Alert>
@@ -372,7 +385,10 @@ const [properties, setProperties] = useState<Property[]>([]);
   
   if (!properties.length) {
     return (
-      <Container maxWidth="lg" sx={{ py: 4 }}>
+      <Container maxWidth="xl" sx={{ 
+        py: 4, 
+        px: isMobile ? 1 : 3
+      }}>
         <Alert severity="info">
           物件が見つかりません
           {!includeInactive && (
@@ -398,7 +414,10 @@ const [properties, setProperties] = useState<Property[]>([]);
   const buildingInfo = building;
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
+    <Container maxWidth="xl" sx={{ 
+      py: 4, 
+      px: isMobile ? 1 : 3
+    }}>
       <Button
         component={Link}
         to="/"
@@ -553,7 +572,14 @@ const [properties, setProperties] = useState<Property[]>([]);
 
       {/* 表示モード切替と物件一覧タイトル */}
       <Box sx={{ mb: 3 }}>
-        <Box display="flex" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+        <Box sx={{ 
+          display: 'flex', 
+          flexDirection: { xs: 'column', sm: 'row' },
+          justifyContent: 'space-between', 
+          alignItems: { xs: 'flex-start', sm: 'center' },
+          gap: { xs: 2, sm: 0 },
+          mb: 2 
+        }}>
           <Typography variant="h5">
             {includeInactive ? '全物件' : '販売中の物件'} ({properties.length}件)
           </Typography>
@@ -562,13 +588,23 @@ const [properties, setProperties] = useState<Property[]>([]);
             exclusive
             onChange={(_, newMode) => newMode && setViewMode(newMode)}
             aria-label="表示モード"
+            sx={{ 
+              flexShrink: 0,
+              '& .MuiToggleButton-root': {
+                minWidth: { xs: 90, sm: 'auto' },
+                whiteSpace: 'nowrap',
+                fontSize: { xs: '0.875rem', sm: '0.875rem' },
+                px: { xs: 1.5, sm: 2 },
+                py: { xs: 1, sm: 1 }
+              }
+            }}
           >
             <ToggleButton value="table" aria-label="表形式">
-              <TableChartIcon sx={{ mr: 0.5 }} />
+              <TableChartIcon sx={{ mr: 0.5, fontSize: { xs: '1rem', sm: '1.25rem' } }} />
               表形式
             </ToggleButton>
             <ToggleButton value="card" aria-label="カード形式">
-              <ViewModuleIcon sx={{ mr: 0.5 }} />
+              <ViewModuleIcon sx={{ mr: 0.5, fontSize: { xs: '1rem', sm: '1.25rem' } }} />
               カード形式
             </ToggleButton>
           </ToggleButtonGroup>

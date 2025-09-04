@@ -23,6 +23,8 @@ import {
   TableContainer,
   TableHead,
   TableRow,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import {
   LocationOn,
@@ -56,6 +58,8 @@ import { PropertyDetail } from '../types/property';
 const PropertyDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [propertyDetail, setPropertyDetail] = useState<PropertyDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -207,12 +211,33 @@ const PropertyDetailPage: React.FC = () => {
       }}>
         <Grid container spacing={3}>
           <Grid item xs={12}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-              <Typography variant="h4" component="h1" sx={{ color: property.sold_at ? 'text.secondary' : 'text.primary' }}>
+            <Box sx={{ 
+              display: 'flex', 
+              flexDirection: { xs: 'column', md: 'row' },
+              justifyContent: 'space-between', 
+              alignItems: { xs: 'flex-start', md: 'center' }, 
+              mb: 2, 
+              gap: { xs: 2, md: 0 } 
+            }}>
+              <Typography 
+                variant={isMobile ? "h5" : "h4"} 
+                component="h1" 
+                sx={{ 
+                  color: property.sold_at ? 'text.secondary' : 'text.primary',
+                  wordBreak: 'break-word',
+                  hyphens: 'auto',
+                  lineHeight: { xs: 1.3, md: 1.2 }
+                }}
+              >
                 {building.normalized_name}
                 {property.room_number && ` ${property.room_number}`}
               </Typography>
-              <Box>
+              <Box sx={{ 
+                display: 'flex', 
+                flexWrap: 'wrap', 
+                gap: 1, 
+                alignSelf: { xs: 'flex-start', md: 'center' } 
+              }}>
                 {property.sold_at && (
                   <Chip 
                     label="販売終了" 
@@ -402,15 +427,35 @@ const PropertyDetailPage: React.FC = () => {
           <Typography variant="h5" gutterBottom>
             掲載情報一覧
           </Typography>
-          <TableContainer>
-          <Table>
+          {isMobile && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+              ← 左右にスクロールできます →
+            </Typography>
+          )}
+          <TableContainer sx={{ overflowX: 'auto' }}>
+          <Table sx={{ minWidth: { xs: 600, md: 'auto' } }}>
             <TableHead>
               <TableRow>
-                <TableCell>掲載サイト</TableCell>
-                <TableCell>タイトル</TableCell>
-                <TableCell align="right">価格</TableCell>
-                <TableCell>売出確認日</TableCell>
-                <TableCell align="center">詳細</TableCell>
+                <TableCell sx={{ 
+                  width: isMobile ? '80px' : '10%',
+                  minWidth: isMobile ? '80px' : 'auto'
+                }}>掲載サイト</TableCell>
+                <TableCell sx={{ 
+                  width: isMobile ? '250px' : '40%',
+                  minWidth: isMobile ? '200px' : 'auto'
+                }}>タイトル</TableCell>
+                <TableCell align="right" sx={{ 
+                  width: isMobile ? '120px' : '20%',
+                  minWidth: isMobile ? '100px' : 'auto'
+                }}>価格</TableCell>
+                <TableCell sx={{ 
+                  width: isMobile ? '100px' : '20%',
+                  minWidth: isMobile ? '90px' : 'auto'
+                }}>売出確認日</TableCell>
+                <TableCell align="center" sx={{ 
+                  width: isMobile ? '60px' : '10%',
+                  minWidth: isMobile ? '60px' : 'auto'
+                }}>詳細</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -420,7 +465,7 @@ const PropertyDetailPage: React.FC = () => {
                     <Chip label={listing.source_site} size="small" />
                   </TableCell>
                   <TableCell>{listing.title}</TableCell>
-                  <TableCell align="right">{formatPrice(listing.current_price)}</TableCell>
+                  <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>{formatPrice(listing.current_price)}</TableCell>
                   <TableCell>
                     {listing.first_published_at 
                       ? format(new Date(listing.first_published_at), 'yyyy/MM/dd', { locale: ja })
@@ -456,14 +501,31 @@ const PropertyDetailPage: React.FC = () => {
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             この物件は販売終了のため、現在有効な掲載情報はありません。
           </Typography>
-          <TableContainer>
-            <Table>
+          {isMobile && (
+            <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+              ← 左右にスクロールできます →
+            </Typography>
+          )}
+          <TableContainer sx={{ overflowX: 'auto' }}>
+            <Table sx={{ minWidth: { xs: 600, md: 'auto' } }}>
               <TableHead>
                 <TableRow>
-                  <TableCell>掲載サイト</TableCell>
-                  <TableCell>タイトル</TableCell>
-                  <TableCell align="right">最終価格</TableCell>
-                  <TableCell>最終確認日</TableCell>
+                  <TableCell sx={{ 
+                    width: isMobile ? '80px' : 'auto',
+                    minWidth: isMobile ? '80px' : 'auto'
+                  }}>掲載サイト</TableCell>
+                  <TableCell sx={{ 
+                    width: isMobile ? '250px' : 'auto',
+                    minWidth: isMobile ? '200px' : 'auto'
+                  }}>タイトル</TableCell>
+                  <TableCell align="right" sx={{ 
+                    width: isMobile ? '120px' : 'auto',
+                    minWidth: isMobile ? '100px' : 'auto'
+                  }}>最終価格</TableCell>
+                  <TableCell sx={{ 
+                    width: isMobile ? '100px' : 'auto',
+                    minWidth: isMobile ? '90px' : 'auto'
+                  }}>最終確認日</TableCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -473,7 +535,7 @@ const PropertyDetailPage: React.FC = () => {
                       <Chip label={listing.source_site} size="small" />
                     </TableCell>
                     <TableCell>{listing.title}</TableCell>
-                    <TableCell align="right">{formatPrice(listing.current_price)}</TableCell>
+                    <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>{formatPrice(listing.current_price)}</TableCell>
                     <TableCell>
                       {/* listing.last_confirmed_at 
                         ? format(new Date(listing.last_confirmed_at), 'yyyy/MM/dd', { locale: ja })
