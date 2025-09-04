@@ -520,11 +520,10 @@ export const BuildingManagement: React.FC = () => {
           <Grid item xs={12} sm={6} md={4}>
             <TextField
               fullWidth
-              label="建物名"
+              label="建物ID・建物名"
               value={searchParams.name}
               onChange={(e) => setSearchParams({ ...searchParams, name: e.target.value })}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              helperText="スペース区切りでAND検索"
             />
           </Grid>
           <Grid item xs={12} sm={6} md={4}>
@@ -534,7 +533,6 @@ export const BuildingManagement: React.FC = () => {
               value={searchParams.address}
               onChange={(e) => setSearchParams({ ...searchParams, address: e.target.value })}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              helperText="スペース区切りでAND検索"
             />
           </Grid>
           <Grid item xs={12} sm={6} md={2}>

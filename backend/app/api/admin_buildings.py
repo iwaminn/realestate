@@ -33,17 +33,22 @@ async def get_buildings(
     
     # フィルタリング
     if name:
-        # 共通の建物名検索関数を使用（BuildingListingNameベース）
-        from ..utils.building_search import apply_building_name_filter_with_alias
-        query = apply_building_name_filter_with_alias(
-            query,
-            name,
-            db,
-            Building,
-            search_building_name=True,
-            search_property_display_name=False,
-            search_aliases=True  # 掲載情報の建物名も検索対象に含める
-        )
+        # 建物IDでの検索かチェック（数値のみの場合）
+        if name.strip().isdigit():
+            building_id = int(name.strip())
+            query = query.filter(Building.id == building_id)
+        else:
+            # 共通の建物名検索関数を使用（BuildingListingNameベース）
+            from ..utils.building_search import apply_building_name_filter_with_alias
+            query = apply_building_name_filter_with_alias(
+                query,
+                name,
+                db,
+                Building,
+                search_building_name=True,
+                search_property_display_name=False,
+                search_aliases=True  # 掲載情報の建物名も検索対象に含める
+            )
     
     if address:
         # スペース区切りでAND検索

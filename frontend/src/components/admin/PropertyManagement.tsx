@@ -204,8 +204,7 @@ export const PropertyManagement: React.FC = () => {
   const [rowsPerPage, setRowsPerPage] = useState(50);
   const [totalCount, setTotalCount] = useState(0);
   const [searchParams, setSearchParams] = useState({
-    propertyId: '',  // 物件ID検索を追加
-    buildingName: '',
+    propertyQuery: '',  // 物件ID・物件名統合検索
     address: '',
     minArea: '',
     maxArea: '',
@@ -251,8 +250,14 @@ export const PropertyManagement: React.FC = () => {
       params.append('offset', String(page * rowsPerPage));
       params.append('limit', String(rowsPerPage));
       
-      if (searchParams.propertyId) params.append('property_id', searchParams.propertyId);
-      if (searchParams.buildingName) params.append('building_name', searchParams.buildingName);
+      if (searchParams.propertyQuery) {
+        // 数値のみの場合は物件IDとして検索、そうでなければ建物名として検索
+        if (searchParams.propertyQuery.trim().match(/^\d+$/)) {
+          params.append('property_id', searchParams.propertyQuery.trim());
+        } else {
+          params.append('building_name', searchParams.propertyQuery);
+        }
+      }
       if (searchParams.address) params.append('address', searchParams.address);
       if (searchParams.minArea) params.append('min_area', searchParams.minArea);
       if (searchParams.maxArea) params.append('max_area', searchParams.maxArea);
@@ -337,8 +342,7 @@ export const PropertyManagement: React.FC = () => {
 
   const handleClearSearch = () => {
     setSearchParams({
-      propertyId: '',
-      buildingName: '',
+      propertyQuery: '',
       address: '',
       minArea: '',
       maxArea: '',
@@ -514,25 +518,13 @@ export const PropertyManagement: React.FC = () => {
       {/* 検索フォーム */}
       <Paper sx={{ p: 3, mb: 3 }}>
         <Grid container spacing={2}>
-          <Grid item xs={12} sm={6} md={3}>
+          <Grid item xs={12} sm={6} md={4}>
             <TextField
               fullWidth
-              label="物件ID"
-              value={searchParams.propertyId}
-              onChange={(e) => setSearchParams({ ...searchParams, propertyId: e.target.value })}
+              label="物件ID・建物名"
+              value={searchParams.propertyQuery}
+              onChange={(e) => setSearchParams({ ...searchParams, propertyQuery: e.target.value })}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              type="number"
-              helperText="物件IDで直接検索"
-            />
-          </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <TextField
-              fullWidth
-              label="建物名"
-              value={searchParams.buildingName}
-              onChange={(e) => setSearchParams({ ...searchParams, buildingName: e.target.value })}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              helperText="スペース区切りでAND検索"
             />
           </Grid>
           <Grid item xs={12} sm={6} md={3}>
@@ -542,7 +534,6 @@ export const PropertyManagement: React.FC = () => {
               value={searchParams.address}
               onChange={(e) => setSearchParams({ ...searchParams, address: e.target.value })}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              helperText="スペース区切りでAND検索"
             />
           </Grid>
           <Grid item xs={12} sm={6} md={2}>

@@ -2,6 +2,7 @@ import React from 'react';
 import { AppBar, Toolbar, Typography, Button } from '@mui/material';
 import { useNavigate } from 'react-router-dom';
 import HomeIcon from '@mui/icons-material/Home';
+import { APP_CONFIG } from '../config/app';
 
 const Header: React.FC = () => {
   const navigate = useNavigate();
@@ -16,7 +17,7 @@ const Header: React.FC = () => {
           sx={{ flexGrow: 1, cursor: 'pointer' }}
           onClick={() => navigate('/')}
         >
-          都心マンションDB
+{APP_CONFIG.APP_NAME}
         </Typography>
         <Button color="inherit" onClick={() => navigate('/')}>
           物件検索

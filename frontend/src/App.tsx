@@ -1,10 +1,11 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { Container } from '@mui/material';
 import { AuthProvider } from './contexts/AuthContext';
 import Header from './components/Header';
+import { APP_CONFIG } from './config/app';
 import AreaSelectionPage from './pages/AreaSelectionPage';
 import PropertyListPage from './pages/PropertyListPage';
 import PropertyDetailPage from './pages/PropertyDetailPage';
@@ -41,6 +42,11 @@ const theme = createTheme({
 });
 
 function App() {
+  // HTMLタイトルを設定
+  useEffect(() => {
+    document.title = APP_CONFIG.HTML_TITLE;
+  }, []);
+
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />

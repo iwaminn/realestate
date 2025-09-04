@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { APP_CONFIG } from '../config/app';
 import {
   Box,
   Container,
@@ -281,10 +282,10 @@ const AreaSelectionPage: React.FC = () => {
             mb: 2,
           }}
         >
-          都心マンションDB
+{APP_CONFIG.APP_NAME}
         </Typography>
         <Typography variant="h6" color="text.secondary" sx={{ mb: 4 }}>
-          東京23区の中古マンション情報を検索
+{APP_CONFIG.APP_DESCRIPTION}
         </Typography>
 
         {/* 検索バー */}

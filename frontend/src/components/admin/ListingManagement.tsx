@@ -109,7 +109,7 @@ export const ListingManagement: React.FC = () => {
   // フィルター
   const [filters, setFilters] = useState({
     source_site: '',
-    building_name: '',
+    listingQuery: '',  // 掲載ID・建物名統合検索
     is_active: '',
     ward: '',
   });
@@ -131,7 +131,14 @@ export const ListingManagement: React.FC = () => {
       };
       
       if (filters.source_site) params.source_site = filters.source_site;
-      if (filters.building_name) params.building_name = filters.building_name;
+      if (filters.listingQuery) {
+        // 数値のみの場合は掲載IDとして検索、そうでなければ建物名として検索
+        if (filters.listingQuery.trim().match(/^\d+$/)) {
+          params.listing_id = filters.listingQuery.trim();
+        } else {
+          params.building_name = filters.listingQuery;
+        }
+      }
       if (filters.is_active !== '') params.is_active = filters.is_active === 'true';
       if (filters.ward) params.ward = filters.ward;
       
@@ -155,7 +162,7 @@ export const ListingManagement: React.FC = () => {
   const handleClearFilters = () => {
     setFilters({
       source_site: '',
-      building_name: '',
+      listingQuery: '',
       is_active: '',
       ward: '',
     });
@@ -305,11 +312,10 @@ export const ListingManagement: React.FC = () => {
             <TextField
               fullWidth
               size="small"
-              label="建物名で検索"
-              value={filters.building_name}
-              onChange={(e) => setFilters({ ...filters, building_name: e.target.value })}
+              label="掲載ID・建物名"
+              value={filters.listingQuery}
+              onChange={(e) => setFilters({ ...filters, listingQuery: e.target.value })}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              helperText="スペース区切りでAND検索"
               InputProps={{
                 startAdornment: (
                   <Box sx={{ mr: 1, display: 'flex', alignItems: 'center' }}>
@@ -463,16 +469,16 @@ export const ListingManagement: React.FC = () => {
         </Grid>
         
         {/* アクティブフィルター表示 */}
-        {(filters.source_site || filters.building_name || filters.is_active !== '' || filters.ward) && (
+        {(filters.source_site || filters.listingQuery || filters.is_active !== '' || filters.ward) && (
           <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
             <Typography variant="body2" color="text.secondary">
               適用中:
             </Typography>
-            {filters.building_name && (
+            {filters.listingQuery && (
               <Chip
                 size="small"
-                label={`建物名: ${filters.building_name}`}
-                onDelete={() => setFilters({ ...filters, building_name: '' })}
+                label={`検索: ${filters.listingQuery}`}
+                onDelete={() => setFilters({ ...filters, listingQuery: '' })}
               />
             )}
             {filters.source_site && (
