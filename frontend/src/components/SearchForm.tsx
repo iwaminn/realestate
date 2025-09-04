@@ -18,6 +18,7 @@ import {
   Collapse,
   useMediaQuery,
   useTheme,
+  Typography,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
@@ -154,6 +155,11 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     onSearch(searchParams);
+    
+    // モバイルで検索実行後は条件フォームを自動的に折りたたむ
+    if (isMobile) {
+      setExpandedFilters(false);
+    }
   };
 
   const handleReset = () => {
@@ -185,12 +191,117 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
     );
   };
 
+  // URLパラメータから条件が設定されている場合、モバイルでもフォームを開いた状態にする
+  React.useEffect(() => {
+    if (isMobile && initialValues && hasActiveFilters()) {
+      // ただし、検索実行直後は折りたたむために少し遅延させる
+      const timer = setTimeout(() => {
+        setExpandedFilters(false);
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isMobile, initialValues]);
+
+  // アクティブな検索条件をチップとして表示する関数
+  const renderActiveFilters = () => {
+    const chips = [];
+
+    if (searchParams.wards && searchParams.wards.length > 0) {
+      chips.push(
+        <Chip
+          key="wards"
+          label={`エリア: ${searchParams.wards.join(', ')}`}
+          size="small"
+          onDelete={() => {
+            setSearchParams({ ...searchParams, wards: [] });
+          }}
+          sx={{ m: 0.5 }}
+        />
+      );
+    }
+
+    if (searchParams.min_price || searchParams.max_price) {
+      const priceLabel = searchParams.min_price && searchParams.max_price
+        ? `価格: ${searchParams.min_price.toLocaleString()}万～${searchParams.max_price.toLocaleString()}万円`
+        : searchParams.min_price
+        ? `価格: ${searchParams.min_price.toLocaleString()}万円以上`
+        : `価格: ${searchParams.max_price!.toLocaleString()}万円以下`;
+      
+      chips.push(
+        <Chip
+          key="price"
+          label={priceLabel}
+          size="small"
+          onDelete={() => {
+            setSearchParams({ ...searchParams, min_price: undefined, max_price: undefined });
+          }}
+          sx={{ m: 0.5 }}
+        />
+      );
+    }
+
+    if (searchParams.min_area || searchParams.max_area) {
+      const areaLabel = searchParams.min_area && searchParams.max_area
+        ? `面積: ${searchParams.min_area}㎡～${searchParams.max_area}㎡`
+        : searchParams.min_area
+        ? `面積: ${searchParams.min_area}㎡以上`
+        : `面積: ${searchParams.max_area}㎡以下`;
+      
+      chips.push(
+        <Chip
+          key="area"
+          label={areaLabel}
+          size="small"
+          onDelete={() => {
+            setSearchParams({ ...searchParams, min_area: undefined, max_area: undefined });
+          }}
+          sx={{ m: 0.5 }}
+        />
+      );
+    }
+
+    if (searchParams.layouts && searchParams.layouts.length > 0) {
+      chips.push(
+        <Chip
+          key="layouts"
+          label={`間取り: ${searchParams.layouts.join(', ')}`}
+          size="small"
+          onDelete={() => {
+            setSearchParams({ ...searchParams, layouts: [] });
+          }}
+          sx={{ m: 0.5 }}
+        />
+      );
+    }
+
+    if (searchParams.max_building_age) {
+      chips.push(
+        <Chip
+          key="building_age"
+          label={`築${searchParams.max_building_age}年以内`}
+          size="small"
+          onDelete={() => {
+            setSearchParams({ ...searchParams, max_building_age: undefined });
+          }}
+          sx={{ m: 0.5 }}
+        />
+      );
+    }
+
+    return chips;
+  };
+
   return (
-    <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
+    <Paper elevation={1} sx={{ p: { xs: 2, sm: 3 }, mb: 3 }}>
       <form onSubmit={handleSubmit}>
         <Grid container spacing={2}>
           <Grid item xs={12}>
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Box sx={{ 
+              display: 'flex', 
+              flexDirection: { xs: 'column', sm: 'row' },
+              alignItems: { xs: 'stretch', sm: 'center' }, 
+              gap: { xs: 2, sm: 1 }
+            }}>
               <Autocomplete
                 sx={{ flex: 1 }}
               freeSolo
@@ -260,7 +371,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                   fullWidth
                   label="建物名"
                   placeholder="建物名で検索"
-                  helperText="スペース区切りでAND検索できます"
                   InputProps={{
                     ...params.InputProps,
                     startAdornment: (
@@ -288,10 +398,11 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                 startIcon={<FilterListIcon />}
                 endIcon={expandedFilters ? <ExpandLessIcon /> : <ExpandMoreIcon />}
                 size="medium"
+                fullWidth
                 sx={{ 
-                  minWidth: 'auto',
                   whiteSpace: 'nowrap',
                   px: 2,
+                  py: 1.5,
                 }}
               >
                 {hasActiveFilters() ? `条件(${
@@ -307,6 +418,27 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
             )}
             </Box>
           </Grid>
+
+          {/* アクティブな検索条件を表示 */}
+          {hasActiveFilters() && (
+            <Grid item xs={12}>
+              <Box sx={{ 
+                display: 'flex', 
+                flexWrap: 'wrap', 
+                gap: 0.5,
+                alignItems: 'center',
+                pt: 1,
+                pb: 1,
+                borderBottom: '1px solid',
+                borderColor: 'divider'
+              }}>
+                <Typography variant="caption" color="text.secondary" sx={{ mr: 1 }}>
+                  検索条件:
+                </Typography>
+                {renderActiveFilters()}
+              </Box>
+            </Grid>
+          )}
 
           <Grid item xs={12}>
             <Collapse in={expandedFilters || !isMobile} timeout="auto">
@@ -571,8 +703,21 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
           </Grid>
         </Grid>
 
-        <Box sx={{ mt: 3, display: 'flex', gap: 2, justifyContent: 'flex-end' }}>
-          <Button variant="outlined" type="button" onClick={handleReset} disabled={loading}>
+        <Box sx={{ 
+          mt: 3, 
+          display: 'flex', 
+          gap: { xs: 1, sm: 2 }, 
+          justifyContent: { xs: 'stretch', sm: 'flex-end' },
+          flexDirection: { xs: 'column', sm: 'row' }
+        }}>
+          <Button 
+            variant="outlined" 
+            type="button" 
+            onClick={handleReset} 
+            disabled={loading}
+            fullWidth={isMobile}
+            sx={{ order: { xs: 2, sm: 1 } }}
+          >
             クリア
           </Button>
           <Button
@@ -580,6 +725,8 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
             type="submit"
             disabled={loading}
             startIcon={<SearchIcon />}
+            fullWidth={isMobile}
+            sx={{ order: { xs: 1, sm: 2 } }}
           >
             検索
           </Button>

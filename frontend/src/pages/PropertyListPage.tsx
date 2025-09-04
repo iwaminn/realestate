@@ -16,6 +16,9 @@ import {
   Checkbox,
   ToggleButton,
   ToggleButtonGroup,
+  useTheme,
+  useMediaQuery,
+  Container,
 } from '@mui/material';
 import {
   ViewList as ViewListIcon,
@@ -30,6 +33,8 @@ import { Property, SearchParams } from '../types/property';
 const PropertyListPage: React.FC = () => {
   const location = useLocation();
   const navigate = useNavigate();
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -136,7 +141,6 @@ const PropertyListPage: React.FC = () => {
     setError(null);
     try {
       const includeInactiveValue = includeInactiveParam !== undefined ? includeInactiveParam : includeInactive;
-      console.log('[DEBUG] Fetching properties with include_inactive:', includeInactiveValue);
       
       const response = await propertyApi.searchProperties({
         ...params,
@@ -145,11 +149,6 @@ const PropertyListPage: React.FC = () => {
         sort_by: params.sort_by || 'updated_at',
         sort_order: params.sort_order || 'desc',
         include_inactive: includeInactiveValue,
-      });
-      console.log('[DEBUG] API Response:', {
-        total: response.total,
-        properties_count: response.properties.length,
-        first_property: response.properties[0]
       });
       
       setProperties(response.properties);
@@ -196,10 +195,8 @@ const PropertyListPage: React.FC = () => {
   }, [location.search]);
 
   const handleSearch = (params: SearchParams) => {
-    console.log('[PropertyListPage] handleSearch called with:', params);
     // クリアボタンから空のオブジェクトが渡された場合は、完全にリセット
     const newParams = Object.keys(params).length === 0 ? {} : { ...searchParams, ...params };
-    console.log('[PropertyListPage] New params:', newParams);
     setSearchParams(newParams);
     fetchProperties(newParams, 1);
   };
@@ -235,9 +232,19 @@ const PropertyListPage: React.FC = () => {
   };
 
   return (
-    <Box>
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 3 }}>
-        <Typography variant="h4" component="h1">
+    <Container maxWidth="xl" sx={{ 
+      py: 4, 
+      px: isMobile ? 1 : 3
+    }}>
+      <Box sx={{ 
+        display: 'flex', 
+        flexDirection: { xs: 'column', sm: 'row' },
+        justifyContent: 'space-between', 
+        alignItems: { xs: 'flex-start', sm: 'center' },
+        gap: { xs: 2, sm: 0 },
+        mb: 3 
+      }}>
+        <Typography variant={isMobile ? "h5" : "h4"} component="h1">
           物件検索
         </Typography>
         <ToggleButtonGroup
@@ -245,13 +252,23 @@ const PropertyListPage: React.FC = () => {
           exclusive
           onChange={handleViewModeChange}
           aria-label="表示モード"
+          sx={{ 
+            flexShrink: 0,
+            '& .MuiToggleButton-root': {
+              minWidth: { xs: 85, sm: 'auto' },
+              whiteSpace: 'nowrap',
+              fontSize: { xs: '0.875rem', sm: '0.875rem' },
+              px: { xs: 1.5, sm: 2 },
+              py: { xs: 1, sm: 1 }
+            }
+          }}
         >
           <ToggleButton value="properties" aria-label="物件一覧">
-            <ViewListIcon sx={{ mr: 1 }} />
+            <ViewListIcon sx={{ mr: { xs: 0.5, sm: 1 }, fontSize: { xs: '1rem', sm: '1.25rem' } }} />
             物件一覧
           </ToggleButton>
           <ToggleButton value="buildings" aria-label="建物一覧">
-            <ApartmentIcon sx={{ mr: 1 }} />
+            <ApartmentIcon sx={{ mr: { xs: 0.5, sm: 1 }, fontSize: { xs: '1rem', sm: '1.25rem' } }} />
             建物一覧
           </ToggleButton>
         </ToggleButtonGroup>
@@ -281,8 +298,20 @@ const PropertyListPage: React.FC = () => {
         // 物件一覧表示
         <>
           <Box sx={{ mb: 2 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Box sx={{ 
+              display: 'flex', 
+              flexDirection: { xs: 'column', sm: 'row' },
+              justifyContent: 'space-between', 
+              alignItems: { xs: 'flex-start', sm: 'center' },
+              gap: { xs: 2, sm: 0 },
+              mb: 1 
+            }}>
+              <Box sx={{ 
+                display: 'flex', 
+                flexDirection: { xs: 'column', sm: 'row' },
+                alignItems: { xs: 'flex-start', sm: 'center' }, 
+                gap: { xs: 1, sm: 2 }
+              }}>
                 <Typography variant="body1" color="text.secondary">
                   検索結果: {totalCount}件
                 </Typography>
@@ -314,7 +343,7 @@ const PropertyListPage: React.FC = () => {
                 )}
               </Box>
               {!loading && properties.length > 0 && (
-                <FormControl size="small" sx={{ minWidth: 200 }}>
+                <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 200 } }}>
                   <InputLabel id="sort-select-label">並び替え</InputLabel>
                   <Select
                     labelId="sort-select-label"
@@ -385,7 +414,7 @@ const PropertyListPage: React.FC = () => {
                   </Box>
                 )}
                 
-                <Grid container spacing={3} sx={{ opacity: !initialLoading && loading ? 0.5 : 1, transition: 'opacity 0.2s' }}>
+                <Grid container spacing={{ xs: 2, sm: 3 }} sx={{ opacity: !initialLoading && loading ? 0.5 : 1, transition: 'opacity 0.2s' }}>
                   {properties.map((property) => (
                     <Grid item key={property.id} xs={12} sm={6} md={4}>
                       <PropertyCard property={property} />
@@ -410,7 +439,7 @@ const PropertyListPage: React.FC = () => {
           )}
         </>
       )}
-    </Box>
+    </Container>
   );
 };
 
