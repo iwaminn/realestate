@@ -480,6 +480,62 @@ class PriceMismatchHistory(Base):
     )
 
 
+class ScrapingSchedule(Base):
+    """スクレイピングスケジュールテーブル"""
+    __tablename__ = "scraping_schedules"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(255), nullable=False)                    # スケジュール名
+    description = Column(Text)                                    # 説明
+    scrapers = Column(JSON, nullable=False)                       # 実行するスクレイパーのリスト
+    areas = Column(JSON)                                          # 実行するエリアのリスト
+    
+    # スケジュール設定
+    schedule_type = Column(String(20), nullable=False, default='interval')  # 'interval' or 'daily'
+    interval_minutes = Column(Integer)                            # 間隔モード：実行間隔（分）
+    daily_hour = Column(Integer)                                  # 日次モード：実行時刻（時）
+    daily_minute = Column(Integer)                                # 日次モード：実行時刻（分）
+    max_properties = Column(Integer, nullable=False, default=100) # 処理上限数
+    
+    is_active = Column(Boolean, nullable=False, default=True)     # アクティブフラグ
+    last_run_at = Column(DateTime)                                # 最後の実行日時
+    next_run_at = Column(DateTime)                                # 次の実行予定日時
+    last_task_id = Column(Integer)                                # 最後に実行されたタスクのID
+    created_by = Column(String(100))                              # 作成者
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    
+    __table_args__ = (
+        Index('idx_scraping_schedules_next_run', 'next_run_at'),
+        Index('idx_scraping_schedules_active', 'is_active'),
+        Index('idx_scraping_schedules_name', 'name'),
+        Index('idx_scraping_schedules_type', 'schedule_type'),
+    )
+
+
+class ScrapingScheduleHistory(Base):
+    """スクレイピングスケジュール実行履歴テーブル"""
+    __tablename__ = "scraping_schedule_history"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    schedule_id = Column(Integer, ForeignKey("scraping_schedules.id"), nullable=False)
+    task_id = Column(Integer)                                     # 実行されたタスクのID
+    started_at = Column(DateTime, nullable=False)                 # 実行開始日時
+    completed_at = Column(DateTime)                               # 実行完了日時
+    status = Column(String(50))                                   # 実行ステータス
+    error_message = Column(Text)                                  # エラーメッセージ
+    created_at = Column(DateTime, server_default=func.now())
+    
+    # リレーションシップ
+    schedule = relationship("ScrapingSchedule")
+    
+    __table_args__ = (
+        Index('idx_schedule_history_schedule', 'schedule_id'),
+        Index('idx_schedule_history_started', 'started_at'),
+        Index('idx_schedule_history_status', 'status'),
+    )
+
+
 # 他のモデルをインポート（循環参照を避けるため最後にインポート）
 from .models_property_matching import AmbiguousPropertyMatch
 # from .models_scraping_task import ScrapingTask, ScrapingTaskProgress  # 循環インポート回避のためコメントアウト

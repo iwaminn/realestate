@@ -35,6 +35,8 @@ services:
       - TZ=Asia/Tokyo
       - ADMIN_USERNAME=admin
       - ADMIN_PASSWORD=admin_password
+      # 開発時の認証バイパス（本番環境では必ずfalseにすること）
+      - DISABLE_ADMIN_AUTH=true
       # スクレイパー設定（デフォルト値）
       - SCRAPER_DETAIL_REFETCH_DAYS=90  # 詳細ページ再取得間隔（日）。0に設定すると常に再取得
       # 常に詳細を再取得したい場合は下記のコメントを解除

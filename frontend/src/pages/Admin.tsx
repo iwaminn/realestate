@@ -48,6 +48,7 @@ import BuildingExclusionHistory from '../components/BuildingExclusionHistory';
 import { ListingManagement } from '../components/admin/ListingManagement';
 import { PropertyManagement } from '../components/admin/PropertyManagement';
 import { BuildingManagement } from '../components/admin/BuildingManagement';
+import { ScheduleManagement } from '../components/admin/ScheduleManagement';
 
 
 const Admin: React.FC = () => {
@@ -57,6 +58,7 @@ const Admin: React.FC = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [propertySubTab, setPropertySubTab] = useState(0);
   const [buildingSubTab, setBuildingSubTab] = useState(0);
+  const [scrapingSubTab, setScrapingSubTab] = useState(0);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' as 'success' | 'error' });
 
   useEffect(() => {
@@ -168,7 +170,20 @@ const Admin: React.FC = () => {
 
       {activeTab === 2 && (
         <Box>
-          <AdminScraping />
+          <Paper sx={{ mb: 2 }}>
+            <Tabs value={scrapingSubTab} onChange={(_, value) => setScrapingSubTab(value)}>
+              <Tab label="実行管理" />
+              <Tab label="スケジュール管理" />
+            </Tabs>
+          </Paper>
+
+          {scrapingSubTab === 0 && (
+            <AdminScraping />
+          )}
+
+          {scrapingSubTab === 1 && (
+            <ScheduleManagement />
+          )}
         </Box>
       )}
 
