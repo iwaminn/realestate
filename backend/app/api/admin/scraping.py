@@ -5,12 +5,13 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import List, Optional, Dict, Any, Tuple
+from typing import List, Optional, Dict, Any, Tuple, Callable
 from datetime import datetime
 import threading
 import uuid
 import os
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor
 
 from ...database import get_db, SessionLocal
@@ -43,6 +44,157 @@ AREA_CODES = {
     "墨田区": "13107",
     "江東区": "13108"
 }
+
+# エリアコードから日本語名への逆マッピング
+AREA_CODE_TO_NAME = {code: name for name, code in AREA_CODES.items()}
+
+def convert_area_codes_to_names(area_codes):
+    """エリアコードを日本語名に変換"""
+    from backend.app.scrapers.area_config import TOKYO_AREA_CODES
+    
+    if not area_codes:
+        return []
+    
+    # 逆引き辞書を作成（エリアコード → 日本語名）
+    code_to_japanese = {}
+    for japanese_name, code in TOKYO_AREA_CODES.items():
+        # 日本語名のみを対象とする（英語名は除く）
+        if not japanese_name.islower():  # 英語名は小文字なので除外
+            code_to_japanese[code] = japanese_name
+    
+    names = []
+    for code in area_codes:
+        japanese_name = code_to_japanese.get(code, code)  # 見つからない場合はそのまま
+        names.append(japanese_name)
+    
+    return names
+
+class TaskHooks:
+    """スクレイピングタスクの実行時フックシステム"""
+    
+    def __init__(self):
+        self.completion_hooks: List[Callable[[str, str], None]] = []
+        self.error_hooks: List[Callable[[str, str, Exception], None]] = []
+    
+    def on_completion(self, hook: Callable[[str, str], None]):
+        """タスク完了時のフック登録
+        
+        Args:
+            hook: (task_id, status) -> None の関数
+        """
+        self.completion_hooks.append(hook)
+    
+    def on_error(self, hook: Callable[[str, str, Exception], None]):
+        """タスクエラー時のフック登録
+        
+        Args:
+            hook: (task_id, status, exception) -> None の関数
+        """
+        self.error_hooks.append(hook)
+    
+    def trigger_completion(self, task_id: str, status: str):
+        """完了フックを実行
+        
+        Args:
+            task_id: タスクID
+            status: 最終ステータス (completed, failed, cancelled)
+        """
+        logger = logging.getLogger(__name__)
+        for hook in self.completion_hooks:
+            try:
+                hook(task_id, status)
+            except Exception as e:
+                logger.warning(f"Completion hook execution failed for task {task_id}: {e}")
+    
+    def trigger_error(self, task_id: str, status: str, exception: Exception):
+        """エラーフックを実行
+        
+        Args:
+            task_id: タスクID
+            status: 最終ステータス
+            exception: 発生した例外
+        """
+        logger = logging.getLogger(__name__)
+        for hook in self.error_hooks:
+            try:
+                hook(task_id, status, exception)
+            except Exception as e:
+                logger.warning(f"Error hook execution failed for task {task_id}: {e}")
+
+
+def validate_area_codes(area_codes: List[str]) -> None:
+    """エリアコードの有効性を検証
+    
+    Args:
+        area_codes: 検証するエリアコードのリスト
+        
+    Raises:
+        ValueError: 無効なエリアコードが含まれる場合
+    """
+    from backend.app.scrapers.area_config import TOKYO_AREA_CODES
+    
+    if not area_codes:
+        raise ValueError("エリアコードが指定されていません")
+    
+    valid_codes = set(TOKYO_AREA_CODES.values())
+    invalid_codes = []
+    
+    for code in area_codes:
+        if not isinstance(code, str):
+            invalid_codes.append(str(code))
+        elif not (code.isdigit() and len(code) == 5 and code in valid_codes):
+            invalid_codes.append(code)
+    
+    if invalid_codes:
+        raise ValueError(f"無効なエリアコードが含まれています: {', '.join(invalid_codes)}")
+
+
+def create_scraping_task(
+    task_id: str,
+    scrapers: List[str],
+    area_codes: List[str],
+    max_properties: int,
+    force_detail_fetch: bool = False,
+    db: Session = None
+) -> 'ScrapingTask':
+    """スクレイピングタスクをデータベースに作成する共通関数
+    
+    Args:
+        task_id: タスクID
+        scrapers: スクレイパーのリスト
+        area_codes: エリアコードのリスト（検証済み）
+        max_properties: 最大取得件数
+        force_detail_fetch: 強制詳細取得フラグ
+        db: データベースセッション
+        
+    Returns:
+        作成されたScrapingTaskオブジェクト
+        
+    Raises:
+        ValueError: エリアコードが無効な場合
+    """
+    # エリアコードの検証
+    validate_area_codes(area_codes)
+    
+    # データベースにタスクを作成
+    from ...models_scraping_task import ScrapingTask
+    
+    db_task = ScrapingTask(
+        task_id=task_id,
+        status='pending',
+        scrapers=scrapers,
+        areas=area_codes,
+        max_properties=max_properties,
+        force_detail_fetch=force_detail_fetch,
+        started_at=datetime.now()
+    )
+    
+    if db:
+        db.add(db_task)
+        db.commit()
+        db.refresh(db_task)
+    
+    return db_task
 
 # グローバルロック（スレッドセーフな操作のため）
 tasks_lock = threading.Lock()
@@ -968,7 +1120,8 @@ def execute_scraping_strategy(
     is_parallel: bool = False,
     detail_refetch_hours: Optional[int] = None,
     force_detail_fetch: bool = False,
-    ignore_error_history: bool = False
+    ignore_error_history: bool = False,
+    hooks: Optional[TaskHooks] = None
 ):
     """スクレイピングタスクを実行（並列または直列の戦略に基づいて）"""
     print(f"[{task_id}] Starting {'parallel' if is_parallel else 'serial'} scraping task with scrapers: {scrapers}, areas: {area_codes}")
@@ -1361,6 +1514,9 @@ def execute_scraping_strategy(
         db_task = get_task_from_db(task_id)
         if db_task and db_task.is_paused:
             print(f"[{task_id}] Task is paused, keeping status as 'paused'")
+            # 一時停止状態でもフック実行
+            if hooks:
+                hooks.trigger_completion(task_id, "paused")
         elif db_task and db_task.status not in ["cancelled", "paused"]:
             # データベースを更新
             db = SessionLocal()
@@ -1370,6 +1526,9 @@ def execute_scraping_strategy(
                     db_task.status = 'completed'
                     db_task.completed_at = datetime.now()
                     db.commit()
+                    # 正常完了フック実行
+                    if hooks:
+                        hooks.trigger_completion(task_id, "completed")
             finally:
                 db.close()
             
@@ -1382,6 +1541,9 @@ def execute_scraping_strategy(
                 db_task.status = "cancelled"
                 db_task.completed_at = datetime.now()
                 db.commit()
+                # キャンセル完了フック実行
+                if hooks:
+                    hooks.trigger_completion(task_id, "cancelled")
         finally:
             db.close()
         print(f"[{task_id}] Task cancelled")
@@ -1395,6 +1557,9 @@ def execute_scraping_strategy(
             if db_task:
                 db_task.status = "paused"
                 db.commit()
+                # 一時停止フック実行
+                if hooks:
+                    hooks.trigger_completion(task_id, "paused")
         finally:
             db.close()
         return
@@ -1407,6 +1572,10 @@ def execute_scraping_strategy(
                 db_task.status = "failed"
                 db_task.completed_at = datetime.now()
                 db.commit()
+                # エラー完了フック実行
+                if hooks:
+                    hooks.trigger_completion(task_id, "failed")
+                    hooks.trigger_error(task_id, "failed", e)
         finally:
             db.close()
         # エラーメッセージをより分かりやすく整形
@@ -1444,20 +1613,18 @@ def start_scraping(
     """スクレイピングを開始"""
     task_id = str(uuid.uuid4())
     
-    # データベースにタスクを作成
-    from ...models_scraping_task import ScrapingTask
-    
-    db_task = ScrapingTask(
-        task_id=task_id,
-        status='pending',
-        scrapers=request.scrapers,
-        areas=request.area_codes,
-        max_properties=request.max_properties,
-        force_detail_fetch=request.force_detail_fetch,
-        started_at=datetime.now()
-    )
-    db.add(db_task)
-    db.commit()
+    # 共通関数を使用してタスクを作成
+    try:
+        db_task = create_scraping_task(
+            task_id=task_id,
+            scrapers=request.scrapers,
+            area_codes=request.area_codes,
+            max_properties=request.max_properties,
+            force_detail_fetch=request.force_detail_fetch,
+            db=db
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     
     # バックグラウンドでスクレイピングを実行
     executor.submit(
@@ -1617,13 +1784,17 @@ def get_all_scraping_tasks(
             ScrapingTaskLog.log_type == 'warning'
         ).all()
         
+        # エリアコードを日本語名に変換
+        area_codes = db_task.areas if isinstance(db_task.areas, list) else []
+        area_names = convert_area_codes_to_names(area_codes)
+        
         # ScrapingTaskモデルからScrapingTaskStatusに変換
         task_data = {
             "task_id": db_task.task_id,
             "type": "parallel" if db_task.task_id.startswith("parallel_") else "serial",
             "status": db_task.status,
             "scrapers": db_task.scrapers if isinstance(db_task.scrapers, list) else [],
-            "area_codes": db_task.areas if isinstance(db_task.areas, list) else [],
+            "area_codes": area_names,  # エリア名に変換して返却
             "max_properties": db_task.max_properties,
             "force_detail_fetch": db_task.force_detail_fetch,
             "started_at": db_task.started_at,
@@ -1785,7 +1956,7 @@ def get_single_task(task_id: str, db: Session = Depends(get_db)):
         'type': 'parallel' if db_task.task_id.startswith('parallel_') else 'serial',
         'status': db_task.status,
         'scrapers': db_task.scrapers if isinstance(db_task.scrapers, list) else [],
-        'area_codes': db_task.areas if isinstance(db_task.areas, list) else [],
+        'area_codes': convert_area_codes_to_names(db_task.areas) if isinstance(db_task.areas, list) else [],
         'max_properties': db_task.max_properties,
         'started_at': db_task.started_at,
         'completed_at': db_task.completed_at,
@@ -1900,25 +2071,20 @@ def start_parallel_scraping(
     # 現在は通常のスクレイピングとして処理
     task_id = f"parallel_{uuid.uuid4().hex[:8]}"
     
-    # データベースにタスクを作成（スクレイパーが期待するため）
-    from ...models_scraping_task import ScrapingTask
-    
-    db_task = ScrapingTask(
-        task_id=task_id,
-        status='pending',
-        scrapers=request.scrapers,
-        areas=request.area_codes,
-        max_properties=request.max_properties,
-        force_detail_fetch=request.force_detail_fetch,
-        started_at=datetime.now()
-    )
-    db.add(db_task)
-    db.commit()
-    
-    # タスク情報はデータベースにすでに登録済み
+    # 共通関数を使用してタスクを作成
+    try:
+        db_task = create_scraping_task(
+            task_id=task_id,
+            scrapers=request.scrapers,
+            area_codes=request.area_codes,
+            max_properties=request.max_properties,
+            force_detail_fetch=request.force_detail_fetch,
+            db=db
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     
     # 並列スクレイピングとして実行
-    
     executor.submit(
         execute_scraping_strategy,
         task_id,
@@ -1931,15 +2097,13 @@ def start_parallel_scraping(
         ignore_error_history=request.ignore_error_history
     )
     
-    # save_tasks_to_file()  # データベースに移行
-    
     return {
         "task_id": task_id,
         "status": "running",
         "scrapers": request.scrapers,
         "area_codes": request.area_codes,
         "max_properties": request.max_properties,
-        "started_at": datetime.now().isoformat(),
+        "started_at": db_task.started_at.isoformat() if db_task.started_at else datetime.now().isoformat(),
         "completed_at": None,
         "progress": {},
         "errors": [],
