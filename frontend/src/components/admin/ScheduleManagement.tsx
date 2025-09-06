@@ -31,6 +31,7 @@ import {
   ListItemText,
   Divider,
   Autocomplete,
+  Checkbox,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -112,15 +113,21 @@ export const ScheduleManagement: React.FC = () => {
   const availableScrapers = ['suumo', 'homes', 'rehouse', 'nomu', 'livable'];
   const availableMaxProperties = [100, 200, 300, 400, 500, 1000, 2000, 3000, 4000, 5000, 10000];
   const availableAreas = [
-    { code: 'chiyoda', name: '千代田区' },
-    { code: 'chuo', name: '中央区' },
-    { code: 'minato', name: '港区' },
-    { code: 'shinjuku', name: '新宿区' },
-    { code: 'bunkyo', name: '文京区' },
-    { code: 'taito', name: '台東区' },
-    { code: 'sumida', name: '墨田区' },
-    { code: 'koto', name: '江東区' },
-    { code: 'shibuya', name: '渋谷区' },
+    { code: '13101', name: '千代田区' },
+    { code: '13103', name: '港区' },
+    { code: '13102', name: '中央区' },
+    { code: '13113', name: '渋谷区' },
+    { code: '13104', name: '新宿区' },
+    { code: '13105', name: '文京区' },
+    { code: '13110', name: '目黒区' },
+    { code: '13109', name: '品川区' },
+    { code: '13112', name: '世田谷区' },
+    { code: '13116', name: '豊島区' },
+    { code: '13106', name: '台東区' },
+    { code: '13114', name: '中野区' },
+    { code: '13115', name: '杉並区' },
+    { code: '13108', name: '江東区' },
+    { code: '13107', name: '墨田区' },
   ];
 
   useEffect(() => {
@@ -142,7 +149,16 @@ export const ScheduleManagement: React.FC = () => {
 
   const handleCreate = async () => {
     try {
-      await axios.post('/api/admin/schedules', formData);
+      // エリアコードをエリア名に変換してAPIに送信
+      const convertedFormData = {
+        ...formData,
+        areas: formData.areas.map(areaCode => {
+          const area = availableAreas.find(a => a.code === areaCode);
+          return area ? area.name : areaCode; // 見つからない場合は元の値を使用
+        })
+      };
+      
+      await axios.post('/api/admin/schedules', convertedFormData);
       setSuccess('スケジュールを作成しました');
       setCreateDialogOpen(false);
       resetForm();
@@ -156,7 +172,16 @@ export const ScheduleManagement: React.FC = () => {
     if (!editingSchedule) return;
     
     try {
-      await axios.put(`/api/admin/schedules/${editingSchedule.id}`, formData);
+      // エリアコードをエリア名に変換してAPIに送信
+      const convertedFormData = {
+        ...formData,
+        areas: formData.areas.map(areaCode => {
+          const area = availableAreas.find(a => a.code === areaCode);
+          return area ? area.name : areaCode; // 見つからない場合は元の値を使用
+        })
+      };
+      
+      await axios.put(`/api/admin/schedules/${editingSchedule.id}`, convertedFormData);
       setSuccess('スケジュールを更新しました');
       setEditDialogOpen(false);
       resetForm();
@@ -202,11 +227,18 @@ export const ScheduleManagement: React.FC = () => {
 
   const openEditDialog = (schedule: Schedule) => {
     setEditingSchedule(schedule);
+    
+    // エリア名からエリアコードに変換
+    const convertedAreas = (schedule.areas || []).map(areaName => {
+      const area = availableAreas.find(a => a.name === areaName);
+      return area ? area.code : areaName; // 見つからない場合は元の値を使用
+    });
+    
     setFormData({
       name: schedule.name,
       description: schedule.description || '',
       scrapers: schedule.scrapers,
-      areas: schedule.areas || [],
+      areas: convertedAreas,
       schedule_type: schedule.schedule_type as 'interval' | 'daily',
       interval_minutes: schedule.interval_minutes || 60,
       daily_hour: schedule.daily_hour || 9,
@@ -392,13 +424,15 @@ export const ScheduleManagement: React.FC = () => {
                   </TableCell>
                   <TableCell align="center">
                     <Tooltip title="今すぐ実行">
-                      <IconButton
-                        size="small"
-                        onClick={() => handleRunNow(schedule.id)}
-                        disabled={!schedule.is_active}
-                      >
-                        <PlayIcon />
-                      </IconButton>
+                      <span>
+                        <IconButton
+                          size="small"
+                          onClick={() => handleRunNow(schedule.id)}
+                          disabled={!schedule.is_active}
+                        >
+                          <PlayIcon />
+                        </IconButton>
+                      </span>
                     </Tooltip>
                     <Tooltip title="履歴表示">
                       <IconButton size="small" onClick={() => handleViewDetail(schedule)}>
@@ -472,6 +506,15 @@ export const ScheduleManagement: React.FC = () => {
                 renderInput={(params) => (
                   <TextField {...params} label="スクレイパー" required />
                 )}
+                renderOption={(props, option, { selected }) => (
+                  <li {...props}>
+                    <Checkbox
+                      style={{ marginRight: 8 }}
+                      checked={selected}
+                    />
+                    {option}
+                  </li>
+                )}
                 renderTags={(value, getTagProps) =>
                   value.map((option, index) => (
                     <Chip {...getTagProps({ index })} key={option} label={option} size="small" />
@@ -485,10 +528,20 @@ export const ScheduleManagement: React.FC = () => {
                 disableCloseOnSelect
                 options={availableAreas.map(area => area.code)}
                 getOptionLabel={(option) => availableAreas.find(a => a.code === option)?.name || option}
+                isOptionEqualToValue={(option, value) => option === value}
                 value={formData.areas}
-                onChange={(_, newValue) => setFormData({ ...formData, areas: newValue })}
+                onChange={(_, newValue) => setFormData({ ...formData, areas: Array.from(new Set(newValue)) })}
                 renderInput={(params) => (
                   <TextField {...params} label="エリア" helperText="未選択の場合は全エリア" />
+                )}
+                renderOption={(props, option, { selected }) => (
+                  <li {...props}>
+                    <Checkbox
+                      style={{ marginRight: 8 }}
+                      checked={selected}
+                    />
+                    {availableAreas.find(a => a.code === option)?.name || option}
+                  </li>
                 )}
                 renderTags={(value, getTagProps) =>
                   value.map((option, index) => (
@@ -639,6 +692,15 @@ export const ScheduleManagement: React.FC = () => {
                 renderInput={(params) => (
                   <TextField {...params} label="スクレイパー" required />
                 )}
+                renderOption={(props, option, { selected }) => (
+                  <li {...props}>
+                    <Checkbox
+                      style={{ marginRight: 8 }}
+                      checked={selected}
+                    />
+                    {option}
+                  </li>
+                )}
                 renderTags={(value, getTagProps) =>
                   value.map((option, index) => (
                     <Chip {...getTagProps({ index })} key={option} label={option} size="small" />
@@ -652,10 +714,20 @@ export const ScheduleManagement: React.FC = () => {
                 disableCloseOnSelect
                 options={availableAreas.map(area => area.code)}
                 getOptionLabel={(option) => availableAreas.find(a => a.code === option)?.name || option}
+                isOptionEqualToValue={(option, value) => option === value}
                 value={formData.areas}
-                onChange={(_, newValue) => setFormData({ ...formData, areas: newValue })}
+                onChange={(_, newValue) => setFormData({ ...formData, areas: Array.from(new Set(newValue)) })}
                 renderInput={(params) => (
                   <TextField {...params} label="エリア" helperText="未選択の場合は全エリア" />
+                )}
+                renderOption={(props, option, { selected }) => (
+                  <li {...props}>
+                    <Checkbox
+                      style={{ marginRight: 8 }}
+                      checked={selected}
+                    />
+                    {availableAreas.find(a => a.code === option)?.name || option}
+                  </li>
                 )}
                 renderTags={(value, getTagProps) =>
                   value.map((option, index) => (

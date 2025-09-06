@@ -663,11 +663,31 @@ async def execute_scheduled_scraping(schedule_id: int, db: Session):
                 logger.error(f"Error in scheduled scraping thread: {str(e)}", exc_info=True)
                 # エラー処理はフックシステムで自動的に処理される
         
-        # スクレイピングを直接実行（スレッド問題を回避）
+        # スクレイピングをThreadPoolExecutorで非同期実行（他のAPIと同様）
         try:
-            run_scraping()
+            from concurrent.futures import ThreadPoolExecutor
+            
+            # グローバルのexecutorを取得（存在しない場合は作成）
+            global_executor = None
+            try:
+                from ..api.admin.scraping import get_global_executor
+                global_executor = get_global_executor()
+            except (ImportError, AttributeError):
+                # フォールバック：専用のexecutorを作成
+                global_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix=f"schedule-{schedule_id}")
+            
+            # バックグラウンドで実行
+            future = global_executor.submit(run_scraping)
+            logger.info(f"Schedule {schedule_id} submitted to executor, task {task_id}")
+            
         except Exception as e:
-            logger.error(f"Error in run_scraping: {str(e)}", exc_info=True)
+            logger.error(f"Error submitting schedule task to executor: {str(e)}", exc_info=True)
+            # エラーを履歴に記録
+            if 'history' in locals():
+                history.completed_at = get_utc_now()
+                history.status = "error"
+                history.error_message = f"実行開始エラー: {str(e)}"
+                db.commit()
         
         # スケジュールの次回実行時刻を更新
         schedule.last_run_at = now

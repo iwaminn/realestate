@@ -2161,7 +2161,7 @@ class BaseScraper(ABC):
         - 比較可能な属性が少なくとも2つ必要
         - 比較可能な属性はすべて一致する必要がある
         - NULLの属性は比較から除外する
-        - 築年月は年と月の両方が一致する必要がある
+        - 築年月は年と月の両方が一致する必要があるが、他の属性がすべて一致している場合は±1ヶ月の誤差を許容
         """
         # 比較可能な属性をカウント
         comparable_attributes = []
@@ -2186,13 +2186,25 @@ class BaseScraper(ABC):
             # 築月の比較（築年が一致している場合のみ）
             # 両方に築月がある場合は比較
             if built_month is not None and building.built_month is not None:
-                if building.built_month != built_month:
+                month_diff = abs(building.built_month - built_month)
+                if month_diff != 0:
                     self.logger.debug(
-                        f"築月が一致しない: 既存={building.built_year}年{building.built_month}月, "
-                        f"新規={built_year}年{built_month}月"
+                        f"築月が異なる: 既存={building.built_year}年{building.built_month}月, "
+                        f"新規={built_year}年{built_month}月 (差: {month_diff}ヶ月)"
                     )
-                    return False
-                comparable_attributes.append('built_year_month')  # 年月両方が一致
+                    # 他の属性がすべて一致していて、築月の差が1ヶ月以内なら許容
+                    if month_diff <= 1:
+                        # 暫定的に築年月が一致したものとして扱う
+                        self.logger.info(
+                            f"築月の差が1ヶ月以内のため許容: 既存={building.built_year}年{building.built_month}月, "
+                            f"新規={built_year}年{built_month}月"
+                        )
+                        comparable_attributes.append('built_year_month_tolerance')  # 年月両方が許容範囲内
+                    else:
+                        # 1ヶ月を超える差は許容しない
+                        return False
+                else:
+                    comparable_attributes.append('built_year_month')  # 年月両方が完全一致
             else:
                 comparable_attributes.append('built_year')  # 年のみ一致
         
@@ -2252,7 +2264,7 @@ class BaseScraper(ABC):
                 else:
                     self.logger.debug(f"住所は完全一致するが、総階数または築年が一致しない: {building.normalized_name}")
             
-            # 部分一致を試す（SQLAlchemyのstartswithを使用）
+            # 部分一致を試す（SQLAlchemyのstartsWithを使用）
             from sqlalchemy import or_
             # 注意: 2番目の条件は文字列メソッドではなくSQLで評価する必要がある
             # そのため、Pythonレベルでフィルタリングする
@@ -2320,6 +2332,52 @@ class BaseScraper(ABC):
                         self.safe_flush()
                     
                     return building
+        
+        # === 新規追加: 建物名の部分一致検索 ===
+        # 完全一致で見つからない場合、建物名の部分一致を試す
+        # ただし、住所と他の属性がすべて一致していることが前提条件
+        
+        # 全建物を対象に、住所が一致し、他の属性も一致するものを探す
+        all_buildings = self.session.query(Building).all()
+        
+        for building in all_buildings:
+            if not building.address or not building.canonical_name:
+                continue
+                
+            building_normalized_addr = normalizer.normalize_for_comparison(building.address)
+            
+            # 住所が一致するかチェック（完全一致または部分一致）
+            address_matches = (
+                building_normalized_addr == normalized_address or
+                building_normalized_addr.startswith(normalized_address) or
+                normalized_address.startswith(building_normalized_addr)
+            )
+            
+            if not address_matches:
+                continue
+            
+            # 建物名の部分一致をチェック（一方が他方を含む）
+            name_partial_match = (
+                search_key in building.canonical_name or
+                building.canonical_name in search_key
+            )
+            
+            if not name_partial_match:
+                continue
+            
+            # 住所と建物名が部分一致している場合、他の属性も厳密にチェック
+            if self._verify_building_attributes(building, total_floors, built_year, built_month, total_units):
+                self.logger.info(
+                    f"既存建物を発見（建物名部分一致・住所一致・属性一致）: "
+                    f"検索キー='{search_key}' → 既存='{building.canonical_name}' "
+                    f"at {building.address}"
+                )
+                return building
+            else:
+                self.logger.debug(
+                    f"建物名と住所は部分一致するが、総階数・築年・総戸数が一致しない: "
+                    f"検索キー='{search_key}' vs 既存='{building.canonical_name}'"
+                )
         
         # BuildingListingNameテーブルを確認（別名で登録されている建物を探す）
         
