@@ -1328,8 +1328,8 @@ def get_duplicate_properties(
             SELECT 
                 building_id,
                 floor_number,
-                -- 面積を1㎡単位で丸める（40.03と40.3を同じグループにするため）
-                ROUND(CAST(area AS NUMERIC)) as rounded_area,
+                -- 面積を1㎡単位で切り捨てる（入力ミスによる誤差を考慮）
+                FLOOR(CAST(area AS NUMERIC)) as rounded_area,
                 -- 間取りの基本部分を抽出して正規化
                 -- 例: 2LDK+S → 2LDK, 3SLDK → 3LDK, 1DK → 1DK, 3LD → 3LDK
                 CASE 
@@ -1356,7 +1356,7 @@ def get_duplicate_properties(
             GROUP BY 
                 building_id,
                 floor_number,
-                ROUND(CAST(area AS NUMERIC)),
+                FLOOR(CAST(area AS NUMERIC)),
                 CASE 
                     WHEN layout ~ '^[0-9]+S\+S$' THEN layout
                     ELSE REGEXP_REPLACE(

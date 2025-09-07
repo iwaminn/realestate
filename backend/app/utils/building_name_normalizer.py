@@ -61,11 +61,9 @@ def get_search_key_for_building(building_name: str) -> str:
     
     normalize_building_nameの処理に加えて：
     - スペースと記号を完全削除（より緩い一致のため）
-    - 棟表記を除去（同一建物群を識別するため）
     
-    注意：このキーは「同じ建物群」を識別するためのもので、
-    「東棟」と「西棟」のような棟違いも同じキーになります。
-    完全に同一の建物を識別する場合はnormalized_nameを使用してください。
+    注意：棟表記（東棟、西棟など）は除去しません。
+    異なる棟は別々の建物として扱われます。
     """
     # まず標準的な正規化を適用
     key = normalize_building_name(building_name)
@@ -73,10 +71,6 @@ def get_search_key_for_building(building_name: str) -> str:
     # 検索用により緩い正規化を追加
     # スペースを完全削除（検索時の利便性のため）
     key = re.sub(r'\s+', '', key)
-    
-    # 末尾の棟表記を除去（検索時のみ）
-    # 東棟、西棟、南棟、北棟、1棟、2棟などを除去
-    key = re.sub(r'(EAST|WEST|NORTH|SOUTH|E|W|N|S|東|西|南|北|[0-9]+)?棟$', '', key)
     
     return key
 

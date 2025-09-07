@@ -759,13 +759,19 @@ class MajorityVoteUpdater:
                 for name, weight in name_weights.items():
                     vote_summary[name] = weight
                 
+                # canonical_nameも更新（検索用）
+                from ..utils.building_name_normalizer import get_search_key_for_building
+                new_canonical_name = get_search_key_for_building(best_name)
+                
                 logger.info(
                     f"建物名更新: '{building.normalized_name}' → '{best_name}' "
                     f"(ID: {building_id}, グループ数: {len(grouped_names)}, "
                     f"選択グループ: '{best_group_key}', "
+                    f"canonical_name: '{building.canonical_name}' → '{new_canonical_name}', "
                     f"votes: {dict(sorted(vote_summary.items(), key=lambda x: x[1], reverse=True)[:5])})"
                 )
                 building.normalized_name = best_name
+                building.canonical_name = new_canonical_name
                 return True
         
         return False
