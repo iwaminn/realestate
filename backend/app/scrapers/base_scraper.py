@@ -30,7 +30,7 @@ from ..utils.building_name_normalizer import (
 )
 from ..utils.property_utils import update_earliest_listing_date
 from ..utils.fuzzy_property_matcher import FuzzyPropertyMatcher
-from ..utils.majority_vote_updater import MajorityVoteUpdater
+
 # BuildingListingNameManagerは循環インポートを避けるため遅延インポート
 from ..utils.exceptions import TaskPausedException, TaskCancelledException, MaintenanceException
 from ..utils.datetime_utils import get_utc_now
@@ -125,7 +125,8 @@ class BaseScraper(ABC):
         self.logger = self._setup_logger()
         self.normalizer = BuildingNameNormalizer()
         self.fuzzy_matcher = FuzzyPropertyMatcher()
-        self.majority_updater = MajorityVoteUpdater(self.session)
+        # majority_updaterは循環インポート回避のため削除
+        # 必要に応じてメソッド内で動的にインポートして使用
         self.external_id_handler = BuildingExternalIdHandler(self.session, self.logger)
         # BuildingListingNameManagerは遅延初期化
         self._listing_name_manager = None
@@ -1826,13 +1827,7 @@ class BaseScraper(ABC):
     def select_best_building_name(self, candidates: List[str]) -> str:
         """複数の建物名候補から最適なものを選択"""
         if not candidates:
-            return ""
-        
-        # 広告文でないものを優先
-        non_ad_names = [name for name in candidates if not self.is_advertising_text(name)]
-        if non_ad_names:
-            candidates = non_ad_names
-        
+            return ""        
         # 表記の優先度（より正式な表記を優先）
         # 1. 漢字が多い
         # 2. 長い（省略されていない）
@@ -2153,15 +2148,18 @@ class BaseScraper(ABC):
                 pass  # 既にトランザクション中の場合があるため無視
     
     def _verify_building_attributes(self, building: Building, total_floors: int = None, 
-                                     built_year: int = None, built_month: int = None,
-                                     total_units: int = None) -> bool:
+                                 built_year: int = None, built_month: int = None,
+                                 total_units: int = None) -> bool:
         """建物の属性（総階数、築年月、総戸数）が一致するか確認
         
-        重要な変更：
+        前提条件：この関数が呼び出される時点で、住所と建物名の一致は確認済み
+        
+        重要な仕様：
         - 比較可能な属性が少なくとも2つ必要
         - 比較可能な属性はすべて一致する必要がある
         - NULLの属性は比較から除外する
-        - 築年月は年と月の両方が一致する必要があるが、他の属性がすべて一致している場合は±1ヶ月の誤差を許容
+        - 総階数・総戸数が一致している場合は築年月の±1ヶ月の誤差を許容
+        - 総階数・築年月が一致している場合は総戸数の±2戸の誤差を許容
         """
         # 比較可能な属性をカウント
         comparable_attributes = []
@@ -2176,6 +2174,9 @@ class BaseScraper(ABC):
             comparable_attributes.append('total_floors')
         
         # 築年月の比較（年と月の両方をチェック）
+        built_year_month_mismatch = False
+        built_month_diff = 0
+        
         if built_year is not None and building.built_year is not None:
             if building.built_year != built_year:
                 self.logger.debug(
@@ -2184,60 +2185,420 @@ class BaseScraper(ABC):
                 return False
             
             # 築月の比較（築年が一致している場合のみ）
-            # 両方に築月がある場合は比較
             if built_month is not None and building.built_month is not None:
-                month_diff = abs(building.built_month - built_month)
-                if month_diff != 0:
+                built_month_diff = abs(building.built_month - built_month)
+                if built_month_diff != 0:
                     self.logger.debug(
                         f"築月が異なる: 既存={building.built_year}年{building.built_month}月, "
-                        f"新規={built_year}年{built_month}月 (差: {month_diff}ヶ月)"
+                        f"新規={built_year}年{built_month}月 (差: {built_month_diff}ヶ月)"
                     )
-                    # 他の属性がすべて一致していて、築月の差が1ヶ月以内なら許容
-                    if month_diff <= 1:
-                        # 暫定的に築年月が一致したものとして扱う
-                        self.logger.info(
-                            f"築月の差が1ヶ月以内のため許容: 既存={building.built_year}年{building.built_month}月, "
-                            f"新規={built_year}年{built_month}月"
-                        )
-                        comparable_attributes.append('built_year_month_tolerance')  # 年月両方が許容範囲内
-                    else:
-                        # 1ヶ月を超える差は許容しない
-                        return False
+                    # 築月の不一致を記録（後で他の条件により判定）
+                    built_year_month_mismatch = True
                 else:
                     comparable_attributes.append('built_year_month')  # 年月両方が完全一致
             else:
                 comparable_attributes.append('built_year')  # 年のみ一致
         
         # 総戸数の比較
-        if total_units is not None and building.total_units is not None:
-            if building.total_units != total_units:
-                self.logger.debug(
-                    f"総戸数が一致しない: 既存={building.total_units}, 新規={total_units}"
-                )
-                return False
-            comparable_attributes.append('total_units')
+        total_units_diff = 0
+        total_units_mismatch = False
         
-        # 比較可能な属性が少なくとも2つ必要
+        if total_units is not None and building.total_units is not None:
+            total_units_diff = abs(building.total_units - total_units)
+            if total_units_diff != 0:
+                self.logger.debug(
+                    f"総戸数が異なる: 既存={building.total_units}, 新規={total_units} (差: {total_units_diff}戸)"
+                )
+                total_units_mismatch = True
+            else:
+                comparable_attributes.append('total_units')
+        
+        # 比較可能な属性が2つ未満の場合は一致と判定（十分な情報がないため）
         if len(comparable_attributes) < 2:
             self.logger.debug(
-                f"比較可能な属性が不足（{len(comparable_attributes)}個）のため自動紐付けをスキップ: "
-                f"比較された属性={comparable_attributes}, "
-                f"total_floors=(既存:{building.total_floors}, 新規:{total_floors}), "
-                f"built_year=(既存:{building.built_year}, 新規:{built_year}), "
-                f"built_month=(既存:{building.built_month}, 新規:{built_month}), "
-                f"total_units=(既存:{building.total_units}, 新規:{total_units})"
+                f"比較可能な属性が{len(comparable_attributes)}つのため、一致と判定"
+                f" (属性: {', '.join(comparable_attributes) if comparable_attributes else 'なし'})"
             )
-            return False
+            return True
         
-        # すべての比較可能な属性が一致している
+        # すべての比較可能な属性が完全一致している場合はOK
+        if not built_year_month_mismatch and not total_units_mismatch:
+            self.logger.debug(
+                f"全属性が一致: {', '.join(comparable_attributes)}"
+            )
+            return True
+        
+        # 特別な許容条件をチェック
+        # 条件1: 総階数・総戸数が一致している場合は築年月の±1ヶ月の誤差を許容
+        if ('total_floors' in comparable_attributes and 
+            'total_units' in comparable_attributes and
+            built_year_month_mismatch and built_month_diff <= 1):
+            self.logger.debug(
+                f"総階数・総戸数一致により築年月の誤差±{built_month_diff}ヶ月を許容"
+            )
+            return True
+        
+        # 条件2: 総階数・築年月が一致している場合は総戸数の±2戸の誤差を許容
+        if (('total_floors' in comparable_attributes or 'built_year' in comparable_attributes or 'built_year_month' in comparable_attributes) and
+            total_units_mismatch and total_units_diff <= 2):
+            
+            # 総階数と築年月の両方、または築年月が一致している場合のみ許容
+            structure_match = 'total_floors' in comparable_attributes
+            time_match = 'built_year' in comparable_attributes or 'built_year_month' in comparable_attributes
+            
+            if structure_match or time_match:
+                self.logger.debug(
+                    f"総階数・築年月一致により総戸数の誤差±{total_units_diff}戸を許容"
+                    f" (総階数:{structure_match}, 築年月:{time_match})"
+                )
+                return True
+        
+        # いずれの条件にも該当しない場合は不一致
         self.logger.debug(
-            f"建物属性が一致: 比較された属性={comparable_attributes} ({len(comparable_attributes)}個)"
+            f"建物属性が不一致: "
+            f"築年月誤差={built_month_diff if built_year_month_mismatch else 0}ヶ月, "
+            f"総戸数誤差={total_units_diff if total_units_mismatch else 0}戸"
         )
+        return False
+
+    def _verify_building_attributes_strict(self, building: Building, total_floors: int = None, 
+                                         built_year: int = None, built_month: int = None,
+                                         total_units: int = None) -> bool:
+        """建物の属性が厳密に一致するかチェック（誤差許容なし）
+        
+        Returns:
+            bool: すべての比較可能な属性が厳密に一致する場合True
+        """
+        # 総階数の厳密チェック
+        if total_floors is not None and building.total_floors is not None:
+            if building.total_floors != total_floors:
+                return False
+        
+        # 築年の厳密チェック
+        if built_year is not None and building.built_year is not None:
+            if building.built_year != built_year:
+                return False
+        
+        # 築月の厳密チェック
+        if built_month is not None and building.built_month is not None:
+            if building.built_month != built_month:
+                return False
+        
+        # 総戸数の厳密チェック
+        if total_units is not None and building.total_units is not None:
+            if building.total_units != total_units:
+                return False
+        
         return True
     
+    def _calculate_name_match_score(self, search_key: str, canonical_name: str) -> tuple:
+        """建物名の一致度スコアを計算
+        
+        Returns:
+            tuple: (priority, score) - priorityが小さいほど優先度高、scoreが大きいほど一致度高
+        """
+        if canonical_name == search_key:
+            return (1, 100)  # 完全一致：最高優先度
+        
+        # 前方一致チェック
+        if canonical_name.startswith(search_key):
+            ratio = len(search_key) / len(canonical_name)
+            return (2, 80 + ratio * 15)  # 前方一致：高優先度
+        
+        if search_key.startswith(canonical_name):
+            ratio = len(canonical_name) / len(search_key)
+            return (2, 80 + ratio * 15)  # 逆前方一致：高優先度
+        
+        # 部分一致チェック
+        if search_key in canonical_name:
+            ratio = len(search_key) / len(canonical_name)
+            return (3, 50 + ratio * 25)  # 部分一致：中優先度
+        
+        if canonical_name in search_key:
+            ratio = len(canonical_name) / len(search_key)
+            return (3, 50 + ratio * 25)  # 逆部分一致：中優先度
+        
+        # 一致しない場合
+        return (4, 0)
+
+    def _calculate_address_match_score(self, address1: str, address2: str) -> Tuple[int, str]:
+        """
+        正規化された住所の一致度を詳細に計算する
+        
+        Returns:
+            Tuple[int, str]: (スコア, 一致タイプ)
+            スコア: 100(完全一致), 90(番地まで一致), 80(丁目まで一致), 70(市区町村一致), 0(不一致)
+        """
+        if not address1 or not address2:
+            return 0, "不一致"
+        
+        # 正規化された住所で比較
+        addr1 = address1.strip()
+        addr2 = address2.strip()
+        
+        # 完全一致（最高スコア）
+        if addr1 == addr2:
+            return 100, "完全一致"
+        
+        # AddressNormalizerを使って住所の構成要素に分解
+        from ..utils.address_normalizer import AddressNormalizer
+        normalizer = AddressNormalizer()
+        
+        # 各住所を構成要素に分解
+        components1 = normalizer.extract_components(addr1)
+        components2 = normalizer.extract_components(addr2)
+        
+        # 階層的な一致度判定
+        # 都道府県が異なる場合は不一致
+        if (components1['prefecture'] and components2['prefecture'] and 
+            components1['prefecture'] != components2['prefecture']):
+            return 0, "不一致"
+        
+        # 市区町村が異なる場合は不一致
+        if (components1['city'] and components2['city'] and 
+            components1['city'] != components2['city']):
+            return 0, "不一致"
+        
+        # 区が異なる場合は不一致
+        if (components1['ward'] and components2['ward'] and 
+            components1['ward'] != components2['ward']):
+            return 0, "不一致"
+        
+        # 町村が異なる場合は不一致
+        if (components1['town'] and components2['town'] and 
+            components1['town'] != components2['town']):
+            return 0, "不一致"
+        
+        # 地域名（丁目より前の部分）が異なる場合は不一致
+        if (components1['area'] and components2['area'] and 
+            components1['area'] != components2['area']):
+            return 0, "不一致"
+        
+        # 番地情報の詳細比較
+        block1 = components1['block']
+        block2 = components2['block']
+        
+        # 両方に番地情報がある場合
+        if block1 and block2:
+            if block1 == block2:
+                return 100, "番地まで完全一致"
+            
+            # 番地の部分一致をチェック
+            # 例: "1丁目2-3" vs "1丁目2" の場合
+            import re
+            
+            # 丁目番号の抽出
+            chome1 = re.search(r'(\d+)丁目', block1)
+            chome2 = re.search(r'(\d+)丁目', block2)
+            
+            if chome1 and chome2:
+                if chome1.group(1) == chome2.group(1):
+                    # 丁目は一致、番地の詳細をチェック
+                    # "2-3" 形式の番地を抽出
+                    banchi1 = re.search(r'(\d+)(?:-(\d+))?', block1.replace(chome1.group(0), ''))
+                    banchi2 = re.search(r'(\d+)(?:-(\d+))?', block2.replace(chome2.group(0), ''))
+                    
+                    if banchi1 and banchi2:
+                        # 第一番地が一致
+                        if banchi1.group(1) == banchi2.group(1):
+                            # 号数もチェック
+                            go1 = banchi1.group(2)
+                            go2 = banchi2.group(2)
+                            
+                            if go1 and go2:
+                                if go1 == go2:
+                                    return 100, "号まで完全一致"
+                                else:
+                                    return 90, "番地一致（号が異なる）"
+                            elif not go1 and not go2:
+                                return 90, "番地まで一致"
+                            else:
+                                return 90, "番地まで一致（号の有無が異なる）"
+                        else:
+                            return 80, "丁目一致（番地が異なる）"
+                    else:
+                        return 80, "丁目まで一致"
+                else:
+                    return 70, "地域一致（丁目が異なる）"
+            
+            # 丁目がない場合の番地比較
+            # 例: "2-3" vs "2" の場合
+            banchi1_match = re.search(r'(\d+)(?:-(\d+))?', block1)
+            banchi2_match = re.search(r'(\d+)(?:-(\d+))?', block2)
+            
+            if banchi1_match and banchi2_match:
+                if banchi1_match.group(1) == banchi2_match.group(1):
+                    go1 = banchi1_match.group(2)
+                    go2 = banchi2_match.group(2)
+                    
+                    if go1 and go2:
+                        if go1 == go2:
+                            return 100, "番地・号完全一致"
+                        else:
+                            return 90, "番地一致（号が異なる）"
+                    elif not go1 and not go2:
+                        return 90, "番地一致"
+                    else:
+                        return 90, "番地一致（号の有無が異なる）"
+                else:
+                    return 80, "地域一致（番地が異なる）"
+            
+            # その他のパターンはブロック情報の部分一致として扱う
+            if block1 in block2 or block2 in block1:
+                return 85, "番地部分一致"
+            else:
+                return 70, "地域一致（番地が異なる）"
+        
+        # 片方にだけ番地情報がある場合
+        elif block1 or block2:
+            # より詳細な住所がある方を基準とする
+            return 80, "地域まで一致（番地情報の詳細度が異なる）"
+        
+        # 番地情報が両方ともない場合、地域レベルまでの比較
+        # 市区町村・町村・地域が一致していればOK
+        match_level = []
+        if components1['prefecture'] == components2['prefecture']:
+            match_level.append('都道府県')
+        if components1['city'] == components2['city']:
+            match_level.append('市区町村')
+        if components1['ward'] == components2['ward']:
+            match_level.append('区')
+        if components1['town'] == components2['town']:
+            match_level.append('町村')
+        if components1['area'] == components2['area']:
+            match_level.append('地域')
+        
+        if match_level:
+            highest_match = match_level[-1]  # 最も詳細な一致レベル
+            return 70, f"{highest_match}まで一致"
+        
+        # 部分一致（包含関係）をチェック
+        if addr1 in addr2 or addr2 in addr1:
+            shorter_len = min(len(addr1), len(addr2))
+            longer_len = max(len(addr1), len(addr2))
+            inclusion_ratio = shorter_len / longer_len
+            
+            if inclusion_ratio >= 0.8:
+                return 60, "高い部分一致"
+            elif inclusion_ratio >= 0.6:
+                return 50, "中程度の部分一致"
+            else:
+                return 40, "低い部分一致"
+        
+        return 0, "不一致"
+
+    def _find_buildings_with_staged_matching(self, search_key: str, normalized_address: str, 
+                                           total_floors: int = None, built_year: int = None, 
+                                           built_month: int = None, total_units: int = None) -> Optional[Building]:
+        """段階的マッチングで建物を検索
+        
+        1. 完全属性一致を優先
+        2. 許容誤差一致をフォールバック
+        3. 建物名一致度で優先順位付け
+        """
+        # 住所を正規化（表記ゆれを吸収）
+        from ..utils.address_normalizer import AddressNormalizer
+        normalizer = AddressNormalizer()
+        
+        # SQLで効率的に候補を絞り込み
+        partial_match_query = self.session.query(Building).filter(
+            Building.canonical_name.isnot(None),
+            Building.address.isnot(None)
+        )
+        
+        # 住所の部分一致条件を追加（より柔軟に）
+        from sqlalchemy import or_
+        partial_match_query = partial_match_query.filter(
+            or_(
+                Building.normalized_address == normalized_address,
+                Building.normalized_address.like(f"{normalized_address}%"),
+                Building.normalized_address.like(f"%{normalized_address}%"),  # 中間一致も追加
+                text(f"'{normalized_address}' LIKE '%' || normalized_address || '%'")  # 逆方向も追加
+            )
+        )
+        
+        # 建物名の完全一致または部分一致条件を追加
+        partial_match_query = partial_match_query.filter(
+            or_(
+                Building.canonical_name == search_key,  # 完全一致を優先
+                Building.canonical_name.like(f"{search_key}%"),  # 前方一致
+                Building.canonical_name.like(f"%{search_key}%"),  # 部分一致
+                text(f"'{search_key}' LIKE '%' || canonical_name || '%'")  # 逆方向部分一致
+            )
+        )
+        
+        # 最大50件まで取得（より多くの候補を確認）
+        candidate_buildings = partial_match_query.limit(50).all()
+        
+        if not candidate_buildings:
+            return None
+        
+        # 住所の精密チェックと分類
+        valid_candidates = []
+        
+        for building in candidate_buildings:
+            # 住所の正規化チェック（Python レベルで精密チェック）
+            building_normalized_addr = normalizer.normalize_for_comparison(building.address)
+            
+            # 詳細な住所一致度計算
+            address_score, address_match_type = self._calculate_address_match_score(
+                normalized_address, building_normalized_addr
+            )
+            
+            # 住所が一致しない場合はスキップ（スコア40以下）
+            if address_score < 40:
+                continue
+                
+            # 建物名一致度と優先度を計算
+            name_score, name_match_type = self._calculate_name_match_score(search_key, building.canonical_name)
+            priority = 1 if building.canonical_name == search_key else 2  # 完全一致は優先度1
+            
+            # 属性一致チェック
+            strict_match = self._verify_building_attributes_strict(building, total_floors, built_year, built_month, total_units)
+            flexible_match = self._verify_building_attributes(building, total_floors, built_year, built_month, total_units)
+                
+            valid_candidates.append({
+                'building': building,
+                'name_priority': priority,
+                'name_score': name_score,
+                'address_score': address_score,
+                'address_match_type': address_match_type,
+                'strict_match': strict_match,
+                'flexible_match': flexible_match
+            })
+        
+        if not valid_candidates:
+            return None
+        
+        # 優先順位でソート：
+        # 1. 厳密一致を優先（strict_match=True）
+        # 2. 住所の完全一致を優先（address_score）
+        # 3. 建物名の優先度（priority）
+        # 4. 建物名のスコア（score）
+        valid_candidates.sort(key=lambda x: (
+            not x['strict_match'],  # 厳密一致を優先（Falseが先）
+            -x['address_score'],    # 住所スコア（高い方が優先）
+            x['name_priority'],     # 優先度（数字が小さいほど優先）
+            -x['name_score']        # スコア（大きいほど優先）
+        ))
+        
+        best_candidate = valid_candidates[0]
+        building = best_candidate['building']
+        
+        # ログ出力
+        match_type = "厳密一致" if best_candidate['strict_match'] else "許容誤差一致"
+        address_type = best_candidate['address_match_type']
+        
+        self.logger.info(
+            f"段階的検索で建物を発見（{match_type}・住所{address_type}・スコア{best_candidate['address_score']}・優先度{best_candidate['name_priority']}）: "
+            f"検索キー='{search_key}' → 既存='{building.canonical_name}' at {building.address}"
+        )
+        
+        return building
+
     def find_existing_building_by_key(self, search_key: str, address: str = None, total_floors: int = None,
-                                      built_year: int = None, built_month: int = None, total_units: int = None) -> Optional[Building]:
-        """検索キーで既存の建物を探す（canonical_nameと住所の両方が一致する必要がある）"""
+                                     built_year: int = None, built_month: int = None, total_units: int = None) -> Optional[Building]:
+        """検索キーで既存の建物を探す（最適化された統一検索ロジック）"""
         # 住所が指定されていない場合は、建物名だけでの判断は危険なのでNoneを返す
         if not address:
             self.logger.debug(f"住所が指定されていないため、建物検索をスキップ: {search_key}")
@@ -2248,204 +2609,171 @@ class BaseScraper(ABC):
         normalizer = AddressNormalizer()
         normalized_address = normalizer.normalize_for_comparison(address)
         
-        # まず、normalized_addressカラムがあれば高速検索を試みる
-        if hasattr(Building, 'normalized_address'):
-            # 完全一致を先に試す
-            building = self.session.query(Building).filter(
-                Building.canonical_name == search_key,
-                Building.normalized_address == normalized_address
-            ).first()
-            
-            if building:
-                # 完全一致でも建物属性を確認
-                if self._verify_building_attributes(building, total_floors, built_year, built_month, total_units):
-                    self.logger.info(f"既存建物を発見（名前と正規化住所が完全一致、属性も確認・高速検索）: {building.normalized_name} at {building.address}")
-                    return building
-                else:
-                    self.logger.debug(f"住所は完全一致するが、総階数または築年が一致しない: {building.normalized_name}")
-            
-            # 部分一致を試す（SQLAlchemyのstartsWithを使用）
-            from sqlalchemy import or_
-            # 注意: 2番目の条件は文字列メソッドではなくSQLで評価する必要がある
-            # そのため、Pythonレベルでフィルタリングする
-            partial_match_buildings = self.session.query(Building).filter(
-                Building.canonical_name == search_key
-            ).all()
-            
-            # Pythonレベルで部分一致をチェック
-            partial_match_buildings = [
-                b for b in partial_match_buildings
-                if b.normalized_address and (
-                    b.normalized_address.startswith(normalized_address) or
-                    normalized_address.startswith(b.normalized_address)
-                )
-            ]
-            
-            # 部分一致の場合も属性確認
-            for building in partial_match_buildings:
-                if self._verify_building_attributes(building, total_floors, built_year, built_month, total_units):
-                    self.logger.info(f"既存建物を発見（部分一致かつ属性一致・高速検索）: {building.normalized_name} at {building.address}")
-                    return building
-                else:
-                    self.logger.debug(f"住所は部分一致するが、総階数または築年が一致しない: {building.normalized_name}")
+        # === 1. 正式な建物名での完全一致（最優先） ===
+        self.logger.debug(f"建物検索開始: search_key='{search_key}', normalized_address='{normalized_address}'")
         
-        # normalized_addressカラムがない、または見つからない場合は従来の方法
+        # まず、建物名（canonical_name）で候補を絞り込む
         candidate_buildings = self.session.query(Building).filter(
             Building.canonical_name == search_key
         ).all()
         
-        # 住所を正規化して比較（部分一致も許可）
+        self.logger.debug(f"建物名'{search_key}'で{len(candidate_buildings)}件の候補が見つかりました")
+        
+        # 候補の中から住所マッチングを行う
         for building in candidate_buildings:
-            if building.address:
+            if not building.address:
+                continue
+                
+            # 建物の住所を正規化
+            building_normalized_addr = building.normalized_address
+            if not building_normalized_addr:
+                # normalized_addressがない場合は、その場で正規化
                 building_normalized_addr = normalizer.normalize_for_comparison(building.address)
-                
-                # 完全一致または部分一致をチェック
-                is_match = False
-                match_type = ""
-                
-                # まず住所の一致を確認
-                if building_normalized_addr == normalized_address:
-                    # 完全一致
-                    match_type = "完全一致"
-                elif building_normalized_addr.startswith(normalized_address) or normalized_address.startswith(building_normalized_addr):
-                    # 部分一致（どちらかがもう一方を含む）
-                    match_type = "部分一致"
-                else:
-                    # 住所が一致しない
-                    continue
-                
-                # 住所が一致した場合（完全一致・部分一致問わず）、建物属性も確認
+                # DBを更新（次回からは高速化）
+                building.normalized_address = building_normalized_addr
+                self.safe_flush()
+            
+            # 住所の完全一致をチェック
+            if building_normalized_addr == normalized_address:
+                # 完全一致でも建物属性を確認
                 if self._verify_building_attributes(building, total_floors, built_year, built_month, total_units):
-                    is_match = True
-                    if total_floors is not None or built_year is not None:
-                        match_type += "（総階数・築年も確認）"
+                    self.logger.info(f"既存建物を発見（名前と正規化住所が完全一致、属性も確認）: {building.normalized_name} at {building.address}")
+                    return building
                 else:
-                    self.logger.debug(f"住所は{match_type}するが、総階数または築年が一致しない: {building.normalized_name}")
+                    self.logger.debug(f"住所は完全一致するが、総階数または築年が一致しない: {building.normalized_name}")
+                    # デバッグ情報：属性比較の詳細
+                    self.logger.debug(f"属性詳細比較 - 既存: floors={building.total_floors}, year={building.built_year}, month={building.built_month}")
+                    self.logger.debug(f"属性詳細比較 - 新規: floors={total_floors}, year={built_year}, month={built_month}")
+        
+        # 完全一致が見つからない場合、部分一致を試す
+        for building in candidate_buildings:
+            if not building.address:
+                continue
+                
+            building_normalized_addr = building.normalized_address
+            if not building_normalized_addr:
+                building_normalized_addr = normalizer.normalize_for_comparison(building.address)
+                building.normalized_address = building_normalized_addr
+                self.safe_flush()
+            
+            # 部分一致をチェック
+            if (building_normalized_addr.startswith(normalized_address) or 
+                normalized_address.startswith(building_normalized_addr)):
+                
+                # 部分一致の場合も属性確認（住所は部分一致、建物名は完全一致）
+                if self._verify_building_attributes(building, total_floors, built_year, built_month, total_units):
+                    self.logger.info(f"既存建物を発見（建物名完全一致・住所部分一致・属性確認）: {building.normalized_name} at {building.address}")
+                    return building
+                else:
+                    self.logger.debug(f"建物名完全一致・住所は部分一致するが、総階数または築年が一致しない: {building.normalized_name}")
+        
+        # === 2. BuildingListingNameテーブルでの検索（別名での完全一致） ===
+        from sqlalchemy import or_
+        from ..models import BuildingListingName
+        from .data_normalizer import canonicalize_building_name
+        
+        # 検索語を正規化
+        canonical_search = canonicalize_building_name(search_key)
+        
+        # BuildingListingNameから該当する建物を検索（複数候補の最適化）
+        listing_matches = self.session.query(BuildingListingName).filter(
+            or_(
+                BuildingListingName.listing_name == search_key,
+                BuildingListingName.canonical_name == canonical_search
+            )
+        ).all()
+        
+        if listing_matches:
+            # 複数の候補から最適な建物を選択
+            best_candidate = None
+            best_score = -1
+            
+            for listing_match in listing_matches:
+                # 建物を取得
+                primary_building = self.session.query(Building).filter(
+                    Building.id == listing_match.building_id
+                ).first()
+                
+                if not primary_building or not primary_building.address:
                     continue
                 
-                if is_match:
-                    self.logger.info(f"既存建物を発見（{match_type}）: {building.normalized_name} at {building.address}")
-                    
-                    # normalized_addressカラムがあれば更新
-                    if hasattr(building, 'normalized_address') and not building.normalized_address:
-                        building.normalized_address = building_normalized_addr
-                        self.safe_flush()
-                    
-                    return building
-        
-        # === 新規追加: 建物名の部分一致検索 ===
-        # 完全一致で見つからない場合、建物名の部分一致を試す
-        # ただし、住所と他の属性がすべて一致していることが前提条件
-        
-        # 全建物を対象に、住所が一致し、他の属性も一致するものを探す
-        all_buildings = self.session.query(Building).all()
-        
-        for building in all_buildings:
-            if not building.address or not building.canonical_name:
-                continue
+                # 住所の確認（完全一致・部分一致）
+                building_normalized_addr = primary_building.normalized_address
+                if not building_normalized_addr:
+                    building_normalized_addr = normalizer.normalize_for_comparison(primary_building.address)
+                    primary_building.normalized_address = building_normalized_addr
+                    self.safe_flush()
                 
-            building_normalized_addr = normalizer.normalize_for_comparison(building.address)
+                # 住所の一致度を計算
+                address_score = 0
+                if building_normalized_addr == normalized_address:
+                    address_score = 100  # 完全一致
+                elif building_normalized_addr.startswith(normalized_address) or normalized_address.startswith(building_normalized_addr):
+                    address_score = 80   # 部分一致
+                else:
+                    continue  # 住所が一致しない場合はスキップ
+                
+                # 属性の一致度を計算
+                attribute_score = 0
+                if self._verify_building_attributes_strict(primary_building, total_floors, built_year, built_month, total_units):
+                    attribute_score = 100  # 厳密一致
+                elif self._verify_building_attributes(primary_building, total_floors, built_year, built_month, total_units):
+                    attribute_score = 70   # 許容誤差一致
+                else:
+                    continue  # 属性が一致しない場合はスキップ
+                
+                # 建物名の一致度を計算
+                name_score = 0
+                if listing_match.listing_name == search_key:
+                    name_score = 100  # 元の名前と完全一致
+                elif listing_match.canonical_name == canonical_search:
+                    name_score = 90   # 正規化名と完全一致
+                else:
+                    name_score = 50   # その他
+                
+                # 総合スコアを計算（住所を最重視、属性次重視、名前は参考程度）
+                total_score = (address_score * 0.5) + (attribute_score * 0.4) + (name_score * 0.1)
+                
+                # より良い候補があれば更新
+                if total_score > best_score:
+                    best_score = total_score
+                    best_candidate = {
+                        'building': primary_building,
+                        'address_score': address_score,
+                        'attribute_score': attribute_score,
+                        'name_score': name_score,
+                        'total_score': total_score,
+                        'listing_name': listing_match.listing_name
+                    }
             
-            # 住所が一致するかチェック（完全一致または部分一致）
-            address_matches = (
-                building_normalized_addr == normalized_address or
-                building_normalized_addr.startswith(normalized_address) or
-                normalized_address.startswith(building_normalized_addr)
-            )
-            
-            if not address_matches:
-                continue
-            
-            # 建物名の部分一致をチェック（一方が他方を含む）
-            name_partial_match = (
-                search_key in building.canonical_name or
-                building.canonical_name in search_key
-            )
-            
-            if not name_partial_match:
-                continue
-            
-            # 住所と建物名が部分一致している場合、他の属性も厳密にチェック
-            if self._verify_building_attributes(building, total_floors, built_year, built_month, total_units):
+            # 最適な候補が見つかった場合
+            if best_candidate:
+                building = best_candidate['building']
+                address_match_type = "完全一致" if best_candidate['address_score'] == 100 else "部分一致"
+                attribute_match_type = "厳密一致" if best_candidate['attribute_score'] == 100 else "許容誤差一致"
+                
                 self.logger.info(
-                    f"既存建物を発見（建物名部分一致・住所一致・属性一致）: "
-                    f"検索キー='{search_key}' → 既存='{building.canonical_name}' "
-                    f"at {building.address}"
+                    f"BuildingListingNameから最適な建物を選択（住所{address_match_type}・{attribute_match_type}・スコア{best_candidate['total_score']:.1f}）: "
+                    f"'{search_key}' → '{building.normalized_name}' (建物ID: {building.id})"
                 )
                 return building
             else:
-                self.logger.debug(
-                    f"建物名と住所は部分一致するが、総階数・築年・総戸数が一致しない: "
-                    f"検索キー='{search_key}' vs 既存='{building.canonical_name}'"
-                )
+                self.logger.debug(f"BuildingListingNameで複数候補が見つかったが、住所または属性が一致する建物がない")
         
-        # BuildingListingNameテーブルを確認（別名で登録されている建物を探す）
+        # === 3. 段階的建物検索（部分一致・厳密一致 → 許容誤差、一致度優先） ===
+        # 正式名称完全一致・別名完全一致で見つからない場合、段階的検索を実行
+        # 1. 建物名部分一致（前方一致→部分一致）
+        # 2. 厳密属性一致を優先
+        # 3. 許容誤差一致をフォールバック
         
-        # まず、元の建物名（部屋番号抽出前）でBuildingListingNameを検索
-        original_building_name = search_key  # search_keyは既に正規化済み
+        if normalized_address:  # 住所がある場合のみ実行
+            staged_result = self._find_buildings_with_staged_matching(
+                search_key, normalized_address, total_floors, built_year, built_month, total_units
+            )
+            if staged_result:
+                return staged_result
         
-        # BuildingListingNameから建物を検索する
-        def find_ultimate_primary_building(building_name: str, max_depth: int = 10) -> Optional[Building]:
-            """BuildingListingNameテーブルから建物を検索"""
-            if max_depth <= 0:
-                self.logger.warning(f"統合チェインが深すぎます: {building_name}")
-                return None
-            
-            # BuildingListingNameから検索
-            from sqlalchemy import or_
-            from ..models import BuildingListingName
-            from .data_normalizer import canonicalize_building_name
-            
-            # 検索語を正規化
-            canonical_search = canonicalize_building_name(building_name)
-            
-            # BuildingListingNameから該当する建物を検索
-            listing_match = self.session.query(BuildingListingName).filter(
-                or_(
-                    BuildingListingName.listing_name == building_name,
-                    BuildingListingName.canonical_name == canonical_search
-                )
-            ).first()
-            
-            if not listing_match:
-                return None
-            
-            # 建物を取得
-            primary_building = self.session.query(Building).filter(
-                Building.id == listing_match.building_id
-            ).first()
-            
-            if primary_building:
-                # 建物が存在する場合は返す
-                self.logger.info(
-                    f"掲載名から建物を発見: '{building_name}' → '{primary_building.normalized_name}' "
-                    f"(建物ID: {primary_building.id})"
-                )
-                return primary_building
-            else:
-                # 建物が見つからない場合
-                return None
-        
-        # BuildingListingNameから建物を探す
-        primary_building = find_ultimate_primary_building(original_building_name)
-        
-        if primary_building:
-            # 住所の確認（統合先の建物の住所と一致するか - 部分一致も許可）
-            if primary_building.address:
-                building_normalized_addr = normalizer.normalize_for_comparison(primary_building.address)
-                # 完全一致または部分一致をチェック
-                if (building_normalized_addr == normalized_address or 
-                    building_normalized_addr.startswith(normalized_address) or 
-                    normalized_address.startswith(building_normalized_addr)):
-                    # 完全一致・部分一致問わず建物属性を確認
-                    if self._verify_building_attributes(primary_building, total_floors, built_year, built_month, total_units):
-                        return primary_building
-                    else:
-                        match_type = "完全一致" if building_normalized_addr == normalized_address else "部分一致"
-                        self.logger.debug(f"BuildingListingNameで見つかった建物は住所が{match_type}するが、属性が一致しない")
-                        return None
-        
-        self.logger.debug(f"一致する建物が見つかりません: {search_key} at {address} (正規化: {normalized_address})")
+        self.logger.debug(f"一致する建物が見つかりません: {search_key} at {address} （正規化: {normalized_address}）")
         return None
     
     def get_or_create_building(self, building_name: str, address: str = None, external_property_id: str = None, 
@@ -2456,6 +2784,19 @@ class BaseScraper(ABC):
         if not building_name:
             return None, None
         
+        # 元の建物名を保持
+        original_building_name = building_name
+        
+        # 広告文が含まれている場合は、建物名部分のみを抽出
+        extracted_name = extract_building_name_from_ad_text(building_name)
+        if extracted_name and extracted_name != building_name:
+            self.logger.debug(f"広告文から建物名を抽出: '{building_name}' → '{extracted_name}'")
+            building_name = extracted_name
+        elif not extracted_name:
+            # 抽出に失敗した場合は元の名前をそのまま使用
+            self.logger.debug(f"建物名抽出に失敗、元の名前を使用: '{building_name}'")
+            building_name = original_building_name
+        
         # セッションの状態を確認し、必要に応じてロールバック
         try:
             # ダミークエリで状態確認
@@ -2463,9 +2804,6 @@ class BaseScraper(ABC):
         except Exception as e:
             self.logger.warning(f"セッションがエラー状態のため、ロールバックを実行: {type(e).__name__}")
             self.session.rollback()
-        
-        # 元の建物名を保存
-        original_building_name = building_name
         
         # 外部IDがある場合は先に検索
         if external_property_id:
@@ -2548,178 +2886,56 @@ class BaseScraper(ABC):
         # 比較用の検索キーを生成（最小限の正規化）
         search_key = self.get_search_key_for_building(clean_building_name)
         
-        # BuildingListingNameテーブルから建物を検索（元の建物名で）
-        if address:  # 住所がある場合のみ
-            from ..utils.address_normalizer import AddressNormalizer
-            addr_normalizer = AddressNormalizer()
-            normalized_address = addr_normalizer.normalize_for_comparison(address)
+        # 既存の建物を検索（一元化された検索ロジック）
+        building = self.find_existing_building_by_key(search_key, address, total_floors, built_year, built_month, total_units)
+        
+        if building:
+            print(f"[INFO] 既存建物を発見: {building.normalized_name} (ID: {building.id})")
             
-            # 元の建物名でBuildingListingNameから検索
-            from sqlalchemy import or_
-            from ..models import BuildingListingName
-            from .data_normalizer import canonicalize_building_name
+            # 建物情報を更新（より詳細な情報があれば）
+            updated = False
+            # 築年月の更新（既存の値がないか、異なる値の場合は更新）
+            if built_year and building.built_year != built_year:
+                old_built_year = building.built_year
+                building.built_year = built_year
+                updated = True
+                if old_built_year:
+                    self.logger.info(f"築年月を更新: {old_built_year} → {built_year}, 建物ID: {building.id}")
+            if built_month and not building.built_month:
+                building.built_month = built_month
+                updated = True
+            if total_floors and not building.total_floors:
+                building.total_floors = total_floors
+                updated = True
+            if basement_floors and not building.basement_floors:
+                building.basement_floors = basement_floors
+                updated = True
+            if structure and not building.construction_type:
+                building.construction_type = structure
+                updated = True
+            if land_rights and not building.land_rights:
+                building.land_rights = land_rights
+                updated = True
+            if station_info and not building.station_info:
+                building.station_info = station_info
+                updated = True
             
-            # 検索語を正規化
-            canonical_search = canonicalize_building_name(original_building_name)
+            if updated:
+                self.safe_flush()
             
-            listing_match = self.session.query(BuildingListingName).filter(
-                or_(
-                    BuildingListingName.listing_name == original_building_name,
-                    BuildingListingName.canonical_name == canonical_search
+            # 外部IDを追加（既存の建物でも、外部IDが未登録の場合は追加）
+            if external_property_id:
+                # ハンドラーを使用して外部IDを追加
+                success = self.external_id_handler.add_external_id(
+                    building.id, self.source_site, external_property_id
                 )
-            ).first()
+                if success:
+                    print(f"[INFO] 既存建物に外部IDを関連付け: building_id={building.id}, external_id={external_property_id}")
             
-            if listing_match:
-                # 建物を取得
-                primary_building = self.session.query(Building).filter(
-                    Building.id == listing_match.building_id
-                ).first()
-                
-                if primary_building and primary_building.address:
-                    # 住所の確認（完全一致を優先、部分一致は制限付きで許可）
-                    building_normalized_addr = addr_normalizer.normalize_for_comparison(primary_building.address)
-                    
-                    # 住所の確認
-                    building_normalized_addr = addr_normalizer.normalize_for_comparison(primary_building.address)
-                    
-                    # 完全一致を最優先
-                    is_exact_match = (building_normalized_addr == normalized_address)
-                    
-                    # 部分一致の判定
-                    is_partial_match = False
-                    if not is_exact_match:
-                        # 部分一致を計算
-                        is_partial_match = (building_normalized_addr.startswith(normalized_address) or 
-                                          normalized_address.startswith(building_normalized_addr))
-                    
-                    is_address_match = is_exact_match or is_partial_match
-                    
-                    # 住所が一致した場合（完全一致・部分一致問わず）
-                    if is_address_match:
-                        # 属性チェックを実施（重要：属性が一致しない場合は建物を使用しない）
-                        if not self._verify_building_attributes(primary_building, total_floors, built_year, built_month, total_units):
-                            match_type = "完全一致" if building_normalized_addr == normalized_address else "部分一致"
-                            self.logger.warning(
-                                f"BuildingListingNameで見つかった建物（住所{match_type}）の属性が異なるため使用しません: "
-                                f"{primary_building.normalized_name} (ID: {primary_building.id}), "
-                                f"総階数: 既存={primary_building.total_floors}, 新規={total_floors}, "
-                                f"築年: 既存={primary_building.built_year}, 新規={built_year}, "
-                                f"総戸数: 既存={primary_building.total_units}, 新規={total_units}"
-                            )
-                            # 属性が一致しない場合は、この建物を使用せず、新規作成へ進む
-                            # continueやreturnではなく、ifブロックから抜けて通常フローへ
-                    
-                    if is_address_match:
-                        # 属性チェックに成功した場合のみ既存建物を使用
-                        if self._verify_building_attributes(primary_building, total_floors, built_year, built_month, total_units):
-                            print(f"[INFO] BuildingListingNameから建物を発見: '{original_building_name}' → '{primary_building.normalized_name}' (ID: {primary_building.id})")
-                        
-                            # 建物情報を更新（より詳細な情報があれば）
-                            updated = False
-                            # 築年月の更新（既存の値がないか、異なる値の場合は更新）
-                            if built_year and primary_building.built_year != built_year:
-                                old_built_year = primary_building.built_year
-                                primary_building.built_year = built_year
-                                updated = True
-                                if old_built_year:
-                                    self.logger.info(f"築年月を更新: {old_built_year} → {built_year}, 建物ID: {primary_building.id}")
-                            if built_month and not primary_building.built_month:
-                                primary_building.built_month = built_month
-                                updated = True
-                            if total_floors and not primary_building.total_floors:
-                                primary_building.total_floors = total_floors
-                                updated = True
-                            if basement_floors and not primary_building.basement_floors:
-                                primary_building.basement_floors = basement_floors
-                                updated = True
-                            if structure and not primary_building.construction_type:
-                                primary_building.construction_type = structure
-                                updated = True
-                            if land_rights and not primary_building.land_rights:
-                                primary_building.land_rights = land_rights
-                                updated = True
-                            if station_info and not primary_building.station_info:
-                                primary_building.station_info = station_info
-                                updated = True
-                        
-                            if updated:
-                                self.safe_flush()
-                        
-                            return primary_building, extracted_room_number
+            return building, extracted_room_number
         
-        
-        # 広告文の場合は特別な処理
-        if self.is_advertising_text(building_name):
-            # 広告文の場合は、住所が必須
-            if not address:
-                print(f"[WARNING] 広告文タイトルで住所がない: {building_name}")
-                return None, extracted_room_number
-            
-            # 住所で既存の建物を検索
-            building = self.session.query(Building).filter(
-                Building.address == address
-            ).first()
-            
-            if building:
-                print(f"[INFO] 住所で既存建物を発見: {building.normalized_name} at {address}")
-                return building, extracted_room_number
-            else:
-                # 新規作成（住所必須）
-                print(f"[WARNING] 広告文タイトルで新規建物作成: {building_name} at {address}")
-                # 建物名は元の名前を使用（多数決で後で決定される）
-                normalized_name = original_building_name
-        else:
-            # 通常の建物名の場合
-            # 既存の建物を検索
-            building = self.find_existing_building_by_key(search_key, address, total_floors, built_year, built_month, total_units)
-            
-            if building:
-                print(f"[INFO] 既存建物を発見: {building.normalized_name} (ID: {building.id})")
-                
-                # 建物情報を更新（より詳細な情報があれば）
-                updated = False
-                # 築年月の更新（既存の値がないか、異なる値の場合は更新）
-                if built_year and building.built_year != built_year:
-                    old_built_year = building.built_year
-                    building.built_year = built_year
-                    updated = True
-                    if old_built_year:
-                        self.logger.info(f"築年月を更新: {old_built_year} → {built_year}, 建物ID: {building.id}")
-                if built_month and not building.built_month:
-                    building.built_month = built_month
-                    updated = True
-                if total_floors and not building.total_floors:
-                    building.total_floors = total_floors
-                    updated = True
-                if basement_floors and not building.basement_floors:
-                    building.basement_floors = basement_floors
-                    updated = True
-                if structure and not building.construction_type:
-                    building.construction_type = structure
-                    updated = True
-                if land_rights and not building.land_rights:
-                    building.land_rights = land_rights
-                    updated = True
-                if station_info and not building.station_info:
-                    building.station_info = station_info
-                    updated = True
-                
-                if updated:
-                    self.safe_flush()
-                
-                # 外部IDを追加（既存の建物でも、外部IDが未登録の場合は追加）
-                if external_property_id:
-                    # ハンドラーを使用して外部IDを追加
-                    success = self.external_id_handler.add_external_id(
-                        building.id, self.source_site, external_property_id
-                    )
-                    if success:
-                        print(f"[INFO] 既存建物に外部IDを関連付け: building_id={building.id}, external_id={external_property_id}")
-                
-                return building, extracted_room_number
-            
-            # 新規建物の場合、元の名前を使用
-            normalized_name = original_building_name
+        # 新規建物の場合、処理済みの建物名を使用
+        normalized_name = clean_building_name
         
         # 新規建物を作成
         print(f"[INFO] 新規建物を作成: {normalized_name}")
@@ -3668,7 +3884,10 @@ class BaseScraper(ABC):
         if master_property:
             try:
                 # 物件情報を多数決で更新
-                self.majority_updater.update_master_property_by_majority(master_property)
+                # 動的インポートで循環インポート回避
+                from ..utils.majority_vote_updater import MajorityVoteUpdater
+                majority_updater = MajorityVoteUpdater(self.session)
+                majority_updater.update_master_property_by_majority(master_property)
                 self.safe_flush()  # 変更を確定
             except Exception as e:
                 # エラーが発生しても処理は続行（ログに記録）
@@ -3681,9 +3900,15 @@ class BaseScraper(ABC):
                     building = self.session.query(Building).get(master_property.building_id)
                     if building:
                         # 建物名を含む全属性を多数決で更新
-                        self.majority_updater.update_building_by_majority(building)
+                        # 動的インポートで循環インポート回避
+                        from ..utils.majority_vote_updater import MajorityVoteUpdater
+                        majority_updater = MajorityVoteUpdater(self.session)
+                        majority_updater.update_building_by_majority(building)
                         # 建物名の個別更新も実行（より最新の重み付けロジックを使用）
-                        self.majority_updater.update_building_name_by_majority(master_property.building_id)
+                        # 動的インポートで循環インポート回避
+                        from ..utils.majority_vote_updater import MajorityVoteUpdater
+                        majority_updater = MajorityVoteUpdater(self.session)
+                        majority_updater.update_building_name_by_majority(master_property.building_id)
                     self.safe_flush()  # 変更を確定
                 except Exception as e:
                     # エラーが発生しても処理は続行（ログに記録）
@@ -3691,7 +3916,10 @@ class BaseScraper(ABC):
                 
                 # 物件の表示用建物名を多数決で更新
                 try:
-                    self.majority_updater.update_property_building_name_by_majority(master_property.id)
+                    # 動的インポートで循環インポート回避
+                    from ..utils.majority_vote_updater import MajorityVoteUpdater
+                    majority_updater = MajorityVoteUpdater(self.session)
+                    majority_updater.update_property_building_name_by_majority(master_property.id)
                     self.safe_flush()  # 変更を確定
                 except Exception as e:
                     # エラーが発生しても処理は続行（ログに記録）
@@ -3722,7 +3950,10 @@ class BaseScraper(ABC):
     
     def update_master_property_by_majority(self, master_property: MasterProperty):
         """マスター物件の情報を多数決で更新"""
-        self.majority_updater.update_master_property_by_majority(master_property)
+        # 動的インポートで循環インポート回避
+        from ..utils.majority_vote_updater import MajorityVoteUpdater
+        majority_updater = MajorityVoteUpdater(self.session)
+        majority_updater.update_master_property_by_majority(master_property)
     
     def get_scraping_stats(self) -> Dict[str, int]:
         """スクレイピング統計を取得"""
@@ -5388,7 +5619,7 @@ class BaseScraper(ABC):
         
         for pattern in ui_patterns:
             address = re.sub(pattern, '', address)
-        
+              
         # 不要な記号や空白文字を削除
         address = re.sub(r'\s+', '', address)  # 全角・半角スペースを削除
         address = re.sub(r'[(\(][^)\)]*[)\)]', '', address)  # 括弧内の補足情報を削除
@@ -5472,33 +5703,157 @@ class BaseScraper(ABC):
         # （JavaScriptで動的に追加される場合などに対応）
         return self.clean_address(address_text)
 
-
-    def is_advertising_text(self, text: str) -> bool:
-        """広告的なテキストかどうかを判定"""
-        if not text:
-            return False
+def extract_building_name_from_ad_text(ad_text: str) -> str:
+    """
+    広告テキストから建物名を抽出する独立関数
+    純粋に広告文除去処理のみを実行し、判定は行わない
+    """
+    import re
     
-        # 広告的なパターン
-        ad_patterns = [
-            r'徒歩\d+分',
-            r'駅.*\d+分',
-            r'の中古マンション',
-            r'新築',
-            r'分譲',
-            r'賃貸',
-            r'[0-9,]+万円',
-            r'\d+LDK',
-            r'\d+階建',
-            r'築\d+年',
-        ]
+    if not ad_text:
+        return ad_text
+    
+    original_text = ad_text.strip()
+    if not original_text:
+        return ""
+    
+    # 統一された広告文除去処理
+    if not original_text or not original_text.strip():
+        return ""
         
-        # いずれかのパターンにマッチしたら広告文と判定
-        for pattern in ad_patterns:
-            if re.search(pattern, text):
-                return True
+    current_text = original_text.strip()
+    
+    # Step 1: 全文レベルでの階数・方角情報除去
+    WING_NAMES = r'[A-Z東西南北本新旧]'
+    
+    # 棟名保持パターン（棟名を保持して階数のみ除去）
+    BUILDING_WING_PATTERN = rf'({WING_NAMES}棟)\s*\d+階'
+    current_text = re.sub(BUILDING_WING_PATTERN, r'\1', current_text)
+    
+    # 通常の階数・方角除去パターン
+    floor_removal_patterns = [
+        r'\s*\d+階\s*/\s*\d+階\s*',      # 7階/7階 パターン
+        r'\s*\d+階\s*/\s*-+\s*',          # 4階/--- パターン
+        r'\s*\(\d+F\)\s*',                # (4F) パターン
+        r'\s*\d+階部分\s*',                 # 10階部分、1階部分 パターン
+        r'\s*\d+階.*向き\s*',               # 19階南向き、3階南東向き パターン
+        r'\s+\d+階\s+\d+LDK\s*',          # 1階 2LDK パターン
+    ]
+    
+    for pattern in floor_removal_patterns:
+        current_text = re.sub(pattern, ' ', current_text)
+    
+    # Step 2: 記号をすべてスペースに統一（・は保護）
+    symbols_pattern = r'[☆★◆◇｜～〜【】■□▲△▼▽◎○●◯※＊\[\]「」『』（）()]'
+    current_text = re.sub(symbols_pattern, ' ', current_text)
+    
+    # Step 3: 複数スペースを単一スペースに統一
+    current_text = re.sub(r'\s+', ' ', current_text.strip())
+    
+    # Step 4: スペースで単語に分割してフィルタリング
+    words = current_text.split()
+    
+    # 建物名キーワード（保護対象）
+    building_keywords = [
+        'マンション', 'タワー', 'ハウス', 'レジデンス', 'ヒルズ', 'パーク', '棟', 'コート', 
+        'TOWER', 'RESIDENCE', 'HOUSE', 'PARK', 'COURT', 'HILL', 'HILLS', 'CITY',
+        'ビル', 'ビルディング', 'プラザ', 'スクエア', 'ガーデン', 'アイランド',
+        'PLAZA', 'SQUARE', 'GARDEN', 'ISLAND', 'SUITE', 'GRAND', 'BLUE', 'CLEARE',
+        'FAMILLE', 'DUET', 'DUO', 'SCALA', 'DOEL', 'ALLES', 'CLEO', 'GALA',
+        'STATION', 'VIEW', 'EAST', 'WEST', 'NORTH', 'SOUTH', 'CENTER',
+        'ウエスト', 'イースト', 'ノース', 'サウス', 'セントラル', 'テラス', 'TERRACE',
+        'ウエスト', 'ウェスト', 'エスト', 'Est', 'EAST', 'Terrazza',
+        '駅前', '駅南', '駅北', '駅東', '駅西'
+    ]
+    
+    # 削除対象のパターン（大幅拡充）
+    removal_patterns = [
+        r'^(?!.*(住宅|ハウス|マンション|ビル|アパート)).*駅$',  # 建物名キーワードを含まない駅名のみ
+        r'徒歩\d+分$', r'JR.*線$', r'東京メトロ.*線$', r'\d+路線利用可$',
+        r'リノベーション済?$', r'リフォーム済?$', r'新築未入居$', r'\d{4}年築$',
+        r'\d+LDK$', r'WIC$', r'SIC$', r'TR$', r'ペット可$', r'内覧可$',
+        r'^\d+階$', r'^\d+F$', r'\d+階部分$', r'\(\d+F\)$', r'\d+階/.*$',
+        r'^\d+階.*向き.*$', r'.*\d+階$', r'^\d+th$', r'.*Floor$',
+        r'^\d+階部分$',
+        # 【】内の典型的な広告文
+        r'^リノベーション済み$', r'^新築物件$', r'^仲介手数料無料$', 
+        r'^弊社限定公開$', r'^新規物件$', r'^駅近$', r'^オススメ$',
+        # 設備・状況情報の拡充（テスト結果に基づく）
+        r'^角部屋$', r'^最上階$', r'^美品$', r'^内装リフォーム済$',
+        r'^WIC付き$', r'^WIC付$', r'^SIC付$', r'^楽器可$', r'^事務所利用可$', r'^SOHO可$',
+        # 築年・距離情報の強化
+        r'^築\d+年$', r'^駅徒歩\d+分$', r'^JR.*線利用可$',
+        # 路線情報の拡充  
+        r'^東京メトロ.*線利用可$', r'^\d+路線利用可$',
+        # 令和年号パターン
+        r'^令和\d+年築$',
+        # テスト結果に基づく改善：間取り情報の除去パターン追加
+        r'^1R$', r'^1K$', r'^1DK$', r'^2DK$', r'^3DK$', r'^4DK$', r'^5DK$',
+        # テスト結果に基づく改善：設備・施設情報の除去パターン追加
+        r'^システムキッチン$', r'^オートロック$', r'^宅配ボックス$', r'^角住戸$',
+        r'^システムキッチン付$', r'^オートロック付$', r'^宅配ボックス付$',
+        r'^システムキッチン完備$', r'^宅配ボックス完備$',
+        # テスト結果に基づく改善：シリーズ名の除去パターン追加
+        r'^エクセルシリーズ$', r'^プレミアムシリーズ$', r'^グランドシリーズ$',
+        # 追加の間取り・設備パターン
+        r'^2LDK$', r'^3LDK$', r'^4LDK$', r'^5LDK$',
+        r'^バルコニー付$', r'^専用庭付$', r'^ルーフバルコニー付$',
+        r'^エレベーター付$', r'^駐車場付$', r'^駐輪場付$',
+        # 追加の状況・品質パターン  
+        r'^中古$', r'^新築$', r'^築浅$', r'^リフォーム中古$',
+        r'^即入居可$', r'^空室$', r'^賃貸中$'
+    ]
+    
+    # 建物名部分を保護（ザ、The、新等）
+    protected_words = [
+        'ザ', 'THE', 'The', 'new', 'NEW', '新', 'プライム', 'グランド', 
+        'ロイヤル', 'クラッシィ', 'ブランズ', 'クレスト', 'プラウド',
+        'セント', 'パレ', 'ドール', 'アルス', 'ベル', 'ヒル', 'サイド',
+        'レクセル', 'シャトー', 'エスペランス', 'オープン', 'ファミール',
+        'グラン', 'ミューゼ', 'コスタ', 'エクレール', 'Palais', 'Soleil',
+        'ドゥ', 'トゥール', 'ドエル', 'サンクタス', 'ミューゼオ', 'ヴィンテージ', 
+        'ペア', 'サンリーノ', '森のとなり',
+        'ウエスト', 'ウェスト', 'イースト', 'ノース', 'サウス', 'セントラル',
+        'テラス', 'エスト', 'Est', 'EAST', 'WEST', 'NORTH', 'SOUTH',
+        'プラネ', '悠遊', 'ツイン', 'NORTH棟', 'EAST棟', 'WEST棟'
+    ]
+    
+    filtered_words = []
+    for word in words:
+        if not word.strip():
+            continue
+            
+        # 建物名キーワードを含む単語は保護
+        if any(keyword in word for keyword in building_keywords):
+            filtered_words.append(word)
+            continue
         
-        # 建物名として短すぎる場合も広告文と判定
-        if len(text) < 3:
-            return True
+        # 駅名を含む建物名パターンの保護
+        if re.search(r'.+駅.*(住宅|ハウス|マンション|ビル|アパート)', word):
+            filtered_words.append(word)
+            continue
+            
+        # 保護対象の単語
+        if word in protected_words:
+            filtered_words.append(word)
+            continue
+            
+        # 棟名保持パターンのチェック（単語レベル）
+        wing_match = re.match(BUILDING_WING_PATTERN + '$', word)
+        if wing_match:
+            filtered_words.append(wing_match.group(1))
+            continue
         
-        return False
+        # 削除パターンにマッチするかチェック
+        should_remove = False
+        for pattern in removal_patterns:
+            if re.match(pattern, word):
+                should_remove = True
+                break
+        
+        if not should_remove:
+            filtered_words.append(word)
+    
+    # 単語を再結合
+    result = ' '.join(filtered_words).strip()
+    return result
