@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, and_, String
 from sqlalchemy.orm import Session
 from ..models import Building, MasterProperty, PropertyListing, ListingPriceHistory
+from ..scrapers.base_scraper import extract_building_name_from_ad_text
 import logging
 
 logger = logging.getLogger(__name__)
@@ -23,6 +24,8 @@ class MajorityVoteUpdater:
     
     def __init__(self, session: Session):
         self.session = session
+
+
     
     @staticmethod
     def get_site_priority(site_name: str) -> int:
@@ -800,19 +803,24 @@ class MajorityVoteUpdater:
             # アクティブな掲載情報から建物名を取得
             for listing in active_listings:
                 if listing.listing_building_name:
+                    # 広告文除去処理を適用
+                    cleaned_building_name = extract_building_name_from_ad_text(listing.listing_building_name)
+                    
+                    # 広告文除去後に有効な建物名がない場合はスキップ
+                    if not cleaned_building_name:
+                        continue
+                    
                     # ソースによる重み付け
                     weight = self.get_site_priority_weight(listing.source_site)
                     
-                    # 広告文っぽい名前は重みを下げる
-                    if self._is_advertising_text(listing.listing_building_name):
-                        weight *= 0.1
+                    # 広告文除去済みなので、追加の広告文判定は不要
                     
-                    all_building_names.append(listing.listing_building_name)
+                    all_building_names.append(cleaned_building_name)
                     
-                    if listing.listing_building_name in name_weights:
-                        name_weights[listing.listing_building_name] += weight
+                    if cleaned_building_name in name_weights:
+                        name_weights[cleaned_building_name] += weight
                     else:
-                        name_weights[listing.listing_building_name] = weight
+                        name_weights[cleaned_building_name] = weight
         else:
             # すべて非アクティブの場合、最近の掲載情報を使用
             recent_listings = self.session.query(PropertyListing).filter(
@@ -822,19 +830,24 @@ class MajorityVoteUpdater:
             
             for listing in recent_listings:
                 if listing.listing_building_name:
+                    # 広告文除去処理を適用
+                    cleaned_building_name = extract_building_name_from_ad_text(listing.listing_building_name)
+                    
+                    # 広告文除去後に有効な建物名がない場合はスキップ
+                    if not cleaned_building_name:
+                        continue
+                    
                     # ソースによる重み付け
                     weight = self.get_site_priority_weight(listing.source_site)
                     
-                    # 広告文っぽい名前は重みを下げる
-                    if self._is_advertising_text(listing.listing_building_name):
-                        weight *= 0.1
+                    # 広告文除去済みなので、追加の広告文判定は不要
                     
-                    all_building_names.append(listing.listing_building_name)
+                    all_building_names.append(cleaned_building_name)
                     
-                    if listing.listing_building_name in name_weights:
-                        name_weights[listing.listing_building_name] += weight
+                    if cleaned_building_name in name_weights:
+                        name_weights[cleaned_building_name] += weight
                     else:
-                        name_weights[listing.listing_building_name] = weight
+                        name_weights[cleaned_building_name] = weight
         
         if all_building_names:
             # 建物名をグループ化（スペース正規化）
