@@ -534,9 +534,6 @@ async def execute_scheduled_scraping(schedule_id: int, db: Session):
         # 実際のスクレイピングタスクを作成
         task_id = str(uuid.uuid4())
         
-        # 実際のスクレイピングタスクを作成（共通関数を使用）
-        task_id = str(uuid.uuid4())
-        
         try:
             # 共通関数を使用してタスクを作成（エリアコード検証も含む）
             from ..api.admin.scraping import create_scraping_task
@@ -564,8 +561,8 @@ async def execute_scheduled_scraping(schedule_id: int, db: Session):
             db.commit()
             return
         
-        # 履歴にタスクIDを記録
-        history.task_id = int(task_id.replace('-', '')[:8], 16)  # UUIDから数値IDを生成
+        # 履歴にタスクIDを記録（UUIDをそのまま保存）
+        history.task_id = task_id
         
         # 並列スクレイピングを開始
         
@@ -697,7 +694,7 @@ async def execute_scheduled_scraping(schedule_id: int, db: Session):
             # 明日の同じ時刻に設定
             tomorrow = now + timedelta(days=1)
             schedule.next_run_at = tomorrow.replace(hour=schedule.daily_hour, minute=schedule.daily_minute, second=0, microsecond=0)
-        schedule.last_task_id = int(task_id.replace('-', '')[:8], 16)
+        schedule.last_task_id = task_id  # 最後に実行されたタスクIDを記録
         db.commit()
         
         logger.info(f"Schedule {schedule_id} started with task {task_id}")

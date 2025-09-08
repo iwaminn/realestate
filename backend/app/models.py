@@ -500,7 +500,7 @@ class ScrapingSchedule(Base):
     is_active = Column(Boolean, nullable=False, default=True)     # アクティブフラグ
     last_run_at = Column(DateTime)                                # 最後の実行日時
     next_run_at = Column(DateTime)                                # 次の実行予定日時
-    last_task_id = Column(Integer)                                # 最後に実行されたタスクのID
+    last_task_id = Column(String(50))                            # 最後に実行されたタスクのID（UUID）
     created_by = Column(String(100))                              # 作成者
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
@@ -519,7 +519,7 @@ class ScrapingScheduleHistory(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     schedule_id = Column(Integer, ForeignKey("scraping_schedules.id"), nullable=False)
-    task_id = Column(Integer)                                     # 実行されたタスクのID
+    task_id = Column(String(50))                                 # 実行されたタスクのID（UUID）
     started_at = Column(DateTime, nullable=False)                 # 実行開始日時
     completed_at = Column(DateTime)                               # 実行完了日時
     status = Column(String(50))                                   # 実行ステータス
