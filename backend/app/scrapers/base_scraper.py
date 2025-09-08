@@ -336,18 +336,77 @@ class BaseScraper(ABC):
             return None
         except requests.exceptions.ConnectionError as e:
             self.logger.error(f"接続エラー - サーバーに接続できません: {url} - {type(e).__name__}: {str(e)}")
+            # 接続エラー情報を保存
+            self._last_fetch_error = {
+                'type': 'connection_error',
+                'error_message': str(e),
+                'url': url
+            }
             return None
         except requests.exceptions.Timeout as e:
             self.logger.error(f"タイムアウトエラー - サーバーが応答しません: {url} - {type(e).__name__}: {str(e)}")
+            # タイムアウトエラー情報を保存
+            self._last_fetch_error = {
+                'type': 'timeout_error',
+                'error_message': str(e),
+                'url': url
+            }
             return None
         except requests.exceptions.RequestException as e:
             self.logger.error(f"リクエストエラー: {url} - {type(e).__name__}: {str(e)}")
+            # リクエストエラー情報を保存
+            self._last_fetch_error = {
+                'type': 'request_error',
+                'error_message': str(e),
+                'url': url
+            }
             return None
         except Exception as e:
             import traceback
             self.logger.error(f"予期しないエラーが発生しました: {url} - {type(e).__name__}: {str(e)}")
-            self.logger.debug(f"詳細なスタックトレース:\n{traceback.format_exc()}")
+            self.logger.debug(f"詳細なスタックトレース:
+{traceback.format_exc()}")
+            # 予期しないエラー情報を保存
+            self._last_fetch_error = {
+                'type': 'unexpected_error',
+                'error_message': str(e),
+                'exception_type': type(e).__name__,
+                'url': url
+            }
             return None
+
+    def _get_detailed_fetch_error_info(self, url: str) -> dict:
+        """fetch_pageの失敗時に詳細なエラー情報を取得する
+        
+        Args:
+            url: 取得に失敗したURL
+            
+        Returns:
+            エラー詳細情報の辞書
+        """
+        error_info = {
+            'url': url,
+            'site': self.source_site.value
+        }
+        
+        # 最後のfetch_pageエラー情報があれば追加
+        if hasattr(self, '_last_fetch_error') and self._last_fetch_error:
+            error_data = self._last_fetch_error
+            
+            if 'status_code' in error_data:
+                error_info['http_status'] = error_data['status_code']
+                
+            if error_data.get('type') == '404':
+                error_info['error_type'] = '404 Not Found'
+            elif error_data.get('type') == 'http_error':
+                error_info['error_type'] = f"HTTP {error_data['status_code']} Error"
+            else:
+                error_info['error_type'] = error_data.get('type', '不明なエラー')
+        else:
+            # エラー情報が保存されていない場合
+            error_info['error_type'] = 'ネットワークエラーまたは予期しないエラー'
+            
+        return error_info
     
     @abstractmethod
     def get_search_url(self, area_code: str, page: int = 1) -> str:
@@ -472,7 +531,9 @@ class BaseScraper(ABC):
                     self.logger.info(f"[DEBUG] fetch_page呼び出し後")
                     debug_log(f"[{self.source_site}] fetch_page呼び出し後")
                     if not soup:
-                        self.log_warning(f'ページ {page} の取得に失敗')
+                        # 詳細なエラー情報を含めた警告ログ
+                        error_details = self._get_detailed_fetch_error_info(url)
+                        self.log_warning(f'ページ {page} の取得に失敗', **error_details)
                         consecutive_empty_pages += 1
                         if consecutive_empty_pages >= max_consecutive_empty:
                             self.logger.info("連続してページ取得に失敗したため終了（最終ページを超えた可能性があります）")
