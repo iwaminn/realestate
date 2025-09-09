@@ -4034,11 +4034,12 @@ class BaseScraper(ABC):
         
         # 建物名と物件情報を多数決で更新
         if master_property:
+            # 動的インポートで循環インポート回避（一度だけインポート）
+            from ..utils.majority_vote_updater import MajorityVoteUpdater
+            majority_updater = MajorityVoteUpdater(self.session)
+            
             try:
                 # 物件情報を多数決で更新
-                # 動的インポートで循環インポート回避
-                from ..utils.majority_vote_updater import MajorityVoteUpdater
-                majority_updater = MajorityVoteUpdater(self.session)
                 majority_updater.update_master_property_by_majority(master_property)
                 self.safe_flush()  # 変更を確定
             except Exception as e:
@@ -4053,14 +4054,8 @@ class BaseScraper(ABC):
                     building = self.session.query(Building).get(master_property.building_id)
                     if building:
                         # 建物名を含む全属性を多数決で更新
-                        # 動的インポートで循環インポート回避
-                        from ..utils.majority_vote_updater import MajorityVoteUpdater
-                        majority_updater = MajorityVoteUpdater(self.session)
                         majority_updater.update_building_by_majority(building)
                         # 建物名の個別更新も実行（より最新の重み付けロジックを使用）
-                        # 動的インポートで循環インポート回避
-                        from ..utils.majority_vote_updater import MajorityVoteUpdater
-                        majority_updater = MajorityVoteUpdater(self.session)
                         majority_updater.update_building_name_by_majority(master_property.building_id)
                     self.safe_flush()  # 変更を確定
                 except Exception as e:
@@ -4070,9 +4065,6 @@ class BaseScraper(ABC):
                 
                 # 物件の表示用建物名を多数決で更新
                 try:
-                    # 動的インポートで循環インポート回避
-                    from ..utils.majority_vote_updater import MajorityVoteUpdater
-                    majority_updater = MajorityVoteUpdater(self.session)
                     majority_updater.update_property_building_name_by_majority(master_property.id)
                     self.safe_flush()  # 変更を確定
                 except Exception as e:
