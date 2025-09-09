@@ -5,6 +5,7 @@
 from fastapi import APIRouter, HTTPException, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, and_, text
+from sqlalchemy.exc import OperationalError
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 from datetime import datetime
@@ -22,6 +23,9 @@ from ...utils.majority_vote_updater import MajorityVoteUpdater
 from ...utils.building_listing_name_manager import BuildingListingNameManager
 from ...utils.property_utils import update_earliest_listing_date
 from ...scrapers.data_normalizer import normalize_layout, normalize_direction
+import logging
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin-duplicates"])
 
@@ -1775,8 +1779,19 @@ async def merge_buildings(
     
     # ソートされた順序で建物をロック（SELECT FOR UPDATE）
     # これにより、常に同じ順序でロックを取得し、デッドロックを防ぐ
-    for building_id in all_building_ids:
-        db.query(Building).filter(Building.id == building_id).with_for_update().first()
+    try:
+        for building_id in all_building_ids:
+            db.query(Building).filter(Building.id == building_id).with_for_update().first()
+    except OperationalError as e:
+        # ロックタイムアウトの場合はロールバックしてエラーメッセージを返す
+        if "lock timeout" in str(e).lower():
+            db.rollback()
+            logger.warning(f"建物統合時にロックタイムアウト: {all_building_ids}")
+            raise HTTPException(
+                status_code=503,
+                detail="データベースがビジー状態です。スクレイピングが完了してから再度お試しください。"
+            )
+        raise
     
     # 複数の建物を統合
     # デッドロックを防ぐため、リトライロジックを追加
@@ -2095,7 +2110,6 @@ async def merge_buildings(
             
             # デッドロックの場合はリトライ
             import time
-            from sqlalchemy.exc import OperationalError
             
             error_message = str(e)
             
