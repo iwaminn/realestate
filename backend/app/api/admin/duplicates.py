@@ -181,7 +181,7 @@ async def get_duplicate_buildings(
         
         # 住所、総階数、総戸数でグループ化（築年は後で個別チェック）
         base_groups = db.query(
-            func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
+            func.regexp_replace(Building.normalized_address, r'-.*', '', 'g').label('address_prefix'),
             Building.total_floors,
             Building.total_units,
             func.array_agg(Building.id).label('building_ids'),
@@ -194,7 +194,7 @@ async def get_duplicate_buildings(
             Building.total_floors.isnot(None),
             Building.total_units.isnot(None)  # 総戸数が存在する建物のみ
         ).group_by(
-            func.substring(Building.normalized_address, 1, 10),
+            func.regexp_replace(Building.normalized_address, r'-.*', '', 'g'),
             Building.total_floors,
             Building.total_units
         ).having(
@@ -204,7 +204,7 @@ async def get_duplicate_buildings(
         # パターン2: 住所と総階数が一致し、建物名が部分一致
         # （総戸数はNULLまたは異なる）
         address_floor_groups = db.query(
-            func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
+            func.regexp_replace(Building.normalized_address, r'-.*', '', 'g').label('address_prefix'),
             Building.total_floors,
             func.array_agg(Building.id).label('building_ids'),
             func.array_agg(Building.canonical_name).label('canonical_names')
@@ -215,7 +215,7 @@ async def get_duplicate_buildings(
             Building.total_floors.isnot(None),
             Building.canonical_name.isnot(None)
         ).group_by(
-            func.substring(Building.normalized_address, 1, 10),
+            func.regexp_replace(Building.normalized_address, r'-.*', '', 'g'),
             Building.total_floors
         ).having(
             func.count(Building.id) > 1
@@ -224,7 +224,7 @@ async def get_duplicate_buildings(
         # パターン3: 住所と総戸数が一致し、建物名が部分一致
         # （総階数はNULLまたは異なる）
         address_units_groups = db.query(
-            func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
+            func.regexp_replace(Building.normalized_address, r'-.*', '', 'g').label('address_prefix'),
             Building.total_units,
             func.array_agg(Building.id).label('building_ids'),
             func.array_agg(Building.canonical_name).label('canonical_names')
@@ -235,7 +235,7 @@ async def get_duplicate_buildings(
             Building.total_units.isnot(None),
             Building.canonical_name.isnot(None)
         ).group_by(
-            func.substring(Building.normalized_address, 1, 10),
+            func.regexp_replace(Building.normalized_address, r'-.*', '', 'g'),
             Building.total_units
         ).having(
             func.count(Building.id) > 1
@@ -244,7 +244,7 @@ async def get_duplicate_buildings(
         # パターン4: 住所と築年が一致し、建物名が部分一致
         # （他はNULLまたは異なる）
         address_year_groups = db.query(
-            func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
+            func.regexp_replace(Building.normalized_address, r'-.*', '', 'g').label('address_prefix'),
             Building.built_year,
             func.array_agg(Building.id).label('building_ids'),
             func.array_agg(Building.canonical_name).label('canonical_names')
@@ -255,7 +255,7 @@ async def get_duplicate_buildings(
             Building.built_year.isnot(None),
             Building.canonical_name.isnot(None)
         ).group_by(
-            func.substring(Building.normalized_address, 1, 10),
+            func.regexp_replace(Building.normalized_address, r'-.*', '', 'g'),
             Building.built_year
         ).having(
             func.count(Building.id) > 1
@@ -369,7 +369,7 @@ async def get_duplicate_buildings(
         # パターン5: 特殊ケース - 階数/戸数が異なるが同じ建物の可能性
         # 住所と築年が一致し、建物名の共通部分が長い場合
         special_case_groups = db.query(
-            func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
+            func.regexp_replace(Building.normalized_address, r'-.*', '', 'g').label('address_prefix'),
             Building.built_year,
             func.array_agg(Building.id).label('building_ids'),
             func.array_agg(Building.canonical_name).label('canonical_names'),
@@ -381,7 +381,7 @@ async def get_duplicate_buildings(
             Building.built_year.isnot(None),
             Building.canonical_name.isnot(None)
         ).group_by(
-            func.substring(Building.normalized_address, 1, 10),
+            func.regexp_replace(Building.normalized_address, r'-.*', '', 'g'),
             Building.built_year
         ).having(
             func.count(Building.id) > 1
@@ -452,7 +452,7 @@ async def get_duplicate_buildings(
         # 追加: 総階数が±1階の誤差を許容するパターンも検索
         if len(buildings_with_count) < limit * 2:
             flexible_groups = db.query(
-                func.substring(Building.normalized_address, 1, 10).label('address_prefix'),
+                func.regexp_replace(Building.normalized_address, r'-.*', '', 'g').label('address_prefix'),
                 Building.built_year,
                 Building.total_units,
                 func.count(Building.id).label('group_count')
@@ -463,7 +463,7 @@ async def get_duplicate_buildings(
                 Building.built_year.isnot(None),
                 Building.total_units.isnot(None)
             ).group_by(
-                func.substring(Building.normalized_address, 1, 10),
+                func.regexp_replace(Building.normalized_address, r'-.*', '', 'g'),
                 Building.built_year,
                 Building.total_units
             ).having(
