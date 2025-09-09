@@ -4030,6 +4030,7 @@ class BaseScraper(ABC):
                 self._listing_name_manager.update_from_listing(listing)
             except Exception as e:
                 self.logger.warning(f"BuildingListingNameの更新に失敗しました: {e}")
+                self._handle_transaction_error(e, "BuildingListingName更新エラー")
         
         # 建物名と物件情報を多数決で更新
         if master_property:
@@ -4043,6 +4044,7 @@ class BaseScraper(ABC):
             except Exception as e:
                 # エラーが発生しても処理は続行（ログに記録）
                 self.logger.warning(f"物件情報の更新に失敗しました (property_id={master_property.id}): {e}")
+                self._handle_transaction_error(e, "多数決更新エラー")
                 
             # 建物名と建物情報を多数決で更新
             if master_property.building_id:
@@ -4064,6 +4066,7 @@ class BaseScraper(ABC):
                 except Exception as e:
                     # エラーが発生しても処理は続行（ログに記録）
                     self.logger.warning(f"建物情報の更新に失敗しました (building_id={master_property.building_id}): {e}")
+                    self._handle_transaction_error(e, "建物情報更新エラー")
                 
                 # 物件の表示用建物名を多数決で更新
                 try:
@@ -4075,6 +4078,7 @@ class BaseScraper(ABC):
                 except Exception as e:
                     # エラーが発生しても処理は続行（ログに記録）
                     self.logger.warning(f"物件建物名の更新に失敗しました (property_id={master_property.id}): {e}")
+                    self._handle_transaction_error(e, "物件建物名更新エラー")
         
         # update_detailsがローカル変数でない場合のために初期化
         # update_detailsが定義されていない場合の処理
@@ -4135,6 +4139,32 @@ class BaseScraper(ABC):
             print(f"[DEBUG-SET-RESUME-AFTER] phase={self._scraping_stats['phase']}, page={self._current_page}, collected={len(self._collected_properties)}, processed={self._processed_count}")
     
     
+    def _handle_transaction_error(self, error: Exception, context: str = "") -> None:
+        """
+        トランザクションエラーを処理し、必要に応じてセッションをリセット
+        
+        Args:
+            error: 発生したエラー
+            context: エラーが発生したコンテキスト（ログ用）
+        """
+        error_msg = str(error)
+        
+        # InFailedSqlTransactionエラーの場合はセッションを完全にリセット
+        if "InFailedSqlTransaction" in error_msg or "current transaction is aborted" in error_msg:
+            try:
+                self.session.rollback()
+                self.session.close()
+                from ..database import get_db_for_scraping
+                self.session = get_db_for_scraping()
+                # マネージャーも再初期化
+                self._listing_name_manager = None
+                self.logger.info(f"{context}後のセッションを完全にリセットしました" if context else "セッションを完全にリセットしました")
+            except Exception as reset_error:
+                self.logger.error(f"セッションリセットエラー: {reset_error}")
+        else:
+            # その他のエラーの場合は通常の回復処理
+            self.ensure_session_active()
+    
     def validate_html_structure(self, soup, required_selectors: dict) -> bool:
         """HTML構造の検証"""
         for name, selector in required_selectors.items():
@@ -4172,23 +4202,8 @@ class BaseScraper(ABC):
                     return False
             return False
         except Exception as e:
-            error_msg = str(e)
             self.logger.error(f"404エラー履歴チェック中にエラー: {e}")
-            
-            # InFailedSqlTransactionエラーの場合はセッションを完全にリセット
-            if "InFailedSqlTransaction" in error_msg or "current transaction is aborted" in error_msg:
-                try:
-                    self.session.rollback()
-                    self.session.close()
-                    from ..database import get_db_for_scraping
-                    self.session = get_db_for_scraping()
-                    self.logger.info("404エラーチェック後のセッションを完全にリセットしました")
-                except Exception as reset_error:
-                    self.logger.error(f"セッションリセットエラー: {reset_error}")
-            else:
-                # その他のエラーの場合は通常の回復処理
-                self.ensure_session_active()
-            
+            self._handle_transaction_error(e, "404エラーチェック")
             # エラーが発生した場合はスキップしない（処理を続行）
             return False
     
@@ -4225,23 +4240,8 @@ class BaseScraper(ABC):
                     return False
             return False
         except Exception as e:
-            error_msg = str(e)
             self.logger.debug(f"検証エラー履歴チェック中にエラー: {e}")
-            
-            # InFailedSqlTransactionエラーの場合はセッションを完全にリセット
-            if "InFailedSqlTransaction" in error_msg or "current transaction is aborted" in error_msg:
-                try:
-                    self.session.rollback()
-                    self.session.close()
-                    from ..database import get_db_for_scraping
-                    self.session = get_db_for_scraping()
-                    self.logger.info("検証エラーチェック後のセッションを完全にリセットしました")
-                except Exception as reset_error:
-                    self.logger.error(f"セッションリセットエラー: {reset_error}")
-            else:
-                # その他のエラーの場合は通常の回復処理
-                self.ensure_session_active()
-            
+            self._handle_transaction_error(e, "検証エラーチェック")
             # エラーが発生した場合はスキップしない（処理を続行）
             return False
     
@@ -4284,20 +4284,8 @@ class BaseScraper(ABC):
                     )
             return False
         except Exception as e:
-            error_msg = str(e)
             self.logger.debug(f"価格不一致履歴チェック中にエラー: {e}")
-            
-            # InFailedSqlTransactionエラーの場合はセッションを完全にリセット
-            if "InFailedSqlTransaction" in error_msg or "current transaction is aborted" in error_msg:
-                try:
-                    self.session.rollback()
-                    self.session.close()
-                    from ..database import get_db_for_scraping
-                    self.session = get_db_for_scraping()
-                    self.logger.info("価格不一致チェック後のセッションを完全にリセットしました")
-                except Exception as reset_error:
-                    self.logger.error(f"セッションリセットエラー: {reset_error}")
-            
+            self._handle_transaction_error(e, "価格不一致チェック")
             # エラーが発生した場合はスキップしない（処理を続行）
             return False
     
