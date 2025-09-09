@@ -78,6 +78,7 @@ class ParallelScrapingManagerDB:
         db = SessionLocal()
         try:
             # タスクを作成
+            now = datetime.now()
             task = ScrapingTask(
                 task_id=task_id,
                 status='running',
@@ -85,8 +86,9 @@ class ParallelScrapingManagerDB:
                 areas=areas,
                 max_properties=max_properties,
                 force_detail_fetch=force_detail_fetch,
-                created_at=datetime.now(),
-                started_at=datetime.now(),
+                created_at=now,
+                started_at=now,
+                last_progress_at=now,  # 最終進捗更新時刻を初期化
                 logs=[]  # ログを初期化
             )
             db.add(task)
@@ -159,6 +161,8 @@ class ParallelScrapingManagerDB:
                     task.detail_skipped = sum(p.detail_skipped for p in all_progress)
                     task.price_missing = sum(p.price_missing for p in all_progress)
                     task.building_info_missing = sum(p.building_info_missing for p in all_progress)
+                    # 最終進捗更新時刻を更新
+                    task.last_progress_at = datetime.now()
                 
                 db.commit()
                 logger.debug(f"進捗更新: {task_id}/{scraper_key}/{area}")

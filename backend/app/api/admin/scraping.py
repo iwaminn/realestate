@@ -179,6 +179,7 @@ def create_scraping_task(
     # データベースにタスクを作成
     from ...models_scraping_task import ScrapingTask
     
+    now = datetime.now()
     db_task = ScrapingTask(
         task_id=task_id,
         status='pending',
@@ -186,7 +187,8 @@ def create_scraping_task(
         areas=area_codes,
         max_properties=max_properties,
         force_detail_fetch=force_detail_fetch,
-        started_at=datetime.now()
+        started_at=now,
+        last_progress_at=now  # 最終進捗更新時刻を初期化
     )
     
     if db:
@@ -247,11 +249,14 @@ class ScrapingTaskStatus(BaseModel):
     max_properties: int
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    last_progress_at: Optional[datetime] = None  # 最終進捗更新時刻
     progress: Dict[str, Dict[str, Any]]  # 各スクレイパー・エリアの進行状況
     errors: List[str] = []
     logs: Optional[List[Dict[str, Any]]] = []  # 物件更新履歴
     error_logs: Optional[List[Dict[str, Any]]] = []  # エラーログ
     warning_logs: Optional[List[Dict[str, Any]]] = []  # 警告ログ
+    statistics: Optional[Dict[str, Any]] = {}  # 統計情報
+    force_detail_fetch: Optional[bool] = False  # 詳細強制取得フラグ
 
 
 # ファイル管理関数は削除（データベース管理に移行）
@@ -305,6 +310,10 @@ def update_task_progress_in_db(task_id: str, progress_key: str, progress_data: d
             
             # JSONフィールドの変更を明示的にマーク
             flag_modified(db_task, 'progress_detail')
+            
+            # last_progress_atを更新
+            db_task.last_progress_at = datetime.now()
+            
             db.commit()
     finally:
         db.close()
@@ -1799,6 +1808,7 @@ def get_all_scraping_tasks(
             "force_detail_fetch": db_task.force_detail_fetch,
             "started_at": db_task.started_at,
             "completed_at": db_task.completed_at,
+            "last_progress_at": db_task.last_progress_at,  # 最終進捗更新時刻を追加
             "progress": db_task.progress_detail if db_task.progress_detail else {},
             "errors": [],
             # データベースから取得したログを使用
@@ -2146,9 +2156,11 @@ def force_cleanup_tasks(db: Session = Depends(get_db)):
     running_tasks = db.query(ScrapingTask).filter(ScrapingTask.status == "running").all()
     
     for task in running_tasks:
-        # 最終更新から30分以上経過している場合
-        if task.started_at:
-            if (datetime.now() - task.started_at).total_seconds() > 1800:
+        # 最終進捗更新から30分以上経過している場合
+        # last_progress_atがある場合はそれを、ない場合はstarted_atを使用
+        last_update = task.last_progress_at or task.started_at
+        if last_update:
+            if (datetime.now() - last_update).total_seconds() > 1800:
                 task.status = "stalled"
                 cleaned_count += 1
     

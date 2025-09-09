@@ -114,7 +114,9 @@ class BaseScraper(ABC):
         # 建物名検証モード（デフォルト: STRICT）
         self.building_name_verification_mode = BuildingNameVerificationMode.STRICT
         
-        self.session = SessionLocal()
+        # get_db_for_scrapingを使用して、クリーンなセッションを取得
+        from ..database import get_db_for_scraping
+        self.session = get_db_for_scraping()
         self.http_session = requests.Session()
         self.http_session.headers.update({
             'User-Agent': self.DEFAULT_USER_AGENT
@@ -364,8 +366,7 @@ class BaseScraper(ABC):
         except Exception as e:
             import traceback
             self.logger.error(f"予期しないエラーが発生しました: {url} - {type(e).__name__}: {str(e)}")
-            self.logger.debug(f"詳細なスタックトレース:
-{traceback.format_exc()}")
+            self.logger.debug(f"詳細なスタックトレース:\n{traceback.format_exc()}")
             # 予期しないエラー情報を保存
             self._last_fetch_error = {
                 'type': 'unexpected_error',
@@ -811,6 +812,7 @@ class BaseScraper(ABC):
                         raise Exception(error_msg)
                     
                     # 保存結果と更新タイプに基づく統計更新（詳細取得の有無に関わらず）
+                    # 注意: この時点ではまだコミットされていない可能性があるため、暫定的なカウント
                     if property_data.get('property_saved', False) and 'update_type' in property_data:
                         update_type = property_data['update_type']
                         self.logger.info(f"統計更新: URL={property_data.get('url', '不明')}, update_type={update_type}, force_detail_fetch={self.force_detail_fetch}")
@@ -929,11 +931,34 @@ class BaseScraper(ABC):
                     # エラーが発生しても処理を続行
         
         # 最終コミット（トランザクションがアクティブな場合のみ）
+        final_commit_success = True
         try:
             if self.session.in_transaction():
                 self.session.commit()
+                self.logger.info(f"最終コミット成功: {total_properties}件の処理完了")
         except Exception as e:
-            self.logger.warning(f"最終コミットエラー: {e}")
+            final_commit_success = False
+            self.logger.error(f"最終コミットエラー: {e}")
+            # エラーの詳細をログに記録
+            import traceback
+            self.logger.error(f"最終コミットエラーのスタックトレース:\n{traceback.format_exc()}")
+            
+            # ロールバックを試みる
+            try:
+                self.session.rollback()
+            except:
+                pass
+            
+            # 最終コミットが失敗した場合、実際に保存された件数を再計算
+            # （10件ごとの定期コミットで保存された分のみ）
+            actually_saved = (total_properties // 10) * 10
+            self.logger.error(f"最終コミット失敗により、{total_properties - actually_saved}件が保存されませんでした")
+            
+            # 統計を修正（過剰にカウントされた分を減算）
+            unsaved_count = total_properties - actually_saved
+            if self._scraping_stats.get('new_listings', 0) >= unsaved_count:
+                self._scraping_stats['new_listings'] -= unsaved_count
+                self.logger.info(f"統計を修正: new_listings を {unsaved_count} 件減算")
         
         # properties_processedとtotal_propertiesの一致を確認
         if self._scraping_stats['properties_processed'] != total_properties:
@@ -2196,17 +2221,40 @@ class BaseScraper(ABC):
             # ダミークエリでセッション状態を確認
             self.session.execute(text("SELECT 1"))
         except Exception as e:
-            self.logger.warning(f"セッションエラーを検出、回復処理を実行: {type(e).__name__}")
-            try:
-                self.session.rollback()
-            except Exception:
-                pass  # 既にロールバック済みの場合があるため無視
+            error_msg = str(e)
+            self.logger.warning(f"セッションエラーを検出、回復処理を実行: {type(e).__name__} - {error_msg}")
             
-            # 新しいトランザクションを開始
-            try:
-                self.session.begin()
-            except Exception:
-                pass  # 既にトランザクション中の場合があるため無視
+            # InFailedSqlTransactionエラーの場合は完全にセッションをリセット
+            if ("InFailedSqlTransaction" in error_msg or 
+                "current transaction is aborted" in error_msg or
+                "rolled back due to a previous exception" in error_msg):
+                try:
+                    # ロールバックを試みる
+                    self.session.rollback()
+                    self.logger.info("トランザクションをロールバックしました")
+                except Exception as rollback_error:
+                    self.logger.debug(f"ロールバック時のエラー（無視）: {rollback_error}")
+                
+                # セッションを完全にリセット
+                try:
+                    self.session.close()
+                    from ..database import get_db_for_scraping
+                    self.session = get_db_for_scraping()
+                    self.logger.info("セッションを完全にリセットしました")
+                except Exception as reset_error:
+                    self.logger.error(f"セッションリセットエラー: {reset_error}")
+            else:
+                # その他のエラーの場合は単純なロールバック
+                try:
+                    self.session.rollback()
+                except Exception:
+                    pass  # 既にロールバック済みの場合があるため無視
+                
+                # 新しいトランザクションを開始
+                try:
+                    self.session.begin()
+                except Exception:
+                    pass  # 既にトランザクション中の場合があるため無視
     
     def _verify_building_attributes(self, building: Building, total_floors: int = None, 
                                  built_year: int = None, built_month: int = None,
@@ -4854,20 +4902,42 @@ class BaseScraper(ABC):
             property_data['update_type'] = update_type
             property_data['update_details'] = update_details
             
-            # 保存成功フラグを設定
-            property_data['property_saved'] = True
-            
-            # サブクラス固有の処理のためのフック
+            # サブクラス固有の処理のためのフック（コミット前に実行）
             self._post_listing_creation_hook(listing, property_data)
             
-            # 定期的にコミット（並列実行時はスキップ）
-            if hasattr(self, '_property_count') and self._property_count % 10 == 0:
-                # autoflushが有効な場合のみコミット
-                if self.session.autoflush:
-                    try:
-                        self.session.commit()
-                    except Exception as e:
-                        self.logger.warning(f"定期コミットエラー: {e}")
+            # 毎回コミット（トランザクションエラーを防ぐため）
+            # 並列実行時（autoflush=False）でも必ずコミットする
+            # これにより、エラーが発生しても他の物件は保存される
+            try:
+                # トランザクションがアクティブな場合のみコミット
+                if self.session.in_transaction():
+                    self.session.commit()
+                    self.logger.debug(f"コミット成功: {property_data.get('url', 'unknown')}")
+                else:
+                    # トランザクションがない場合は新しく開始
+                    self.session.begin()
+                    self.session.commit()
+                    self.logger.debug(f"新規トランザクションでコミット成功: {property_data.get('url', 'unknown')}")
+            except Exception as e:
+                self.logger.error(f"コミットエラー: {e}")
+                # コミット失敗時は完全にセッションをリセット
+                try:
+                    self.session.rollback()
+                    self.session.close()
+                    # 新しいセッションを作成
+                    from ..database import get_db_for_scraping
+                    self.session = get_db_for_scraping()
+                    self.logger.info("セッションを完全にリセットしました")
+                except Exception as reset_error:
+                    self.logger.error(f"セッションリセットエラー: {reset_error}")
+                # 保存失敗として扱う
+                property_data['property_saved'] = False
+                property_data['commit_failed'] = True
+                return False
+            
+            # 保存成功フラグを設定（コミット成功または未実行の場合のみ）
+            # 注：定期コミットを行わない場合も、後でバッチコミットされるため仮にTrueとする
+            property_data['property_saved'] = True
             
             return True
             
@@ -4895,13 +4965,24 @@ class BaseScraper(ABC):
                 import traceback
                 traceback.print_exc()
             else:
-                # トランザクションエラーの場合はロールバックして新しいトランザクションを開始
+                # トランザクションエラーの場合は完全にセッションをリセット
+                self.logger.warning(f"トランザクションエラー検出: {error_msg[:100]}")
                 try:
+                    # ロールバック
                     self.session.rollback()
-                    self.logger.info("save_property_common: トランザクションエラーのためロールバックし、新しいトランザクションを開始")
+                    # セッションをクローズして再作成
+                    self.session.close()
+                    from ..database import get_db_for_scraping
+                    self.session = get_db_for_scraping()
+                    self.logger.info("save_property_common: セッションを完全にリセットしました")
                 except Exception as rollback_error:
-                    self.logger.warning(f"ロールバック/再開エラー: {rollback_error}")
-                    pass
+                    self.logger.error(f"セッションリセットエラー: {rollback_error}")
+                    # 最後の手段として新しいセッションを作成
+                    try:
+                        from ..database import get_db_for_scraping
+                        self.session = get_db_for_scraping()
+                    except:
+                        pass
             
             # エラーログを記録
             url = property_data.get('url', '不明')
@@ -5638,11 +5719,29 @@ class BaseScraper(ABC):
         pass
 
     def __del__(self):
-        """デストラクタ"""
+        """
+        デストラクタ
+        
+        重要: セッションを確実にクリーンアップして、
+        トランザクション状態の汚染を防ぐ
+        """
         if hasattr(self, 'session'):
-            self.session.close()
+            try:
+                # 未コミットのトランザクションをロールバック
+                self.session.rollback()
+            except Exception:
+                pass  # エラーは無視（既にクローズされている可能性がある）
+            finally:
+                try:
+                    self.session.close()
+                except Exception:
+                    pass
+        
         if hasattr(self, 'http_session'):
-            self.http_session.close()
+            try:
+                self.http_session.close()
+            except Exception:
+                pass
 
     def clean_address(self, address: str) -> str:
         """

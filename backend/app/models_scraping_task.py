@@ -25,6 +25,7 @@ class ScrapingTask(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.now)
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
+    last_progress_at = Column(DateTime, nullable=True)  # 最終進捗更新時刻
     
     # 統計情報
     total_processed = Column(Integer, nullable=False, default=0)
@@ -62,6 +63,7 @@ class ScrapingTask(Base):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'started_at': self.started_at.isoformat() if self.started_at else None,
             'completed_at': self.completed_at.isoformat() if self.completed_at else None,
+            'last_progress_at': self.last_progress_at.isoformat() if self.last_progress_at else None,
             'total_processed': self.total_processed,
             'total_new': self.total_new,
             'total_updated': self.total_updated,
