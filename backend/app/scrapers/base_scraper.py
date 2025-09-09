@@ -225,7 +225,7 @@ class BaseScraper(ABC):
         except Exception as e:
             self.logger.error(f"データベースからタスク状態を取得中にエラー: {e}")
             # トランザクションエラーの場合はセッションを回復
-            self._recover_session_if_needed()
+            self.ensure_session_active()
             # エラー時は安全のため停止しない
             return {"is_paused": False, "is_cancelled": False}
     
@@ -4174,7 +4174,7 @@ class BaseScraper(ABC):
         except Exception as e:
             self.logger.error(f"404エラー履歴チェック中にエラー: {e}")
             # トランザクションエラーの場合はセッションを回復
-            self._recover_session_if_needed()
+            self.ensure_session_active()
             return False
     
     def _should_skip_url_due_to_validation_error(self, url: str) -> bool:
@@ -4212,7 +4212,7 @@ class BaseScraper(ABC):
         except Exception as e:
             self.logger.debug(f"検証エラー履歴チェック中にエラー: {e}")
             # トランザクションエラーの場合はセッションを回復
-            self._recover_session_if_needed()
+            self.ensure_session_active()
             return False
     
     def _should_skip_due_to_price_mismatch(self, site_property_id: str) -> bool:
