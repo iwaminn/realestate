@@ -118,6 +118,7 @@ class MasterProperty(Base):
     # リレーションシップ
     building = relationship("Building", back_populates="properties")
     listings = relationship("PropertyListing", back_populates="master_property")
+    bookmarks = relationship("PropertyBookmark", back_populates="master_property")
     
     __table_args__ = (
         Index('idx_master_properties_building_id', 'building_id'),
@@ -533,6 +534,112 @@ class ScrapingScheduleHistory(Base):
         Index('idx_schedule_history_schedule', 'schedule_id'),
         Index('idx_schedule_history_started', 'started_at'),
         Index('idx_schedule_history_status', 'status'),
+    )
+
+
+class PropertyBookmark(Base):
+    """物件ブックマーク"""
+    __tablename__ = "property_bookmarks"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    master_property_id = Column(Integer, ForeignKey("master_properties.id"), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)  # session_idからuser_idに変更
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    
+    # リレーション
+    master_property = relationship("MasterProperty", back_populates="bookmarks")
+    user = relationship("User", back_populates="bookmarks")
+    
+    # インデックス
+    __table_args__ = (
+        Index('idx_bookmarks_user_property', 'user_id', 'master_property_id'),
+        Index('idx_bookmarks_user', 'user_id'),
+        Index('idx_bookmarks_property', 'master_property_id'),
+        # 同一ユーザーが同じ物件を重複ブックマークすることを防ぐ
+        {'postgresql_exclude': ('user_id', 'master_property_id')} if 'postgresql' in str(Column) else None
+    )
+
+class User(Base):
+    """ユーザーテーブル"""
+    __tablename__ = "users"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    hashed_password = Column(String(255), nullable=True)  # Googleログインの場合は不要
+    is_active = Column(Boolean, default=True, nullable=False)
+    google_id = Column(String(255), unique=True, nullable=True, index=True)  # Google OAuth用
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    last_login_at = Column(DateTime)
+    
+    # リレーション
+    bookmarks = relationship("PropertyBookmark", back_populates="user")
+    
+    # インデックス
+    __table_args__ = (
+        Index('idx_users_email', 'email'),
+        Index('idx_users_active', 'is_active'),
+    )
+
+
+class UserSession(Base):
+    """ユーザーセッション管理（ログアウト管理用）"""
+    __tablename__ = "user_sessions"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    jti = Column(String(36), unique=True, nullable=False)  # JWT ID
+    created_at = Column(DateTime, server_default=func.now())
+    expires_at = Column(DateTime, nullable=False)
+    is_revoked = Column(Boolean, default=False, nullable=False)
+    
+    # リレーション
+    user = relationship("User")
+    
+    # インデックス
+    __table_args__ = (
+        Index('idx_user_sessions_user', 'user_id'),
+        Index('idx_user_sessions_jti', 'jti'),
+        Index('idx_user_sessions_expires', 'expires_at'),
+    )
+
+class EmailVerificationToken(Base):
+    """メールアドレス確認トークンテーブル"""
+    __tablename__ = "email_verification_tokens"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    token = Column(String(255), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)
+    used_at = Column(DateTime)  # 使用済みの場合にセット
+    created_at = Column(DateTime, server_default=func.now())
+    
+    # リレーション
+    user = relationship("User")
+    
+    # インデックス
+    __table_args__ = (
+        Index('idx_verification_tokens_user', 'user_id'),
+        Index('idx_verification_tokens_expires', 'expires_at'),
+    )
+
+class PendingUser(Base):
+    """仮登録ユーザーテーブル（メール確認前）"""
+    __tablename__ = "pending_users"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    hashed_password = Column(String(255), nullable=False)
+    verification_token = Column(String(255), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)  # 仮登録の有効期限
+    created_at = Column(DateTime, server_default=func.now())
+    
+    # インデックス
+    __table_args__ = (
+        Index('idx_pending_users_email', 'email'),
+        Index('idx_pending_users_token', 'verification_token'),
+        Index('idx_pending_users_expires', 'expires_at'),
     )
 
 

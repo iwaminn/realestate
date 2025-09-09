@@ -1,51 +1,33 @@
 """
-管理画面用の認証モジュール
+管理者認証モジュール
 """
-import os
-import secrets
-from fastapi import Depends, HTTPException, status
+
+from fastapi import HTTPException, Security, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from typing import Optional
+import secrets
+import os
 
-# ベーシック認証の設定
-security = HTTPBasic(auto_error=False)  # auto_error=Falseでダイアログを抑制
+security = HTTPBasic()
 
-# 環境変数から認証情報を取得
-ADMIN_USERNAME = os.getenv("ADMIN_USERNAME", "admin")
-ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin_password")
-
-# 開発環境での認証バイパス設定
-DISABLE_AUTH = os.getenv("DISABLE_ADMIN_AUTH", "false").lower() == "true"
-
-def verify_admin_credentials(credentials: Optional[HTTPBasicCredentials] = Depends(security)):
-    """管理者認証を検証する"""
-    # 開発環境で認証無効化が設定されている場合はバイパス
-    if DISABLE_AUTH:
-        return "developer"  # 開発者ユーザーとして認証
+def verify_admin_credentials(credentials: HTTPBasicCredentials = Security(security)):
+    """管理者認証を検証"""
+    # 環境変数から管理者認証情報を取得
+    admin_username = os.getenv("ADMIN_USERNAME", "admin")
+    admin_password = os.getenv("ADMIN_PASSWORD", "admin")
     
-    # 通常の認証処理
-    if not credentials:
+    # ユーザー名の検証
+    correct_username = secrets.compare_digest(credentials.username, admin_username)
+    # パスワードの検証
+    correct_password = secrets.compare_digest(credentials.password, admin_password)
+    
+    if not (correct_username and correct_password):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Credentials required",
-            headers={"WWW-Authenticate": "Basic"},
-        )
-    
-    # タイミング攻撃を防ぐため、secrets.compare_digestを使用
-    is_username_correct = secrets.compare_digest(
-        credentials.username.encode("utf8"),
-        ADMIN_USERNAME.encode("utf8")
-    )
-    is_password_correct = secrets.compare_digest(
-        credentials.password.encode("utf8"),
-        ADMIN_PASSWORD.encode("utf8")
-    )
-    
-    if not (is_username_correct and is_password_correct):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect username or password",
+            detail="Invalid authentication credentials",
             headers={"WWW-Authenticate": "Basic"},
         )
     
     return credentials.username
+
+# エイリアス
+require_admin = verify_admin_credentials
