@@ -4,6 +4,7 @@ import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { Container } from '@mui/material';
 import { AuthProvider } from './contexts/AuthContext';
+import { UserAuthProvider } from './contexts/UserAuthContext';
 import Header from './components/Header';
 import { APP_CONFIG } from './config/app';
 import AreaSelectionPage from './pages/AreaSelectionPage';
@@ -14,6 +15,9 @@ import Admin from './pages/Admin';
 import AdminLogin from './components/AdminLogin';
 import PropertyUpdatesPage from './pages/PropertyUpdatesPage';
 import RedirectToUpdates from './components/RedirectToUpdates';
+import { BookmarksPage } from './pages/BookmarksPage';
+import { VerifyEmailPage } from './pages/VerifyEmailPage';
+import { AuthCallbackPage } from './pages/AuthCallbackPage';
 import './utils/axiosConfig'; // Axiosの設定を読み込む
 
 const theme = createTheme({
@@ -51,23 +55,28 @@ function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <Router>
-          <Header />
-          <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-            <Routes>
-              <Route path="/" element={<AreaSelectionPage />} />
-              <Route path="/properties" element={<PropertyListPage />} />
-              <Route path="/properties/:id" element={<PropertyDetailPage />} />
-              <Route path="/buildings/:buildingId/properties" element={<BuildingPropertiesPage />} />
-              <Route path="/updates" element={<PropertyUpdatesPage />} />
-              {/* 旧URLは新しいURLにリダイレクト */}
-              <Route path="/price-changes" element={<RedirectToUpdates defaultTab={0} />} />
-              <Route path="/new-listings" element={<RedirectToUpdates defaultTab={1} />} />
-              <Route path="/admin" element={<Admin />} />
-              <Route path="/admin/login" element={<AdminLogin />} />
-            </Routes>
-          </Container>
-        </Router>
+        <UserAuthProvider>
+          <Router>
+            <Header />
+            <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+              <Routes>
+                <Route path="/" element={<AreaSelectionPage />} />
+                <Route path="/properties" element={<PropertyListPage />} />
+                <Route path="/properties/:id" element={<PropertyDetailPage />} />
+                <Route path="/buildings/:buildingId/properties" element={<BuildingPropertiesPage />} />
+                <Route path="/bookmarks" element={<BookmarksPage />} />
+                <Route path="/updates" element={<PropertyUpdatesPage />} />
+                <Route path="/verify-email" element={<VerifyEmailPage />} />
+                <Route path="/auth/callback" element={<AuthCallbackPage />} />
+                {/* 旧URLは新しいURLにリダイレクト */}
+                <Route path="/price-changes" element={<RedirectToUpdates defaultTab={0} />} />
+                <Route path="/new-listings" element={<RedirectToUpdates defaultTab={1} />} />
+                <Route path="/admin" element={<Admin />} />
+                <Route path="/admin/login" element={<AdminLogin />} />
+              </Routes>
+            </Container>
+          </Router>
+        </UserAuthProvider>
       </AuthProvider>
     </ThemeProvider>
   );

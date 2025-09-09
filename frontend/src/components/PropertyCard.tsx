@@ -18,6 +18,7 @@ import CachedIcon from '@mui/icons-material/Cached';
 import { format } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import { Property } from '../types/property';
+import { BookmarkButton } from './BookmarkButton';
 
 interface PropertyCardProps {
   property: Property;
@@ -144,26 +145,21 @@ const PropertyCard: React.FC<PropertyCardProps> = ({ property }) => {
           />
         )}
         
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
-          <Box sx={{ display: 'flex', gap: 0.5 }}>
-            {property.source_sites.map((site) => (
-              <Chip
-                key={site}
-                label={site}
-                size="small"
-                color="primary"
-                variant="outlined"
-              />
-            ))}
-          </Box>
-          {property.listing_count > 1 && (
+        {/* ブックマークボタン（右上） */}
+        <Box sx={{ position: 'absolute', top: 8, right: property.sold_at || property.has_active_listing === false || property.is_resale ? 72 : 8, zIndex: 1 }}>
+          <BookmarkButton propertyId={property.id} size="small" />
+        </Box>
+
+        {/* 物件数のみ表示（複数ある場合のみ） */}
+        {property.listing_count > 1 && (
+          <Box sx={{ mb: 1 }}>
             <Chip
               label={`${property.listing_count}件`}
               size="small"
               color="secondary"
             />
-          )}
-        </Box>
+          </Box>
+        )}
 
         <Typography gutterBottom variant="h6" component="h2" sx={{ color: property.sold_at ? 'text.secondary' : 'text.primary' }}>
           {property.building.normalized_name}

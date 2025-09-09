@@ -42,6 +42,7 @@ import {
   Cached,
   AccountBalanceWallet,
 } from '@mui/icons-material';
+import { BookmarkButton } from '../components/BookmarkButton';
 import {
   LineChart,
   Line,
@@ -226,7 +227,8 @@ const PropertyDetailPage: React.FC = () => {
                   color: property.sold_at ? 'text.secondary' : 'text.primary',
                   wordBreak: 'break-word',
                   hyphens: 'auto',
-                  lineHeight: { xs: 1.3, md: 1.2 }
+                  lineHeight: { xs: 1.3, md: 1.2 },
+                  flex: 1
                 }}
               >
                 {building.normalized_name}
@@ -263,7 +265,13 @@ const PropertyDetailPage: React.FC = () => {
                 {property.source_sites.map(site => (
                   <Chip key={site} label={site} color="primary" sx={{ mr: 1 }} />
                 ))}
-                <Chip label={`${property.listing_count}件の掲載`} color="secondary" />
+                <Chip label={`${property.listing_count}件の掲載`} color="secondary" sx={{ mr: 1 }} />
+                
+                {/* ブックマークボタン */}
+                <BookmarkButton 
+                  propertyId={property.id} 
+                  size="medium"
+                />
               </Box>
             </Box>
           </Grid>

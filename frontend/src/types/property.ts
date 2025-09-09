@@ -41,6 +41,8 @@ export interface Property {
   has_price_change?: boolean;
   sold_at?: string;
   last_sale_price?: number;
+  is_bookmarked?: boolean;  // ブックマーク状態
+  display_building_name?: string;  // 物件レベルの建物名
 }
 
 export interface Listing {
@@ -127,4 +129,21 @@ export interface Statistics {
   by_price_range: Record<string, number>;
   by_layout: Record<string, number>;
   last_updated: string;
+}
+
+// ブックマーク関連の型定義
+export interface Bookmark {
+  id: number;
+  master_property_id: number;
+  created_at: string;
+  master_property?: Property;
+}
+
+export interface BookmarkCreate {
+  master_property_id: number;
+}
+
+export interface BookmarkStatus {
+  is_bookmarked: boolean;
+  bookmark_id?: number;
 }
