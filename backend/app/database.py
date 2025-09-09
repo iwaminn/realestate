@@ -57,5 +57,27 @@ def init_db():
     Base.metadata.create_all(bind=engine)
 
 def get_db_for_scraping():
-    """スクレイピングタスク用のデータベースセッション（手動管理）"""
-    return SessionLocal()
+    """
+    スクレイピングタスク用のデータベースセッション（手動管理）
+    
+    重要: スクレイパー専用の独立したセッションを作成します。
+    これにより、他のコンポーネントのトランザクションエラーの影響を受けません。
+    
+    使用方法:
+        session = get_db_for_scraping()
+        try:
+            # データベース操作
+            session.commit()
+        except Exception:
+            session.rollback()
+        finally:
+            session.close()  # 必ずcloseすること
+    """
+    # 新しいセッションを作成して返す
+    # autoflush=Falseでauto-flushを無効化し、明示的なコミットのみを使用
+    session = SessionLocal()
+    
+    # セッションの状態をリセット（念のため）
+    session.rollback()
+    
+    return session

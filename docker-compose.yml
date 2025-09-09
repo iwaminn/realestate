@@ -44,6 +44,20 @@ services:
       # スクレイパー個別設定の例（必要に応じてコメントアウトを解除）
       # - SCRAPER_SUUMO_DETAIL_REFETCH_DAYS=60
       # - SCRAPER_HOMES_DETAIL_REFETCH_DAYS=30
+      # メール送信設定（本番環境用）
+      # - MAIL_USERNAME=your-email@gmail.com
+      # - MAIL_PASSWORD=your-app-password
+      # - MAIL_SERVER=smtp.gmail.com
+      # - MAIL_PORT=587
+      # - MAIL_FROM=noreply@yourdomain.com
+      # - MAIL_FROM_NAME=都心マンションDB
+      # - MAIL_STARTTLS=True
+      # - MAIL_SSL_TLS=False
+      # - FRONTEND_URL=https://yourdomain.com
+      # Google OAuth設定（本番環境用）
+      # - GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+      # - GOOGLE_CLIENT_SECRET=your-client-secret
+      # - GOOGLE_REDIRECT_URI=https://yourdomain.com/api/oauth/google/callback
     command: poetry run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
     depends_on:
       - postgres

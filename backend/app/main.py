@@ -20,10 +20,14 @@ from .api import admin_properties
 from .api import admin_buildings
 from .api import admin_matching
 from .api import admin_schedules
+from .api import admin_users
 from .api import properties
 from .api import buildings
 from .api import stats
 from .api import grouped_properties
+from .api import bookmarks
+from .api import auth
+from .api import oauth
 
 app = FastAPI(title="不動産横断検索API", version="1.0.0")
 
@@ -91,10 +95,14 @@ app.include_router(admin_properties.router)
 app.include_router(admin_buildings.router)
 app.include_router(admin_matching.router)
 app.include_router(admin_schedules.router)
+app.include_router(admin_users.router, prefix="/api/admin", tags=["admin-users"])
 app.include_router(properties.router)
 app.include_router(buildings.router)
 app.include_router(stats.router)
 app.include_router(grouped_properties.router)
+app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
+app.include_router(oauth.router, prefix="/api/oauth", tags=["oauth"])
+app.include_router(bookmarks.router, prefix="/api/bookmarks", tags=["bookmarks"])
 
 
 # 起動時の初期化
