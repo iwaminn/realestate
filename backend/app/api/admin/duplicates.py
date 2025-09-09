@@ -1675,6 +1675,16 @@ async def merge_buildings(
     db: Session = Depends(get_db)
 ):
     """複数の建物を統合（admin_old.pyと互換性のある実装）"""
+    from sqlalchemy import text
+    
+    # トランザクション分離レベルを設定（SERIALIZABLE）してデッドロックを防ぐ
+    db.execute(text("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE"))
+    
+    # トランザクションタイムアウトを設定（30秒）
+    db.execute(text("SET LOCAL statement_timeout = '30s'"))
+    
+    # ロック取得タイムアウトを設定（5秒）
+    db.execute(text("SET LOCAL lock_timeout = '5s'"))
     
     # リクエストの形式を判定
     if "primary_id" in request and "secondary_ids" in request:
@@ -1758,6 +1768,15 @@ async def merge_buildings(
         secondary_buildings = [secondary]
     else:
         raise HTTPException(status_code=400, detail="Invalid request format")
+    
+    # デッドロックを防ぐため、建物IDをソートして一貫した順序で処理
+    all_building_ids = [primary_id] + [b.id for b in secondary_buildings]
+    all_building_ids.sort()  # IDの昇順でソート
+    
+    # ソートされた順序で建物をロック（SELECT FOR UPDATE）
+    # これにより、常に同じ順序でロックを取得し、デッドロックを防ぐ
+    for building_id in all_building_ids:
+        db.query(Building).filter(Building.id == building_id).with_for_update().first()
     
     # 複数の建物を統合
     # デッドロックを防ぐため、リトライロジックを追加
@@ -2078,7 +2097,17 @@ async def merge_buildings(
             import time
             from sqlalchemy.exc import OperationalError
             
-            if isinstance(e, OperationalError) and ("deadlock" in str(e).lower() or "lock" in str(e).lower()):
+            error_message = str(e)
+            
+            # ロックタイムアウトの場合
+            if "lock_timeout" in error_message.lower() or "lock timeout" in error_message.lower():
+                raise HTTPException(
+                    status_code=503,
+                    detail="他の処理がデータベースを使用中です。しばらく待ってから再度お試しください。"
+                )
+            
+            # デッドロックまたはその他のロックエラーの場合
+            if isinstance(e, OperationalError) and ("deadlock" in error_message.lower() or "could not obtain lock" in error_message.lower()):
                 retry_count += 1
                 if retry_count < max_retries:
                     time.sleep(0.5 * retry_count)  # 指数バックオフ
