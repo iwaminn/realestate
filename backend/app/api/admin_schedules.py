@@ -563,6 +563,10 @@ async def execute_scheduled_scraping(schedule_id: int, db: Session):
         
         # 履歴にタスクIDを記録（UUIDをそのまま保存）
         history.task_id = task_id
+        db.commit()  # 履歴を保存
+        
+        # 履歴IDを保存（後でフック内で使用）
+        history_id = history.id
         
         # 並列スクレイピングを開始
         
@@ -586,11 +590,11 @@ async def execute_scheduled_scraping(schedule_id: int, db: Session):
                             
                             # スケジュール履歴を検索
                             hist = session.query(ScrapingScheduleHistory).filter(
-                                ScrapingScheduleHistory.id == history.id
+                                ScrapingScheduleHistory.id == history_id
                             ).first()
                             
                             if not hist:
-                                logger.warning(f"Hook: History with id {history.id} not found, searching by schedule_id")
+                                logger.warning(f"Hook: History with id {history_id} not found, searching by schedule_id")
                                 hist = session.query(ScrapingScheduleHistory).filter(
                                     ScrapingScheduleHistory.schedule_id == schedule_id,
                                     ScrapingScheduleHistory.status == "running"

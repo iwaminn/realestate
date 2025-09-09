@@ -79,6 +79,14 @@ export const LoginModal: React.FC<LoginModalProps> = ({ open, onClose }) => {
     setLoading(true);
     setError('');
 
+    // メールアドレスの簡易検証
+    const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailPattern.test(loginForm.email)) {
+      setError('有効なメールアドレスを入力してください');
+      setLoading(false);
+      return;
+    }
+
     const result = await login(loginForm.email, loginForm.password);
     
     if (result.success) {
@@ -103,6 +111,20 @@ export const LoginModal: React.FC<LoginModalProps> = ({ open, onClose }) => {
     e.preventDefault();
     setLoading(true);
     setError('');
+
+    // メールアドレスの検証
+    const emailPattern = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+    if (!emailPattern.test(registerForm.email)) {
+      setError('有効なメールアドレスを入力してください');
+      setLoading(false);
+      return;
+    }
+
+    if (registerForm.email.length > 254) {
+      setError('メールアドレスが長すぎます');
+      setLoading(false);
+      return;
+    }
 
     // パスワード確認
     if (registerForm.password !== registerForm.confirmPassword) {
@@ -148,7 +170,13 @@ export const LoginModal: React.FC<LoginModalProps> = ({ open, onClose }) => {
   };
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth>
+    <Dialog 
+      open={open} 
+      onClose={handleClose} 
+      maxWidth="sm" 
+      fullWidth
+      onClick={(e) => e.stopPropagation()}
+    >
       <DialogTitle>
         <Tabs value={tabValue} onChange={handleTabChange}>
           <Tab label="ログイン" />

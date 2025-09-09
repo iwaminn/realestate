@@ -33,9 +33,15 @@ class UserCreate(BaseModel):
     
     @validator('email')
     def validate_email(cls, v):
-        if '@' not in v or '.' not in v:
+        import re
+        # RFC 5322準拠の簡易的なメールアドレス正規表現
+        email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+        if not re.match(email_pattern, v):
             raise ValueError('有効なメールアドレスを入力してください')
-        return v
+        # メールアドレスの長さチェック
+        if len(v) > 254:  # RFC 5321
+            raise ValueError('メールアドレスが長すぎます')
+        return v.lower()  # 小文字に統一
     
     @validator('password')
     def validate_password(cls, v):

@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 from ...database import get_db, SessionLocal
 from ...utils.exceptions import TaskPausedException, TaskCancelledException
-from ...models_scraping_task import ScrapingTask, ScrapingTaskLog, ScrapingTaskProgress
+from ...models_scraping_task import ScrapingTask, ScrapingTaskLog
 
 # 並列スクレイピングマネージャーのインスタンス管理（将来の拡張用）
 parallel_managers: Dict[str, Any] = {}
@@ -1712,16 +1712,9 @@ def cleanup_stale_tasks(db: Session):
         
         # 1. 最終更新から設定値以上経過しているかチェック
         if task.started_at:
-            # ScrapingTaskProgressテーブルから最新の進捗を取得
-            from ...models_scraping_task import ScrapingTaskProgress
-            latest_progress = db.query(ScrapingTaskProgress).filter(
-                ScrapingTaskProgress.task_id == task.task_id
-            ).order_by(
-                ScrapingTaskProgress.last_updated.desc()
-            ).first()
-            
-            if latest_progress and latest_progress.last_updated:
-                last_update = latest_progress.last_updated
+            # last_progress_atを使用（これは確実に更新される）
+            if task.last_progress_at:
+                last_update = task.last_progress_at
             else:
                 last_update = task.started_at
             
@@ -1898,7 +1891,7 @@ def cancel_scraping(task_id: str, db: Session = Depends(get_db)):
 @router.delete("/scraping/tasks/{task_id}")
 def delete_scraping_task(task_id: str, db: Session = Depends(get_db)):
     """スクレイピングタスクを削除"""
-    from ...models_scraping_task import ScrapingTaskProgress, ScrapingTaskLog
+    from ...models_scraping_task import ScrapingTaskLog
     
     db_task = db.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
     if not db_task:
@@ -1908,10 +1901,6 @@ def delete_scraping_task(task_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Cannot delete running or paused task")
     
     # 関連するレコードを削除
-    # ScrapingTaskProgressレコードを削除
-    db.query(ScrapingTaskProgress).filter(
-        ScrapingTaskProgress.task_id == task_id
-    ).delete()
     
     # ScrapingTaskLogレコードを削除
     db.query(ScrapingTaskLog).filter(
@@ -2065,7 +2054,7 @@ def get_task_debug_info(task_id: str, db: Session = Depends(get_db)):
 @router.delete("/scraping/all-tasks")
 def delete_all_scraping_tasks(db: Session = Depends(get_db)):
     """全スクレイピングタスクを削除（実行中のタスクは除く）"""
-    from ...models_scraping_task import ScrapingTask, ScrapingTaskProgress, ScrapingTaskLog
+    from ...models_scraping_task import ScrapingTask, ScrapingTaskLog
     
     # 削除対象のタスクIDを取得
     tasks_to_delete = db.query(ScrapingTask.task_id).filter(
@@ -2078,10 +2067,6 @@ def delete_all_scraping_tasks(db: Session = Depends(get_db)):
     if task_ids:
         try:
             # 関連するレコードを削除
-            # ScrapingTaskProgressレコードを削除
-            db.query(ScrapingTaskProgress).filter(
-                ScrapingTaskProgress.task_id.in_(task_ids)
-            ).delete(synchronize_session=False)
             
             # ScrapingTaskLogレコードを削除
             db.query(ScrapingTaskLog).filter(

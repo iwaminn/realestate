@@ -50,11 +50,50 @@ class EmailService:
 
     async def send_verification_email(self, email: str, user_name: str, verification_token: str) -> bool:
         """メールアドレス確認メールを送信"""
+        # 確認URL生成
+        base_url = os.getenv('FRONTEND_URL', 'http://localhost:3001')
+        verification_url = f"{base_url}/verify-email?token={verification_token}"
+        
         if not self.enabled:
-            # 開発モードではログに出力してtrueを返す
-            verification_url = f"http://localhost:3000/verify-email?token={verification_token}"
+            # 開発モードではログファイルに詳細を出力
+            import json
+            from datetime import datetime
+            
+            # メール内容をログファイルに記録
+            log_dir = Path('/app/logs')
+            log_dir.mkdir(parents=True, exist_ok=True)
+            
+            email_log_file = log_dir / 'email_dev.log'
+            
+            email_content = {
+                'timestamp': datetime.utcnow().isoformat(),
+                'type': 'verification',
+                'to': email,
+                'user_name': user_name,
+                'verification_url': verification_url,
+                'token': verification_token,
+                'message': f'開発環境: メール確認URLは {verification_url} です'
+            }
+            
+            # ファイルに追記
+            with open(email_log_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(email_content, ensure_ascii=False) + '\n')
+            
+            # 通常のログにも出力
             api_logger.info(f"[開発モード] メール確認URL: {verification_url}")
             api_logger.info(f"[開発モード] 宛先: {email} ({user_name})")
+            api_logger.info(f"[開発モード] トークン: {verification_token}")
+            api_logger.info(f"[開発モード] 詳細は /app/logs/email_dev.log を確認してください")
+            
+            # コンソールにも表示（見やすくするため）
+            print("\n" + "="*60)
+            print("📧 開発環境メール確認情報")
+            print("="*60)
+            print(f"宛先: {email}")
+            print(f"確認URL: {verification_url}")
+            print(f"トークン: {verification_token}")
+            print("="*60 + "\n")
+            
             return True
             
         try:

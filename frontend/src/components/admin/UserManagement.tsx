@@ -80,6 +80,7 @@ interface UserDetail extends User {
 
 export const UserManagement: React.FC = () => {
   const [users, setUsers] = useState<User[]>([]);
+  const [totalUsers, setTotalUsers] = useState(0);
   const [stats, setStats] = useState<UserStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -139,7 +140,8 @@ export const UserManagement: React.FC = () => {
       if (filterActive !== null) params.append('is_active', String(filterActive));
 
       const response = await axios.get(`/api/admin/users?${params}`);
-      setUsers(response.data);
+      setUsers(response.data.users);
+      setTotalUsers(response.data.total);
     } catch (error: any) {
       console.error('ユーザー一覧の取得エラー:', error);
       setError('ユーザー一覧の取得に失敗しました');
@@ -426,7 +428,7 @@ export const UserManagement: React.FC = () => {
         </Table>
         <TablePagination
           component="div"
-          count={-1}
+          count={totalUsers}
           page={page}
           onPageChange={(e, newPage) => setPage(newPage)}
           rowsPerPage={rowsPerPage}
@@ -436,6 +438,9 @@ export const UserManagement: React.FC = () => {
           }}
           rowsPerPageOptions={[10, 25, 50, 100]}
           labelRowsPerPage="表示件数:"
+          labelDisplayedRows={({ from, to, count }) =>
+            `${from}-${to} / ${count !== -1 ? count : `${to}+`}`
+          }
         />
       </TableContainer>
 

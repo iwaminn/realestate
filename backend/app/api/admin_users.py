@@ -64,7 +64,14 @@ class AdminUserStats(BaseModel):
     new_users_this_week: int
     new_users_this_month: int
 
-@router.get("/users", response_model=List[UserListResponse])
+class UserListWithPagination(BaseModel):
+    """ページネーション付きユーザー一覧レスポンス"""
+    users: List[UserListResponse]
+    total: int
+    skip: int
+    limit: int
+
+@router.get("/users", response_model=UserListWithPagination)
 async def get_users(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
@@ -96,6 +103,14 @@ async def get_users(
     if is_active is not None:
         query = query.filter(User.is_active == is_active)
     
+    # 総件数を取得
+    total_query = db.query(User)
+    if search:
+        total_query = total_query.filter(User.email.ilike(search_pattern))
+    if is_active is not None:
+        total_query = total_query.filter(User.is_active == is_active)
+    total = total_query.count()
+    
     # ソート
     if sort_by == "email":
         order_column = User.email
@@ -126,7 +141,12 @@ async def get_users(
             bookmark_count=bookmark_count
         ))
     
-    return users
+    return UserListWithPagination(
+        users=users,
+        total=total,
+        skip=skip,
+        limit=limit
+    )
 
 @router.get("/users/stats", response_model=AdminUserStats)
 async def get_user_stats(

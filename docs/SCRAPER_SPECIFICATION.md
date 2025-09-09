@@ -490,6 +490,76 @@ def record_error(self, error_type):
     # サーキットブレーカーの発動チェック
 ```
 
+## タスクのタイムアウトと自動クリーンアップ
+
+### 概要
+長時間応答がないタスクを自動的に検出し、failedステータスに変更する仕組みが実装されています。
+
+### タイムアウトの仕組み
+
+1. **進捗更新の監視**
+   - スクレイピングタスクは定期的に`scraping_tasks.last_progress_at`を更新
+   - 物件を処理するたびに進捗が記録される
+
+2. **停止タスクの検出**
+   - 起動時およびタスク一覧取得時に、停止したタスクを自動検出
+   - 最終進捗更新から一定時間経過したタスクを「停止」と判定
+
+3. **自動クリーンアップ**
+   - 停止と判定されたタスクは自動的に`failed`ステータスに変更
+   - タスクログに理由を記録
+
+### タイムアウト設定
+
+| 設定項目 | デフォルト値 | 説明 |
+|---------|------------|------|
+| `STALLED_TASK_THRESHOLD_MINUTES` | 90分 | 通常のタスクがタイムアウトと判定される時間 |
+| `STALLED_PAUSED_TASK_THRESHOLD_MINUTES` | 120分 | 一時停止中のタスクがタイムアウトと判定される時間 |
+| `PAUSE_TIMEOUT_SECONDS` | 1800秒（30分） | 一時停止状態のタイムアウト時間 |
+
+### 設定ファイル
+タイムアウト設定は`backend/app/config/scraping_config.py`で管理されています：
+
+```python
+# 停止タスク判定の閾値（分）
+STALLED_TASK_THRESHOLD_MINUTES = 90  # 通常のタスク
+STALLED_PAUSED_TASK_THRESHOLD_MINUTES = 120  # 一時停止中のタスク
+
+# タイムアウト設定（秒）
+PAUSE_TIMEOUT_SECONDS = 1800  # 一時停止中のタイムアウト（30分）
+```
+
+### 実装詳細
+
+1. **進捗更新の記録**（`base_scraper.py`）
+   - 物件処理のたびに`update_task_progress_in_db`が呼ばれる
+   - `scraping_tasks.last_progress_at`フィールドが更新される
+   - 進捗詳細は`progress_detail`（JSON）に保存
+
+2. **タイムアウト判定**（`admin/scraping.py`）
+   ```python
+   # last_progress_atを使用してタイムアウトを判定
+   if task.last_progress_at:
+       last_update = task.last_progress_at
+   else:
+       last_update = task.started_at
+   
+   # 最終更新から設定値以上経過したらfailedに
+   if (now - last_update).total_seconds() > (STALLED_TASK_THRESHOLD_MINUTES * 60):
+       task.status = "failed"
+   ```
+
+3. **クリーンアップのタイミング**
+   - システム起動時
+   - タスク一覧API呼び出し時
+   - 新しいタスク開始時
+
+### 注意事項
+
+- **大量物件の処理時**: 1物件あたりの処理時間が長い場合、タイムアウト値を調整してください
+- **ネットワーク遅延**: 遅いネットワーク環境では、タイムアウト値を増やすことを推奨
+- **デバッグ時**: 開発中はタイムアウトを無効化または大きな値に設定することを推奨
+
 ## 環境変数
 
 ```bash
@@ -504,6 +574,10 @@ SCRAPER_ERROR_THRESHOLD=0.5          # エラー率の閾値（0.5 = 50%）
 SCRAPER_MIN_ATTEMPTS=10              # エラー率チェック前の最低試行回数
 SCRAPER_CONSECUTIVE_ERROR_LIMIT=10   # 連続エラーの上限
 SCRAPER_CIRCUIT_BREAKER=true         # サーキットブレーカーの有効/無効
+
+# タイムアウト設定（設定ファイルで管理）
+# STALLED_TASK_THRESHOLD_MINUTES と STALLED_PAUSED_TASK_THRESHOLD_MINUTES は
+# backend/app/config/scraping_config.py で設定
 ```
 
 ## 実行方法
@@ -623,7 +697,66 @@ else:
   ```
 - 注意: スクレイパー側で不要な文言（[乗り換え案内]等）を削除し、改行を挿入
 
+## タイムアウト機構
+
+スクレイピングタスクには自動タイムアウト機構が実装されており、異常終了したタスクを自動的に失敗（failed）状態に変更します。
+
+### タイムアウトの仕組み
+
+1. **進捗更新の追跡**
+   - 各スクレイパーは処理中に定期的に `last_progress_at` を更新
+   - 物件一覧の収集時：エリア処理開始時に更新
+   - 物件処理時：10件ごとに更新（バッチ処理単位）
+
+2. **タイムアウト判定**
+   - **通常のタスク**: 最終更新から90分経過で失敗と判定
+   - **一時停止中のタスク**: 最終更新から120分経過で失敗と判定
+   - 判定は以下のタイミングで実行：
+     - システム起動時（古いタスクのクリーンアップ）
+     - タスク一覧API呼び出し時
+     - 新規タスク開始時
+
+3. **設定値**（`backend/app/config/scraping_config.py`）
+   ```python
+   STALLED_TASK_THRESHOLD_MINUTES = 90  # 通常のタスク
+   STALLED_PAUSED_TASK_THRESHOLD_MINUTES = 120  # 一時停止中のタスク
+   ```
+
+### 実装詳細
+
+- **進捗情報の保存**
+  - `scraping_tasks.last_progress_at`: 最終進捗更新時刻
+  - `scraping_tasks.progress_detail`: JSON形式の詳細進捗（スクレイパー別・エリア別）
+
+- **タイムアウト処理**
+  ```python
+  # backend/app/api/admin/scraping.py
+  if task.is_paused:
+      threshold = STALLED_PAUSED_TASK_THRESHOLD_MINUTES
+  else:
+      threshold = STALLED_TASK_THRESHOLD_MINUTES
+  
+  if task.last_progress_at:
+      last_update = task.last_progress_at
+  else:
+      last_update = task.started_at
+  
+  if last_update and (datetime.now() - last_update).total_seconds() > threshold * 60:
+      task.status = 'failed'
+  ```
+
+### 注意事項
+
+- 大量の物件を処理する場合でも、バッチ処理単位で進捗を更新するため、90分のタイムアウトに到達することは通常ありません
+- ネットワークエラーや無限ループなど、実際に処理が停止した場合のみタイムアウトが発生します
+- タイムアウトしたタスクは管理画面から再実行可能です
+
 ## 更新履歴
+
+- 2025-09-09: タイムアウト機構の詳細ドキュメントを追加
+  - ScrapingTaskProgressテーブルを削除し、scraping_tasks.last_progress_atで進捗管理
+  - タイムアウト判定の仕組みと設定値を明文化
+  - 通常タスク90分、一時停止タスク120分のタイムアウト設定
 
 - 2025-08-03: 一覧ページでの必須フィールドに建物名を追加、建物名の一致検証仕様を追加
   - 一覧ページで建物名が取得できない物件はスキップされるように仕様を明確化
