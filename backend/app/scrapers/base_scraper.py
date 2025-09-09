@@ -753,21 +753,45 @@ class BaseScraper(ABC):
                         # 既存物件の場合は最終確認日時を更新
                         if existing_listing:
                             try:
+                                # existing_listingのIDを保存（セッションエラー後の再取得用）
+                                listing_id = existing_listing.id
+                                listing_master_property_id = existing_listing.master_property_id
+                                
+                                # セッションにアタッチされているか確認し、必要なら再取得
+                                if existing_listing not in self.session:
+                                    existing_listing = self.session.query(PropertyListing).filter(
+                                        PropertyListing.id == listing_id
+                                    ).first()
+                                    if not existing_listing:
+                                        self.logger.warning(f"掲載情報の再取得に失敗: listing_id={listing_id}")
+                                        continue
+                                
                                 existing_listing.last_confirmed_at = get_utc_now()
                                 
                                 # 非アクティブな掲載を再アクティブ化
                                 if not existing_listing.is_active:
                                     existing_listing.is_active = True
-                                    self.logger.debug(f"掲載を再開 (HTML構造エラースキップ) - ID: {existing_listing.id}")
+                                    self.logger.debug(f"掲載を再開 (HTML構造エラースキップ) - ID: {listing_id}")
                                     
                                     # 物件が販売終了になっていた場合は販売再開
-                                    if existing_listing.master_property and existing_listing.master_property.sold_at:
-                                        existing_listing.master_property.sold_at = None
-                                        existing_listing.master_property.final_price = None
-                                        existing_listing.master_property.final_price_updated_at = None
-                                        self.logger.debug(f"物件を販売再開 (HTML構造エラースキップ) - 物件ID: {existing_listing.master_property.id}")
+                                    # master_propertyを明示的に取得（lazy loadエラーを回避）
+                                    if listing_master_property_id:
+                                        master_prop = self.session.query(MasterProperty).filter(
+                                            MasterProperty.id == listing_master_property_id
+                                        ).first()
+                                        if master_prop and master_prop.sold_at:
+                                            master_prop.sold_at = None
+                                            master_prop.final_price = None
+                                            master_prop.final_price_updated_at = None
+                                            self.logger.debug(f"物件を販売再開 (HTML構造エラースキップ) - 物件ID: {master_prop.id}")
                                 
-                                self.safe_flush()
+                                if self.safe_flush():
+                                    self.logger.debug(f"最終確認日時を正常に更新: listing_id={listing_id}")
+                                else:
+                                    # flushが失敗した場合、existing_listingを再取得
+                                    existing_listing = self.session.query(PropertyListing).filter(
+                                        PropertyListing.id == listing_id
+                                    ).first()
                             except Exception as e:
                                 self.log_warning(f'最終確認日時の更新に失敗: {e}',
                                                url=property_data.get('url', '不明'))
@@ -1449,12 +1473,17 @@ class BaseScraper(ABC):
                         price_changed = True
                         # 建物名と物件情報を含む詳細ログ
                         building_name = existing_listing.listing_building_name or ''
-                        if existing_listing.master_property and existing_listing.master_property.building:
-                            building_name = existing_listing.master_property.building.normalized_name or building_name
+                        # master_propertyとbuildingを明示的に取得（lazy loadエラーを回避）
+                        if existing_listing.master_property_id:
+                            master_prop = self.session.query(MasterProperty).filter(
+                                MasterProperty.id == existing_listing.master_property_id
+                            ).first()
+                            if master_prop and master_prop.building:
+                                building_name = master_prop.building.normalized_name or building_name
                         
                         detail_info = []
-                        if existing_listing.master_property:
-                            mp = existing_listing.master_property
+                        if master_prop:
+                            mp = master_prop
                             if mp.floor_number:
                                 detail_info.append(f"{mp.floor_number}階")
                             if mp.area:
@@ -1745,16 +1774,22 @@ class BaseScraper(ABC):
             self._last_detail_fetched = False  # フラグを記録
             
             # 詳細を取得しない場合、既存の情報を補完
-            if existing_listing and existing_listing.master_property:
-                # 必須情報を既存データから補完
-                if 'building_name' not in property_data or not property_data['building_name']:
-                    property_data['building_name'] = existing_listing.master_property.building.normalized_name
-                if 'area' not in property_data or not property_data['area']:
-                    property_data['area'] = existing_listing.master_property.area
-                if 'layout' not in property_data or not property_data['layout']:
-                    property_data['layout'] = existing_listing.master_property.layout
-                if 'floor_number' not in property_data or property_data.get('floor_number') is None:
-                    property_data['floor_number'] = existing_listing.master_property.floor_number
+            # master_propertyを明示的に取得（lazy loadエラーを回避）
+            if existing_listing and existing_listing.master_property_id:
+                master_prop = self.session.query(MasterProperty).filter(
+                    MasterProperty.id == existing_listing.master_property_id
+                ).first()
+                if master_prop:
+                    # 必須情報を既存データから補完
+                    if 'building_name' not in property_data or not property_data['building_name']:
+                        if master_prop.building:
+                            property_data['building_name'] = master_prop.building.normalized_name
+                    if 'area' not in property_data or not property_data['area']:
+                        property_data['area'] = master_prop.area
+                    if 'layout' not in property_data or not property_data['layout']:
+                        property_data['layout'] = master_prop.layout
+                    if 'floor_number' not in property_data or property_data.get('floor_number') is None:
+                        property_data['floor_number'] = master_prop.floor_number
         
         # 物件保存前に一時停止チェック
         try:
@@ -2213,6 +2248,8 @@ class BaseScraper(ABC):
         except Exception as e:
             self.logger.warning(f"flush中にエラーが発生したため、ロールバックします: {type(e).__name__}: {e}")
             self.session.rollback()
+            # セッションのリセット後、新しいセッションを確保
+            self.ensure_session_active()
             return False
     
     def ensure_session_active(self):
@@ -3449,7 +3486,10 @@ class BaseScraper(ABC):
                     f"site_property_id={site_property_id}"
                 )
                 # 既存の関係を優先（save_property_commonで処理済みのはず）
-                master_property = listing.master_property
+                # master_propertyを明示的に取得（lazy loadエラーを回避）
+                master_property = self.session.query(MasterProperty).filter(
+                    MasterProperty.id == listing.master_property_id
+                ).first()
         else:
             # site_property_idがない場合は、URLとmaster_property_idで検索
             listing = self.session.query(PropertyListing).filter(
@@ -4519,11 +4559,16 @@ class BaseScraper(ABC):
                     print(f"  → 掲載を再開 (ID: {existing_listing.id})")
                     
                     # 物件が販売終了になっていた場合は販売再開
-                    if existing_listing.master_property and existing_listing.master_property.sold_at:
-                        existing_listing.master_property.sold_at = None
-                        existing_listing.master_property.final_price = None
-                        existing_listing.master_property.final_price_updated_at = None
-                        print(f"  → 物件を販売再開 (物件ID: {existing_listing.master_property.id})")
+                    # master_propertyを明示的に取得（lazy loadエラーを回避）
+                    if existing_listing.master_property_id:
+                        master_prop = self.session.query(MasterProperty).filter(
+                            MasterProperty.id == existing_listing.master_property_id
+                        ).first()
+                        if master_prop and master_prop.sold_at:
+                            master_prop.sold_at = None
+                            master_prop.final_price = None
+                            master_prop.final_price_updated_at = None
+                            print(f"  → 物件を販売再開 (物件ID: {master_prop.id})")
                 
                 self.session.commit()
                 print(f"  → 既存物件の最終確認日時を更新 (ID: {existing_listing.id})")
@@ -4651,11 +4696,19 @@ class BaseScraper(ABC):
                 return False
             
             # site_property_idで既存の掲載情報が見つかっている場合、その物件・建物情報を優先的に使用
-            if existing_listing and existing_listing.master_property:
+            # master_propertyを明示的に取得（lazy loadエラーを回避）
+            if existing_listing and existing_listing.master_property_id:
                 # 既存の物件と建物を使用
-                master_property = existing_listing.master_property
-                building = master_property.building
-                extracted_room_number = master_property.room_number
+                master_property = self.session.query(MasterProperty).filter(
+                    MasterProperty.id == existing_listing.master_property_id
+                ).first()
+                if not master_property:
+                    # master_propertyが見つからない場合は通常の処理に戻る
+                    master_property = None
+                    building = None
+                else:
+                    building = master_property.building
+                    extracted_room_number = master_property.room_number
                 
                 # 建物情報の更新（多数決で決定するため、ここでは直接更新しない）
                 # ただし、完全に空のフィールドは初期値として設定可能

@@ -2,7 +2,8 @@
 スクレイピングタスク管理用のモデル定義
 """
 
-from sqlalchemy import Column, String, Integer, DateTime, Text, Float, JSON, Boolean
+from sqlalchemy import Column, String, Integer, DateTime, Text, Float, JSON, Boolean, ForeignKey
+from sqlalchemy.orm import relationship
 from datetime import datetime
 from .models import Base
 
@@ -51,6 +52,10 @@ class ScrapingTask(Base):
     pause_requested_at = Column(DateTime, nullable=True)
     cancel_requested_at = Column(DateTime, nullable=True)
     
+    # リレーションシップ
+    progress_records = relationship("ScrapingTaskProgress", cascade="all, delete-orphan", back_populates="task")
+    logs = relationship("ScrapingTaskLog", cascade="all, delete-orphan", back_populates="task")
+    
     def to_dict(self):
         """辞書形式に変換"""
         return {
@@ -87,7 +92,7 @@ class ScrapingTaskProgress(Base):
     __tablename__ = "scraping_task_progress"
     
     # 複合主キー
-    task_id = Column(String(50), primary_key=True, index=True)
+    task_id = Column(String(50), ForeignKey('scraping_tasks.task_id', ondelete='CASCADE'), primary_key=True, index=True)
     scraper = Column(String(20), primary_key=True)
     area = Column(String(20), primary_key=True)
     
@@ -117,6 +122,9 @@ class ScrapingTaskProgress(Base):
     save_failed = Column(Integer, nullable=False, default=0)
     price_missing = Column(Integer, nullable=False, default=0)
     building_info_missing = Column(Integer, nullable=False, default=0)
+    
+    # リレーションシップ
+    task = relationship("ScrapingTask", back_populates="progress_records")
     
     def to_dict(self):
         """辞書形式に変換"""
@@ -151,10 +159,13 @@ class ScrapingTaskLog(Base):
     __tablename__ = "scraping_task_logs"
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    task_id = Column(String(50), nullable=False, index=True)
+    task_id = Column(String(50), ForeignKey('scraping_tasks.task_id', ondelete='CASCADE'), nullable=False, index=True)
     log_type = Column(String(20), nullable=False)  # property_update, error, warning
     timestamp = Column(DateTime, nullable=False, default=datetime.now)
     message = Column(Text, nullable=True)
     details = Column(JSON, nullable=True)  # 詳細情報（辞書形式）
     created_at = Column(DateTime, nullable=False, default=datetime.now)
+    
+    # リレーションシップ
+    task = relationship("ScrapingTask", back_populates="logs")
 

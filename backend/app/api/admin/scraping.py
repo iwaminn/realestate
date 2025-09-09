@@ -1898,6 +1898,8 @@ def cancel_scraping(task_id: str, db: Session = Depends(get_db)):
 @router.delete("/scraping/tasks/{task_id}")
 def delete_scraping_task(task_id: str, db: Session = Depends(get_db)):
     """スクレイピングタスクを削除"""
+    from ...models_scraping_task import ScrapingTaskProgress, ScrapingTaskLog
+    
     db_task = db.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
     if not db_task:
         raise HTTPException(status_code=404, detail="Task not found")
@@ -1905,7 +1907,18 @@ def delete_scraping_task(task_id: str, db: Session = Depends(get_db)):
     if db_task.status in ["running", "paused"]:
         raise HTTPException(status_code=400, detail="Cannot delete running or paused task")
     
-    # データベースから削除
+    # 関連するレコードを削除
+    # ScrapingTaskProgressレコードを削除
+    db.query(ScrapingTaskProgress).filter(
+        ScrapingTaskProgress.task_id == task_id
+    ).delete()
+    
+    # ScrapingTaskLogレコードを削除
+    db.query(ScrapingTaskLog).filter(
+        ScrapingTaskLog.task_id == task_id
+    ).delete()
+    
+    # メインのタスクレコードを削除
     db.delete(db_task)
     db.commit()
     
@@ -2052,18 +2065,39 @@ def get_task_debug_info(task_id: str, db: Session = Depends(get_db)):
 @router.delete("/scraping/all-tasks")
 def delete_all_scraping_tasks(db: Session = Depends(get_db)):
     """全スクレイピングタスクを削除（実行中のタスクは除く）"""
-    from ...models_scraping_task import ScrapingTask
+    from ...models_scraping_task import ScrapingTask, ScrapingTaskProgress, ScrapingTaskLog
     
-    # データベースから削除（実行中・一時停止中・保留中を除く）
-    try:
-        deleted_db_count = db.query(ScrapingTask).filter(
-            ScrapingTask.status.notin_(["running", "paused", "pending"])
-        ).delete()
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        print(f"Error deleting tasks from database: {e}")
-        deleted_db_count = 0
+    # 削除対象のタスクIDを取得
+    tasks_to_delete = db.query(ScrapingTask.task_id).filter(
+        ScrapingTask.status.notin_(["running", "paused", "pending"])
+    ).all()
+    
+    task_ids = [task.task_id for task in tasks_to_delete]
+    deleted_db_count = len(task_ids)
+    
+    if task_ids:
+        try:
+            # 関連するレコードを削除
+            # ScrapingTaskProgressレコードを削除
+            db.query(ScrapingTaskProgress).filter(
+                ScrapingTaskProgress.task_id.in_(task_ids)
+            ).delete(synchronize_session=False)
+            
+            # ScrapingTaskLogレコードを削除
+            db.query(ScrapingTaskLog).filter(
+                ScrapingTaskLog.task_id.in_(task_ids)
+            ).delete(synchronize_session=False)
+            
+            # メインのタスクレコードを削除
+            db.query(ScrapingTask).filter(
+                ScrapingTask.task_id.in_(task_ids)
+            ).delete(synchronize_session=False)
+            
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            print(f"Error deleting tasks from database: {e}")
+            deleted_db_count = 0
     
     return {
         "message": f"Deleted {deleted_db_count} tasks from database",

@@ -1760,315 +1760,334 @@ async def merge_buildings(
         raise HTTPException(status_code=400, detail="Invalid request format")
     
     # 複数の建物を統合
-    try:
-        merged_count = 0
-        moved_properties = 0
-        building_infos = []
-        duplicate_properties_merged = 0  # 統合された重複物件数
-        duplicate_merge_details = []  # 重複物件統合の詳細
-        
-        for secondary_building in secondary_buildings:
-            # 統合履歴を記録（詳細情報を含む）
-            merge_details = {
-                "merged_buildings": [{
-                    "id": secondary_building.id,
-                    "normalized_name": secondary_building.normalized_name,
-                    "address": secondary_building.address,
-                    "total_floors": secondary_building.total_floors,
-                    "built_year": secondary_building.built_year,
-                    "construction_type": secondary_building.construction_type if hasattr(secondary_building, 'construction_type') else None,
-                    "property_ids": [],  # 後で追加
-                    "properties_moved": 0  # 後で更新
-                }]
-            }
+    # デッドロックを防ぐため、リトライロジックを追加
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            merged_count = 0
+            moved_properties = 0
+            building_infos = []
+            duplicate_properties_merged = 0  # 統合された重複物件数
+            duplicate_merge_details = []  # 重複物件統合の詳細
             
-            merge_history = BuildingMergeHistory(
-                primary_building_id=primary_id,
-                merged_building_id=secondary_building.id,
-                merged_building_name=secondary_building.normalized_name,
-                canonical_merged_name=secondary_building.canonical_name,
-                merge_details=merge_details,  # 詳細情報を保存
-                merged_at=datetime.now(),
-                merged_by="admin"
-            )
-            db.add(merge_history)
+            for secondary_building in secondary_buildings:
+                # 統合履歴を記録（詳細情報を含む）
+                    merge_details = {
+                    "merged_buildings": [{
+                        "id": secondary_building.id,
+                        "normalized_name": secondary_building.normalized_name,
+                        "address": secondary_building.address,
+                        "total_floors": secondary_building.total_floors,
+                        "built_year": secondary_building.built_year,
+                        "construction_type": secondary_building.construction_type if hasattr(secondary_building, 'construction_type') else None,
+                        "property_ids": [],  # 後で追加
+                        "properties_moved": 0  # 後で更新
+                    }]
+                }
             
-            # 物件を移動
-            properties_to_move = db.query(MasterProperty).filter(
-                MasterProperty.building_id == secondary_building.id
-            ).all()
-            
-            property_ids_moved = []
-            for prop in properties_to_move:
-                # PropertyMergeHistoryの参照は更新しない（履歴は保持）
-                # 物件を新しい建物に移動
-                prop.building_id = primary_id
-                moved_properties += 1
-                property_ids_moved.append(prop.id)
-            
-            # merge_detailsに物件IDを記録
-            merge_history.merge_details["merged_buildings"][0]["property_ids"] = property_ids_moved
-            merge_history.merge_details["merged_buildings"][0]["properties_moved"] = len(property_ids_moved)
-            
-            # 外部IDを移動（重複がある場合は削除）
-            external_ids_to_move = db.query(BuildingExternalId).filter(
-                BuildingExternalId.building_id == secondary_building.id
-            ).all()
-            
-            for ext_id in external_ids_to_move:
-                # 同じ外部IDが既に主建物に存在するか確認
-                existing = db.query(BuildingExternalId).filter(
-                    BuildingExternalId.building_id == primary_id,
-                    BuildingExternalId.source_site == ext_id.source_site,
-                    BuildingExternalId.external_id == ext_id.external_id
-                ).first()
-                
-                if existing:
-                    # 重複する場合は削除
-                    db.delete(ext_id)
-                else:
-                    # 重複しない場合は移動
-                    ext_id.building_id = primary_id
-            
-            # 変更をフラッシュ（物件と外部IDの移動を確実に反映）
-            db.flush()
-            
-            # 建物情報を保存（レスポンス用）
-            building_infos.append({
-                "id": secondary_building.id,
-                "name": secondary_building.normalized_name,
-                "properties_moved": len(properties_to_move)
-            })
-            
-            # 既存の統合履歴の参照を更新（この建物が他の統合履歴で参照されている場合）
-            db.query(BuildingMergeHistory).filter(
-                BuildingMergeHistory.primary_building_id == secondary_building.id
-            ).update({
-                "primary_building_id": primary_id
-            })
-            
-            # direct_primary_building_idの参照も更新
-            db.query(BuildingMergeHistory).filter(
-                BuildingMergeHistory.direct_primary_building_id == secondary_building.id
-            ).update({
-                "direct_primary_building_id": primary_id
-            })
-            
-            # final_primary_building_idの参照も更新
-            db.query(BuildingMergeHistory).filter(
-                BuildingMergeHistory.final_primary_building_id == secondary_building.id
-            ).update({
-                "final_primary_building_id": primary_id
-            })
-            
-            # ambiguous_property_matchesテーブルのbuilding_id参照を更新
-            from sqlalchemy import text
-            db.execute(
-                text("""
-                    UPDATE ambiguous_property_matches 
-                    SET building_id = :primary_id 
-                    WHERE building_id = :secondary_id
-                """),
-                {"primary_id": primary_id, "secondary_id": secondary_building.id}
-            )
-            
-            # 建物除外テーブルの参照を削除または更新
-            # building1_idとして参照されている場合
-            db.query(BuildingMergeExclusion).filter(
-                BuildingMergeExclusion.building1_id == secondary_building.id
-            ).delete()
-            
-            # building2_idとして参照されている場合
-            db.query(BuildingMergeExclusion).filter(
-                BuildingMergeExclusion.building2_id == secondary_building.id
-            ).delete()
-            
-            # 建物を削除
-            db.delete(secondary_building)
-            merged_count += 1
-        
-        # 全ての建物移動が完了した後、重複物件を検出して統合
-        # 主建物内の全物件を取得
-        all_properties = db.query(MasterProperty).filter(
-            MasterProperty.building_id == primary_id
-        ).order_by(
-            MasterProperty.floor_number,
-            MasterProperty.area,
-            MasterProperty.layout,
-            MasterProperty.direction,
-            MasterProperty.created_at  # 古い物件を優先
-        ).all()
-        
-        # 重複物件を検出（階数、面積、間取り、方角が同じ物件）
-        seen_properties = {}  # キー: (floor, area, layout, direction), 値: primary_property
-        properties_to_merge = []  # [(primary_id, secondary_id), ...]
-        
-        for prop in all_properties:
-            # 重複判定のキーを作成（面積は0.5㎡の誤差を考慮）
-            # 面積を0.5㎡単位に丸める
-            rounded_area = round(prop.area * 2) / 2 if prop.area else None
-            # 間取りと方角を正規化
-            normalized_layout = normalize_layout(prop.layout) if prop.layout else None
-            normalized_direction = normalize_direction(prop.direction) if prop.direction else None
-            
-            key = (
-                prop.floor_number,
-                rounded_area,
-                normalized_layout,
-                normalized_direction
-            )
-            
-            if key in seen_properties:
-                # 重複物件が見つかった
-                primary_prop = seen_properties[key]
-                
-                # 部屋番号の処理
-                # 優先順位: 1. 両方あるなら異なる場合はスキップ 2. 片方のみある場合は統合 3. 両方ない場合は統合
-                if primary_prop.room_number and prop.room_number:
-                    if primary_prop.room_number != prop.room_number:
-                        # 部屋番号が異なるので別物件として扱う
-                        continue
-                
-                properties_to_merge.append((primary_prop.id, prop.id))
-            else:
-                seen_properties[key] = prop
-        
-        # 重複物件を統合
-        for primary_prop_id, secondary_prop_id in properties_to_merge:
-            try:
-                # 掲載情報を移動
-                listings_moved = db.query(PropertyListing).filter(
-                    PropertyListing.master_property_id == secondary_prop_id
-                ).update({
-                    "master_property_id": primary_prop_id
-                })
-                
-                # ambiguous_property_matchesテーブルの参照を更新
-                db.execute(
-                    text("""
-                        UPDATE ambiguous_property_matches 
-                        SET selected_property_id = :primary_id 
-                        WHERE selected_property_id = :secondary_id
-                    """),
-                    {"primary_id": primary_prop_id, "secondary_id": secondary_prop_id}
-                )
-                
-                # ambiguous_property_matchesのJSON配列を更新
-                # この処理は複雑なので、一旦削除された物件IDを持つレコードを取得してPython側で処理
-                ambiguous_matches = db.execute(
-                    text("""
-                        SELECT id, candidate_property_ids 
-                        FROM ambiguous_property_matches 
-                        WHERE candidate_property_ids::text LIKE :pattern
-                    """),
-                    {"pattern": f"%{secondary_prop_id}%"}
-                ).fetchall()
-                
-                for match in ambiguous_matches:
-                    candidate_ids = match.candidate_property_ids if match.candidate_property_ids else []
-                    # 削除対象IDを主物件IDに置き換える
-                    new_candidates = []
-                    for cid in candidate_ids:
-                        if cid == secondary_prop_id:
-                            if primary_prop_id not in new_candidates:
-                                new_candidates.append(primary_prop_id)
-                        else:
-                            if cid not in new_candidates:
-                                new_candidates.append(cid)
+                    merge_history = BuildingMergeHistory(
+                        primary_building_id=primary_id,
+                        merged_building_id=secondary_building.id,
+                        merged_building_name=secondary_building.normalized_name,
+                        canonical_merged_name=secondary_building.canonical_name,
+                        merge_details=merge_details,  # 詳細情報を保存
+                        merged_at=datetime.now(),
+                        merged_by="admin"
+                    )
+                    db.add(merge_history)
                     
-                    # 更新
-                    if new_candidates != candidate_ids:
-                        db.execute(
-                            text("""
-                                UPDATE ambiguous_property_matches 
-                                SET candidate_property_ids = :candidates 
-                                WHERE id = :match_id
-                            """),
-                            {"candidates": json.dumps(new_candidates), "match_id": match.id}
-                        )
-                
-                # 建物統合による自動統合は履歴に記録しない
-                # （スクレイピング時の自動紐付けと同様の扱い）
-                
-                # 統合詳細を記録
-                secondary_prop = db.query(MasterProperty).filter(
-                    MasterProperty.id == secondary_prop_id
-                ).first()
-                
-                if secondary_prop:
-                    duplicate_merge_details.append({
-                        "primary_id": primary_prop_id,
-                        "secondary_id": secondary_prop_id,
-                        "floor": secondary_prop.floor_number,
-                        "area": secondary_prop.area,
-                        "layout": secondary_prop.layout,
-                        "direction": secondary_prop.direction,
-                        "listings_moved": listings_moved
+                    # 物件を移動
+                    properties_to_move = db.query(MasterProperty).filter(
+                        MasterProperty.building_id == secondary_building.id
+                    ).all()
+                    
+                    property_ids_moved = []
+                    for prop in properties_to_move:
+                        # PropertyMergeHistoryの参照は更新しない（履歴は保持）
+                        # 物件を新しい建物に移動
+                        prop.building_id = primary_id
+                        moved_properties += 1
+                        property_ids_moved.append(prop.id)
+                    
+                    # merge_detailsに物件IDを記録
+                    merge_history.merge_details["merged_buildings"][0]["property_ids"] = property_ids_moved
+                    merge_history.merge_details["merged_buildings"][0]["properties_moved"] = len(property_ids_moved)
+                    
+                    # 外部IDを移動（重複がある場合は削除）
+                    external_ids_to_move = db.query(BuildingExternalId).filter(
+                        BuildingExternalId.building_id == secondary_building.id
+                    ).all()
+                    
+                    for ext_id in external_ids_to_move:
+                        # 同じ外部IDが既に主建物に存在するか確認
+                        existing = db.query(BuildingExternalId).filter(
+                            BuildingExternalId.building_id == primary_id,
+                            BuildingExternalId.source_site == ext_id.source_site,
+                            BuildingExternalId.external_id == ext_id.external_id
+                        ).first()
+                        
+                        if existing:
+                            # 重複する場合は削除
+                            db.delete(ext_id)
+                        else:
+                            # 重複しない場合は移動
+                            ext_id.building_id = primary_id
+                    
+                    # 変更をフラッシュ（物件と外部IDの移動を確実に反映）
+                    db.flush()
+                    
+                    # 建物情報を保存（レスポンス用）
+                    building_infos.append({
+                        "id": secondary_building.id,
+                        "name": secondary_building.normalized_name,
+                        "properties_moved": len(properties_to_move)
                     })
                     
-                    # PropertyMergeHistoryから参照されているかチェック
-                    is_referenced = db.query(PropertyMergeHistory).filter(
-                        or_(
-                            PropertyMergeHistory.primary_property_id == secondary_prop_id,
-                            PropertyMergeHistory.direct_primary_property_id == secondary_prop_id,
-                            PropertyMergeHistory.final_primary_property_id == secondary_prop_id
+                    # 既存の統合履歴の参照を更新（この建物が他の統合履歴で参照されている場合）
+                    db.query(BuildingMergeHistory).filter(
+                        BuildingMergeHistory.primary_building_id == secondary_building.id
+                    ).update({
+                        "primary_building_id": primary_id
+                    })
+                    
+                    # direct_primary_building_idの参照も更新
+                    db.query(BuildingMergeHistory).filter(
+                        BuildingMergeHistory.direct_primary_building_id == secondary_building.id
+                    ).update({
+                        "direct_primary_building_id": primary_id
+                    })
+                    
+                    # final_primary_building_idの参照も更新
+                    db.query(BuildingMergeHistory).filter(
+                        BuildingMergeHistory.final_primary_building_id == secondary_building.id
+                    ).update({
+                        "final_primary_building_id": primary_id
+                    })
+                    
+                    # ambiguous_property_matchesテーブルのbuilding_id参照を更新
+                    from sqlalchemy import text
+                    db.execute(
+                        text("""
+                            UPDATE ambiguous_property_matches 
+                            SET building_id = :primary_id 
+                            WHERE building_id = :secondary_id
+                        """),
+                        {"primary_id": primary_id, "secondary_id": secondary_building.id}
+                    )
+                    
+                    # 建物除外テーブルの参照を削除または更新
+                    # building1_idとして参照されている場合
+                    db.query(BuildingMergeExclusion).filter(
+                        BuildingMergeExclusion.building1_id == secondary_building.id
+                    ).delete()
+                    
+                    # building2_idとして参照されている場合
+                    db.query(BuildingMergeExclusion).filter(
+                        BuildingMergeExclusion.building2_id == secondary_building.id
+                    ).delete()
+                    
+                    # 建物を削除
+                    db.delete(secondary_building)
+                    merged_count += 1
+                
+                    # 全ての建物移動が完了した後、重複物件を検出して統合
+                    # 主建物内の全物件を取得
+                    all_properties = db.query(MasterProperty).filter(
+                        MasterProperty.building_id == primary_id
+                    ).order_by(
+                        MasterProperty.floor_number,
+                        MasterProperty.area,
+                        MasterProperty.layout,
+                        MasterProperty.direction,
+                        MasterProperty.created_at  # 古い物件を優先
+                    ).all()
+                    
+                    # 重複物件を検出（階数、面積、間取り、方角が同じ物件）
+                    seen_properties = {}  # キー: (floor, area, layout, direction), 値: primary_property
+                    properties_to_merge = []  # [(primary_id, secondary_id), ...]
+                    
+                    for prop in all_properties:
+                        # 重複判定のキーを作成（面積は0.5㎡の誤差を考慮）
+                        # 面積を0.5㎡単位に丸める
+                        rounded_area = round(prop.area * 2) / 2 if prop.area else None
+                        # 間取りと方角を正規化
+                        normalized_layout = normalize_layout(prop.layout) if prop.layout else None
+                        normalized_direction = normalize_direction(prop.direction) if prop.direction else None
+                        
+                        key = (
+                            prop.floor_number,
+                            rounded_area,
+                            normalized_layout,
+                            normalized_direction
                         )
-                    ).first()
+                        
+                        if key in seen_properties:
+                            # 重複物件が見つかった
+                            primary_prop = seen_properties[key]
+                            
+                            # 部屋番号の処理
+                            # 優先順位: 1. 両方あるなら異なる場合はスキップ 2. 片方のみある場合は統合 3. 両方ない場合は統合
+                            if primary_prop.room_number and prop.room_number:
+                                if primary_prop.room_number != prop.room_number:
+                                    # 部屋番号が異なるので別物件として扱う
+                                    continue
+                            
+                            properties_to_merge.append((primary_prop.id, prop.id))
+                        else:
+                            seen_properties[key] = prop
                     
-                    if not is_referenced:
-                        # 参照されていない場合のみ削除
-                        db.delete(secondary_prop)
-                        duplicate_properties_merged += 1
-                    else:
-                        # 参照されている場合はログを出力（削除しない）
-                        import logging
-                        logging.info(f"物件ID {secondary_prop_id} はPropertyMergeHistoryから参照されているため削除をスキップ")
+                    # 重複物件を統合
+                    for primary_prop_id, secondary_prop_id in properties_to_merge:
+                        try:
+                            # 掲載情報を移動
+                            listings_moved = db.query(PropertyListing).filter(
+                                PropertyListing.master_property_id == secondary_prop_id
+                            ).update({
+                                "master_property_id": primary_prop_id
+                            })
+                            
+                            # ambiguous_property_matchesテーブルの参照を更新
+                            db.execute(
+                                text("""
+                                    UPDATE ambiguous_property_matches 
+                                    SET selected_property_id = :primary_id 
+                                    WHERE selected_property_id = :secondary_id
+                                """),
+                                {"primary_id": primary_prop_id, "secondary_id": secondary_prop_id}
+                            )
+                            
+                            # ambiguous_property_matchesのJSON配列を更新
+                            # この処理は複雑なので、一旦削除された物件IDを持つレコードを取得してPython側で処理
+                            ambiguous_matches = db.execute(
+                                text("""
+                                    SELECT id, candidate_property_ids 
+                                    FROM ambiguous_property_matches 
+                                    WHERE candidate_property_ids::text LIKE :pattern
+                                """),
+                                {"pattern": f"%{secondary_prop_id}%"}
+                            ).fetchall()
+                            
+                            for match in ambiguous_matches:
+                                candidate_ids = match.candidate_property_ids if match.candidate_property_ids else []
+                                # 削除対象IDを主物件IDに置き換える
+                                new_candidates = []
+                                for cid in candidate_ids:
+                                    if cid == secondary_prop_id:
+                                        if primary_prop_id not in new_candidates:
+                                            new_candidates.append(primary_prop_id)
+                                    else:
+                                        if cid not in new_candidates:
+                                            new_candidates.append(cid)
+                                
+                                # 更新
+                                if new_candidates != candidate_ids:
+                                    db.execute(
+                                        text("""
+                                            UPDATE ambiguous_property_matches 
+                                            SET candidate_property_ids = :candidates 
+                                            WHERE id = :match_id
+                                        """),
+                                        {"candidates": json.dumps(new_candidates), "match_id": match.id}
+                                    )
+                            
+                            # 建物統合による自動統合は履歴に記録しない
+                            # （スクレイピング時の自動紐付けと同様の扱い）
+                            
+                            # 統合詳細を記録
+                            secondary_prop = db.query(MasterProperty).filter(
+                                MasterProperty.id == secondary_prop_id
+                            ).first()
+                            
+                            if secondary_prop:
+                                duplicate_merge_details.append({
+                                    "primary_id": primary_prop_id,
+                                    "secondary_id": secondary_prop_id,
+                                    "floor": secondary_prop.floor_number,
+                                    "area": secondary_prop.area,
+                                    "layout": secondary_prop.layout,
+                                    "direction": secondary_prop.direction,
+                                    "listings_moved": listings_moved
+                                })
+                                
+                                # PropertyMergeHistoryから参照されているかチェック
+                                is_referenced = db.query(PropertyMergeHistory).filter(
+                                    or_(
+                                        PropertyMergeHistory.primary_property_id == secondary_prop_id,
+                                        PropertyMergeHistory.direct_primary_property_id == secondary_prop_id,
+                                        PropertyMergeHistory.final_primary_property_id == secondary_prop_id
+                                    )
+                                ).first()
+                                
+                                if not is_referenced:
+                                    # 参照されていない場合のみ削除
+                                    db.delete(secondary_prop)
+                                    duplicate_properties_merged += 1
+                                else:
+                                    # 参照されている場合はログを出力（削除しない）
+                                    import logging
+                                    logging.info(f"物件ID {secondary_prop_id} はPropertyMergeHistoryから参照されているため削除をスキップ")
+                                
+                        except Exception as e:
+                            # 個別のエラーはログに記録して続行
+                            import logging
+                            logging.error(f"物件統合エラー: primary={primary_prop_id}, secondary={secondary_prop_id}, error={e}")
+                            continue
                     
-            except Exception as e:
-                # 個別のエラーはログに記録して続行
-                import logging
-                logging.error(f"物件統合エラー: primary={primary_prop_id}, secondary={secondary_prop_id}, error={e}")
-                continue
+                    # 多数決で建物情報を更新
+                    updater = MajorityVoteUpdater(db)
+                    primary_building = db.query(Building).filter(Building.id == primary_id).first()
+                    if primary_building:
+                        updater.update_building_by_majority(primary_building)
+                    
+                    # BuildingListingNameテーブルを更新
+                    listing_name_manager = BuildingListingNameManager(db)
+                    for secondary_building in secondary_buildings:
+                        listing_name_manager.update_from_building_merge(
+                            primary_building_id=primary_id,
+                            secondary_building_id=secondary_building.id
+                        )
+                    
+            db.commit()
+            
+            # 重複候補リストが変更される可能性があるため再計算を促す
+            clear_duplicate_buildings_cache()
+            
+            return {
+                "merged_count": merged_count,
+                "moved_properties": moved_properties,
+                "primary_building": {
+                    "id": primary.id,
+                    "normalized_name": primary.normalized_name,
+                    "address": primary.address if hasattr(primary, 'address') else None,
+                    "property_count": db.query(MasterProperty).filter(
+                        MasterProperty.building_id == primary_id
+                    ).count()
+                },
+                "message": f"{merged_count}件の建物を統合し、{moved_properties}件の物件を処理しました。" + (f"{duplicate_properties_merged}件の重複物件を自動統合しました。" if duplicate_properties_merged > 0 else ""),
+                "merged_buildings": building_infos,
+                "duplicate_properties_merged": duplicate_properties_merged,
+                "duplicate_merge_details": duplicate_merge_details if duplicate_properties_merged > 0 else []
+            }
         
-        # 多数決で建物情報を更新
-        updater = MajorityVoteUpdater(db)
-        primary_building = db.query(Building).filter(Building.id == primary_id).first()
-        if primary_building:
-            updater.update_building_by_majority(primary_building)
+        except Exception as e:
+            db.rollback()
+            
+            # デッドロックの場合はリトライ
+            import time
+            from sqlalchemy.exc import OperationalError
+            
+            if isinstance(e, OperationalError) and ("deadlock" in str(e).lower() or "lock" in str(e).lower()):
+                retry_count += 1
+                if retry_count < max_retries:
+                    time.sleep(0.5 * retry_count)  # 指数バックオフ
+                    continue
+            
+            raise HTTPException(status_code=500, detail=str(e))
         
-        # BuildingListingNameテーブルを更新
-        listing_name_manager = BuildingListingNameManager(db)
-        for secondary_building in secondary_buildings:
-            listing_name_manager.update_from_building_merge(
-                primary_building_id=primary_id,
-                secondary_building_id=secondary_building.id
-            )
-        
-        db.commit()
-        
-        # 重複候補リストが変更される可能性があるため再計算を促す
-        clear_duplicate_buildings_cache()
-        
-        return {
-            "merged_count": merged_count,
-            "moved_properties": moved_properties,
-            "primary_building": {
-                "id": primary.id,
-                "normalized_name": primary.normalized_name,
-                "address": primary.address if hasattr(primary, 'address') else None,
-                "property_count": db.query(MasterProperty).filter(
-                    MasterProperty.building_id == primary_id
-                ).count()
-            },
-            "message": f"{merged_count}件の建物を統合し、{moved_properties}件の物件を処理しました。" + (f"{duplicate_properties_merged}件の重複物件を自動統合しました。" if duplicate_properties_merged > 0 else ""),
-            "merged_buildings": building_infos,
-            "duplicate_properties_merged": duplicate_properties_merged,
-            "duplicate_merge_details": duplicate_merge_details if duplicate_properties_merged > 0 else []
-        }
-        
-    except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        # 成功したらループを抜ける
+        break
 
 
 @router.post("/revert-building-merge/{history_id}")
