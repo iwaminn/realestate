@@ -4172,9 +4172,24 @@ class BaseScraper(ABC):
                     return False
             return False
         except Exception as e:
+            error_msg = str(e)
             self.logger.error(f"404エラー履歴チェック中にエラー: {e}")
-            # トランザクションエラーの場合はセッションを回復
-            self.ensure_session_active()
+            
+            # InFailedSqlTransactionエラーの場合はセッションを完全にリセット
+            if "InFailedSqlTransaction" in error_msg or "current transaction is aborted" in error_msg:
+                try:
+                    self.session.rollback()
+                    self.session.close()
+                    from ..database import get_db_for_scraping
+                    self.session = get_db_for_scraping()
+                    self.logger.info("404エラーチェック後のセッションを完全にリセットしました")
+                except Exception as reset_error:
+                    self.logger.error(f"セッションリセットエラー: {reset_error}")
+            else:
+                # その他のエラーの場合は通常の回復処理
+                self.ensure_session_active()
+            
+            # エラーが発生した場合はスキップしない（処理を続行）
             return False
     
     def _should_skip_url_due_to_validation_error(self, url: str) -> bool:
@@ -4210,9 +4225,24 @@ class BaseScraper(ABC):
                     return False
             return False
         except Exception as e:
+            error_msg = str(e)
             self.logger.debug(f"検証エラー履歴チェック中にエラー: {e}")
-            # トランザクションエラーの場合はセッションを回復
-            self.ensure_session_active()
+            
+            # InFailedSqlTransactionエラーの場合はセッションを完全にリセット
+            if "InFailedSqlTransaction" in error_msg or "current transaction is aborted" in error_msg:
+                try:
+                    self.session.rollback()
+                    self.session.close()
+                    from ..database import get_db_for_scraping
+                    self.session = get_db_for_scraping()
+                    self.logger.info("検証エラーチェック後のセッションを完全にリセットしました")
+                except Exception as reset_error:
+                    self.logger.error(f"セッションリセットエラー: {reset_error}")
+            else:
+                # その他のエラーの場合は通常の回復処理
+                self.ensure_session_active()
+            
+            # エラーが発生した場合はスキップしない（処理を続行）
             return False
     
     def _should_skip_due_to_price_mismatch(self, site_property_id: str) -> bool:
@@ -4254,7 +4284,21 @@ class BaseScraper(ABC):
                     )
             return False
         except Exception as e:
+            error_msg = str(e)
             self.logger.debug(f"価格不一致履歴チェック中にエラー: {e}")
+            
+            # InFailedSqlTransactionエラーの場合はセッションを完全にリセット
+            if "InFailedSqlTransaction" in error_msg or "current transaction is aborted" in error_msg:
+                try:
+                    self.session.rollback()
+                    self.session.close()
+                    from ..database import get_db_for_scraping
+                    self.session = get_db_for_scraping()
+                    self.logger.info("価格不一致チェック後のセッションを完全にリセットしました")
+                except Exception as reset_error:
+                    self.logger.error(f"セッションリセットエラー: {reset_error}")
+            
+            # エラーが発生した場合はスキップしない（処理を続行）
             return False
     
     def _calculate_retry_interval(self, error_count: int) -> int:
