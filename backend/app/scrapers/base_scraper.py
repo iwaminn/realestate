@@ -3,6 +3,7 @@ import time
 import logging
 from typing import Dict, List, Optional, Any, Tuple, Union
 from datetime import datetime, timedelta
+from contextlib import contextmanager
 import os
 import json
 from abc import ABC, abstractmethod
@@ -95,6 +96,56 @@ class BaseScraper(ABC):
     AREA_CHANGE_THRESHOLD = 0.7  # 面積変更の閾値（70%）
     PRICE_CHANGE_THRESHOLD = 0.7  # 価格変更の閾値（70%）
     
+    @contextmanager
+    def transaction_scope(self):
+        """
+        トランザクションスコープを管理するコンテキストマネージャー
+        
+        使用例:
+            with self.transaction_scope() as session:
+                # データベース操作
+                pass
+            # ここで自動的にcommit/rollback/closeされる
+        """
+        from ..database import get_db_for_scraping
+        session = get_db_for_scraping()
+        try:
+            yield session
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            # エラーはログに記録するが、再スローして呼び出し元で処理
+            self.logger.debug(f"トランザクションエラー（ロールバック済み）: {e}")
+            raise
+        finally:
+            session.close()
+
+    def _handle_transaction_error(self, error: Exception, context: str) -> bool:
+        """
+        トランザクションエラーを処理する共通メソッド
+        
+        Args:
+            error: 発生した例外
+            context: エラーが発生したコンテキスト（ログ用）
+            
+        Returns:
+            bool: セッションがリセットされた場合True、そうでない場合False
+        """
+        error_str = str(error)
+        
+        # InFailedSqlTransactionエラーの場合
+        if ("current transaction is aborted" in error_str or 
+            "InFailedSqlTransaction" in error_str or
+            "rolled back due to a previous exception" in error_str):
+            
+            self.logger.debug(f"{context}: トランザクションエラーを検出しました（新しいトランザクション管理では自動回復）")
+            # 新しいトランザクション管理では、次の操作で自動的に新しいトランザクションが開始される
+            return True
+        
+        # その他のエラーはログに記録
+        self.logger.warning(f"{context}: {error}")
+        return False
+    
     def __init__(self, source_site: Union[str, SourceSite], force_detail_fetch: bool = False, max_properties: Optional[int] = None, ignore_error_history: bool = False, task_id: Optional[str] = None):
         # 文字列の場合はSourceSiteに変換（後方互換性）
         if isinstance(source_site, str):
@@ -114,9 +165,7 @@ class BaseScraper(ABC):
         # 建物名検証モード（デフォルト: STRICT）
         self.building_name_verification_mode = BuildingNameVerificationMode.STRICT
         
-        # get_db_for_scrapingを使用して、クリーンなセッションを取得
-        from ..database import get_db_for_scraping
-        self.session = get_db_for_scraping()
+        # セッションは各メソッドで必要に応じて作成（コンテキストマネージャー使用）
         self.http_session = requests.Session()
         self.http_session.headers.update({
             'User-Agent': self.DEFAULT_USER_AGENT
@@ -129,7 +178,8 @@ class BaseScraper(ABC):
         self.fuzzy_matcher = FuzzyPropertyMatcher()
         # majority_updaterは循環インポート回避のため削除
         # 必要に応じてメソッド内で動的にインポートして使用
-        self.external_id_handler = BuildingExternalIdHandler(self.session, self.logger)
+        # BuildingExternalIdHandlerは遅延初期化（セッションが必要な時に作成）
+        self.external_id_handler = None
         # BuildingListingNameManagerは遅延初期化
         self._listing_name_manager = None
         
@@ -193,16 +243,24 @@ class BaseScraper(ABC):
         self._selector_stats = {}  # {selector: {'success': 0, 'fail': 0}}
         self._page_structure_errors = 0  # ページ構造エラーカウント  # ページ構造エラーカウント
 
+    def _ensure_external_id_handler(self, session):
+        """external_id_handlerを遅延初期化（必要な時だけ作成）"""
+        if self.external_id_handler is None:
+            self.external_id_handler = BuildingExternalIdHandler(session, self.logger)
+        return self.external_id_handler
+
     def _check_task_status_from_db(self) -> dict:
-        """データベースからタスクの状態を確認（セッション再利用・軽量クエリ）"""
+        """データベースからタスクの状態を確認（新しいセッションで軽量クエリ）"""
         if not self.task_id:
             return {"is_paused": False, "is_cancelled": False}
         
+        from ..database import get_db_for_scraping
+        from ..models_scraping_task import ScrapingTask
+        
+        session = get_db_for_scraping()
         try:
-            from ..models_scraping_task import ScrapingTask
-            
-            # 既存のセッションを再利用し、必要なカラムのみ取得（軽量クエリ）
-            result = self.session.query(
+            # 必要なカラムのみ取得（軽量クエリ）
+            result = session.query(
                 ScrapingTask.is_paused,
                 ScrapingTask.is_cancelled,
                 ScrapingTask.status
@@ -224,10 +282,10 @@ class BaseScraper(ABC):
                 
         except Exception as e:
             self.logger.error(f"データベースからタスク状態を取得中にエラー: {e}")
-            # トランザクションエラーの場合はセッションを回復
-            self.ensure_session_active()
             # エラー時は安全のため停止しない
             return {"is_paused": False, "is_cancelled": False}
+        finally:
+            session.close()
     
     def _setup_logger(self) -> logging.Logger:
         """ロガーのセットアップ"""
@@ -720,21 +778,27 @@ class BaseScraper(ABC):
                     existing_listing = None
                     site_property_id = property_data.get('site_property_id')
                     
-                    if site_property_id:
-                        self.logger.info(f"[DEBUG] DB確認中: site_property_id={site_property_id}")
-                        existing_listing = self.session.query(PropertyListing).filter(
-                            PropertyListing.site_property_id == site_property_id,
-                            PropertyListing.source_site == self.source_site
-                        ).first()
-                        self.logger.info(f"[DEBUG] DB確認完了: existing={existing_listing is not None}")
-                    else:
-                        # site_property_idがない場合は従来通りURLで検索（後方互換性）
-                        self.logger.info(f"[DEBUG] site_property_idがないためURLで確認: {property_data['url']}")
-                        existing_listing = self.session.query(PropertyListing).filter(
-                            PropertyListing.url == property_data['url'],
-                            PropertyListing.source_site == self.source_site
-                        ).first()
-                        self.logger.info(f"[DEBUG] DB確認完了: existing={existing_listing is not None}")
+                    # 新しいセッションを作成して確認
+                    from ..database import get_db_for_scraping
+                    db_session = get_db_for_scraping()
+                    try:
+                        if site_property_id:
+                            self.logger.info(f"[DEBUG] DB確認中: site_property_id={site_property_id}")
+                            existing_listing = db_session.query(PropertyListing).filter(
+                                PropertyListing.site_property_id == site_property_id,
+                                PropertyListing.source_site == self.source_site
+                            ).first()
+                            self.logger.info(f"[DEBUG] DB確認完了: existing={existing_listing is not None}")
+                        else:
+                            # site_property_idがない場合は従来通りURLで検索（後方互換性）
+                            self.logger.info(f"[DEBUG] site_property_idがないためURLで確認: {property_data['url']}")
+                            existing_listing = db_session.query(PropertyListing).filter(
+                                PropertyListing.url == property_data['url'],
+                                PropertyListing.source_site == self.source_site
+                            ).first()
+                            self.logger.info(f"[DEBUG] DB確認完了: existing={existing_listing is not None}")
+                    finally:
+                        db_session.close()
                     
                     # HTML構造エラーの既知物件をスキップ（全スクレイパー共通）
                     if self.has_critical_field_errors(property_data['url']):
@@ -754,19 +818,21 @@ class BaseScraper(ABC):
                         
                         # 既存物件の場合は最終確認日時を更新
                         if existing_listing:
+                            # 新しいトランザクションスコープで更新
+                            from ..database import get_db_for_scraping
+                            update_session = get_db_for_scraping()
                             try:
-                                # existing_listingのIDを保存（セッションエラー後の再取得用）
+                                # existing_listingのIDを保存
                                 listing_id = existing_listing.id
                                 listing_master_property_id = existing_listing.master_property_id
                                 
-                                # セッションにアタッチされているか確認し、必要なら再取得
-                                if existing_listing not in self.session:
-                                    existing_listing = self.session.query(PropertyListing).filter(
-                                        PropertyListing.id == listing_id
-                                    ).first()
-                                    if not existing_listing:
-                                        self.logger.warning(f"掲載情報の再取得に失敗: listing_id={listing_id}")
-                                        continue
+                                # セッションから再取得
+                                existing_listing = update_session.query(PropertyListing).filter(
+                                    PropertyListing.id == listing_id
+                                ).first()
+                                if not existing_listing:
+                                    self.logger.warning(f"掲載情報の再取得に失敗: listing_id={listing_id}")
+                                    continue
                                 
                                 existing_listing.last_confirmed_at = get_utc_now()
                                 
@@ -778,7 +844,7 @@ class BaseScraper(ABC):
                                     # 物件が販売終了になっていた場合は販売再開
                                     # master_propertyを明示的に取得（lazy loadエラーを回避）
                                     if listing_master_property_id:
-                                        master_prop = self.session.query(MasterProperty).filter(
+                                        master_prop = update_session.query(MasterProperty).filter(
                                             MasterProperty.id == listing_master_property_id
                                         ).first()
                                         if master_prop and master_prop.sold_at:
@@ -787,16 +853,14 @@ class BaseScraper(ABC):
                                             master_prop.final_price_updated_at = None
                                             self.logger.debug(f"物件を販売再開 (HTML構造エラースキップ) - 物件ID: {master_prop.id}")
                                 
-                                if self.safe_flush():
-                                    self.logger.debug(f"最終確認日時を正常に更新: listing_id={listing_id}")
-                                else:
-                                    # flushが失敗した場合、existing_listingを再取得
-                                    existing_listing = self.session.query(PropertyListing).filter(
-                                        PropertyListing.id == listing_id
-                                    ).first()
+                                update_session.commit()
+                                self.logger.debug(f"最終確認日時を正常に更新: listing_id={listing_id}")
                             except Exception as e:
+                                update_session.rollback()
                                 self.log_warning(f'最終確認日時の更新に失敗: {e}',
                                                url=property_data.get('url', '不明'))
+                            finally:
+                                update_session.close()
                         
                         processed = True
                     else:
@@ -856,6 +920,10 @@ class BaseScraper(ABC):
                             pass
                         elif update_type == 'other_updates':
                             self._scraping_stats['other_updates'] += 1
+                        elif update_type == 'existing':
+                            # 既存レコードの更新（IntegrityError回避のケース）
+                            self._scraping_stats['other_updates'] += 1
+                            self.logger.debug(f"既存レコード更新をother_updatesとしてカウント: URL={property_data.get('url', '不明')}")
                         else:
                             # 未知のupdate_type
                             self._scraping_stats['other_updates'] += 1
@@ -935,56 +1003,20 @@ class BaseScraper(ABC):
                         'timestamp': datetime.now().isoformat()
                     })
                 
-                # トランザクションエラーの場合はロールバック
+                # トランザクションエラーの場合（新しいトランザクション管理では各物件ごとに独立したトランザクション）
                 if ("current transaction is aborted" in str(e) or 
                     "InFailedSqlTransaction" in str(e) or
                     "rolled back due to a previous exception" in str(e)):
-                    try:
-                        self.session.rollback()
-                        # トランザクションは自動的に開始される
-                        self.logger.info("トランザクションをロールバックしました")
-                    except:
-                        pass
+                    # save_property_common内でトランザクションが管理されるため、ここでのロールバックは不要
+                    self.logger.info("トランザクションエラーを検出しましたが、次の物件で新しいトランザクションが開始されます")
                 continue
             
-            # 定期的にコミット（トランザクションがアクティブな場合のみ）
-            if total_properties % 10 == 0:
-                try:
-                    if self.session.in_transaction():
-                        self.session.commit()
-                except Exception as e:
-                    self.logger.warning(f"定期コミットエラー: {e}")
-                    # エラーが発生しても処理を続行
+            # 定期的にコミット（新しいトランザクション管理では不要）
+            # save_property_common内で各物件ごとにトランザクションが管理される
         
-        # 最終コミット（トランザクションがアクティブな場合のみ）
+        # 最終コミット（新しいトランザクション管理では不要）
+        # save_property_common内で各物件ごとにトランザクションが完結している
         final_commit_success = True
-        try:
-            if self.session.in_transaction():
-                self.session.commit()
-                self.logger.info(f"最終コミット成功: {total_properties}件の処理完了")
-        except Exception as e:
-            final_commit_success = False
-            self.logger.error(f"最終コミットエラー: {e}")
-            # エラーの詳細をログに記録
-            import traceback
-            self.logger.error(f"最終コミットエラーのスタックトレース:\n{traceback.format_exc()}")
-            
-            # ロールバックを試みる
-            try:
-                self.session.rollback()
-            except:
-                pass
-            
-            # 最終コミットが失敗した場合、実際に保存された件数を再計算
-            # （10件ごとの定期コミットで保存された分のみ）
-            actually_saved = (total_properties // 10) * 10
-            self.logger.error(f"最終コミット失敗により、{total_properties - actually_saved}件が保存されませんでした")
-            
-            # 統計を修正（過剰にカウントされた分を減算）
-            unsaved_count = total_properties - actually_saved
-            if self._scraping_stats.get('new_listings', 0) >= unsaved_count:
-                self._scraping_stats['new_listings'] -= unsaved_count
-                self.logger.info(f"統計を修正: new_listings を {unsaved_count} 件減算")
         
         # properties_processedとtotal_propertiesの一致を確認
         if self._scraping_stats['properties_processed'] != total_properties:
@@ -1476,12 +1508,18 @@ class BaseScraper(ABC):
                         # 建物名と物件情報を含む詳細ログ
                         building_name = existing_listing.listing_building_name or ''
                         # master_propertyとbuildingを明示的に取得（lazy loadエラーを回避）
+                        master_prop = None
                         if existing_listing.master_property_id:
-                            master_prop = self.session.query(MasterProperty).filter(
-                                MasterProperty.id == existing_listing.master_property_id
-                            ).first()
-                            if master_prop and master_prop.building:
-                                building_name = master_prop.building.normalized_name or building_name
+                            from ..database import get_db_for_scraping
+                            temp_session = get_db_for_scraping()
+                            try:
+                                master_prop = temp_session.query(MasterProperty).filter(
+                                    MasterProperty.id == existing_listing.master_property_id
+                                ).first()
+                                if master_prop and master_prop.building:
+                                    building_name = master_prop.building.normalized_name or building_name
+                            finally:
+                                temp_session.close()
                         
                         detail_info = []
                         if master_prop:
@@ -1778,20 +1816,25 @@ class BaseScraper(ABC):
             # 詳細を取得しない場合、既存の情報を補完
             # master_propertyを明示的に取得（lazy loadエラーを回避）
             if existing_listing and existing_listing.master_property_id:
-                master_prop = self.session.query(MasterProperty).filter(
-                    MasterProperty.id == existing_listing.master_property_id
-                ).first()
-                if master_prop:
-                    # 必須情報を既存データから補完
-                    if 'building_name' not in property_data or not property_data['building_name']:
-                        if master_prop.building:
-                            property_data['building_name'] = master_prop.building.normalized_name
-                    if 'area' not in property_data or not property_data['area']:
-                        property_data['area'] = master_prop.area
-                    if 'layout' not in property_data or not property_data['layout']:
-                        property_data['layout'] = master_prop.layout
-                    if 'floor_number' not in property_data or property_data.get('floor_number') is None:
-                        property_data['floor_number'] = master_prop.floor_number
+                from ..database import get_db_for_scraping
+                temp_session = get_db_for_scraping()
+                try:
+                    master_prop = temp_session.query(MasterProperty).filter(
+                        MasterProperty.id == existing_listing.master_property_id
+                    ).first()
+                    if master_prop:
+                        # 必須情報を既存データから補完
+                        if 'building_name' not in property_data or not property_data['building_name']:
+                            if master_prop.building:
+                                property_data['building_name'] = master_prop.building.normalized_name
+                        if 'area' not in property_data or not property_data['area']:
+                            property_data['area'] = master_prop.area
+                        if 'layout' not in property_data or not property_data['layout']:
+                            property_data['layout'] = master_prop.layout
+                        if 'floor_number' not in property_data or property_data.get('floor_number') is None:
+                            property_data['floor_number'] = master_prop.floor_number
+                finally:
+                    temp_session.close()
         
         # 物件保存前に一時停止チェック
         try:
@@ -2242,58 +2285,16 @@ class BaseScraper(ABC):
         """
         return get_search_key_for_building_common(building_name)
     
-    def safe_flush(self):
+    def safe_flush(self, session):
         """セッションのflushを安全に実行（エラー時は自動ロールバック）"""
+            
         try:
-            self.session.flush()
+            session.flush()
             return True
         except Exception as e:
             self.logger.warning(f"flush中にエラーが発生したため、ロールバックします: {type(e).__name__}: {e}")
-            self.session.rollback()
-            # セッションのリセット後、新しいセッションを確保
-            self.ensure_session_active()
+            session.rollback()
             return False
-    
-    def ensure_session_active(self):
-        """セッションがアクティブであることを確認し、必要に応じて回復"""
-        try:
-            # ダミークエリでセッション状態を確認
-            self.session.execute(text("SELECT 1"))
-        except Exception as e:
-            error_msg = str(e)
-            self.logger.warning(f"セッションエラーを検出、回復処理を実行: {type(e).__name__} - {error_msg}")
-            
-            # InFailedSqlTransactionエラーの場合は完全にセッションをリセット
-            if ("InFailedSqlTransaction" in error_msg or 
-                "current transaction is aborted" in error_msg or
-                "rolled back due to a previous exception" in error_msg):
-                try:
-                    # ロールバックを試みる
-                    self.session.rollback()
-                    self.logger.info("トランザクションをロールバックしました")
-                except Exception as rollback_error:
-                    self.logger.debug(f"ロールバック時のエラー（無視）: {rollback_error}")
-                
-                # セッションを完全にリセット
-                try:
-                    self.session.close()
-                    from ..database import get_db_for_scraping
-                    self.session = get_db_for_scraping()
-                    self.logger.info("セッションを完全にリセットしました")
-                except Exception as reset_error:
-                    self.logger.error(f"セッションリセットエラー: {reset_error}")
-            else:
-                # その他のエラーの場合は単純なロールバック
-                try:
-                    self.session.rollback()
-                except Exception:
-                    pass  # 既にロールバック済みの場合があるため無視
-                
-                # 新しいトランザクションを開始
-                try:
-                    self.session.begin()
-                except Exception:
-                    pass  # 既にトランザクション中の場合があるため無視
     
     def _verify_building_attributes(self, building: Building, total_floors: int = None, 
                                  built_year: int = None, built_month: int = None,
@@ -2649,7 +2650,7 @@ class BaseScraper(ABC):
         normalizer = AddressNormalizer()
         
         # SQLで効率的に候補を絞り込み
-        partial_match_query = self.session.query(Building).filter(
+        partial_match_query = session.query(Building).filter(
             Building.canonical_name.isnot(None),
             Building.address.isnot(None)
         )
@@ -2761,7 +2762,7 @@ class BaseScraper(ABC):
         self.logger.debug(f"建物検索開始: search_key='{search_key}', normalized_address='{normalized_address}'")
         
         # まず、建物名（canonical_name）で候補を絞り込む
-        candidate_buildings = self.session.query(Building).filter(
+        candidate_buildings = session.query(Building).filter(
             Building.canonical_name == search_key
         ).all()
         
@@ -2779,7 +2780,7 @@ class BaseScraper(ABC):
                 building_normalized_addr = normalizer.normalize_for_comparison(building.address)
                 # DBを更新（次回からは高速化）
                 building.normalized_address = building_normalized_addr
-                self.safe_flush()
+                self.safe_flush(session)
             
             # 住所の完全一致をチェック
             if building_normalized_addr == normalized_address:
@@ -2802,7 +2803,7 @@ class BaseScraper(ABC):
             if not building_normalized_addr:
                 building_normalized_addr = normalizer.normalize_for_comparison(building.address)
                 building.normalized_address = building_normalized_addr
-                self.safe_flush()
+                self.safe_flush(session)
             
             # 部分一致をチェック
             if (building_normalized_addr.startswith(normalized_address) or 
@@ -2824,7 +2825,7 @@ class BaseScraper(ABC):
         canonical_search = canonicalize_building_name(search_key)
         
         # BuildingListingNameから該当する建物を検索（複数候補の最適化）
-        listing_matches = self.session.query(BuildingListingName).filter(
+        listing_matches = session.query(BuildingListingName).filter(
             or_(
                 BuildingListingName.listing_name == search_key,
                 BuildingListingName.canonical_name == canonical_search
@@ -2838,7 +2839,7 @@ class BaseScraper(ABC):
             
             for listing_match in listing_matches:
                 # 建物を取得
-                primary_building = self.session.query(Building).filter(
+                primary_building = session.query(Building).filter(
                     Building.id == listing_match.building_id
                 ).first()
                 
@@ -2850,7 +2851,7 @@ class BaseScraper(ABC):
                 if not building_normalized_addr:
                     building_normalized_addr = normalizer.normalize_for_comparison(primary_building.address)
                     primary_building.normalized_address = building_normalized_addr
-                    self.safe_flush()
+                    self.safe_flush(session)
                 
                 # 住所の一致度を計算
                 address_score = 0
@@ -2928,10 +2929,26 @@ class BaseScraper(ABC):
                                built_year: int = None, built_month: int = None, total_floors: int = None, 
                                basement_floors: int = None, total_units: int = None, structure: str = None, 
                                land_rights: str = None, station_info: str = None) -> Tuple[Optional[Building], Optional[str]]:
-        """建物を取得または作成（改善版：元の建物名を保持）"""
+        """
+        建物を取得または作成
+        
+        常に新しいトランザクションスコープで実行
+        """
         if not building_name:
             return None, None
         
+        with self.transaction_scope() as session:
+            return self._get_or_create_building_with_session(
+                session, building_name, address, external_property_id,
+                built_year, built_month, total_floors, basement_floors,
+                total_units, structure, land_rights, station_info
+            )
+    
+    def _get_or_create_building_with_session(self, session, building_name: str, address: str = None, 
+                               external_property_id: str = None, built_year: int = None, built_month: int = None, 
+                               total_floors: int = None, basement_floors: int = None, total_units: int = None, 
+                               structure: str = None, land_rights: str = None, station_info: str = None) -> Tuple[Optional[Building], Optional[str]]:
+        """建物を取得または作成（セッションを受け取るバージョン）"""
         # 元の建物名を保持
         original_building_name = building_name
         
@@ -2945,34 +2962,17 @@ class BaseScraper(ABC):
             self.logger.debug(f"建物名抽出に失敗、元の名前を使用: '{building_name}'")
             building_name = original_building_name
         
-        # セッションの状態を確認し、必要に応じてロールバック
-        try:
-            # ダミークエリで状態確認
-            self.session.execute(text("SELECT 1"))
-        except Exception as e:
-            self.logger.warning(f"セッションがエラー状態のため、ロールバックを実行: {type(e).__name__}")
-            self.session.rollback()
-        
         # 外部IDがある場合は先に検索
         if external_property_id:
-            # トランザクション状態を確認
-            if self.session.is_active:
-                # 何らかのエラーが以前に発生していないか確認
-                try:
-                    # ダミークエリで状態確認
-                    self.session.execute(text("SELECT 1"))
-                except Exception as test_e:
-                    self.logger.warning(f"トランザクションが既にエラー状態: {type(test_e).__name__}")
-                    self.session.rollback()
-            
             # ハンドラーを使用して既存の外部IDをチェック
-            existing_external = self.external_id_handler.get_existing_external_id(
+            handler = self._ensure_external_id_handler(session)
+            existing_external = handler.get_existing_external_id(
                 self.source_site, external_property_id
             )
             
             if existing_external:
                 # 既存の建物を使用
-                building = self.session.query(Building).get(existing_external.building_id)
+                building = session.query(Building).get(existing_external.building_id)
                 if building:
                     print(f"[既存] 外部IDで建物を発見: {building.normalized_name} (ID: {building.id})")
                     # 建物名から部屋番号を抽出
@@ -3014,7 +3014,7 @@ class BaseScraper(ABC):
                         building.station_info = station_info
                         updated = True
                     if updated:
-                        self.safe_flush()
+                        self.safe_flush(session)
                     
                     return building, extracted_room_number
                 else:
@@ -3022,11 +3022,10 @@ class BaseScraper(ABC):
                     orphaned_building_id = existing_external.building_id
                     print(f"[WARNING] 外部ID {external_property_id} に紐づく建物ID {orphaned_building_id} が存在しません")
                     # 孤立した外部IDレコードを削除
-                    self.session.delete(existing_external)
-                    self.safe_flush()
+                    session.delete(existing_external)
+                    self.safe_flush(session)
                     print(f"[INFO] 孤立した外部IDレコード（building_id={orphaned_building_id}）を削除しました")
                     # 重要: 孤立レコード削除後は新規建物作成として処理を続行
-                    # existing_externalをNoneとして扱う
         
         # 建物名から部屋番号を抽出（内部処理用）
         clean_building_name, extracted_room_number = self.normalizer.extract_room_number(building_name)
@@ -3069,12 +3068,13 @@ class BaseScraper(ABC):
                 updated = True
             
             if updated:
-                self.safe_flush()
+                self.safe_flush(session)
             
             # 外部IDを追加（既存の建物でも、外部IDが未登録の場合は追加）
             if external_property_id:
                 # ハンドラーを使用して外部IDを追加
-                success = self.external_id_handler.add_external_id(
+                handler = self._ensure_external_id_handler(session)
+                success = handler.add_external_id(
                     building.id, self.source_site, external_property_id
                 )
                 if success:
@@ -3108,14 +3108,14 @@ class BaseScraper(ABC):
             land_rights=land_rights,          # 土地権利も設定
             station_info=station_info         # 交通情報も設定
         )
-        self.session.add(building)
-        self.safe_flush()
+        session.add(building)
+        self.safe_flush(session)
         
         # デバッグ: 新規作成された建物のIDを確認
         self.logger.info(f"[DEBUG] 新規建物作成後のID: {building.id}, 名前: {building.normalized_name}")
         
         # 念のため、作成された建物が実際にデータベースに存在するか確認
-        verify_building = self.session.query(Building).filter(Building.id == building.id).first()
+        verify_building = session.query(Building).filter(Building.id == building.id).first()
         if not verify_building:
             self.logger.error(f"[CRITICAL] 新規作成した建物ID {building.id} がデータベースに見つかりません！")
             raise RuntimeError(f"新規作成した建物ID {building.id} がデータベースに見つかりません")
@@ -3124,6 +3124,10 @@ class BaseScraper(ABC):
         
         # 外部IDを追加（ある場合）
         if external_property_id:
+            # external_id_handlerを遅延初期化
+            if self.external_id_handler is None:
+                self.external_id_handler = BuildingExternalIdHandler(session, self.logger)
+            
             # ハンドラーを使用して外部IDを追加
             success = self.external_id_handler.add_external_id(
                 building.id, self.source_site, external_property_id
@@ -3134,11 +3138,27 @@ class BaseScraper(ABC):
         return building, extracted_room_number
     
     def get_or_create_master_property(self, building: Building, room_number: str = None,
-                                    floor_number: int = None, area: float = None,
-                                    layout: str = None, direction: str = None,
-                                    balcony_area: float = None, url: str = None,
-                                    use_learning: bool = True) -> MasterProperty:
-        """マスター物件を取得または作成（学習機能付き）"""
+                                        floor_number: int = None, area: float = None,
+                                        layout: str = None, direction: str = None,
+                                        balcony_area: float = None, url: str = None,
+                                        use_learning: bool = True) -> MasterProperty:
+        """
+        マスター物件を取得または作成（学習機能付き）
+        
+        常に新しいトランザクションスコープで実行
+        """
+        with self.transaction_scope() as session:
+            return self._get_or_create_master_property_with_session(
+                session, building, room_number, floor_number, area,
+                layout, direction, balcony_area, url, use_learning
+            )
+    
+    def _get_or_create_master_property_with_session(self, session, building: Building, room_number: str = None,
+                                                    floor_number: int = None, area: float = None,
+                                                    layout: str = None, direction: str = None,
+                                                    balcony_area: float = None, url: str = None,
+                                                    use_learning: bool = True) -> MasterProperty:
+        """マスター物件を取得または作成（セッション指定版）"""
         # 同一物件の判定条件：建物、所在階、平米数、間取り、方角が一致
         # 部屋番号は両方に値がある場合のみ一致を要求（片方が未入力なら無視）
         
@@ -3158,7 +3178,7 @@ class BaseScraper(ABC):
                         f"area={area}, layout={layout}, direction={direction}, room_number={room_number}")
         
         # 既存のマスター物件を検索（絶対条件で）
-        query = self.session.query(MasterProperty).filter(
+        query = session.query(MasterProperty).filter(
             MasterProperty.building_id == building.id
         )
         
@@ -3200,7 +3220,7 @@ class BaseScraper(ABC):
         if not candidates and use_learning:
             try:
                 from ..utils.property_learning import PropertyLearningService
-                learning_service = PropertyLearningService(self.session)
+                learning_service = PropertyLearningService(session)
                 
                 # 学習結果を使った柔軟な検索
                 flexible_candidates = learning_service.find_property_with_learning(
@@ -3352,7 +3372,7 @@ class BaseScraper(ABC):
                         confidence_score=confidence_score,
                         used_learning=use_learning and not candidates  # 学習機能を使った場合
                     )
-                    self.session.add(ambiguous_match)
+                    session.add(ambiguous_match)
                     # 信頼度に応じてログレベルを変更
                     if confidence_score >= 0.7:
                         self.logger.info(
@@ -3405,17 +3425,17 @@ class BaseScraper(ABC):
                 max_retries = 3
                 for attempt in range(max_retries):
                     try:
-                        self.safe_flush()
+                        self.safe_flush(session)
                         break
                     except Exception as e:
                         if "deadlock detected" in str(e).lower() and attempt < max_retries - 1:
                             self.logger.warning(f"デッドロック検出、リトライ {attempt + 1}/{max_retries}")
-                            self.session.rollback()
+                            session.rollback()
                             # 少し待機してからリトライ
                             import time
                             time.sleep(0.1 * (attempt + 1))
                             # 再度同じ更新を試みる（トランザクションは自動的に開始される）
-                            master_property = self.session.query(MasterProperty).filter(
+                            master_property = session.query(MasterProperty).filter(
                                 MasterProperty.id == master_property.id
                             ).first()
                             if master_property and balcony_area and not master_property.balcony_area:
@@ -3429,7 +3449,7 @@ class BaseScraper(ABC):
         self.logger.info(f"[DEBUG] 新規MasterProperty作成: building_id={building.id if building else 'None'}, floor={floor_number}, room={room_number}")
         
         # buildingオブジェクトの検証
-        if building and not self.session.query(Building).filter(Building.id == building.id).first():
+        if building and not session.query(Building).filter(Building.id == building.id).first():
             self.logger.error(f"[ERROR] 建物ID {building.id} がデータベースに存在しません！")
             # 建物を再取得または作成
             raise ValueError(f"建物ID {building.id} がデータベースに存在しません")
@@ -3443,20 +3463,20 @@ class BaseScraper(ABC):
             direction=self.fuzzy_matcher.normalize_direction(direction) if direction else None,
             balcony_area=balcony_area
         )
-        self.session.add(master_property)
+        session.add(master_property)
         
         try:
-            self.safe_flush()
+            self.safe_flush(session)
         except Exception as e:
             # 重複エラーの場合はロールバックして再検索
             if "duplicate key value violates unique constraint" in str(e):
                 self.logger.warning(f"Duplicate property detected, rolling back and retrying")
-                self.session.rollback()
+                session.rollback()
                 
-                # 再度検索（同じ条件で）（トランザクションは自動的に開始される）
-                return self.get_or_create_master_property(
-                    building, room_number, floor_number, area, 
-                    layout, direction, balcony_area, url
+                # 再度検索（同じ条件で）
+                return self._get_or_create_master_property_with_session(
+                    session, building, room_number, floor_number, area, 
+                    layout, direction, balcony_area, url, use_learning
                 )
             else:
                 # その他のエラーは再発生
@@ -3469,11 +3489,33 @@ class BaseScraper(ABC):
                                description: str = None, station_info: str = None,
                                management_fee: int = None, repair_fund: int = None,
                                published_at: datetime = None, first_published_at: datetime = None,
+                               **kwargs) -> tuple[PropertyListing, str, dict]:
+        """
+        掲載情報を作成または更新
+        
+        常に新しいトランザクションスコープで実行
+        """
+        with self.transaction_scope() as session:
+            return self._create_or_update_listing_with_session(
+                session, master_property, url, title, price, agency_name,
+                site_property_id, description, station_info, management_fee,
+                repair_fund, published_at, first_published_at, **kwargs
+            )
+    
+    def _create_or_update_listing_with_session(self, session, master_property: MasterProperty, url: str, title: str,
+                               price: int, agency_name: str = None, site_property_id: str = None,
+                               description: str = None, station_info: str = None,
+                               management_fee: int = None, repair_fund: int = None,
+                               published_at: datetime = None, first_published_at: datetime = None,
                                **kwargs) -> tuple[PropertyListing, str]:
-        """掲載情報を作成または更新"""
+        """掲載情報を作成または更新（セッションを受け取るバージョン）"""
+        # 戻り値を初期化
+        update_type = None
+        update_details = None
+        changed_fields = []
         # site_property_idがある場合は、それを使って既存の掲載を検索
         if site_property_id:
-            listing = self.session.query(PropertyListing).filter(
+            listing = session.query(PropertyListing).filter(
                 PropertyListing.source_site == self.source_site,
                 PropertyListing.site_property_id == site_property_id
             ).first()
@@ -3489,12 +3531,12 @@ class BaseScraper(ABC):
                 )
                 # 既存の関係を優先（save_property_commonで処理済みのはず）
                 # master_propertyを明示的に取得（lazy loadエラーを回避）
-                master_property = self.session.query(MasterProperty).filter(
+                master_property = session.query(MasterProperty).filter(
                     MasterProperty.id == listing.master_property_id
                 ).first()
         else:
             # site_property_idがない場合は、URLとmaster_property_idで検索
-            listing = self.session.query(PropertyListing).filter(
+            listing = session.query(PropertyListing).filter(
                 PropertyListing.master_property_id == master_property.id,
                 PropertyListing.url == url,
                 PropertyListing.source_site == self.source_site
@@ -3519,7 +3561,7 @@ class BaseScraper(ABC):
         
         # 同じURLで別の物件が存在する場合の処理（site_property_idベースで検索した場合のみ）
         if not listing and site_property_id:
-            existing_with_same_url = self.session.query(PropertyListing).filter(
+            existing_with_same_url = session.query(PropertyListing).filter(
                 PropertyListing.url == url,
                 PropertyListing.source_site == self.source_site
             ).first()
@@ -3531,7 +3573,7 @@ class BaseScraper(ABC):
                     self.logger.info(f"同じURLで別の物件が存在 (旧物件ID: {existing_with_same_url.master_property_id})")
                     existing_with_same_url.is_active = False
                     existing_with_same_url.delisted_at = get_utc_now()
-                    self.safe_flush()
+                    self.safe_flush(session)
                 else:
                     # 同じ物件の場合は、既存のレコードを使用
                     listing = existing_with_same_url
@@ -3607,7 +3649,7 @@ class BaseScraper(ABC):
             price_changed = False
             other_changed = False
             old_price = listing.current_price  # 更新前の価格を保存（ログ用）
-            changed_fields = []  # 変更されたフィールドを記録
+            # changed_fieldsは既にメソッドの先頭で初期化済み
             
             # 価格が変更されている場合は履歴を記録
             if listing.current_price != price:
@@ -3617,18 +3659,18 @@ class BaseScraper(ABC):
                     price=price,
                     recorded_at=get_utc_now()
                 )
-                self.session.add(price_history)
+                session.add(price_history)
                 
                 # 現在価格を更新
                 listing.current_price = price
                 listing.price_updated_at = get_utc_now()
                 
                 # 価格履歴をデータベースに反映してから価格改定日を更新
-                self.safe_flush()  # 重要: 価格履歴をDBに反映
+                self.safe_flush(session)  # 重要: 価格履歴をDBに反映
                 
                 # 価格改定日を更新
                 from ..utils.property_utils import update_latest_price_change
-                update_latest_price_change(self.session, master_property.id)
+                update_latest_price_change(session, master_property.id)
             
             # その他の情報を更新（変更を追跡）
             if listing.title != title:
@@ -3701,7 +3743,7 @@ class BaseScraper(ABC):
                 master_property.sold_at = None
                 master_property.final_price = None
                 master_property.final_price_updated_at = None
-                self.safe_flush()
+                self.safe_flush(session)
             
             # 更新タイプを判定
             update_details = None
@@ -3880,37 +3922,31 @@ class BaseScraper(ABC):
                     price_updated_at=first_published_at or published_at or get_utc_now(),
                     last_confirmed_at=get_utc_now(),
                     detail_fetched_at=get_utc_now(),  # 詳細取得時刻を設定
-                    # varchar(20)制限のため、20文字に切り詰める
-                    scraped_from_area=(
-                        getattr(self, 'current_area_code', '')[:20] 
-                        if getattr(self, 'current_area_code', None) 
-                        else None
-                    ),  # 現在のエリアコードを設定
                     **kwargs
                 )
-                self.session.add(listing)
-                self.safe_flush()
+                session.add(listing)
+                self.safe_flush(session)
                 
                 # 最初の掲載日を更新
-                update_earliest_listing_date(self.session, master_property.id)
+                update_earliest_listing_date(session, master_property.id)
                 # 価格改定日を更新（新規なので価格履歴追加と同時）
                 from ..utils.property_utils import update_latest_price_change
-                update_latest_price_change(self.session, master_property.id)
+                update_latest_price_change(session, master_property.id)
             except Exception as e:
                 # URL重複エラーまたはsite_property_id重複エラーの場合は、再度検索して既存レコードを使用
                 if "property_listings_url_key" in str(e) or "property_listings_site_property_unique" in str(e):
-                    self.session.rollback()
+                    session.rollback()
                     self.logger.debug(f"重複エラー検出。既存レコードを再検索... エラー: {str(e)}")
                     
                     # 再度検索（他のプロセスが同時に作成した可能性）
                     # site_property_idがある場合はそれで検索、なければURLで検索
                     if site_property_id:
-                        listing = self.session.query(PropertyListing).filter(
+                        listing = session.query(PropertyListing).filter(
                             PropertyListing.source_site == self.source_site,
                             PropertyListing.site_property_id == site_property_id
                         ).first()
                     else:
-                        listing = self.session.query(PropertyListing).filter(
+                        listing = session.query(PropertyListing).filter(
                             PropertyListing.url == url,
                             PropertyListing.source_site == self.source_site
                         ).first()
@@ -3922,14 +3958,14 @@ class BaseScraper(ABC):
                             print(f"  → 別の物件のため、古い方を非アクティブ化")
                             listing.is_active = False
                             listing.delisted_at = get_utc_now()
-                            self.safe_flush()
+                            self.safe_flush(session)
                             
                             # 非アクティブ化された物件の最初の掲載日を更新
                             if listing.master_property_id:
-                                update_earliest_listing_date(self.session, listing.master_property_id)
+                                update_earliest_listing_date(session, listing.master_property_id)
                                 # 価格改定日も更新（非アクティブ化により再計算が必要）
                                 from ..utils.property_utils import update_latest_price_change
-                                update_latest_price_change(self.session, listing.master_property_id)
+                                update_latest_price_change(session, listing.master_property_id)
                             
                             # 新しいレコードを作成（再試行）
                             listing = PropertyListing(
@@ -3952,8 +3988,8 @@ class BaseScraper(ABC):
                                 detail_fetched_at=datetime.now(),
                                 **kwargs
                             )
-                            self.session.add(listing)
-                            self.safe_flush()
+                            session.add(listing)
+                            self.safe_flush(session)
                         else:
                             # 同じ物件の場合は、既存のレコードを更新
                             update_type = 'existing'
@@ -3971,14 +4007,14 @@ class BaseScraper(ABC):
                 price=price,
                 recorded_at=get_utc_now()  # datetime.now()ではなくget_utc_now()を使用（統一）
             )
-            self.session.add(price_history)
+            session.add(price_history)
             
             # 価格履歴をデータベースに反映してから価格改定日を更新
-            self.safe_flush()  # 重要: 価格履歴をDBに反映
+            self.safe_flush(session)  # 重要: 価格履歴をDBに反映
             
             # 価格改定日を更新（初回登録も価格設定として扱う）
             from ..utils.property_utils import update_latest_price_change
-            update_latest_price_change(self.session, master_property.id)
+            update_latest_price_change(session, master_property.id)
             
             # 新規作成の場合、update_typeを'new'に設定
             update_type = 'new'
@@ -3989,7 +4025,7 @@ class BaseScraper(ABC):
                 master_property.sold_at = None
                 master_property.final_price = None
                 master_property.final_price_updated_at = None
-                self.safe_flush()
+                self.safe_flush(session)
             
             # 物件と建物の詳細情報を含むログメッセージ
             building_name = kwargs.get('listing_building_name', '')
@@ -4026,60 +4062,20 @@ class BaseScraper(ABC):
             try:
                 if self._listing_name_manager is None:
                     from ..utils.building_listing_name_manager import BuildingListingNameManager
-                    self._listing_name_manager = BuildingListingNameManager(self.session)
+                    self._listing_name_manager = BuildingListingNameManager(session)
                 self._listing_name_manager.update_from_listing(listing)
             except Exception as e:
                 self.logger.warning(f"BuildingListingNameの更新に失敗しました: {e}")
                 self._handle_transaction_error(e, "BuildingListingName更新エラー")
         
         # 建物名と物件情報を多数決で更新
-        if master_property:
-            # 動的インポートで循環インポート回避（一度だけインポート）
-            from ..utils.majority_vote_updater import MajorityVoteUpdater
-            majority_updater = MajorityVoteUpdater(self.session)
-            
-            try:
-                # 物件情報を多数決で更新
-                majority_updater.update_master_property_by_majority(master_property)
-                self.safe_flush()  # 変更を確定
-            except Exception as e:
-                # エラーが発生しても処理は続行（ログに記録）
-                self.logger.warning(f"物件情報の更新に失敗しました (property_id={master_property.id}): {e}")
-                self._handle_transaction_error(e, "多数決更新エラー")
-                
-            # 建物名と建物情報を多数決で更新
-            if master_property.building_id:
-                try:
-                    # 建物情報を多数決で更新
-                    building = self.session.query(Building).get(master_property.building_id)
-                    if building:
-                        # 建物名を含む全属性を多数決で更新
-                        majority_updater.update_building_by_majority(building)
-                        # 建物名の個別更新も実行（より最新の重み付けロジックを使用）
-                        majority_updater.update_building_name_by_majority(master_property.building_id)
-                    self.safe_flush()  # 変更を確定
-                except Exception as e:
-                    # エラーが発生しても処理は続行（ログに記録）
-                    self.logger.warning(f"建物情報の更新に失敗しました (building_id={master_property.building_id}): {e}")
-                    self._handle_transaction_error(e, "建物情報更新エラー")
-                
-                # 物件の表示用建物名を多数決で更新
-                try:
-                    majority_updater.update_property_building_name_by_majority(master_property.id)
-                    self.safe_flush()  # 変更を確定
-                except Exception as e:
-                    # エラーが発生しても処理は続行（ログに記録）
-                    self.logger.warning(f"物件建物名の更新に失敗しました (property_id={master_property.id}): {e}")
-                    self._handle_transaction_error(e, "物件建物名更新エラー")
+        self._update_by_majority_vote(session, master_property)
         
-        # update_detailsがローカル変数でない場合のために初期化
-        # update_detailsが定義されていない場合の処理
-        if 'update_details' not in locals():
+        # update_detailsが未設定の場合の処理
+        if update_details is None:
             # other_changedがTrueでchanged_fieldsがある場合は、update_detailsを生成
-            if update_type == 'other_updates' and 'changed_fields' in locals() and changed_fields:
+            if update_type == 'other_updates' and changed_fields:
                 update_details = ', '.join(changed_fields)
-            else:
-                update_details = None
         
         # update_typeが設定されていない場合の処理
         if update_type is None:
@@ -4094,13 +4090,6 @@ class BaseScraper(ABC):
             self.logger.warning(f"その他更新と判定されたが詳細が空です - URL: {url}")
         
         return listing, update_type, update_details
-    
-    def update_master_property_by_majority(self, master_property: MasterProperty):
-        """マスター物件の情報を多数決で更新"""
-        # 動的インポートで循環インポート回避
-        from ..utils.majority_vote_updater import MajorityVoteUpdater
-        majority_updater = MajorityVoteUpdater(self.session)
-        majority_updater.update_master_property_by_majority(master_property)
     
     def get_scraping_stats(self) -> Dict[str, int]:
         """スクレイピング統計を取得"""
@@ -4130,33 +4119,6 @@ class BaseScraper(ABC):
             self.logger.info(f"再開状態を設定: phase={self._scraping_stats['phase']}, page={self._current_page}, collected={len(self._collected_properties)}, processed={self._processed_count}")
             print(f"[DEBUG-SET-RESUME-AFTER] phase={self._scraping_stats['phase']}, page={self._current_page}, collected={len(self._collected_properties)}, processed={self._processed_count}")
     
-    
-    def _handle_transaction_error(self, error: Exception, context: str = "") -> None:
-        """
-        トランザクションエラーを処理し、必要に応じてセッションをリセット
-        
-        Args:
-            error: 発生したエラー
-            context: エラーが発生したコンテキスト（ログ用）
-        """
-        error_msg = str(error)
-        
-        # InFailedSqlTransactionエラーの場合はセッションを完全にリセット
-        if "InFailedSqlTransaction" in error_msg or "current transaction is aborted" in error_msg:
-            try:
-                self.session.rollback()
-                self.session.close()
-                from ..database import get_db_for_scraping
-                self.session = get_db_for_scraping()
-                # マネージャーも再初期化
-                self._listing_name_manager = None
-                self.logger.info(f"{context}後のセッションを完全にリセットしました" if context else "セッションを完全にリセットしました")
-            except Exception as reset_error:
-                self.logger.error(f"セッションリセットエラー: {reset_error}")
-        else:
-            # その他のエラーの場合は通常の回復処理
-            self.ensure_session_active()
-    
     def validate_html_structure(self, soup, required_selectors: dict) -> bool:
         """HTML構造の検証"""
         for name, selector in required_selectors.items():
@@ -4167,8 +4129,11 @@ class BaseScraper(ABC):
     
     def _should_skip_url_due_to_404(self, url: str) -> bool:
         """404エラー履歴によりスキップすべきURLか判定"""
+        from ..database import get_db_for_scraping
+        
+        session = get_db_for_scraping()
         try:
-            retry_record = self.session.query(Url404Retry).filter(
+            retry_record = session.query(Url404Retry).filter(
                 Url404Retry.url == url,
                 Url404Retry.source_site == self.source_site.value
             ).first()
@@ -4198,6 +4163,8 @@ class BaseScraper(ABC):
             self._handle_transaction_error(e, "404エラーチェック")
             # エラーが発生した場合はスキップしない（処理を続行）
             return False
+        finally:
+            session.close()
     
     def _should_skip_url_due_to_validation_error(self, url: str) -> bool:
         """検証エラー履歴によりスキップすべきURLか判定"""
@@ -4205,7 +4172,7 @@ class BaseScraper(ABC):
             from ..models import PropertyValidationError
             
             # PropertyValidationErrorテーブルから確認
-            error_record = self.session.query(PropertyValidationError).filter(
+            error_record = session.query(PropertyValidationError).filter(
                 PropertyValidationError.url == url,
                 PropertyValidationError.source_site == self.source_site.value
             ).first()
@@ -4240,8 +4207,9 @@ class BaseScraper(ABC):
     def _should_skip_due_to_price_mismatch(self, site_property_id: str) -> bool:
         """価格不一致履歴によりスキップすべきか判定"""
         try:
-            # price_mismatch_historyテーブルから確認
-            result = self.session.execute(
+            with self.transaction_scope() as session:
+                # price_mismatch_historyテーブルから確認
+                result = session.execute(
                 text("""
                     SELECT retry_count, attempted_at
                     FROM price_mismatch_history 
@@ -4251,30 +4219,30 @@ class BaseScraper(ABC):
                     ORDER BY attempted_at DESC
                     LIMIT 1
                 """),
-                {'site_id': site_property_id, 'site': self.source_site.value}
-            ).first()
-            
-            if result:
-                retry_count, attempted_at = result
+                    {'site_id': site_property_id, 'site': self.source_site.value}
+                ).first()
                 
-                # エラー回数に基づいて再試行間隔を計算（時間単位）
-                retry_hours = self._calculate_retry_interval(retry_count)
-                hours_since_error = (datetime.now() - attempted_at).total_seconds() / 3600
-                
-                if hours_since_error < retry_hours:
-                    self.logger.warning(
-                        f"価格不一致履歴によりスキップ: ID={site_property_id} "
-                        f"(エラー回数: {retry_count}, "
-                        f"最終エラーから: {hours_since_error:.1f}時間, "
-                        f"再試行間隔: {retry_hours}時間)"
-                    )
-                    return True
-                else:
-                    self.logger.debug(
-                        f"価格不一致履歴ありだが再試行可能: ID={site_property_id} "
-                        f"(最終エラーから{hours_since_error:.1f}時間経過)"
-                    )
-            return False
+                if result:
+                    retry_count, attempted_at = result
+                    
+                    # エラー回数に基づいて再試行間隔を計算（時間単位）
+                    retry_hours = self._calculate_retry_interval(retry_count)
+                    hours_since_error = (datetime.now() - attempted_at).total_seconds() / 3600
+                    
+                    if hours_since_error < retry_hours:
+                        self.logger.warning(
+                            f"価格不一致履歴によりスキップ: ID={site_property_id} "
+                            f"(エラー回数: {retry_count}, "
+                            f"最終エラーから: {hours_since_error:.1f}時間, "
+                            f"再試行間隔: {retry_hours}時間)"
+                        )
+                        return True
+                    else:
+                        self.logger.debug(
+                            f"価格不一致履歴ありだが再試行可能: ID={site_property_id} "
+                            f"(最終エラーから{hours_since_error:.1f}時間経過)"
+                        )
+                return False
         except Exception as e:
             self.logger.debug(f"価格不一致履歴チェック中にエラー: {e}")
             self._handle_transaction_error(e, "価格不一致チェック")
@@ -4300,43 +4268,40 @@ class BaseScraper(ABC):
             return
             
         try:
-            # 既存のレコードを確認
-            retry_record = self.session.query(Url404Retry).filter(
-                Url404Retry.url == url,
-                Url404Retry.source_site == self.source_site.value
-            ).first()
-            
-            if retry_record:
-                # エラー回数を増加
-                retry_record.error_count += 1
-                retry_record.last_error_at = datetime.now()
+            with self.transaction_scope() as session:
+                # 既存のレコードを確認
+                retry_record = session.query(Url404Retry).filter(
+                    Url404Retry.url == url,
+                    Url404Retry.source_site == self.source_site.value
+                ).first()
                 
-                # 再試行間隔を計算（エラー回数に基づく）
-                retry_hours = self._calculate_retry_interval(retry_record.error_count)
+                if retry_record:
+                    # エラー回数を増加
+                    retry_record.error_count += 1
+                    retry_record.last_error_at = datetime.now()
+                    
+                    # 再試行間隔を計算（エラー回数に基づく）
+                    retry_hours = self._calculate_retry_interval(retry_record.error_count)
+                    
+                    self.logger.info(
+                        f"404エラー再発生 (回数: {retry_record.error_count}, "
+                        f"次回再試行までの最小間隔: {retry_hours}時間)"
+                    )
+                else:
+                    # 新規レコードを作成
+                    retry_record = Url404Retry(
+                        url=url,
+                        source_site=self.source_site.value,
+                        error_count=1
+                    )
+                    session.add(retry_record)
+                    self.logger.info("404エラーを記録 (初回、次回再試行は2時間後以降)")
                 
-                self.logger.info(
-                    f"404エラー再発生 (回数: {retry_record.error_count}, "
-                    f"次回再試行までの最小間隔: {retry_hours}時間)"
-                )
-            else:
-                # 新規レコードを作成
-                retry_record = Url404Retry(
-                    url=url,
-                    source_site=self.source_site.value,
-                    error_count=1
-                )
-                self.session.add(retry_record)
-                self.logger.info("404エラーを記録 (初回、次回再試行は2時間後以降)")
-            
-            # autoflushが有効な場合のみコミット
-            if self.session.autoflush:
-                self.session.commit()
-            
+                # トランザクションは with 文を抜ける際に自動的にコミット
+                
         except Exception as e:
             self.logger.error(f"404エラー記録中にエラー: {e}")
-            self.session.rollback()
-            # 新しいトランザクションを開始
-            self.session.begin()
+            # トランザクションはwith文を抜ける際に自動的にロールバック
     
     
     def _handle_validation_error(self, url: str, error_type: str, error_details: dict = None):
@@ -4347,53 +4312,50 @@ class BaseScraper(ABC):
             return
             
         try:
-            from ..models import PropertyValidationError
-            import json
-            
-            # 既存のレコードを確認
-            error_record = self.session.query(PropertyValidationError).filter(
-                PropertyValidationError.url == url,
-                PropertyValidationError.source_site == self.source_site.value
-            ).first()
-            
-            if error_record:
-                # エラー回数を更新
-                error_record.error_count += 1
-                error_record.last_error_at = datetime.now()
-                error_record.error_type = error_type
-                error_record.error_details = json.dumps(error_details or {}, ensure_ascii=False)
+            with self.transaction_scope() as session:
+                from ..models import PropertyValidationError
+                import json
                 
-                # 再試行間隔を計算
-                retry_hours = self._calculate_retry_interval(error_record.error_count)
+                # 既存のレコードを確認
+                error_record = session.query(PropertyValidationError).filter(
+                    PropertyValidationError.url == url,
+                    PropertyValidationError.source_site == self.source_site.value
+                ).first()
                 
-                self.logger.info(
-                    f"検証エラー再発生 ({error_type}) - "
-                    f"URL: {url}, 回数: {error_record.error_count}, "
-                    f"次回再試行までの最小間隔: {retry_hours}時間"
-                )
-            else:
-                # 新規レコードを作成
-                new_error = PropertyValidationError(
-                    url=url,
-                    source_site=self.source_site.value,
-                    error_type=error_type,
-                    error_details=json.dumps(error_details or {}, ensure_ascii=False),
-                    error_count=1,
-                    first_error_at=datetime.now(),
-                    last_error_at=datetime.now()
-                )
-                self.session.add(new_error)
-                self.logger.info(f"検証エラーを記録 ({error_type}) - URL: {url} (初回、次回再試行は2時間後以降)")
-            
-            # autoflushが有効な場合のみコミット
-            if self.session.autoflush:
-                self.session.commit()
-            
+                if error_record:
+                    # エラー回数を更新
+                    error_record.error_count += 1
+                    error_record.last_error_at = datetime.now()
+                    error_record.error_type = error_type
+                    error_record.error_details = json.dumps(error_details or {}, ensure_ascii=False)
+                    
+                    # 再試行間隔を計算
+                    retry_hours = self._calculate_retry_interval(error_record.error_count)
+                    
+                    self.logger.info(
+                        f"検証エラー再発生 ({error_type}) - "
+                        f"URL: {url}, 回数: {error_record.error_count}, "
+                        f"次回再試行までの最小間隔: {retry_hours}時間"
+                    )
+                else:
+                    # 新規レコードを作成
+                    new_error = PropertyValidationError(
+                        url=url,
+                        source_site=self.source_site.value,
+                        error_type=error_type,
+                        error_details=json.dumps(error_details or {}, ensure_ascii=False),
+                        error_count=1,
+                        first_error_at=datetime.now(),
+                        last_error_at=datetime.now()
+                    )
+                    session.add(new_error)
+                    self.logger.info(f"検証エラーを記録 ({error_type}) - URL: {url} (初回、次回再試行は2時間後以降)")
+                
+                # トランザクションは with 文を抜ける際に自動的にコミット
+                
         except Exception as e:
             self.logger.error(f"検証エラー記録中にエラー: {e}")
-            self.session.rollback()
-            # 新しいトランザクションを開始
-            self.session.begin()
+            # トランザクションはwith文を抜ける際に自動的にロールバック
     
     
     def _record_price_mismatch(self, site_property_id: str, url: str, list_price: int, detail_price: int):
@@ -4404,29 +4366,30 @@ class BaseScraper(ABC):
             return
             
         try:
-            # 既存のエラー記録を確認してエラー回数を取得
-            result = self.session.execute(
-                text("""
-                    SELECT retry_count 
-                    FROM price_mismatch_history 
-                    WHERE site_property_id = :site_id 
-                    AND source_site = :site
-                    AND is_resolved = false
-                """),
-                {'site_id': site_property_id, 'site': self.source_site.value}
-            ).first()
-            
-            if result:
-                # 既存記録がある場合はエラー回数を増やす
-                retry_count = result[0] + 1
-            else:
-                # 新規記録の場合
-                retry_count = 1
-            
-            # エラー回数に基づいて再試行間隔を計算（時間単位）
-            retry_hours = self._calculate_retry_interval(retry_count)
-            
-            sql = text("""
+            with self.transaction_scope() as session:
+                # 既存のエラー記録を確認してエラー回数を取得
+                result = session.execute(
+                    text("""
+                        SELECT retry_count 
+                        FROM price_mismatch_history 
+                        WHERE site_property_id = :site_id 
+                        AND source_site = :site
+                        AND is_resolved = false
+                    """),
+                    {'site_id': site_property_id, 'site': self.source_site.value}
+                ).first()
+                
+                if result:
+                    # 既存記録がある場合はエラー回数を増やす
+                    retry_count = result[0] + 1
+                else:
+                    # 新規記録の場合
+                    retry_count = 1
+                
+                # エラー回数に基づいて再試行間隔を計算（時間単位）
+                retry_hours = self._calculate_retry_interval(retry_count)
+                
+                sql = text("""
                 INSERT INTO price_mismatch_history 
                 (source_site, site_property_id, property_url, list_price, detail_price, 
                  retry_after, retry_count)
@@ -4440,29 +4403,27 @@ class BaseScraper(ABC):
                     retry_after = NOW() + INTERVAL ':retry_hours hours',
                     retry_count = :retry_count,
                     is_resolved = false
-            """.replace(':retry_hours', str(retry_hours)))
-            
-            self.session.execute(sql, {
-                'source_site': self.source_site.value,
-                'site_property_id': site_property_id,
-                'url': url,
-                'list_price': list_price,
-                'detail_price': detail_price,
-                'retry_count': retry_count
-            })
-            self.session.commit()
-            
-            self.logger.warning(
-                f"価格不一致を記録 - ID: {site_property_id}, "
-                f"一覧: {list_price}万円, 詳細: {detail_price}万円, "
-                f"エラー回数: {retry_count}, 再試行間隔: {retry_hours}時間"
-            )
-            
+                """.replace(':retry_hours', str(retry_hours)))
+                
+                session.execute(sql, {
+                    'source_site': self.source_site.value,
+                    'site_property_id': site_property_id,
+                    'url': url,
+                    'list_price': list_price,
+                    'detail_price': detail_price,
+                    'retry_count': retry_count
+                })
+                # トランザクションは with 文を抜ける際に自動的にコミット
+                
+                self.logger.warning(
+                    f"価格不一致を記録 - ID: {site_property_id}, "
+                    f"一覧: {list_price}万円, 詳細: {detail_price}万円, "
+                    f"エラー回数: {retry_count}, 再試行間隔: {retry_hours}時間"
+                )
+                
         except Exception as e:
             self.logger.error(f"価格不一致記録中のエラー: {e}")
-            self.session.rollback()
-            # 新しいトランザクションを開始
-            self.session.begin()
+            # トランザクションはwith文を抜ける際に自動的にロールバック
 
     def _record_validation_error(self, url: str, site_property_id: str, error_type: str, error_details: str = None):
         """検証エラーを記録し、再試行間隔を管理"""
@@ -4472,50 +4433,49 @@ class BaseScraper(ABC):
             return
             
         try:
-            from ..models import PropertyValidationError
-            
-            # 既存のエラー記録を確認
-            error_record = self.session.query(PropertyValidationError).filter(
-                PropertyValidationError.url == url,
-                PropertyValidationError.source_site == self.source_site.value
-            ).first()
-            
-            if error_record:
-                # 既存記録を更新
-                error_record.error_count += 1
-                error_record.last_error_at = datetime.now()
-                error_record.error_details = error_details
-                error_record.site_property_id = site_property_id or error_record.site_property_id
+            with self.transaction_scope() as session:
+                from ..models import PropertyValidationError
                 
-                self.logger.warning(
-                    f"検証エラーを更新 - URL: {url}, タイプ: {error_type}, "
-                    f"エラー回数: {error_record.error_count}"
-                )
-            else:
-                # 新規記録を作成
-                error_record = PropertyValidationError(
-                    url=url,
-                    source_site=self.source_site.value,
-                    site_property_id=site_property_id,
-                    error_type=error_type,
-                    error_details=error_details,
-                    first_error_at=datetime.now(),
-                    last_error_at=datetime.now(),
-                    error_count=1
-                )
-                self.session.add(error_record)
+                # 既存のエラー記録を確認
+                error_record = session.query(PropertyValidationError).filter(
+                    PropertyValidationError.url == url,
+                    PropertyValidationError.source_site == self.source_site.value
+                ).first()
                 
-                self.logger.warning(
-                    f"検証エラーを新規記録 - URL: {url}, タイプ: {error_type}"
-                )
-            
-            self.session.commit()
-            
+                if error_record:
+                    # 既存記録を更新
+                    error_record.error_count += 1
+                    error_record.last_error_at = datetime.now()
+                    error_record.error_details = error_details
+                    error_record.site_property_id = site_property_id or error_record.site_property_id
+                    
+                    self.logger.warning(
+                        f"検証エラーを更新 - URL: {url}, タイプ: {error_type}, "
+                        f"エラー回数: {error_record.error_count}"
+                    )
+                else:
+                    # 新規記録を作成
+                    error_record = PropertyValidationError(
+                        url=url,
+                        source_site=self.source_site.value,
+                        site_property_id=site_property_id,
+                        error_type=error_type,
+                        error_details=error_details,
+                        first_error_at=datetime.now(),
+                        last_error_at=datetime.now(),
+                        error_count=1
+                    )
+                    session.add(error_record)
+                    
+                    self.logger.warning(
+                        f"検証エラーを新規記録 - URL: {url}, タイプ: {error_type}"
+                    )
+                
+                # トランザクションは with 文を抜ける際に自動的にコミット
+                
         except Exception as e:
             self.logger.error(f"検証エラー記録中のエラー: {e}")
-            self.session.rollback()
-            # 新しいトランザクションを開始
-            self.session.begin()
+            # トランザクションはwith文を抜ける際に自動的にロールバック
     
     
     
@@ -4530,7 +4490,7 @@ class BaseScraper(ABC):
         if self.task_id:
             try:
                 from ..models_scraping_task import ScrapingTask
-                task = self.session.query(ScrapingTask).filter(
+                task = session.query(ScrapingTask).filter(
                     ScrapingTask.task_id == self.task_id
                 ).first()
                 
@@ -4556,536 +4516,297 @@ class BaseScraper(ABC):
         
         return False
 
-    def save_property_common(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
-        """物件情報を保存する共通メソッド"""
+
+    
+
+    
+
+    
+    def _update_by_majority_vote(self, session: Session, master_property: MasterProperty):
+        """多数決で情報を更新（エラーが発生しても処理は続行）"""
+        if not master_property:
+            return
+            
         try:
-            # セッションが正常であることを確認
-            self.ensure_session_active()
+            from ..utils.majority_vote_updater import MajorityVoteUpdater
+            majority_updater = MajorityVoteUpdater(session)
             
-            # トランザクション状態のチェックと修復
+            # 物件情報を多数決で更新
             try:
-                # テスト用のクエリで現在のトランザクション状態を確認
-                self.session.execute(text("SELECT 1"))
-            except Exception as tx_error:
-                error_msg = str(tx_error)
-                if ("rolled back due to a previous exception" in error_msg or
-                    "current transaction is aborted" in error_msg or
-                    "InFailedSqlTransaction" in error_msg):
-                    self.logger.info("save_property_common: トランザクションが無効な状態のため、ロールバックして再開")
+                majority_updater.update_master_property_by_majority(master_property)
+                self.safe_flush(session)  # 変更を確定
+            except Exception as e:
+                self.logger.warning(f"物件情報の更新に失敗しました (property_id={master_property.id}): {e}")
+                if self._handle_transaction_error(e, "多数決更新エラー"):
+                    # セッションがリセットされたため、master_propertyを再取得
                     try:
-                        self.session.rollback()
-                    except:
-                        pass
-            
-            # 詳細取得をスキップした場合の処理
-            if not property_data.get('detail_fetched', False) and existing_listing:
-                # 既存物件の最終確認日時のみ更新
-                existing_listing.last_scraped_at = datetime.now()
-                existing_listing.last_confirmed_at = datetime.now()
-                
-                # 非アクティブな掲載を再アクティブ化
-                if not existing_listing.is_active:
-                    existing_listing.is_active = True
-                    print(f"  → 掲載を再開 (ID: {existing_listing.id})")
-                    
-                    # 物件が販売終了になっていた場合は販売再開
-                    # master_propertyを明示的に取得（lazy loadエラーを回避）
-                    if existing_listing.master_property_id:
-                        master_prop = self.session.query(MasterProperty).filter(
-                            MasterProperty.id == existing_listing.master_property_id
-                        ).first()
-                        if master_prop and master_prop.sold_at:
-                            master_prop.sold_at = None
-                            master_prop.final_price = None
-                            master_prop.final_price_updated_at = None
-                            print(f"  → 物件を販売再開 (物件ID: {master_prop.id})")
-                
-                self.session.commit()
-                print(f"  → 既存物件の最終確認日時を更新 (ID: {existing_listing.id})")
-                # update_typeを設定（詳細をスキップした場合は変更なし）
-                property_data['update_type'] = 'skipped'  # 'refetched_unchanged'ではなく'skipped'を使用
-                property_data['property_saved'] = True
-                return True
-            
-            # 詳細取得していない場合（新規物件なのに詳細取得失敗など）は妥当性チェックをスキップ
-            if not property_data.get('detail_fetched', False):
-                # 詳細取得失敗の場合は既にエラーカウント済みなので、ここでは追加カウントしない
-                property_data['property_saved'] = False
-                return False
-            
-            # データの妥当性チェック（詳細取得済みの場合のみ）
-            if not self.validate_property_data(property_data):
-                # 失敗理由の特定とログ記録
-                url = property_data.get('url', '不明')
-                failure_reason = ""
-                validation_error_type = None
-                validation_error_details = {}
-                
-                if not property_data.get('price'):
-                    self._scraping_stats['price_missing'] += 1
-                    failure_reason = "価格情報なし"
-                    # フィールドエラーを記録
-                    self.record_field_extraction_error('price', url, log_error=False)
-                elif not property_data.get('building_name'):
-                    self._scraping_stats['building_info_missing'] += 1
-                    failure_reason = "建物名なし"
-                    # フィールドエラーを記録
-                    self.record_field_extraction_error('building_name', url, log_error=False)
-                elif not property_data.get('site_property_id'):
-                    self._scraping_stats['other_errors'] += 1
-                    failure_reason = "サイト物件IDなし"
-                    # フィールドエラーを記録
-                    self.record_field_extraction_error('site_property_id', url, log_error=False)
-                    # 詳細なデバッグ情報
-                    self.logger.error(
-                        f"サイト物件ID取得失敗 - URL: {url}, "
-                        f"source_site: {self.source_site}, "
-                        f"building_name: {property_data.get('building_name', '不明')}"
-                    )
-                elif not property_data.get('address') and property_data.get('detail_fetched', False):
-                    # 詳細取得後も住所がない場合
-                    self._scraping_stats['other_errors'] += 1
-                    failure_reason = "詳細取得後も住所情報なし"
-                    # フィールドエラーを記録
-                    self.record_field_extraction_error('address', url, log_error=False)
-                    # 詳細なデバッグ情報
-                    self.logger.error(
-                        f"住所取得失敗の詳細 - URL: {url}, "
-                        f"source_site: {self.source_site}, "
-                        f"building_name: {property_data.get('building_name', '不明')}, "
-                        f"detail_fetched: {property_data.get('detail_fetched', False)}"
-                    )
-                else:
-                    self._scraping_stats['other_errors'] += 1
-                    missing_fields = []
-                    # 面積と間取りもチェック
-                    if not property_data.get('area'):
-                        missing_fields.append('area')
-                        self.record_field_extraction_error('area', url, log_error=False)
-                    if not property_data.get('layout'):
-                        missing_fields.append('layout')
-                        self.record_field_extraction_error('layout', url, log_error=False)
-                    
-                    if missing_fields:
-                        failure_reason = f"必須情報不足: {', '.join(missing_fields)}"
-                    else:
-                        # validate_property_dataでFalseが返されたが、個別チェックを通過した場合
-                        # 検証エラーの詳細を取得
-                        validation_errors = property_data.get('_validation_errors', [])
-                        if validation_errors:
-                            failure_reason = f"データ検証失敗: {'; '.join(validation_errors)}"
-                        else:
-                            failure_reason = "データ検証失敗（詳細はログ参照）"
-                        # validate_property_dataで設定されたエラータイプを取得
-                        validation_error_type = property_data.get('_validation_error_type', 'validation_failed')
-                        # 追加の詳細情報を出力
-                        self.logger.error(
-                            f"データ検証失敗の追加情報 - "
-                            f"URL: {url}, "
-                            f"site_property_id: {property_data.get('site_property_id', 'なし')}, "
-                            f"address: {property_data.get('address', 'なし')}, "
-                            f"detail_fetched: {property_data.get('detail_fetched', False)}, "
-                            f"価格: {property_data.get('price', 'なし')}万円, "
-                            f"面積: {property_data.get('area', 'なし')}㎡, "
-                            f"階数: {property_data.get('floor_number', 'なし')}階"
-                        )
-                    
-                    # デバッグ情報を出力
-                
-                print(f"  → 保存失敗: {failure_reason} (URL: {url})")
-                
-                # 検証エラーの場合、再取得制御用に記録
-                if validation_error_type and url and url != '不明':
-                    # 面積超過の詳細情報を収集
-                    if 'area_exceeded' in validation_error_type:
-                        validation_error_details = {
-                            'area': property_data.get('area'),
-                            'building_name': property_data.get('building_name', ''),
-                            'price': property_data.get('price', ''),
-                            'failure_reason': failure_reason
-                        }
-                    self._handle_validation_error(url, validation_error_type, validation_error_details)
-                
-                # 管理画面用のエラーログを記録
-                if hasattr(self, '_save_error_log'):
-                    self._save_error_log({
-                        'url': url,
-                        'reason': failure_reason,
-                        'building_name': property_data.get('building_name', ''),
-                        'price': property_data.get('price', ''),
-                        'timestamp': datetime.now().isoformat()
-                    })
-                
-                # 保存失敗フラグを設定
-                property_data['property_saved'] = False
-                # save_failedもカウント（フロントエンドで必要）
-                # ただし、これは追加情報として扱い、メインの統計には含めない
-                if property_data.get('detail_fetched', False):
-                    # 詳細取得済みの保存失敗のみカウント
-                    self._scraping_stats['save_failed'] = self._scraping_stats.get('save_failed', 0) + 1
-                return False
-            
-            # site_property_idで既存の掲載情報が見つかっている場合、その物件・建物情報を優先的に使用
-            # master_propertyを明示的に取得（lazy loadエラーを回避）
-            if existing_listing and existing_listing.master_property_id:
-                # 既存の物件と建物を使用
-                master_property = self.session.query(MasterProperty).filter(
-                    MasterProperty.id == existing_listing.master_property_id
-                ).first()
-                if not master_property:
-                    # master_propertyが見つからない場合は通常の処理に戻る
-                    master_property = None
-                    building = None
-                else:
-                    building = master_property.building
-                    extracted_room_number = master_property.room_number
-                
-                # 建物情報の更新（多数決で決定するため、ここでは直接更新しない）
-                # ただし、完全に空のフィールドは初期値として設定可能
-                if building:
-                    updated = False
-                    if property_data.get('address') and not building.address:
-                        building.address = property_data.get('address')
-                        # 正規化住所も更新
-                        if hasattr(building, 'normalized_address'):
-                            from ..utils.address_normalizer import AddressNormalizer
-                            addr_normalizer = AddressNormalizer()
-                            building.normalized_address = addr_normalizer.normalize_for_comparison(property_data.get('address'))
-                        updated = True
-                    if property_data.get('station_info') and not building.station_info:
-                        building.station_info = property_data.get('station_info')
-                        updated = True
-                    if updated:
-                        self.safe_flush()
-                
-                # マスター物件の情報更新（より詳細な情報があれば）
-                updated = False
-                if property_data.get('room_number') and not master_property.room_number:
-                    master_property.room_number = property_data.get('room_number')
-                    updated = True
-                if property_data.get('floor_number') and not master_property.floor_number:
-                    master_property.floor_number = property_data.get('floor_number')
-                    updated = True
-                if property_data.get('area') and not master_property.area:
-                    master_property.area = property_data.get('area')
-                    updated = True
-                if property_data.get('layout') and not master_property.layout:
-                    master_property.layout = self.fuzzy_matcher.normalize_layout(property_data.get('layout'))
-                    updated = True
-                if property_data.get('direction') and not master_property.direction:
-                    master_property.direction = self.fuzzy_matcher.normalize_direction(property_data.get('direction'))
-                    updated = True
-                if property_data.get('balcony_area') and not master_property.balcony_area:
-                    master_property.balcony_area = property_data.get('balcony_area')
-                    updated = True
-                if updated:
-                    # デッドロック対策：リトライロジック
-                    max_retries = 3
-                    for attempt in range(max_retries):
-                        try:
-                            self.safe_flush()
-                            break
-                        except Exception as e:
-                            if "deadlock detected" in str(e).lower() and attempt < max_retries - 1:
-                                self.logger.warning(f"デッドロック検出（既存物件更新）、リトライ {attempt + 1}/{max_retries}")
-                                self.session.rollback()
-                                # 少し待機してからリトライ
-                                import time
-                                time.sleep(0.1 * (attempt + 1))
-                                # トランザクションを再開
-                                self.session.begin()
-                                # 再度同じ更新を試みる（最新の状態を取得）
-                                master_property = self.session.query(MasterProperty).filter(
-                                    MasterProperty.id == master_property.id
-                                ).first()
-                                if master_property:
-                                    # 再度更新が必要か確認
-                                    if property_data.get('balcony_area') and not master_property.balcony_area:
-                                        master_property.balcony_area = property_data.get('balcony_area')
-                            else:
-                                raise
-                    
-                self.logger.info(f"既存掲載情報の物件・建物を使用: 建物ID={building.id if building else 'なし'}, 物件ID={master_property.id}")
-            else:
-                # 既存の掲載情報がない、または物件情報がない場合は従来通りの処理
-                
-                # セッションの状態を確認
-                if not self.session.is_active:
-                    self.logger.warning("セッションが非アクティブです。ロールバックしてから新しいトランザクションを開始します。")
-                    try:
-                        self.session.rollback()
+                        master_property = session.query(MasterProperty).get(master_property.id)
+                        if not master_property:
+                            return
                     except Exception:
-                        pass  # 既にロールバック済みの場合があるため無視
-                    self.session.begin()
-                
-                # セッションが正常であることを確認
-                self.ensure_session_active()
-                
-                # 建物を取得または作成
+                        self.logger.error(f"マスター物件の再取得に失敗しました (property_id={master_property.id})")
+                        return
+            
+            # 建物情報を多数決で更新
+            if master_property.building_id:
                 try:
-                    building, extracted_room_number = self.get_or_create_building(
-                    building_name=property_data.get('building_name'),
-                    address=property_data.get('address'),
-                    external_property_id=property_data.get('site_property_id'),
-                    built_year=property_data.get('built_year'),
-                    built_month=property_data.get('built_month'),  # 最初の掲載情報から設定
-                    total_floors=property_data.get('total_floors'),
-                    basement_floors=property_data.get('basement_floors'),
-                    total_units=property_data.get('total_units'),  # 総戸数を追加
-                    structure=property_data.get('structure'),
-                    land_rights=property_data.get('land_rights'),
-                    station_info=property_data.get('station_info')  # 最初の掲載情報から設定
-                )
-                except RuntimeError as e:
-                    # 建物作成時のデータベースエラー
-                    self.logger.error(f"建物作成時にRuntimeErrorが発生: {e}")
-                    self.session.rollback()
-                    building = None
-                    extracted_room_number = None
+                    # セッションがリセットされた可能性があるため、再度インポート
+                    from ..utils.majority_vote_updater import MajorityVoteUpdater
+                    majority_updater = MajorityVoteUpdater(session)
+                    
+                    # 建物情報を多数決で更新
+                    building = session.query(Building).get(master_property.building_id)
+                    if building:
+                        # 建物名を含む全属性を多数決で更新
+                        majority_updater.update_building_by_majority(building)
+                        # 建物名の個別更新も実行（より最新の重み付けロジックを使用）
+                        majority_updater.update_building_name_by_majority(master_property.building_id)
+                    self.safe_flush(session)  # 変更を確定
                 except Exception as e:
-                    # その他のエラー
-                    self.logger.error(f"建物作成時に予期しないエラーが発生: {type(e).__name__}: {e}")
-                    self.session.rollback()
-                    building = None
-                    extracted_room_number = None
-            
-            # 建物オブジェクトの検証
-            if building:
-                # セッションに建物が含まれているか確認
-                if building not in self.session:
-                    self.logger.warning(f"建物オブジェクトがセッションから切り離されています。再取得します。")
-                    building = self.session.query(Building).filter(Building.id == building.id).first()
-                    if not building:
-                        self.logger.error(f"建物がデータベースに存在しません！セッションから切り離された建物を再取得できませんでした。")
-                        # エラーログを記録
-                        if hasattr(self, '_save_error_log'):
-                            self._save_error_log({
-                                'url': property_data.get('url', '不明'),
-                                'reason': f'建物がデータベースに存在しません（セッションから切り離された建物を再取得できませんでした）',
-                                'building_name': property_data.get('building_name', ''),
-                                'price': property_data.get('price', ''),
-                                'timestamp': datetime.now().isoformat()
-                            })
-                        property_data['property_saved'] = False
-                        return False
-                    else:
-                        self.logger.debug(f"建物ID {building.id} を再取得しました: {building.normalized_name}")
-            
-            if not building:
-                # 建物情報がない場合（土地物件など）または建物名が空の場合
-                building_name = property_data.get('building_name', '')
-                if not building_name:
-                    self.logger.info(f"建物名が空のため、物件をスキップします: {property_data.get('url', '不明')}")
-                else:
-                    self.logger.warning(f"建物の作成に失敗しました: {building_name}")
-                    # エラーログを記録
-                    if hasattr(self, '_save_error_log'):
-                        self._save_error_log({
-                            'url': property_data.get('url', '不明'),
-                            'reason': f'建物の作成に失敗: {building_name}',
-                            'building_name': building_name,
-                            'price': property_data.get('price', ''),
-                            'timestamp': datetime.now().isoformat()
-                        })
-                property_data['property_saved'] = False
-                # save_failedは上位の処理でカウントされるため、ここではカウントしない
-                return False
-            
-            # 部屋番号の処理
-            room_number = property_data.get('room_number', extracted_room_number)
-            
-            # マスター物件を取得または作成（初期化と例外処理を追加）
-            master_property = None
-            try:
-                # セッションが正常であることを確認
-                self.ensure_session_active()
+                    self.logger.warning(f"建物情報の更新に失敗しました (building_id={master_property.building_id}): {e}")
+                    self._handle_transaction_error(e, "建物情報更新エラー")
                 
-                master_property = self.get_or_create_master_property(
-                    building=building,
-                    room_number=room_number,
-                    floor_number=property_data.get('floor_number'),
-                    area=property_data.get('area'),
-                    layout=property_data.get('layout'),
-                    direction=property_data.get('direction'),
-                    balcony_area=property_data.get('balcony_area'),
-                    url=property_data.get('url')
-                )
-                
-                if not master_property:
-                    self.logger.warning("マスター物件の作成に失敗しました")
-                    # エラーログを記録
-                    if hasattr(self, '_save_error_log'):
-                        self._save_error_log({
-                            'url': property_data.get('url', '不明'),
-                            'reason': 'マスター物件の作成に失敗',
-                            'building_name': property_data.get('building_name', ''),
-                            'price': property_data.get('price', ''),
-                            'timestamp': datetime.now().isoformat()
-                        })
+                # 物件の表示用建物名を多数決で更新
+                try:
+                    # セッションがリセットされた可能性があるため、再度インポート
+                    from ..utils.majority_vote_updater import MajorityVoteUpdater
+                    majority_updater = MajorityVoteUpdater(session)
+                    majority_updater.update_property_building_name_by_majority(master_property.id)
+                    self.safe_flush(session)  # 変更を確定
+                except Exception as e:
+                    self.logger.warning(f"物件建物名の更新に失敗しました (property_id={master_property.id}): {e}")
+                    self._handle_transaction_error(e, "物件建物名更新エラー")
+        except Exception as e:
+            self.logger.warning(f"多数決更新全体でエラー: {e}")
+    
+    def _log_validation_failure(self, property_data: Dict[str, Any]):
+        """バリデーション失敗をログに記録"""
+        url = property_data.get('url', '不明')
+        failure_reason = ""
+        
+        if not property_data.get('price'):
+            self._scraping_stats['price_missing'] += 1
+            failure_reason = "価格情報なし"
+        elif not property_data.get('building_name'):
+            self._scraping_stats['building_info_missing'] += 1
+            failure_reason = "建物名なし"
+        elif not property_data.get('site_property_id'):
+            self._scraping_stats['other_errors'] += 1
+            failure_reason = "サイト物件IDなし"
+        else:
+            self._scraping_stats['other_errors'] += 1
+            failure_reason = "その他のバリデーションエラー"
+        
+        print(f"  → 保存失敗: {failure_reason} (URL: {url})")
+        
+        if hasattr(self, '_save_error_log'):
+            self._save_error_log({
+                'url': url,
+                'reason': failure_reason,
+                'building_name': property_data.get('building_name', ''),
+                'price': property_data.get('price', ''),
+                'timestamp': datetime.now().isoformat()
+            })
+    
+    def save_property_common(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
+        """
+        物件情報を保存する共通メソッド（新バージョン）
+        
+        トランザクション管理をコンテキストマネージャーで簡潔に実装
+        注: existing_listingパラメータは後方互換性のため残しているが、使用しない
+        """
+        try:
+            with self.transaction_scope() as session:
+                # 詳細取得をスキップした場合の処理
+                if not property_data.get('detail_fetched', False):
+                    # 既存物件の確認と更新
+                    if property_data.get('site_property_id'):
+                        existing_listing = session.query(PropertyListing).filter(
+                            PropertyListing.source_site == self.source_site,
+                            PropertyListing.site_property_id == property_data['site_property_id']
+                        ).first()
+                        
+                        if existing_listing:
+                            # 最終確認日時を更新
+                            existing_listing.last_scraped_at = datetime.now()
+                            existing_listing.last_confirmed_at = datetime.now()
+                            
+                            # 非アクティブな掲載を再アクティブ化
+                            if not existing_listing.is_active:
+                                existing_listing.is_active = True
+                                print(f"  → 掲載を再開 (ID: {existing_listing.id})")
+                                
+                                # 物件が販売終了になっていた場合は販売再開
+                                if existing_listing.master_property_id:
+                                    master_prop = session.query(MasterProperty).filter(
+                                        MasterProperty.id == existing_listing.master_property_id
+                                    ).first()
+                                    if master_prop and master_prop.sold_at:
+                                        master_prop.sold_at = None
+                                        master_prop.final_price = None
+                                        master_prop.final_price_updated_at = None
+                                        print(f"  → 物件を販売再開 (物件ID: {master_prop.id})")
+                            
+                            print(f"  → 既存物件の最終確認日時を更新 (ID: {existing_listing.id})")
+                            property_data['update_type'] = 'skipped'
+                            property_data['property_saved'] = True
+                            return True
+                    
+                    # 詳細取得していない新規物件は保存しない
                     property_data['property_saved'] = False
                     return False
+                
+                # データの妥当性チェック
+                if not self.validate_property_data(property_data):
+                    self._log_validation_failure(property_data)
+                    property_data['property_saved'] = False
+                    return False
+                
+                # 既存の掲載情報を確認
+                existing_listing = None
+                if property_data.get('site_property_id'):
+                    existing_listing = session.query(PropertyListing).filter(
+                        PropertyListing.source_site == self.source_site,
+                        PropertyListing.site_property_id == property_data['site_property_id']
+                    ).first()
+                
+                # 既存の掲載情報から物件・建物を取得、または新規作成
+                if existing_listing and existing_listing.master_property_id:
+                    # 既存の物件と建物を使用
+                    master_property = session.query(MasterProperty).filter(
+                        MasterProperty.id == existing_listing.master_property_id
+                    ).first()
                     
-            except Exception as e:
-                self.logger.error(f"マスター物件の取得・作成中にエラー: {e}")
-                # エラーログを記録
-                if hasattr(self, '_save_error_log'):
-                    self._save_error_log({
-                        'url': property_data.get('url', '不明'),
-                        'reason': f'マスター物件の取得・作成中にエラー: {str(e)}',
-                        'building_name': property_data.get('building_name', ''),
-                        'price': property_data.get('price', ''),
-                        'timestamp': datetime.now().isoformat()
-                    })
-                property_data['property_saved'] = False
-                return False
-            
-            # summary_remarksをMasterPropertyに保存
-            if property_data.get('summary_remarks') and master_property and not master_property.summary_remarks:
-                master_property.summary_remarks = property_data.get('summary_remarks')
-                self.safe_flush()
-            
-            # 掲載情報を作成または更新
-            listing, update_type, update_details = self.create_or_update_listing(
-                master_property=master_property,
-                url=property_data.get('url'),
-                title=property_data.get('title', property_data.get('building_name', '')),
-                price=property_data.get('price'),
-                agency_name=property_data.get('agency_name'),
-                site_property_id=property_data.get('site_property_id'),
-                description=property_data.get('description'),
-                station_info=property_data.get('station_info'),
-                management_fee=property_data.get('management_fee'),
-                repair_fund=property_data.get('repair_fund'),
-                published_at=property_data.get('published_at'),
-                first_published_at=property_data.get('first_published_at'),
-                remarks=property_data.get('remarks'),
-                # summary_remarksはMasterPropertyのフィールドなので、PropertyListingには渡さない
-                agency_tel=property_data.get('agency_tel'),
-                # 建物名を追加（物件独自の表示用建物名の多数決に使用）
-                listing_building_name=property_data.get('building_name'),
-                # 掲載サイトごとの物件属性
-                listing_floor_number=property_data.get('floor_number'),
-                listing_area=property_data.get('area'),
-                # varchar(20)制限があるため、20文字に切り詰める
-                listing_layout=property_data.get('layout')[:20] if property_data.get('layout') else None,
-                listing_direction=property_data.get('direction')[:20] if property_data.get('direction') else None,
-                listing_total_floors=property_data.get('total_floors'),
-                listing_total_units=property_data.get('total_units'),
-                listing_built_year=property_data.get('built_year'),
-                listing_built_month=property_data.get('built_month'),
-                listing_balcony_area=property_data.get('balcony_area'),
-                listing_address=property_data.get('address'),
-                listing_basement_floors=property_data.get('basement_floors'),
-                listing_land_rights=property_data.get('land_rights'),
-                listing_parking_info=property_data.get('parking_info'),
-                listing_station_info=property_data.get('station_info')
-            )
-            
-            # 更新タイプをproperty_dataに設定（外部で使用するため）
-            property_data['update_type'] = update_type
-            property_data['update_details'] = update_details
-            
-            # サブクラス固有の処理のためのフック（コミット前に実行）
-            self._post_listing_creation_hook(listing, property_data)
-            
-            # 毎回コミット（トランザクションエラーを防ぐため）
-            # 並列実行時（autoflush=False）でも必ずコミットする
-            # これにより、エラーが発生しても他の物件は保存される
-            try:
-                # トランザクションがアクティブな場合のみコミット
-                if self.session.in_transaction():
-                    self.session.commit()
-                    self.logger.debug(f"コミット成功: {property_data.get('url', 'unknown')}")
+                    if master_property:
+                        building = master_property.building
+                        extracted_room_number = master_property.room_number
+                    else:
+                        # master_propertyが見つからない場合は新規作成
+                        # 現在のトランザクション内で建物を作成
+                        building, extracted_room_number = self._get_or_create_building_with_session(
+                            session,
+                            building_name=property_data.get('building_name', ''),
+                            address=property_data.get('address'),
+                            external_property_id=property_data.get('external_property_id'),
+                            built_year=property_data.get('built_year'),
+                            built_month=property_data.get('built_month'),
+                            total_floors=property_data.get('total_floors'),
+                            structure=property_data.get('structure'),
+                            land_rights=property_data.get('land_rights'),
+                            station_info=property_data.get('station_info')
+                        )
+                        master_property = None
                 else:
-                    # トランザクションがない場合は新しく開始
-                    self.session.begin()
-                    self.session.commit()
-                    self.logger.debug(f"新規トランザクションでコミット成功: {property_data.get('url', 'unknown')}")
-            except Exception as e:
-                self.logger.error(f"コミットエラー: {e}")
-                # コミット失敗時は完全にセッションをリセット
+                    # 新規作成
+                    # 現在のトランザクション内で建物を作成
+                    building, extracted_room_number = self._get_or_create_building_with_session(
+                        session,
+                        building_name=property_data.get('building_name', ''),
+                        address=property_data.get('address'),
+                        external_property_id=property_data.get('external_property_id'),
+                        built_year=property_data.get('built_year'),
+                        built_month=property_data.get('built_month'),
+                        total_floors=property_data.get('total_floors'),
+                        structure=property_data.get('structure'),
+                        land_rights=property_data.get('land_rights'),
+                        station_info=property_data.get('station_info')
+                    )
+                    master_property = None
+                
+                if not building:
+                    self.logger.warning(f"建物の作成に失敗: {property_data.get('building_name', '')}")
+                    property_data['property_saved'] = False
+                    return False
+                
+                # マスター物件を取得または作成
+                if not master_property:
+                    # 現在のトランザクション内でマスター物件を作成
+                    master_property = self._get_or_create_master_property_with_session(
+                        session,
+                        building=building,
+                        room_number=property_data.get('room_number', extracted_room_number),
+                        floor_number=property_data.get('floor_number'),
+                        area=property_data.get('area'),
+                        layout=property_data.get('layout'),
+                        direction=property_data.get('direction'),
+                        balcony_area=property_data.get('balcony_area')
+                    )
+                
+                if not master_property:
+                    self.logger.warning("マスター物件の作成に失敗")
+                    property_data['property_saved'] = False
+                    return False
+                
+                # summary_remarksをMasterPropertyに保存
+                if property_data.get('summary_remarks') and not master_property.summary_remarks:
+                    master_property.summary_remarks = property_data['summary_remarks']
+                
+                # 掲載情報を作成または更新（create_or_update_listingは独自のトランザクションを使用）
                 try:
-                    self.session.rollback()
-                    self.session.close()
-                    # 新しいセッションを作成
-                    from ..database import get_db_for_scraping
-                    self.session = get_db_for_scraping()
-                    self.logger.info("セッションを完全にリセットしました")
-                except Exception as reset_error:
-                    self.logger.error(f"セッションリセットエラー: {reset_error}")
-                # 保存失敗として扱う
-                property_data['property_saved'] = False
-                property_data['commit_failed'] = True
-                return False
-            
-            # 保存成功フラグを設定（コミット成功または未実行の場合のみ）
-            # 注：定期コミットを行わない場合も、後でバッチコミットされるため仮にTrueとする
-            property_data['property_saved'] = True
-            
-            return True
-            
+                    listing_kwargs = {
+                        'listing_building_name': property_data.get('building_name'),
+                        'listing_floor_number': property_data.get('floor_number'),
+                        'listing_area': property_data.get('area'),
+                        'listing_layout': property_data.get('layout'),
+                        'listing_direction': property_data.get('direction'),
+                        'listing_total_floors': property_data.get('total_floors'),
+                        'listing_balcony_area': property_data.get('balcony_area'),
+                        'listing_built_year': property_data.get('built_year'),
+                        'listing_built_month': property_data.get('built_month'),
+                        'listing_address': property_data.get('address'),
+                        'remarks': property_data.get('remarks'),
+                        'agency_tel': property_data.get('agency_tel'),
+                        'scraped_from_area': getattr(self, 'current_area_code', None)
+                    }
+                    
+                    # Noneの値を除外
+                    listing_kwargs = {k: v for k, v in listing_kwargs.items() if v is not None}
+                    
+                    result = self.create_or_update_listing(
+                        master_property=master_property,
+                        url=property_data['url'],
+                        title=property_data.get('title', ''),
+                        price=property_data['price'],
+                        agency_name=property_data.get('agency_name'),
+                        site_property_id=property_data.get('site_property_id'),
+                        description=property_data.get('description'),
+                        station_info=property_data.get('station_info'),
+                        management_fee=property_data.get('management_fee'),
+                        repair_fund=property_data.get('repair_fund'),
+                        published_at=property_data.get('published_at'),
+                        first_published_at=property_data.get('first_published_at'),
+                        **listing_kwargs
+                    )
+                    
+                    # 戻り値を展開
+                    if len(result) == 2:
+                        listing, update_type = result
+                        update_details = None
+                    else:
+                        listing, update_type, update_details = result
+                except Exception as e:
+                    raise
+                
+                # 更新タイプを設定
+                property_data['update_type'] = update_type
+                property_data['update_details'] = update_details
+                
+                # サブクラス固有の処理
+                if hasattr(self, '_post_listing_creation_hook'):
+                    self._post_listing_creation_hook(session, listing, property_data)
+                
+                # 多数決で情報を更新
+                self._update_by_majority_vote(session, master_property)
+                
+                # コミットはwith文を抜ける時に自動実行
+                property_data['property_saved'] = True
+                return True
+                
         except (TaskPausedException, TaskCancelledException):
             # タスクの一時停止・キャンセル例外は再スロー
             raise
         except Exception as e:
-            # トランザクションエラーの場合はロールバック
-            if self.session:
-                try:
-                    self.session.rollback()
-                    # 新しいトランザクションを開始
-                    self.session.begin()
-                except:
-                    pass
-            
-            # トランザクションエラーの場合は詳細ログを出さない
-            error_msg = str(e)
-            is_transaction_error = ("current transaction is aborted" in error_msg or 
-                                  "InFailedSqlTransaction" in error_msg or
-                                  "rolled back due to a previous exception" in error_msg)
-            
-            if not is_transaction_error:
-                self.logger.error(f"物件保存エラー: {e}")
-                import traceback
-                traceback.print_exc()
-            else:
-                # トランザクションエラーの場合は完全にセッションをリセット
-                self.logger.warning(f"トランザクションエラー検出: {error_msg[:100]}")
-                try:
-                    # ロールバック
-                    self.session.rollback()
-                    # セッションをクローズして再作成
-                    self.session.close()
-                    from ..database import get_db_for_scraping
-                    self.session = get_db_for_scraping()
-                    self.logger.info("save_property_common: セッションを完全にリセットしました")
-                except Exception as rollback_error:
-                    self.logger.error(f"セッションリセットエラー: {rollback_error}")
-                    # 最後の手段として新しいセッションを作成
-                    try:
-                        from ..database import get_db_for_scraping
-                        self.session = get_db_for_scraping()
-                    except:
-                        pass
-            
-            # エラーログを記録
-            url = property_data.get('url', '不明')
-            building_name = property_data.get('building_name', '')
-            price = property_data.get('price', '')
-            
-            self.logger.error(f"物件保存失敗 - システムエラー: URL={url}, 建物名={building_name}, 価格={price}")
-            print(f"  → 保存失敗: システムエラー - {str(e)[:100]} (URL: {url})")
-            
-            # 管理画面用のエラーログを記録
-            if hasattr(self, '_save_error_log'):
-                self._save_error_log({
-                    'url': url,
-                    'reason': f'システムエラー: {str(e)[:200]}',
-                    'building_name': building_name,
-                    'price': str(price) if price else '',
-                    'timestamp': datetime.now().isoformat()
-                })
-            
-            # 保存失敗フラグを設定
+            self.logger.error(f"物件保存エラー: {e}")
             property_data['property_saved'] = False
             return False
     
@@ -5190,57 +4911,58 @@ class BaseScraper(ABC):
             error_rate: エラー率
         """
         try:
-            from sqlalchemy import text
-            from ..models import ScraperAlert
-            
-            # まず既存のアクティブアラートがあるか確認
-            # field_nameはdetails JSON内に格納されているため、別の方法でチェック
-            existing_alerts = self.session.query(ScraperAlert).filter(
-                ScraperAlert.source_site == self.source_site,
-                ScraperAlert.alert_type == 'critical_field_error',
-                ScraperAlert.is_active == True
-            ).all()
-            
-            existing_alert = None
-            for alert in existing_alerts:
-                if alert.details and alert.details.get('field_name') == field_name:
-                    existing_alert = alert
-                    break
-            
-            message = (
-                f"{self.source_site}のスクレイパーで重要フィールド'{field_name}'の"
-                f"エラー率が{error_rate:.1%}（{error_count}件）に達しました。"
-                f"HTML構造の変更を確認してください。"
-            )
-            
-            details = {
-                'error_count': error_count,
-                'error_rate': error_rate,
-                'field_name': field_name,
-                'threshold': self._error_thresholds
-            }
-            
-            if existing_alert:
-                # 既存のアラートを更新
-                existing_alert.message = message
-                existing_alert.details = details
-                existing_alert.updated_at = datetime.now()
-            else:
-                # 新規アラートを作成
-                new_alert = ScraperAlert(
-                    source_site=self.source_site,
-                    alert_type='critical_field_error',
-                    severity='high',
-                    message=message,
-                    details=details
+            with self.transaction_scope() as session:
+                from sqlalchemy import text
+                from ..models import ScraperAlert
+                
+                # まず既存のアクティブアラートがあるか確認
+                # field_nameはdetails JSON内に格納されているため、別の方法でチェック
+                existing_alerts = session.query(ScraperAlert).filter(
+                    ScraperAlert.source_site == self.source_site,
+                    ScraperAlert.alert_type == 'critical_field_error',
+                    ScraperAlert.is_active == True
+                ).all()
+                
+                existing_alert = None
+                for alert in existing_alerts:
+                    if alert.details and alert.details.get('field_name') == field_name:
+                        existing_alert = alert
+                        break
+                
+                message = (
+                    f"{self.source_site}のスクレイパーで重要フィールド'{field_name}'の"
+                    f"エラー率が{error_rate:.1%}（{error_count}件）に達しました。"
+                    f"HTML構造の変更を確認してください。"
                 )
-                self.session.add(new_alert)
-            
-            self.session.commit()
-            
+                
+                details = {
+                    'error_count': error_count,
+                    'error_rate': error_rate,
+                    'field_name': field_name,
+                    'threshold': self._error_thresholds
+                }
+                
+                if existing_alert:
+                    # 既存のアラートを更新
+                    existing_alert.message = message
+                    existing_alert.details = details
+                    existing_alert.updated_at = datetime.now()
+                else:
+                    # 新規アラートを作成
+                    new_alert = ScraperAlert(
+                        source_site=self.source_site,
+                        alert_type='critical_field_error',
+                        severity='high',
+                        message=message,
+                        details=details
+                    )
+                    session.add(new_alert)
+                
+                # トランザクションは with 文を抜ける際に自動的にコミット
+                
         except Exception as e:
             self.logger.error(f"アラート記録エラー: {e}")
-            self.session.rollback()
+            # トランザクションはwith文を抜ける際に自動的にロールバック
     
     def track_selector_usage(self, soup: BeautifulSoup, selector: str, field_name: str, required: bool = True) -> Optional[any]:
         """セレクタの使用を追跡し、要素を返す
@@ -5797,7 +5519,7 @@ class BaseScraper(ABC):
         if hasattr(self, '_save_error_log'):
             self._save_error_log(error_info)
 
-    def _post_listing_creation_hook(self, listing: PropertyListing, property_data: Dict[str, Any]):
+    def _post_listing_creation_hook(self, session, listing: PropertyListing, property_data: Dict[str, Any]):
         """掲載情報作成後のフック（サブクラスでオーバーライド可能）"""
         pass
 
@@ -5805,20 +5527,9 @@ class BaseScraper(ABC):
         """
         デストラクタ
         
-        重要: セッションを確実にクリーンアップして、
-        トランザクション状態の汚染を防ぐ
+        HTTPセッションをクリーンアップ
         """
-        if hasattr(self, 'session'):
-            try:
-                # 未コミットのトランザクションをロールバック
-                self.session.rollback()
-            except Exception:
-                pass  # エラーは無視（既にクローズされている可能性がある）
-            finally:
-                try:
-                    self.session.close()
-                except Exception:
-                    pass
+        # トランザクションは transaction_scope() で自動管理される
         
         if hasattr(self, 'http_session'):
             try:

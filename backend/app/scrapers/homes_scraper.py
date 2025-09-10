@@ -1263,7 +1263,7 @@ class HomesScraper(BaseScraper):
             listing.detail_info = detail_info
             listing.detail_fetched_at = datetime.now()
             
-            self.session.commit()
+            # トランザクションは上位のスコープで管理される
             return True
             
         except (TaskPausedException, TaskCancelledException):

@@ -614,7 +614,7 @@ class RehouseScraper(BaseScraper):
         # 共通の保存処理を使用
         return self.save_property_common(property_data, existing_listing)
     
-    def _post_listing_creation_hook(self, listing: PropertyListing, property_data: Dict[str, Any]):
+    def _post_listing_creation_hook(self, session, listing: PropertyListing, property_data: Dict[str, Any]):
         """掲載情報作成後のフック（三井のリハウス特有の処理）"""
         # 追加フィールドの設定
         self._set_additional_fields(listing, property_data)
@@ -624,10 +624,10 @@ class RehouseScraper(BaseScraper):
             listing.detail_info = self._build_detail_info(property_data)
             listing.detail_fetched_at = datetime.now()
         
-        # 多数決による物件情報更新
+        # 多数決による物件情報更新（建物情報も含む）
         # listingからmaster_propertyへの参照を取得
         if listing.master_property:
-            self.update_master_property_by_majority(listing.master_property)
+            self._update_by_majority_vote(session, listing.master_property)
     
     
     def _set_additional_fields(self, listing: PropertyListing, property_data: Dict[str, Any]):

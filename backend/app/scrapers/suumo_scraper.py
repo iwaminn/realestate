@@ -969,7 +969,7 @@ class SuumoScraper(BaseScraper):
             listing.detail_info = detail_info
             listing.detail_fetched_at = datetime.now()
             
-            self.session.commit()
+            # トランザクションはtransaction_scope()で管理されるため、ここでのcommitは不要
             return True
             
         except (TaskPausedException, TaskCancelledException):
