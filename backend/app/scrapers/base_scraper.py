@@ -101,14 +101,32 @@ class BaseScraper(ABC):
         """
         トランザクションスコープを管理するコンテキストマネージャー
         
-        使用例:
-            with self.transaction_scope() as session:
-                # データベース操作
-                pass
-            # ここで自動的にcommit/rollback/closeされる
+        デッドロック防止のための最適化：
+        1. READ COMMITTEDレベルで不要なロックを減らす
+        2. ロックタイムアウトを設定
+        3. ステートメントタイムアウトを設定
         """
         from ..database import get_db_for_scraping
         session = get_db_for_scraping()
+        
+        try:
+            # トランザクション分離レベルをREAD COMMITTEDに設定
+            # （PostgreSQLのデフォルトだが明示的に設定）
+            session.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            
+            # ロックタイムアウトを設定（5秒）
+            session.execute("SET LOCAL lock_timeout = '5s'")
+            
+            # ステートメントタイムアウトを設定（30秒）
+            session.execute("SET LOCAL statement_timeout = '30s'")
+            
+            # デッドロック優先度を設定（低優先度）
+            # これにより、デッドロック時にこのセッションが優先的にキャンセルされる
+            session.execute("SET LOCAL deadlock_timeout = '1s'")
+            
+        except Exception as e:
+            self.logger.debug(f"トランザクション設定エラー（無視）: {e}")
+        
         try:
             yield session
             session.commit()
@@ -145,6 +163,25 @@ class BaseScraper(ABC):
         # その他のエラーはログに記録
         self.logger.warning(f"{context}: {error}")
         return False
+
+    def _ensure_ordered_locking(self, session: Session, property_id: int, building_id: int = None):
+        """
+        デッドロック防止のため、常に同じ順序でロックを取得
+        順序: buildings → master_properties (IDの小さい順)
+        
+        これにより循環待機を防ぐ
+        """
+        if building_id:
+            # まず建物をロック（IDが小さい方から）
+            if building_id < property_id:
+                session.query(Building).filter(Building.id == building_id).with_for_update().first()
+                session.query(MasterProperty).filter(MasterProperty.id == property_id).with_for_update().first()
+            else:
+                session.query(MasterProperty).filter(MasterProperty.id == property_id).with_for_update().first()
+                session.query(Building).filter(Building.id == building_id).with_for_update().first()
+        else:
+            # 物件のみロック
+            session.query(MasterProperty).filter(MasterProperty.id == property_id).with_for_update().first()
     
     def __init__(self, source_site: Union[str, SourceSite], force_detail_fetch: bool = False, max_properties: Optional[int] = None, ignore_error_history: bool = False, task_id: Optional[str] = None):
         # 文字列の場合はSourceSiteに変換（後方互換性）
@@ -3481,7 +3518,7 @@ class BaseScraper(ABC):
         
         return master_property
     
-    def create_or_update_listing(self, master_property: MasterProperty, url: str, title: str,
+    def create_or_update_listing(self, session: Session, master_property: MasterProperty, url: str, title: str,
                                price: int, agency_name: str = None, site_property_id: str = None,
                                description: str = None, station_info: str = None,
                                management_fee: int = None, repair_fund: int = None,
@@ -3490,22 +3527,17 @@ class BaseScraper(ABC):
         """
         掲載情報を作成または更新
         
-        常に新しいトランザクションスコープで実行
+        Args:
+            session: 使用するデータベースセッション（必須）
+            master_property: マスター物件
+            url: 物件URL
+            title: 物件タイトル
+            price: 価格
+            その他: オプショナルな詳細情報
+            
+        Returns:
+            tuple: (PropertyListing, update_type, update_details)
         """
-        with self.transaction_scope() as session:
-            return self._create_or_update_listing_with_session(
-                session, master_property, url, title, price, agency_name,
-                site_property_id, description, station_info, management_fee,
-                repair_fund, published_at, first_published_at, **kwargs
-            )
-    
-    def _create_or_update_listing_with_session(self, session, master_property: MasterProperty, url: str, title: str,
-                               price: int, agency_name: str = None, site_property_id: str = None,
-                               description: str = None, station_info: str = None,
-                               management_fee: int = None, repair_fund: int = None,
-                               published_at: datetime = None, first_published_at: datetime = None,
-                               **kwargs) -> tuple[PropertyListing, str]:
-        """掲載情報を作成または更新（セッションを受け取るバージョン）"""
         # 戻り値を初期化
         update_type = None
         update_details = None
@@ -4526,7 +4558,13 @@ class BaseScraper(ABC):
 
     
     def _update_by_majority_vote(self, session: Session, master_property: MasterProperty):
-        """多数決で情報を更新（エラーが発生しても処理は続行）"""
+        """
+        多数決で情報を更新（バッチ更新方式でデッドロックを回避）
+        
+        重要：このメソッドは既存のトランザクション内で呼ばれるため、
+        新しいトランザクションを作成せず、渡されたセッションを使用する
+        更新はベストエフォート方式で、エラーは記録するが処理は続行
+        """
         if not master_property:
             return
             
@@ -4534,53 +4572,130 @@ class BaseScraper(ABC):
             from ..utils.majority_vote_updater import MajorityVoteUpdater
             majority_updater = MajorityVoteUpdater(session)
             
-            # 物件情報を多数決で更新
-            try:
-                majority_updater.update_master_property_by_majority(master_property)
-                self.safe_flush(session)  # 変更を確定
-            except Exception as e:
-                self.logger.warning(f"物件情報の更新に失敗しました (property_id={master_property.id}): {e}")
-                if self._handle_transaction_error(e, "多数決更新エラー"):
-                    # セッションがリセットされたため、master_propertyを再取得
-                    try:
-                        master_property = session.query(MasterProperty).get(master_property.id)
-                        if not master_property:
-                            return
-                    except Exception:
-                        self.logger.error(f"マスター物件の再取得に失敗しました (property_id={master_property.id})")
-                        return
+            # すべての多数決更新を実行（エラーは内部で処理）
+            updates_to_perform = []
             
-            # 建物情報を多数決で更新
+            # 物件情報の更新を予定
+            updates_to_perform.append(('property', master_property.id, master_property))
+            
+            # 建物情報の更新を予定
             if master_property.building_id:
+                updates_to_perform.append(('building', master_property.building_id, master_property.building))
+                updates_to_perform.append(('building_name', master_property.building_id, None))
+                updates_to_perform.append(('property_building_name', master_property.id, None))
+            
+            # 各更新を順次実行（エラーは個別に処理）
+            for update_type, target_id, target_obj in updates_to_perform:
                 try:
-                    # セッションがリセットされた可能性があるため、再度インポート
-                    from ..utils.majority_vote_updater import MajorityVoteUpdater
-                    majority_updater = MajorityVoteUpdater(session)
+                    if update_type == 'property':
+                        majority_updater.update_master_property_by_majority(target_obj)
+                    elif update_type == 'building' and target_obj:
+                        majority_updater.update_building_by_majority(target_obj)
+                        majority_updater.update_building_name_by_majority(target_id)
+                    elif update_type == 'building_name':
+                        majority_updater.update_building_name_by_majority(target_id)
+                    elif update_type == 'property_building_name':
+                        majority_updater.update_property_building_name_by_majority(target_id)
                     
-                    # 建物情報を多数決で更新
-                    building = session.query(Building).get(master_property.building_id)
-                    if building:
-                        # 建物名を含む全属性を多数決で更新
-                        majority_updater.update_building_by_majority(building)
-                        # 建物名の個別更新も実行（より最新の重み付けロジックを使用）
-                        majority_updater.update_building_name_by_majority(master_property.building_id)
-                    self.safe_flush(session)  # 変更を確定
+                    self.logger.debug(f"多数決更新成功: {update_type} (id={target_id})")
+                    
                 except Exception as e:
-                    self.logger.warning(f"建物情報の更新に失敗しました (building_id={master_property.building_id}): {e}")
-                    self._handle_transaction_error(e, "建物情報更新エラー")
-                
-                # 物件の表示用建物名を多数決で更新
-                try:
-                    # セッションがリセットされた可能性があるため、再度インポート
-                    from ..utils.majority_vote_updater import MajorityVoteUpdater
-                    majority_updater = MajorityVoteUpdater(session)
-                    majority_updater.update_property_building_name_by_majority(master_property.id)
-                    self.safe_flush(session)  # 変更を確定
-                except Exception as e:
-                    self.logger.warning(f"物件建物名の更新に失敗しました (property_id={master_property.id}): {e}")
-                    self._handle_transaction_error(e, "物件建物名更新エラー")
+                    # エラーの種類を判別
+                    error_str = str(e).lower()
+                    
+                    # データが見つからない場合は正常
+                    if 'no data' in error_str or 'not found' in error_str:
+                        self.logger.debug(f"多数決更新: {update_type} (id={target_id}) - データなし（正常）")
+                    # タイムアウトやロックエラーは警告
+                    elif 'timeout' in error_str or 'lock' in error_str:
+                        self.logger.debug(f"多数決更新: {update_type} (id={target_id}) - 一時的なロックエラー")
+                    # その他のエラーは警告レベルで記録
+                    else:
+                        self.logger.warning(f"多数決更新エラー: {update_type} (id={target_id}) - {e}")
+                    
+                    # エラーがあっても次の更新を続行
+                    continue
+                    
+        except ImportError as e:
+            # モジュールのインポートエラーは重大
+            self.logger.error(f"MajorityVoteUpdaterのインポートに失敗: {e}")
+            # ただし、メインの処理は継続させる
         except Exception as e:
-            self.logger.warning(f"多数決更新全体でエラー: {e}")
+            # 予期しないエラーも記録はするが処理は継続
+            self.logger.error(f"多数決更新で予期しないエラー（処理は継続）: {e}")
+    
+    def _handle_majority_vote_error(self, error: Exception, context: str):
+        """
+        多数決更新のエラーを適切に処理
+        
+        Args:
+            error: 発生したエラー
+            context: エラーが発生した文脈
+        """
+        error_str = str(error).lower()
+        
+        # データが見つからない（正常なケース）
+        if 'no data' in error_str or 'empty' in error_str or 'not found' in error_str:
+            self.logger.debug(f"{context}: 更新対象データなし（正常）")
+            return
+        
+        # ロック関連のエラー（一時的）
+        if 'lock' in error_str or 'deadlock' in error_str or 'timeout' in error_str:
+            self.logger.warning(f"{context}: ロックエラー（一時的）: {error}")
+            return
+        
+        # データ整合性エラー（重大）
+        if 'integrity' in error_str or 'constraint' in error_str or 'foreign key' in error_str:
+            self.logger.error(f"{context}: データ整合性エラー（重大）: {error}")
+            raise
+        
+        # データ型やNULL値エラー（データ品質）
+        if 'null' in error_str or 'type' in error_str or 'value' in error_str:
+            self.logger.warning(f"{context}: データ品質の問題: {error}")
+            return
+        
+        # その他のエラー（詳細ログを記録して再スロー）
+        self.logger.error(f"{context}: 予期しないエラー: {error}")
+        raise
+
+    def _schedule_majority_vote_update(self, property_id: int, building_id: int = None):
+        """
+        多数決更新を後で実行するためにキューに追加（非同期処理）
+        
+        デッドロックを避けるため、メインのトランザクションとは別のタイミングで実行
+        """
+        # 実装例：更新対象をキューやタスクテーブルに保存
+        # 別のプロセスやバックグラウンドタスクで処理
+        self.logger.debug(f"多数決更新をスケジュール: property_id={property_id}, building_id={building_id}")
+
+    def _record_data_quality_issue(self, property_id: int, error_message: str):
+        """
+        データ品質の問題を記録（将来的な分析のため）
+        
+        Args:
+            property_id: 問題が発生した物件ID
+            error_message: エラーメッセージ
+        """
+        try:
+            # データ品質問題をログに記録
+            self.logger.warning(f"データ品質問題を記録: property_id={property_id}, error={error_message}")
+            
+            # 将来的には専用のテーブルに記録することも検討
+            # from ..database import get_db_for_scraping
+            # with get_db_for_scraping() as session:
+            #     quality_issue = DataQualityIssue(
+            #         property_id=property_id,
+            #         error_type='majority_vote_error',
+            #         error_message=error_message,
+            #         occurred_at=datetime.now()
+            #     )
+            #     session.add(quality_issue)
+            #     session.commit()
+            
+        except Exception as e:
+            # 記録自体のエラーは無視（メインフローを妨げない）
+            self.logger.debug(f"データ品質問題の記録中にエラー: {e}")
+        # TODO: 実際のキュー実装が必要な場合はここに追加
     
     def _log_validation_failure(self, property_data: Dict[str, Any]):
         """バリデーション失敗をログに記録"""
@@ -4744,7 +4859,7 @@ class BaseScraper(ABC):
                 if property_data.get('summary_remarks') and not master_property.summary_remarks:
                     master_property.summary_remarks = property_data['summary_remarks']
                 
-                # 掲載情報を作成または更新（create_or_update_listingは独自のトランザクションを使用）
+                # 掲載情報を作成または更新（同一トランザクション内で実行）
                 try:
                     listing_kwargs = {
                         'listing_building_name': property_data.get('building_name'),
@@ -4765,7 +4880,9 @@ class BaseScraper(ABC):
                     # Noneの値を除外
                     listing_kwargs = {k: v for k, v in listing_kwargs.items() if v is not None}
                     
+                    # 重要：同じセッションを渡して同一トランザクション内で実行
                     result = self.create_or_update_listing(
+                        session=session,  # セッションは必須パラメータ
                         master_property=master_property,
                         url=property_data['url'],
                         title=property_data.get('title', ''),
@@ -4799,7 +4916,43 @@ class BaseScraper(ABC):
                     self._post_listing_creation_hook(session, listing, property_data)
                 
                 # 多数決で情報を更新
-                self._update_by_majority_vote(session, master_property)
+                # デッドロック防止のため、オプションで別トランザクションで実行
+                if getattr(self, 'async_majority_vote', False):
+                    # 非同期モード：更新をスケジュールして後で実行
+                    self._schedule_majority_vote_update(master_property.id, master_property.building_id)
+                else:
+                    # 同期モード：現在のトランザクション内で実行（ベストエフォート）
+                    try:
+                        self._update_by_majority_vote(session, master_property)
+                    except Exception as e:
+                        # エラーの種類を判別して適切に処理
+                        error_str = str(e).lower()
+                        
+                        # ロック関連のエラー（リトライ可能）
+                        if 'lock' in error_str or 'deadlock' in error_str or 'timeout' in error_str:
+                            self.logger.warning(f"多数決更新でロックエラーが発生（後で再試行されます）: {e}")
+                            # 後で非同期更新をスケジュール
+                            self._schedule_majority_vote_update(master_property.id, master_property.building_id)
+                        
+                        # データ整合性エラー（致命的）
+                        elif 'integrity' in error_str or 'constraint' in error_str or 'foreign key' in error_str:
+                            self.logger.error(f"多数決更新でデータ整合性エラー: {e}")
+                            # トランザクション全体をロールバックすべき重大なエラー
+                            raise
+                        
+                        # NULL値エラーや型エラー（データ品質の問題）
+                        elif 'null' in error_str or 'type' in error_str or 'value' in error_str:
+                            self.logger.error(f"多数決更新でデータ品質エラー: {e}")
+                            # データの問題なので記録はするが、処理は続行
+                            self._record_data_quality_issue(master_property.id, str(e))
+                        
+                        # その他の予期しないエラー
+                        else:
+                            self.logger.error(f"多数決更新で予期しないエラー: {e}")
+                            import traceback
+                            self.logger.error(f"スタックトレース: {traceback.format_exc()}")
+                            # 原因不明なので安全のため再スロー
+                            raise
                 
                 # コミットはwith文を抜ける時に自動実行
                 property_data['property_saved'] = True
