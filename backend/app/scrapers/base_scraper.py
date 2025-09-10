@@ -254,38 +254,35 @@ class BaseScraper(ABC):
         if not self.task_id:
             return {"is_paused": False, "is_cancelled": False}
         
-        from ..database import get_db_for_scraping
         from ..models_scraping_task import ScrapingTask
         
-        session = get_db_for_scraping()
         try:
-            # 必要なカラムのみ取得（軽量クエリ）
-            result = session.query(
-                ScrapingTask.is_paused,
-                ScrapingTask.is_cancelled,
-                ScrapingTask.status
-            ).filter(
-                ScrapingTask.task_id == self.task_id
-            ).first()
-            
-            if not result:
-                # タスクが存在しない場合
-                return {"is_paused": False, "is_cancelled": False}
-            
-            # statusがcancelledの場合もキャンセル扱い
-            is_cancelled = result.is_cancelled or result.status == 'cancelled'
-            
-            return {
-                "is_paused": result.is_paused,
-                "is_cancelled": is_cancelled
-            }
+            with self.transaction_scope() as session:
+                # 必要なカラムのみ取得（軽量クエリ）
+                result = session.query(
+                    ScrapingTask.is_paused,
+                    ScrapingTask.is_cancelled,
+                    ScrapingTask.status
+                ).filter(
+                    ScrapingTask.task_id == self.task_id
+                ).first()
+                
+                if not result:
+                    # タスクが存在しない場合
+                    return {"is_paused": False, "is_cancelled": False}
+                
+                # statusがcancelledの場合もキャンセル扱い
+                is_cancelled = result.is_cancelled or result.status == 'cancelled'
+                
+                return {
+                    "is_paused": result.is_paused,
+                    "is_cancelled": is_cancelled
+                }
                 
         except Exception as e:
             self.logger.error(f"データベースからタスク状態を取得中にエラー: {e}")
             # エラー時は安全のため停止しない
             return {"is_paused": False, "is_cancelled": False}
-        finally:
-            session.close()
     
     def _setup_logger(self) -> logging.Logger:
         """ロガーのセットアップ"""
@@ -2636,7 +2633,7 @@ class BaseScraper(ABC):
         
         return 0, "不一致"
 
-    def _find_buildings_with_staged_matching(self, search_key: str, normalized_address: str, 
+    def _find_buildings_with_staged_matching(self, session, search_key: str, normalized_address: str, 
                                            total_floors: int = None, built_year: int = None, 
                                            built_month: int = None, total_units: int = None) -> Optional[Building]:
         """段階的マッチングで建物を検索
@@ -2745,7 +2742,7 @@ class BaseScraper(ABC):
         
         return building
 
-    def find_existing_building_by_key(self, search_key: str, address: str = None, total_floors: int = None,
+    def find_existing_building_by_key(self, session, search_key: str, address: str = None, total_floors: int = None,
                                      built_year: int = None, built_month: int = None, total_units: int = None) -> Optional[Building]:
         """検索キーで既存の建物を探す（最適化された統一検索ロジック）"""
         # 住所が指定されていない場合は、建物名だけでの判断は危険なのでNoneを返す
@@ -2917,7 +2914,7 @@ class BaseScraper(ABC):
         
         if normalized_address:  # 住所がある場合のみ実行
             staged_result = self._find_buildings_with_staged_matching(
-                search_key, normalized_address, total_floors, built_year, built_month, total_units
+                session, search_key, normalized_address, total_floors, built_year, built_month, total_units
             )
             if staged_result:
                 return staged_result
@@ -3034,7 +3031,7 @@ class BaseScraper(ABC):
         search_key = self.get_search_key_for_building(clean_building_name)
         
         # 既存の建物を検索（一元化された検索ロジック）
-        building = self.find_existing_building_by_key(search_key, address, total_floors, built_year, built_month, total_units)
+        building = self.find_existing_building_by_key(session, search_key, address, total_floors, built_year, built_month, total_units)
         
         if building:
             print(f"[INFO] 既存建物を発見: {building.normalized_name} (ID: {building.id})")
@@ -4131,42 +4128,38 @@ class BaseScraper(ABC):
     
     def _should_skip_url_due_to_404(self, url: str) -> bool:
         """404エラー履歴によりスキップすべきURLか判定"""
-        from ..database import get_db_for_scraping
-        
-        session = get_db_for_scraping()
         try:
-            retry_record = session.query(Url404Retry).filter(
-                Url404Retry.url == url,
-                Url404Retry.source_site == self.source_site.value
-            ).first()
-            
-            if retry_record:
-                # 再試行間隔を計算
-                retry_hours = self._calculate_retry_interval(retry_record.error_count)
-                hours_since_error = (datetime.now() - retry_record.last_error_at).total_seconds() / 3600
+            with self.transaction_scope() as session:
+                retry_record = session.query(Url404Retry).filter(
+                    Url404Retry.url == url,
+                    Url404Retry.source_site == self.source_site.value
+                ).first()
                 
-                if hours_since_error < retry_hours:
-                    self.logger.warning(
-                        f"404エラー履歴によりスキップ: {url} "
-                        f"(エラー回数: {retry_record.error_count}, "
-                        f"最終エラーから: {hours_since_error:.1f}時間, "
-                        f"再試行間隔: {retry_hours}時間)"
-                    )
-                    return True
-                else:
-                    self.logger.debug(
-                        f"404エラー履歴ありだが再試行可能: {url} "
-                        f"(最終エラーから{hours_since_error:.1f}時間経過)"
-                    )
-                    return False
-            return False
+                if retry_record:
+                    # 再試行間隔を計算
+                    retry_hours = self._calculate_retry_interval(retry_record.error_count)
+                    hours_since_error = (datetime.now() - retry_record.last_error_at).total_seconds() / 3600
+                    
+                    if hours_since_error < retry_hours:
+                        self.logger.warning(
+                            f"404エラー履歴によりスキップ: {url} "
+                            f"(エラー回数: {retry_record.error_count}, "
+                            f"最終エラーから: {hours_since_error:.1f}時間, "
+                            f"再試行間隔: {retry_hours}時間)"
+                        )
+                        return True
+                    else:
+                        self.logger.debug(
+                            f"404エラー履歴ありだが再試行可能: {url} "
+                            f"(最終エラーから{hours_since_error:.1f}時間経過)"
+                        )
+                        return False
+                return False
         except Exception as e:
             self.logger.error(f"404エラー履歴チェック中にエラー: {e}")
             self._handle_transaction_error(e, "404エラーチェック")
             # エラーが発生した場合はスキップしない（処理を続行）
             return False
-        finally:
-            session.close()
     
     def _should_skip_url_due_to_validation_error(self, url: str) -> bool:
         """検証エラー履歴によりスキップすべきURLか判定"""
@@ -4816,7 +4809,9 @@ class BaseScraper(ABC):
             # タスクの一時停止・キャンセル例外は再スロー
             raise
         except Exception as e:
+            import traceback
             self.logger.error(f"物件保存エラー: {e}")
+            self.logger.error(f"詳細なトレースバック:\n{traceback.format_exc()}")
             property_data['property_saved'] = False
             return False
     
