@@ -356,7 +356,7 @@ class BuildingListingNameManager:
                 existing = self.db.query(BuildingListingName).filter(
                     BuildingListingName.building_id == building_id,
                     BuildingListingName.canonical_name == canonical_name
-                ).with_for_update(skip_locked=True).first()  # skip_lockedで他のトランザクションがロックしている行をスキップ
+                ).first()  # ロックを使わずに楽観的並行制御を使用
                 
                 if existing:
                     # 更新
