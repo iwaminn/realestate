@@ -21,6 +21,7 @@ import { GoogleLoginButton } from './GoogleLoginButton';
 interface LoginModalProps {
   open: boolean;
   onClose: () => void;
+  onSuccess?: () => void;
 }
 
 interface TabPanelProps {
@@ -37,7 +38,7 @@ function TabPanel({ children, value, index }: TabPanelProps) {
   );
 }
 
-export const LoginModal: React.FC<LoginModalProps> = ({ open, onClose }) => {
+export const LoginModal: React.FC<LoginModalProps> = ({ open, onClose, onSuccess }) => {
   const { login, register } = useUserAuth();
   const [tabValue, setTabValue] = useState(0);
   const [loading, setLoading] = useState(false);
@@ -93,6 +94,9 @@ export const LoginModal: React.FC<LoginModalProps> = ({ open, onClose }) => {
       setSuccess('ログインに成功しました');
       setTimeout(() => {
         handleClose();
+        if (onSuccess) {
+          onSuccess();
+        }
       }, 1000);
     } else {
       // メール確認が必要な場合の特別な処理

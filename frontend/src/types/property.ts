@@ -41,6 +41,7 @@ export interface Property {
   has_price_change?: boolean;
   sold_at?: string;
   last_sale_price?: number;
+  final_price?: number;  // 最終価格（販売終了時の価格）
   is_bookmarked?: boolean;  // ブックマーク状態
   display_building_name?: string;  // 物件レベルの建物名
 }
