@@ -146,7 +146,7 @@ class LivableScraper(BaseScraper):
             property_data=property_data,
             existing_listing=existing_listing,
             parse_detail_func=self.parse_property_detail,
-            save_property_func=self._save_property_after_detail
+            save_property_func=self.save_property_common
         )
         
         return result
@@ -331,9 +331,6 @@ class LivableScraper(BaseScraper):
         self.logger.error(f"[LIVABLE] URLから物件IDを抽出できませんでした: {url}")
         return None
     
-    def _save_property_after_detail(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
-        """詳細データ取得後の保存処理（内部メソッド）"""
-        return self.save_property_common(property_data, existing_listing)
     
     def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
         """物件情報を保存（共通ロジックを使用）"""

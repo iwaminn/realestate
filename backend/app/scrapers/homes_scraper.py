@@ -1161,12 +1161,9 @@ class HomesScraper(BaseScraper):
             property_data=property_data,
             existing_listing=existing_listing,
             parse_detail_func=self.parse_property_detail,
-            save_property_func=self._save_property_after_detail
+            save_property_func=self.save_property_common
         )
     
-    def _save_property_after_detail(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
-        """詳細データ取得後の保存処理"""
-        return self.save_property_common(property_data, existing_listing)
     
     def fetch_and_update_detail(self, listing) -> bool:
         """詳細ページを取得して情報を更新"""

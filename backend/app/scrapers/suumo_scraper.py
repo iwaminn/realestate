@@ -28,9 +28,6 @@ class SuumoScraper(BaseScraper):
     
     # 定数の定義
     MAX_DISPLAY_ITEMS = 100  # SUUMOの最大表示件数
-    BUILDING_NAME_ERROR_CACHE_HOURS = 24  # 建物名エラーのキャッシュ時間
-    BUILDING_NAME_ERROR_CACHE_MAX_SIZE = 1000  # キャッシュの最大サイズ
-    MAX_IMAGE_COUNT = 10  # 画像の最大取得数
     MAX_REMARKS_LENGTH = 500  # 備考の最大文字数
     MIN_REMARKS_LENGTH = 50  # 備考の最小文字数
     MIN_LONG_TEXT_LENGTH = 100  # 長文と判定する最小文字数
@@ -38,7 +35,6 @@ class SuumoScraper(BaseScraper):
     def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False, task_id=None):
         super().__init__(SourceSite.SUUMO, force_detail_fetch, max_properties, ignore_error_history, task_id)
         # 建物名取得エラーの履歴（メモリ内管理）
-        self._building_name_error_cache = {}  # {url: timestamp}  # {url: timestamp}
     
     
     def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
@@ -49,7 +45,7 @@ class SuumoScraper(BaseScraper):
                 property_data=property_data,
                 existing_listing=existing_listing,
                 parse_detail_func=self.parse_property_detail,
-                save_property_func=self._save_property_after_detail
+                save_property_func=self.save_property_common
             )
             return result
         except Exception as e:
@@ -235,20 +231,15 @@ class SuumoScraper(BaseScraper):
             property_data=property_data,
             existing_listing=existing_listing,
             parse_detail_func=self.parse_property_detail,
-            save_property_func=self._save_property_after_detail
+            save_property_func=self.save_property_common
         )
     
-    def _save_property_after_detail(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
-        """詳細データ取得後の保存処理（内部メソッド）"""
-        # 共通の保存処理を使用（例外処理はbase_scraperで行う）
-        return self.save_property_common(property_data, existing_listing)
     
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
         """物件詳細を解析"""
         try:
-            # 特定物件のデバッグログ
-            if 'nc_78113042' in url or 'nc_78146938' in url:
-                self.logger.info(f"[DEBUG] 問題のある物件の詳細ページ取得開始: {url}")
+
+
             
             # アクセス間隔を保つ
             time.sleep(self.delay)
@@ -327,24 +318,15 @@ class SuumoScraper(BaseScraper):
             # その他の情報を抽出
             self._extract_facilities(soup, detail_info)
             self._extract_remarks(soup, property_data)
-            self._extract_images(soup, property_data)
             
             # 詳細情報を保存
             property_data['detail_info'] = detail_info
             
-            # detail_infoの重要な情報をproperty_dataにも含める（後方互換性のため）
-            self._copy_detail_info_to_property_data(detail_info, property_data)
             
             # 建物名取得元の統計を更新
             self._update_building_name_statistics(property_data)
             
-            # デバッグ: 特定物件の最終データ
-            if 'nc_76583217' in url:
-                self.logger.info(f"[DEBUG] nc_76583217 - 最終データ: "
-                               f"price={property_data.get('price')}, "
-                               f"building_name={property_data.get('building_name')}, "
-                               f"area={property_data.get('area')}, "
-                               f"layout={property_data.get('layout')}")
+
             
             # 詳細ページでの必須フィールドを検証
             if not self.validate_detail_page_fields(property_data, url):
@@ -355,6 +337,12 @@ class SuumoScraper(BaseScraper):
         except (TaskPausedException, TaskCancelledException):
             # タスクの一時停止・キャンセル例外は再スロー
             raise
+        except MemoryError as e:
+            self.logger.critical(f"メモリエラー: {url} - {e}")
+            self.log_detailed_error("メモリエラー", url, e)
+            # メモリエラーの場合はプロセスを終了
+            import sys
+            sys.exit(1)
         except Exception as e:
             self.log_detailed_error("詳細ページ解析エラー", url, e)
             return None
@@ -579,27 +567,20 @@ class SuumoScraper(BaseScraper):
     
     def _extract_layout(self, label: str, value: str, property_data: Dict[str, Any]):
         """間取りを抽出"""
-        # デバッグ: 特定物件の間取り取得
-        if 'nc_76583217' in property_data.get('url', ''):
-            self.logger.info(f"[DEBUG] nc_76583217 - 間取りフィールド発見: label='{label}', value='{value}'")
         
         layout = normalize_layout(value)
         if layout:
             property_data['layout'] = layout
-            if 'nc_76583217' in property_data.get('url', ''):
-                self.logger.info(f"[DEBUG] nc_76583217 - 間取り設定: {layout}")
+
     
     def _extract_area(self, label: str, value: str, property_data: Dict[str, Any]):
         """専有面積を抽出"""
-        # デバッグ: 特定物件の面積取得
-        if 'nc_76583217' in property_data.get('url', ''):
-            self.logger.info(f"[DEBUG] nc_76583217 - 専有面積フィールド発見: label='{label}', value='{value}'")
+
         
         area = extract_area(value)
         if area:
             property_data['area'] = area
-            if 'nc_76583217' in property_data.get('url', ''):
-                self.logger.info(f"[DEBUG] nc_76583217 - 面積設定: {area}㎡")
+
     
     def _extract_station_info(self, value: str, property_data: Dict[str, Any]):
         """交通情報を抽出"""
@@ -704,15 +685,11 @@ class SuumoScraper(BaseScraper):
                             building_name = building_name[:-len(suffix)].strip()
                     if building_name:
                         # タイトルから取得した場合は警告を出して処理を中断
-                        if not self._has_recent_building_name_error(url):
-                            self.logger.error(
-                                f"建物名がテーブルから取得できませんでした。"
-                                f"HTML構造が変更された可能性があります: {url}"
-                            )
-                            self._record_building_name_error(url)
-                            self._scraping_stats['building_name_missing_new'] += 1
-                        else:
-                            self.logger.debug(f"建物名取得エラー（既知）: {url}")
+                        self.logger.error(
+                            f"建物名がテーブルから取得できませんでした。"
+                            f"HTML構造が変更された可能性があります: {url}"
+                        )
+                        self._scraping_stats['building_name_missing_new'] += 1
                             
                         print(f"    [ERROR] 物件名がテーブルから取得できませんでした")
                         print(f"    [INFO] タイトルには「{building_name}」とありますが、信頼性が低いため使用しません")
@@ -723,13 +700,8 @@ class SuumoScraper(BaseScraper):
         
         # 建物名が全く取得できない場合も同様
         if 'building_name' not in property_data:
-            # 初回のみエラーログを出力
-            if not self._has_recent_building_name_error(url):
-                self.logger.error(f"建物名が取得できませんでした。HTML構造の確認が必要です: {url}")
-                self._record_building_name_error(url)
-                self._scraping_stats['building_name_missing_new'] += 1
-            else:
-                self.logger.debug(f"建物名取得エラー（既知）: {url}")
+            self.logger.error(f"建物名が取得できませんでした。HTML構造の確認が必要です: {url}")
+            self._scraping_stats['building_name_missing_new'] += 1
                 
             print(f"    [ERROR] 物件名が取得できませんでした")
             # 統計情報を更新
@@ -786,19 +758,6 @@ class SuumoScraper(BaseScraper):
             property_data['remarks'] = remarks_text
             print(f"    備考を取得")
     
-    def _extract_images(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
-        """物件画像を抽出"""
-        image_urls = []
-        image_elements = soup.select('.property-view-photo img, .property-photo img')
-        for img in image_elements:
-            img_url = img.get('src', '')
-            if img_url and not img_url.startswith('data:'):
-                # 相対URLを絶対URLに変換
-                img_url = urljoin(self.BASE_URL, img_url)
-                image_urls.append(img_url)
-        
-        if image_urls:
-            property_data['image_urls'] = image_urls[:self.MAX_IMAGE_COUNT]
     
     def verify_building_names_match(self, detail_building_name: str, building_name_from_list: str,
                                     allow_partial_match: bool = False, threshold: float = 0.8) -> Tuple[bool, Optional[str]]:
@@ -896,16 +855,6 @@ class SuumoScraper(BaseScraper):
                 threshold=threshold
             )
     
-    def _copy_detail_info_to_property_data(self, detail_info: Dict[str, Any], property_data: Dict[str, Any]):
-        """detail_infoの重要な情報をproperty_dataにコピー（後方互換性のため）"""
-        fields_to_copy = [
-            'total_floors', 'basement_floors', 'total_units', 
-            'structure', 'land_rights', 'parking_info'
-        ]
-        
-        for field in fields_to_copy:
-            if field in detail_info:
-                property_data[field] = detail_info[field]
     
     
     def _update_building_name_statistics(self, property_data: Dict[str, Any]):
@@ -922,7 +871,7 @@ class SuumoScraper(BaseScraper):
             del property_data['building_name_source']
     
     def fetch_and_update_detail(self, listing: PropertyListing) -> bool:
-        """詳細ページを取得して情報を更新（後方互換性のため残す）"""
+        """詳細ページを取得して情報を更新"""
         try:
             detail_data = self.parse_property_detail(listing.url)
             if not detail_data:
@@ -982,40 +931,4 @@ class SuumoScraper(BaseScraper):
                                    'price': property_data.get('price', '')})
             return False
     
-    def _has_recent_building_name_error(self, url: str) -> bool:
-        """最近（24時間以内）に建物名取得エラーが記録されているかチェック"""
-        if url in self._building_name_error_cache:
-            error_time = self._building_name_error_cache[url]
-            hours_since_error = (datetime.now() - error_time).total_seconds() / 3600
-            # 24時間以内のエラーは既知として扱う
-            return hours_since_error < self.BUILDING_NAME_ERROR_CACHE_HOURS
-        return False
     
-    def should_skip_due_to_building_name_error(self, url: str) -> bool:
-        """建物名取得エラーのためスキップすべきかチェック（一覧処理用）"""
-        return self._has_recent_building_name_error(url)
-    
-    def _record_building_name_error(self, url: str):
-        """建物名取得エラーを記録"""
-        self._building_name_error_cache[url] = datetime.now()
-        
-        # キャッシュサイズが大きくなりすぎないよう、古いエントリを削除
-        if len(self._building_name_error_cache) > self.BUILDING_NAME_ERROR_CACHE_MAX_SIZE:
-            # 24時間以上前のエントリを削除
-            now = datetime.now()
-            old_urls = [
-                u for u, t in self._building_name_error_cache.items()
-                if (now - t).total_seconds() > 86400  # 24時間
-            ]
-            for u in old_urls:
-                del self._building_name_error_cache[u]
-    
-    def has_critical_errors(self, url: str) -> bool:
-        """重要項目でエラーが発生している物件かチェック（後方互換性のため）"""
-        # 基底クラスのメソッドを使用
-        if self.has_critical_field_errors(url):
-            return True
-        # 後方互換性のため建物名エラーキャッシュもチェック
-        if self._has_recent_building_name_error(url):
-            return True
-        return False

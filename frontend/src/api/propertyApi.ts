@@ -227,6 +227,7 @@ export const propertyApi = {
 
   getMergeHistory: async (params?: {
     limit?: number;
+    offset?: number;
     include_reverted?: boolean;
   }): Promise<{
     histories: Array<{
@@ -379,6 +380,7 @@ export const propertyApi = {
   // 建物除外履歴取得
   getBuildingExclusions: async (params?: {
     limit?: number;
+    offset?: number;
   }): Promise<{
     exclusions: Array<{
       id: number;

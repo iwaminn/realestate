@@ -396,7 +396,13 @@ class BaseScraper(ABC):
             response.raise_for_status()
             
             # レスポンスを解析
-            soup = BeautifulSoup(response.content, 'html.parser')
+            try:
+                self.logger.debug(f"BeautifulSoup解析開始: {url}")
+                soup = BeautifulSoup(response.content, 'html.parser')
+                self.logger.debug(f"BeautifulSoup解析完了: {url}")
+            except Exception as e:
+                self.logger.error(f"BeautifulSoup解析エラー: {url} - {type(e).__name__}: {e}")
+                return None
             
             # メンテナンスページの検出
             if self._is_maintenance_page(soup):
@@ -1696,16 +1702,25 @@ class BaseScraper(ABC):
             self._last_detail_error = None
             
             try:
+                # 詳細取得前のログ
+                import os
+                pid = os.getpid()
+                self.logger.info(f"[TRACE-DETAIL-{pid}] parse_detail_func呼び出し前 - URL: {property_data.get('url', '')[:100]}")
+                
                 # parse_detail_funcにproperty_dataを渡す（建物名などの情報を含む）
                 # 関数のシグネチャを確認して適切に呼び出す
                 import inspect
                 sig = inspect.signature(parse_detail_func)
                 if 'property_data_from_list' in sig.parameters:
                     # HOMESスクレイパーのように一覧データを受け取る場合
+                    self.logger.info(f"[TRACE-DETAIL-{pid}] parse_detail_func呼び出し（with property_data）")
                     detail_data = parse_detail_func(property_data['url'], property_data)
                 else:
                     # 従来のスクレイパー（URLのみ）
+                    self.logger.info(f"[TRACE-DETAIL-{pid}] parse_detail_func呼び出し（URL only）")
                     detail_data = parse_detail_func(property_data['url'])
+                
+                self.logger.info(f"[TRACE-DETAIL-{pid}] parse_detail_func完了 - 結果: {detail_data is not None}")
             except TaskCancelledException:
                 # キャンセル例外は再スロー
                 raise

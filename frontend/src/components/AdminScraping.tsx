@@ -519,7 +519,7 @@ const AdminScraping: React.FC = () => {
         const tasksResponse = await axios.get('/api/admin/scraping/tasks');
         const updatedTask = tasksResponse.data.find((t: ScrapingTask) => t.task_id === taskId);
         
-        if (updatedTask && (updatedTask.status === 'cancelled' || updatedTask.status === 'completed')) {
+        if (updatedTask && (updatedTask.status === 'cancelled' || updatedTask.status === 'completed' || updatedTask.status === 'error' || updatedTask.status === 'failed')) {
           setTasks(tasksResponse.data);
           break;
         }
@@ -829,7 +829,7 @@ const AdminScraping: React.FC = () => {
                       {alert.message}
                     </Typography>
                     <Box display="flex" gap={2}>
-                      {alert.details && alert.details.error_count !== undefined && (
+                      {alert.details && alert.details.error_count !== undefined && alert.details.error_rate !== undefined && (
                         <Typography variant="caption" color="text.secondary">
                           エラー: {alert.details.error_count}件 ({(alert.details.error_rate * 100).toFixed(0)}%)
                         </Typography>
@@ -1349,7 +1349,7 @@ const AdminScraping: React.FC = () => {
                             </Tooltip>
                           </>
                         )}
-                        {(task.status === 'completed' || task.status === 'cancelled' || task.status === 'error') && (
+                        {(task.status === 'completed' || task.status === 'cancelled' || task.status === 'error' || task.status === 'failed') && (
                           <Tooltip title="削除">
                             <span>
                               <IconButton
@@ -1507,18 +1507,18 @@ const AdminScraping: React.FC = () => {
                                                 secondary={
                                                   <Box>
                                                     <Box sx={{ pl: 2 }}>
-                                                      <Typography variant="body2" color="success.main">
+                                                      <Box color="success.main">
                                                         • 新規登録: {progress.new_listings || 0}件
-                                                      </Typography>
-                                                      <Typography variant="body2" color="info.main">
+                                                      </Box>
+                                                      <Box color="info.main">
                                                         • 価格更新: {progress.price_updated || 0}件
-                                                      </Typography>
-                                                      <Typography variant="body2" color="primary.main">
-                                                      • その他更新: {progress.other_updates || 0}件
-                                                    </Typography>
-                                                    <Typography variant="body2" color="text.secondary">
-                                                      • 変更なし: {progress.refetched_unchanged || 0}件
-                                                    </Typography>
+                                                      </Box>
+                                                      <Box color="primary.main">
+                                                        • その他更新: {progress.other_updates || 0}件
+                                                      </Box>
+                                                      <Box color="text.secondary">
+                                                        • 変更なし: {progress.refetched_unchanged || 0}件
+                                                      </Box>
                                                   </Box>
                                                 </Box>
                                               }
@@ -1537,34 +1537,34 @@ const AdminScraping: React.FC = () => {
                                                   <Box sx={{ pl: 2 }}>
                                                     {(progress.detail_fetch_failed || 0) > 0 && (
                                                       <>
-                                                        <Typography variant="body2" color="error">
+                                                        <Box color="error">
                                                           • 詳細取得失敗: {progress.detail_fetch_failed}件
-                                                        </Typography>
-                                                        <Typography variant="caption" color="text.secondary" sx={{ pl: 3, display: 'block' }}>
+                                                        </Box>
+                                                        <Box sx={{ pl: 3, fontSize: '0.75rem', color: 'text.secondary' }}>
                                                           （保存処理はスキップされました）
-                                                        </Typography>
+                                                        </Box>
                                                       </>
                                                     )}
                                                     {(progress.save_failed || 0) > 0 && (
                                                       <>
-                                                        <Typography variant="body2" color="error">
+                                                        <Box color="error">
                                                           • 保存失敗: {progress.save_failed}件（詳細取得成功後）
-                                                        </Typography>
+                                                        </Box>
                                                         <Box sx={{ pl: 3 }}>
                                                           {(progress.price_missing || 0) > 0 && (
-                                                            <Typography variant="caption" color="error" display="block">
+                                                            <Box sx={{ fontSize: '0.75rem', color: 'error.main' }}>
                                                               └ 価格情報なし: {progress.price_missing}件
-                                                            </Typography>
+                                                            </Box>
                                                           )}
                                                           {(progress.building_info_missing || 0) > 0 && (
-                                                            <Typography variant="caption" color="error" display="block">
+                                                            <Box sx={{ fontSize: '0.75rem', color: 'error.main' }}>
                                                               └ 建物名なし: {progress.building_info_missing}件
-                                                            </Typography>
+                                                            </Box>
                                                           )}
                                                           {(progress.other_errors || 0) > 0 && (
-                                                            <Typography variant="caption" color="error" display="block">
+                                                            <Box sx={{ fontSize: '0.75rem', color: 'error.main' }}>
                                                               └ その他の必須情報不足: {progress.other_errors}件
-                                                            </Typography>
+                                                            </Box>
                                                           )}
                                                         </Box>
                                                       </>
@@ -1574,9 +1574,9 @@ const AdminScraping: React.FC = () => {
                                                       (progress.building_info_missing || 0) > 0 || 
                                                       (progress.other_errors || 0) > 0) && 
                                                      (progress.save_failed || 0) === 0 && (
-                                                      <Typography variant="caption" color="warning.main" display="block" sx={{ mt: 1 }}>
+                                                      <Box sx={{ fontSize: '0.75rem', color: 'warning.main', mt: 1 }}>
                                                         ※ 必須情報不足エラーが検出されましたが、保存失敗が0件です
-                                                      </Typography>
+                                                      </Box>
                                                     )}
                                                   </Box>
                                                 }
