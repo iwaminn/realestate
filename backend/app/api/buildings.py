@@ -470,13 +470,8 @@ async def suggest_buildings(
                 "label": info["name"]
             }
             
-            # 掲載名でマッチした場合はラベルに表示
-            if info.get("matched_by") == "listing" and info.get("listing_name"):
-                if info["listing_name"] != info["name"]:
-                    result_item["label"] = f"{info['name']} (掲載名: {info['listing_name']})"
-            elif info.get("listing_name"):
-                if info["listing_name"] != info["name"]:
-                    result_item["label"] = f"{info['name']} (別表記: {info['listing_name']})"
+            # 掲載名でマッチした場合でも、括弧内表示は不要
+            # 既に正規化された建物名で表示しているため
             
             results.append(result_item)
             seen_names.add(name)

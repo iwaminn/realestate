@@ -73,26 +73,51 @@ const [properties, setProperties] = useState<Property[]>([]);
   const [stats, setStats] = useState<BuildingStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>('table');
-  const [orderBy, setOrderBy] = useState<OrderBy>('earliest_published_at');
-  const [order, setOrder] = useState<Order>('desc');
   const [maxFloorFromProperties, setMaxFloorFromProperties] = useState<number | null>(null);
   
-  // URLパラメータまたはstateからincludeInactiveを取得
-  const getIncludeInactiveFromUrl = () => {
-    // まずlocation.stateから取得を試みる
-    const stateIncludeInactive = (location.state as any)?.includeInactive;
-    if (stateIncludeInactive !== undefined) {
-    return stateIncludeInactive;
-    }
-    
-    // 次にURLパラメータから取得
+  // URLパラメータから各種設定を取得
+  const getParamsFromUrl = () => {
     const urlParams = new URLSearchParams(location.search);
-    const result = urlParams.get('includeInactive') === 'true';
-  return result;
+    return {
+      includeInactive: urlParams.get('includeInactive') === 'true',
+      viewMode: (urlParams.get('viewMode') as ViewMode) || 'table',
+      orderBy: (urlParams.get('orderBy') as OrderBy) || 'earliest_published_at',
+      order: (urlParams.get('order') as Order) || 'desc'
+    };
   };
   
-  const [includeInactive, setIncludeInactive] = useState(getIncludeInactiveFromUrl());
+  const initialParams = getParamsFromUrl();
+  const [viewMode, setViewMode] = useState<ViewMode>(initialParams.viewMode);
+  const [orderBy, setOrderBy] = useState<OrderBy>(initialParams.orderBy);
+  const [order, setOrder] = useState<Order>(initialParams.order);
+  const [includeInactive, setIncludeInactive] = useState(initialParams.includeInactive);
+  
+  // URLパラメータを更新する関数
+  const updateUrlParams = (updates: Partial<{includeInactive: boolean, viewMode: ViewMode, orderBy: OrderBy, order: Order}>) => {
+    const searchParams = new URLSearchParams(location.search);
+    
+    if (updates.includeInactive !== undefined) {
+      if (updates.includeInactive) {
+        searchParams.set('includeInactive', 'true');
+      } else {
+        searchParams.delete('includeInactive');
+      }
+    }
+    
+    if (updates.viewMode !== undefined) {
+      searchParams.set('viewMode', updates.viewMode);
+    }
+    
+    if (updates.orderBy !== undefined) {
+      searchParams.set('orderBy', updates.orderBy);
+    }
+    
+    if (updates.order !== undefined) {
+      searchParams.set('order', updates.order);
+    }
+    
+    navigate(`${location.pathname}?${searchParams.toString()}`, { replace: true });
+  };
 
   useEffect(() => {
   if (buildingId) {
@@ -102,10 +127,11 @@ const [properties, setProperties] = useState<Property[]>([]);
 
   // URLパラメータが変更された時の処理
   useEffect(() => {
-    const newIncludeInactive = getIncludeInactiveFromUrl();
-    if (newIncludeInactive !== includeInactive) {
-      setIncludeInactive(newIncludeInactive);
-    }
+    const params = getParamsFromUrl();
+    setIncludeInactive(params.includeInactive);
+    setViewMode(params.viewMode);
+    setOrderBy(params.orderBy);
+    setOrder(params.order);
   }, [location.search]);
 
   const fetchBuildingProperties = async () => {
@@ -285,8 +311,10 @@ const [properties, setProperties] = useState<Property[]>([]);
 
   const handleRequestSort = (property: OrderBy) => {
     const isAsc = orderBy === property && order === 'asc';
-    setOrder(isAsc ? 'desc' : 'asc');
+    const newOrder = isAsc ? 'desc' : 'asc';
+    setOrder(newOrder);
     setOrderBy(property);
+    updateUrlParams({ orderBy: property, order: newOrder });
   };
 
   const sortedProperties = React.useMemo(() => {
@@ -638,7 +666,12 @@ const [properties, setProperties] = useState<Property[]>([]);
           <ToggleButtonGroup
             value={viewMode}
             exclusive
-            onChange={(_, newMode) => newMode && setViewMode(newMode)}
+            onChange={(_, newMode) => {
+              if (newMode) {
+                setViewMode(newMode);
+                updateUrlParams({ viewMode: newMode });
+              }
+            }}
             aria-label="表示モード"
             sx={{ 
               flexShrink: 0,
@@ -668,14 +701,7 @@ const [properties, setProperties] = useState<Property[]>([]);
               onChange={(e) => {
                 const newValue = e.target.checked;
                 setIncludeInactive(newValue);
-                // URLパラメータも更新
-                const searchParams = new URLSearchParams(location.search);
-                if (newValue) {
-                  searchParams.set('includeInactive', 'true');
-                } else {
-                  searchParams.delete('includeInactive');
-                }
-                navigate(`${location.pathname}?${searchParams.toString()}`, { replace: true });
+                updateUrlParams({ includeInactive: newValue });
               }}
             />
           }

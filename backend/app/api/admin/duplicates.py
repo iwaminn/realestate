@@ -1636,6 +1636,13 @@ def move_property_to_building(
             new_building_id=target_building_id
         )
         
+        # 元の建物のbuilding_listing_namesを再計算
+        if original_building_id:
+            listing_name_manager.refresh_building_names(original_building_id)
+        
+        # 移動先の建物のbuilding_listing_namesも再計算
+        listing_name_manager.refresh_building_names(target_building_id)
+        
         # 多数決による建物情報の更新
         updater = MajorityVoteUpdater(db)
         

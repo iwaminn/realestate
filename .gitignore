@@ -80,3 +80,4 @@ cleanup_root_files.sh
 postgres_data/
 redis_data/
 .serena/
+backups/
