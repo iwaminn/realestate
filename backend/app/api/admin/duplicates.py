@@ -16,7 +16,7 @@ from ...models import (
     Building, MasterProperty, PropertyListing,
     BuildingMergeHistory, PropertyMergeHistory,
     BuildingMergeExclusion, PropertyMergeExclusion,
-    BuildingExternalId
+    BuildingExternalId, BuildingListingName
 )
 from ...utils.enhanced_building_matcher import EnhancedBuildingMatcher
 from ...utils.majority_vote_updater import MajorityVoteUpdater
@@ -2077,11 +2077,27 @@ async def merge_buildings(
                     
                     # BuildingListingNameテーブルを更新
                     listing_name_manager = BuildingListingNameManager(db)
+                    
+                    # 統合元の建物が持つbuilding_listing_namesレコード数を確認
+                    has_existing_records = False
                     for secondary_building in secondary_buildings:
+                        # まず既存レコードの移動を試みる
                         listing_name_manager.update_from_building_merge(
                             primary_building_id=primary_id,
                             secondary_building_id=secondary_building.id
                         )
+                        
+                        # 統合元にレコードがあったか確認
+                        if db.query(BuildingListingName).filter_by(
+                            building_id=secondary_building.id
+                        ).first():
+                            has_existing_records = True
+                    
+                    # 手動統合（複数建物）または統合元にレコードがなかった場合のみ全体更新
+                    # スクレイピング時の自動統合（1建物のみ）でレコードがある場合は部分更新で十分
+                    if len(secondary_buildings) > 1 or not has_existing_records:
+                        # 統合後、統合先建物のbuilding_listing_namesを再集計
+                        listing_name_manager.refresh_building_names(primary_id)
                     
             db.commit()
             

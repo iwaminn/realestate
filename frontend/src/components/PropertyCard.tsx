@@ -162,7 +162,7 @@ const PropertyCard: React.FC<PropertyCardProps> = ({ property }) => {
         )}
 
         <Typography gutterBottom variant="h6" component="h2" sx={{ color: property.sold_at ? 'text.secondary' : 'text.primary' }}>
-          {property.building.normalized_name}
+          {property.display_building_name || property.building.normalized_name}
           {property.room_number && ` ${property.room_number}`}
         </Typography>
 

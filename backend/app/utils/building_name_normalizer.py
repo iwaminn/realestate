@@ -23,10 +23,33 @@ def normalize_building_name(building_name: str) -> str:
     # 1. 全角英数字と記号を半角に変換
     normalized = jaconv.z2h(building_name, kana=False, ascii=True, digit=True)
     
-    # 2. 記号類（半角・全角両方）を半角スペースに変換
-    # 半角: ・-~  全角で残っているもの: ・‐‑‒–—～〜 など
-    # \u30fb: 全角中点・, \u2010-\u2015: 各種ダッシュ, \u301c: 波ダッシュ〜
-    normalized = re.sub(r'[・\-~・\u2010-\u2015\u301c]', ' ', normalized)
+    # 2. 記号類の処理
+    # 意味のある記号（・、&、-、~）は保持、装飾記号はスペースに変換
+    
+    # 各種ダッシュをハイフンに統一
+    for dash_char in ['\u2010', '\u2011', '\u2012', '\u2013', '\u2014', '\u2015']:
+        normalized = normalized.replace(dash_char, '-')
+    
+    # 波ダッシュをチルダに統一
+    normalized = normalized.replace('\u301c', '~').replace('～', '~')
+    
+    # 装飾記号をスペースに変換（●■★◆▲◇□◎○△▽♪など）
+    # 保持する記号: 英数字、日本語、・（中点）、&、-、~、括弧、スペース
+    import string
+    allowed_chars = set(string.ascii_letters + string.digits + '・&-~()[] 　')
+    # 日本語文字の範囲を追加（ひらがな、カタカナ、漢字）
+    result = []
+    for char in normalized:
+        if char in allowed_chars:
+            result.append(char)
+        elif '\u3040' <= char <= '\u9fff':  # 日本語文字の範囲
+            result.append(char)
+        elif '\uff00' <= char <= '\uffef':  # 全角記号の一部（全角英数字など）
+            result.append(char)
+        else:
+            # その他の記号はスペースに変換
+            result.append(' ')
+    normalized = ''.join(result)
     
     # 3. ローマ数字の正規化（全角ローマ数字を半角に変換）
     roman_map = {

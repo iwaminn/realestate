@@ -130,6 +130,7 @@ async def get_properties(
                 "built_month": building.built_month,
                 "construction_type": building.construction_type
             },
+            "display_building_name": mp.display_building_name,  # 表示用建物名を追加
             "room_number": mp.room_number,
             "floor_number": mp.floor_number,
             "area": mp.area,
@@ -788,6 +789,7 @@ async def get_property_details(
     master_property_data = {
         "id": master_property.id,
         "building": BuildingSchema.from_orm(master_property.building),
+        "display_building_name": master_property.display_building_name,  # 表示用建物名を追加
         "room_number": master_property.room_number,
         "floor_number": master_property.floor_number,
         "area": master_property.area,

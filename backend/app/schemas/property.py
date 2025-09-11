@@ -37,6 +37,7 @@ class PriceHistorySchema(BaseModel):
 class MasterPropertySchema(BaseModel):
     id: int
     building: BuildingSchema
+    display_building_name: Optional[str]  # 表示用建物名（多数決で決定）
     room_number: Optional[str]
     floor_number: Optional[int]
     area: Optional[float]

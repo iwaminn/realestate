@@ -918,8 +918,20 @@ def canonicalize_building_name(text: str) -> str:
         else:
             canonical += char
     
-    # スペースとハイフンを削除して小文字化
-    canonical = canonical.replace(' ', '').replace('-', '').lower()
+    # すべての記号とスペースを削除して小文字化
+    import string
+    
+    # 英数字と日本語文字以外をすべて削除
+    # 保持する文字: 英数字、ひらがな、カタカナ、漢字
+    result = []
+    for char in canonical:
+        if char in string.ascii_letters + string.digits:
+            result.append(char)
+        elif '\u3040' <= char <= '\u9fff':  # 日本語文字の範囲
+            result.append(char)
+        # それ以外の文字（記号、スペース等）は削除
+    
+    canonical = ''.join(result).lower()
     
     return canonical
 

@@ -231,7 +231,7 @@ const PropertyDetailPage: React.FC = () => {
                   flex: 1
                 }}
               >
-                {building.normalized_name}
+                {property.display_building_name || building.normalized_name}
                 {property.room_number && ` ${property.room_number}`}
               </Typography>
               <Box sx={{ 
@@ -665,7 +665,7 @@ const PropertyDetailPage: React.FC = () => {
         </Box>
         
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          {building.normalized_name}
+          {property.display_building_name || building.normalized_name}
           {building.total_units && ` （総戸数: ${building.total_units}戸）`}
         </Typography>
         
@@ -692,7 +692,7 @@ const PropertyDetailPage: React.FC = () => {
             fontWeight: 500
           }}
         >
-          {building.normalized_name}の全物件を見る
+          {property.display_building_name || building.normalized_name}の全物件を見る
         </Button>
         
         <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, textAlign: 'center' }}>
