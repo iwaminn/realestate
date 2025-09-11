@@ -112,7 +112,7 @@ class MajorityVoteUpdater:
                 if len(best_prefixes) == 1:
                     # 1つのグループが勝者
                     current_group = prefix_groups[best_prefixes[0]]
-                    selected_address = current_group[0]['address']  # 暫定的に最初のものを選択
+                    selected_address = current_group[0]['normalized']  # 正規化された住所を選択
                 else:
                     # 同数の場合、より詳細な住所があるグループを優先
                     best_group = None
@@ -135,7 +135,7 @@ class MajorityVoteUpdater:
                     
                     current_group = best_group
                     if current_group:
-                        selected_address = current_group[0]['address']
+                        selected_address = current_group[0]['normalized']
                 
                 # 次のレベルに進むかチェック
                 # 現在のグループ内により詳細な住所があるか確認
@@ -146,7 +146,7 @@ class MajorityVoteUpdater:
                     if len(current_group) > 1:
                         # サイト優先度で最終選択
                         current_group.sort(key=lambda x: self.get_site_priority(x['source']))
-                    selected_address = current_group[0]['address']
+                    selected_address = current_group[0]['normalized']
                     break
             
             # 選択された住所を正規化グループに追加
