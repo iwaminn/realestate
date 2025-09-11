@@ -481,9 +481,61 @@ const [properties, setProperties] = useState<Property[]>([]);
                 <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                   所在地
                 </Typography>
-                <Typography variant="h6">
-                  {building.address || '不明'}
-                </Typography>
+                <Box sx={{ 
+                  display: 'flex', 
+                  flexDirection: 'column',
+                  gap: 1
+                }}>
+                  <Typography variant="h6">
+                    {building.address || '不明'}
+                  </Typography>
+                  {/* 住所に「号」まで含まれている場合、Google Mapsへのリンクを表示 */}
+                  {building.address && building.address.match(/\d+-\d+-\d+|\d+号/) && (
+                    <Box
+                      component="a"
+                      href={`https://www.google.com/maps/search/${encodeURIComponent(building.address)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        padding: '4px 8px',
+                        borderRadius: '4px',
+                        border: '1px solid #dadce0',
+                        textDecoration: 'none',
+                        backgroundColor: 'white',
+                        transition: 'all 0.2s',
+                        width: 'fit-content',
+                        '&:hover': {
+                          backgroundColor: '#f1f3f4',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                        }
+                      }}
+                    >
+                      {/* Google Maps公式アイコン */}
+                      <Box
+                        component="img"
+                        src="https://www.gstatic.com/images/branding/product/1x/maps_24dp.png"
+                        alt="Google Maps"
+                        sx={{
+                          width: 18,
+                          height: 18,
+                          mr: 0.75
+                        }}
+                      />
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          fontSize: '0.8125rem',
+                          color: '#1a73e8',
+                          fontWeight: 500
+                        }}
+                      >
+                        Google Mapsで表示
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
               </Box>
             </Grid>
 

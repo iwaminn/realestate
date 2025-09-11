@@ -41,6 +41,7 @@ import {
   Home,
   Cached,
   AccountBalanceWallet,
+  Map,
 } from '@mui/icons-material';
 import { BookmarkButton } from '../components/BookmarkButton';
 import {
@@ -340,7 +341,68 @@ const PropertyDetailPage: React.FC = () => {
             <List>
               <ListItem>
                 <LocationOn sx={{ mr: 2 }} />
-                <ListItemText primary="住所" secondary={building.address} />
+                <ListItemText 
+                  primary="住所" 
+                  secondary={
+                    <Box sx={{ 
+                      display: 'flex', 
+                      flexDirection: { xs: 'column', md: 'row' },
+                      alignItems: { xs: 'flex-start', md: 'center' },
+                      gap: { xs: 0.5, md: 2 }
+                    }}>
+                      <Typography variant="body2" color="text.secondary">
+                        {building.address}
+                      </Typography>
+                      {/* 住所に「号」まで含まれている場合、Google Mapsへのリンクを表示 */}
+                      {building.address && building.address.match(/\d+-\d+-\d+|\d+号/) && (
+                        <Box
+                          component="a"
+                          href={`https://www.google.com/maps/search/${encodeURIComponent(building.address)}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          sx={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            mt: { xs: 1, md: 0 },
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            border: '1px solid #dadce0',
+                            textDecoration: 'none',
+                            backgroundColor: 'white',
+                            transition: 'all 0.2s',
+                            flexShrink: 0,
+                            '&:hover': {
+                              backgroundColor: '#f1f3f4',
+                              boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                            }
+                          }}
+                        >
+                          {/* Google Maps公式アイコン */}
+                          <Box
+                            component="img"
+                            src="https://www.gstatic.com/images/branding/product/1x/maps_24dp.png"
+                            alt="Google Maps"
+                            sx={{
+                              width: 18,
+                              height: 18,
+                              mr: 0.75
+                            }}
+                          />
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontSize: '0.8125rem',
+                              color: '#1a73e8',
+                              fontWeight: 500
+                            }}
+                          >
+                            Google Mapsで表示
+                          </Typography>
+                        </Box>
+                      )}
+                    </Box>
+                  }
+                />
               </ListItem>
               {property.station_info && (
                 <ListItem>

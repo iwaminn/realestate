@@ -210,12 +210,19 @@ class MajorityVoteUpdater:
         if len(most_common_groups) == 1:
             # 最頻グループが1つの場合、そのグループ内で最もサイト優先度の高い値を返す
             best_group = most_common_groups[0]
+            # 住所の場合は正規化された値を返す
+            if value_type == 'address':
+                return best_group
             return self._select_best_from_group(normalized_groups[best_group])
         
         # 最頻グループが複数ある場合、サイト優先順位で決定
         candidates = []
         for normalized in most_common_groups:
-            best_value = self._select_best_from_group(normalized_groups[normalized])
+            # 住所の場合は正規化された値を使用
+            if value_type == 'address':
+                best_value = normalized
+            else:
+                best_value = self._select_best_from_group(normalized_groups[normalized])
             # このグループの最高優先度を取得
             sources = [s for v, s in normalized_groups[normalized]]
             best_priority = min(self.get_site_priority(s) for s in sources)
