@@ -172,11 +172,14 @@ class AddressNormalizer:
         # 番地情報を抽出（より正確なパターン）
         # 丁目を含むパターンを優先
         block_patterns = [
-            r'(\d+)丁目(\d+)(?:-(\d+))?',  # N丁目N-N または N丁目N
-            r'(\d+)-(\d+)-(\d+)',           # N-N-N
-            r'(\d+)-(\d+)',                 # N-N
-            r'(\d+)丁目',                   # N丁目のみ
-            r'(\d+)',                       # 数字のみ
+            r'\d+丁目\d+番地?\d*号?',       # N丁目N番地N号、N丁目N番N号、N丁目N番地、N丁目N番
+            r'\d+丁目\d+-\d+',             # N丁目N-N
+            r'\d+丁目\d+',                 # N丁目N
+            r'\d+-\d+-\d+',                # N-N-N
+            r'\d+-\d+',                    # N-N
+            r'\d+丁目',                    # N丁目のみ
+            r'\d+番地?\d*号?',             # N番地N号、N番N号、N番地、N番
+            r'\d+',                        # 数字のみ
         ]
         
         matched = False
@@ -350,6 +353,133 @@ class AddressNormalizer:
         # 番地（ハイフン区切り）
         if components['block']:
             parts.append(components['block'])
+        
+        return ''.join(parts)
+    
+    def get_address_detail_level(self, address: str) -> int:
+        """
+        住所の詳細度レベルを取得する
+        
+        Args:
+            address: 住所文字列
+            
+        Returns:
+            詳細度レベル（0-4）
+            0: 都道府県のみ
+            1: 市区町村まで
+            2: 町名まで
+            3: 丁目まで
+            4: 番地・号まで
+        """
+        if not address:
+            return 0
+        
+        components = self.extract_components(address)
+        
+        # 番地・号がある場合
+        if components.get('block'):
+            block = components['block']
+            # 「N丁目」のみの場合は丁目レベル
+            if re.match(r'^\d+丁目$', block):
+                return 3
+            # 「N丁目N-N」「N丁目N番地N号」などは番地・号レベル
+            elif '丁目' in block and (re.search(r'丁目\d+', block) or '番地' in block or '号' in block):
+                return 4
+            # ハイフンが2つ以上ある（号まである）
+            elif block.count('-') >= 2:
+                return 4
+            # ハイフンが1つある（番地まで）
+            elif '-' in block:
+                return 4
+            # 3桁以上の数字（番地の可能性が高い）
+            elif block.isdigit() and len(block) >= 3:
+                return 4
+            # 1桁または2桁の数字（元の住所で「丁目」があったか判断が必要）
+            elif block.isdigit():
+                # 町名の後に1桁の数字だけの場合は丁目の可能性が高い
+                if len(block) == 1:
+                    return 3  # 丁目
+                elif len(block) == 2:
+                    # 2桁は微妙（丁目または番地）
+                    # 前後の文脈で判断するのが難しいので、丁目と仮定
+                    return 3
+                else:
+                    return 4
+            else:
+                # その他（通常ありえない）
+                return 3
+        
+        # 町名まで
+        if components.get('area'):
+            # 「○丁目」パターンのチェック
+            if re.search(r'\d+丁目', components['area']):
+                return 3
+            return 2
+        
+        # 市区町村まで
+        if components.get('city') or components.get('ward'):
+            return 1
+        
+        # 都道府県のみ
+        if components.get('prefecture'):
+            return 0
+        
+        return 0
+    
+    def get_address_prefix(self, address: str, level: int = 2) -> str:
+        """
+        指定したレベルまでの住所前方部分を取得する
+        
+        Args:
+            address: 住所文字列
+            level: 取得するレベル（0-4）
+            
+        Returns:
+            指定レベルまでの住所文字列
+        """
+        components = self.extract_components(address)
+        
+        parts = []
+        
+        # レベル0: 都道府県のみ
+        if level >= 0 and components.get('prefecture'):
+            parts.append(components['prefecture'])
+        
+        # レベル1: 市区町村まで
+        if level >= 1:
+            if components.get('city'):
+                parts.append(components['city'])
+            if components.get('ward'):
+                parts.append(components['ward'])
+        
+        # レベル2: 町名まで
+        if level >= 2 and components.get('area'):
+            parts.append(components['area'])
+        
+        # レベル3以上: 丁目・番地
+        if level >= 3 and components.get('block'):
+            block = components['block']
+            if level == 3:
+                # 丁目レベルまで
+                # 「1-8」「1-9-8」のような場合、最初の数字部分（丁目）だけ取得
+                if '-' in block:
+                    # ハイフン区切りの最初の部分が丁目
+                    first_part = block.split('-')[0]
+                    parts.append(first_part)
+                elif re.match(r'^\d+丁目', block):
+                    # 「N丁目」部分だけ抽出
+                    match = re.match(r'^(\d+丁目)', block)
+                    if match:
+                        parts.append(match.group(1))
+                elif block.isdigit() and len(block) <= 2:
+                    # 数字のみで2桁以下は丁目として扱う
+                    parts.append(block)
+                # それ以外（番地など）は含めない
+            else:
+                # レベル4: 番地・号まですべて含める
+                # 「1丁目8番地」→「1丁目8番地」（そのまま）
+                # 「1丁目9番地8号」→「1丁目9番地8号」（そのまま）
+                parts.append(block)
         
         return ''.join(parts)
 

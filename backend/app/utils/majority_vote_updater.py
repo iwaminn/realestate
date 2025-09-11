@@ -57,14 +57,110 @@ class MajorityVoteUpdater:
         normalized_groups = {}  # {正規化値: [(元の値, ソース)]}
         
         if value_type == 'address':
-            # 住所の正規化
+            # 階層的な住所多数決ロジック
             from .address_normalizer import AddressNormalizer
             normalizer = AddressNormalizer()
+            
+            # すべての住所とその詳細度を取得
+            addresses_with_details = []
             for value, source in valid_items:
+                # まず正規化
                 normalized = normalizer.normalize_for_comparison(value)
+                detail_level = normalizer.get_address_detail_level(normalized)
+                addresses_with_details.append({
+                    'address': value,  # 元の住所を保持
+                    'normalized': normalized,  # 正規化後
+                    'source': source,
+                    'level': detail_level,
+                    'prefix_0': normalizer.get_address_prefix(normalized, level=0),  # 都道府県
+                    'prefix_1': normalizer.get_address_prefix(normalized, level=1),  # 市区町村
+                    'prefix_2': normalizer.get_address_prefix(normalized, level=2),  # 町名
+                    'prefix_3': normalizer.get_address_prefix(normalized, level=3),  # 丁目
+                    'prefix_4': normalizer.get_address_prefix(normalized, level=4),  # 番地・号
+                })
+            
+            # レベル0から順に多数決を取っていく
+            current_group = addresses_with_details
+            selected_address = None
+            
+            for target_level in range(5):  # 0から4まで
+                if not current_group:
+                    break
+                
+                # 現在のレベルの前方部分でグループ化
+                prefix_groups = {}
+                for item in current_group:
+                    # このレベル以上の詳細度を持つ住所のみ対象
+                    if item['level'] >= target_level:
+                        prefix_key = f'prefix_{target_level}'
+                        prefix = item[prefix_key]
+                        if prefix not in prefix_groups:
+                            prefix_groups[prefix] = []
+                        prefix_groups[prefix].append(item)
+                
+                if not prefix_groups:
+                    # このレベルの住所がない場合は前のレベルで終了
+                    break
+                
+                # 各グループの件数をカウント
+                group_counts = {prefix: len(items) for prefix, items in prefix_groups.items()}
+                
+                # 最多のグループを選択（同数の場合は複数選択）
+                max_count = max(group_counts.values())
+                best_prefixes = [prefix for prefix, count in group_counts.items() if count == max_count]
+                
+                if len(best_prefixes) == 1:
+                    # 1つのグループが勝者
+                    current_group = prefix_groups[best_prefixes[0]]
+                    selected_address = current_group[0]['address']  # 暫定的に最初のものを選択
+                else:
+                    # 同数の場合、より詳細な住所があるグループを優先
+                    best_group = None
+                    best_max_level = -1
+                    
+                    for prefix in best_prefixes:
+                        group = prefix_groups[prefix]
+                        # このグループ内の最大詳細度を確認
+                        max_level_in_group = max(item['level'] for item in group)
+                        
+                        if max_level_in_group > best_max_level:
+                            best_max_level = max_level_in_group
+                            best_group = group
+                        elif max_level_in_group == best_max_level and best_group:
+                            # 同じ詳細度の場合はサイト優先度で選択
+                            current_priority = min(self.get_site_priority(item['source']) for item in best_group)
+                            new_priority = min(self.get_site_priority(item['source']) for item in group)
+                            if new_priority < current_priority:
+                                best_group = group
+                    
+                    current_group = best_group
+                    if current_group:
+                        selected_address = current_group[0]['address']
+                
+                # 次のレベルに進むかチェック
+                # 現在のグループ内により詳細な住所があるか確認
+                has_more_detail = any(item['level'] > target_level for item in current_group)
+                if not has_more_detail:
+                    # これ以上詳細な住所がない場合は終了
+                    # 現在のグループから最適なものを選択
+                    if len(current_group) > 1:
+                        # サイト優先度で最終選択
+                        current_group.sort(key=lambda x: self.get_site_priority(x['source']))
+                    selected_address = current_group[0]['address']
+                    break
+            
+            # 選択された住所を正規化グループに追加
+            if selected_address:
+                normalized = normalizer.normalize_for_comparison(selected_address)
                 if normalized not in normalized_groups:
                     normalized_groups[normalized] = []
-                normalized_groups[normalized].append((value, source))
+                
+                # 選択された住所と同じ正規化値を持つものだけを紐付け
+                selected_normalized = normalizer.normalize_for_comparison(selected_address)
+                for value, source in valid_items:
+                    value_normalized = normalizer.normalize_for_comparison(value)
+                    if value_normalized == selected_normalized:
+                        normalized_groups[normalized].append((value, source))
                 
         elif value_type == 'layout':
             # 間取りの正規化
@@ -752,25 +848,29 @@ class MajorityVoteUpdater:
                     f"グループ '{best_group_key}' の表記ゆれを統合: {best_group_names[:5]} → '{best_name}'"
                 )
             
+            # 正規化して比較・更新
+            from ..utils.building_name_normalizer import normalize_building_name, get_search_key_for_building
+            normalized_best_name = normalize_building_name(best_name)
+            
             # 現在の名前と異なる場合は更新
-            if best_name != building.normalized_name:
+            if normalized_best_name != building.normalized_name:
                 # ログ出力用に投票結果を整形
                 vote_summary = {}
                 for name, weight in name_weights.items():
                     vote_summary[name] = weight
                 
                 # canonical_nameも更新（検索用）
-                from ..utils.building_name_normalizer import get_search_key_for_building
-                new_canonical_name = get_search_key_for_building(best_name)
+                new_canonical_name = get_search_key_for_building(normalized_best_name)
                 
                 logger.info(
-                    f"建物名更新: '{building.normalized_name}' → '{best_name}' "
+                    f"建物名更新: '{building.normalized_name}' → '{normalized_best_name}' "
                     f"(ID: {building_id}, グループ数: {len(grouped_names)}, "
                     f"選択グループ: '{best_group_key}', "
+                    f"元の名前: '{best_name}', "
                     f"canonical_name: '{building.canonical_name}' → '{new_canonical_name}', "
                     f"votes: {dict(sorted(vote_summary.items(), key=lambda x: x[1], reverse=True)[:5])})"
                 )
-                building.normalized_name = best_name
+                building.normalized_name = normalized_best_name
                 building.canonical_name = new_canonical_name
                 return True
         

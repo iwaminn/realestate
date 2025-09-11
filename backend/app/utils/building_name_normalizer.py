@@ -83,7 +83,9 @@ def get_search_key_for_building(building_name: str) -> str:
     建物検索用のキーを生成（normalize_building_nameをベースに追加処理）
     
     normalize_building_nameの処理に加えて：
-    - スペースと記号を完全削除（より緩い一致のため）
+    - すべての記号とスペースを完全削除（より緩い一致のため）
+    - ひらがなをカタカナに変換
+    - 小文字化
     
     注意：棟表記（東棟、西棟など）は除去しません。
     異なる棟は別々の建物として扱われます。
@@ -91,9 +93,29 @@ def get_search_key_for_building(building_name: str) -> str:
     # まず標準的な正規化を適用
     key = normalize_building_name(building_name)
     
-    # 検索用により緩い正規化を追加
-    # スペースを完全削除（検索時の利便性のため）
-    key = re.sub(r'\s+', '', key)
+    # ひらがなをカタカナに変換
+    canonical = ''
+    for char in key:
+        # ひらがなの範囲（U+3040〜U+309F）をカタカナ（U+30A0〜U+30FF）に変換
+        if '\u3040' <= char <= '\u309f':
+            canonical += chr(ord(char) + 0x60)
+        else:
+            canonical += char
+    
+    # 英数字と日本語文字以外をすべて削除
+    import string
+    result = []
+    for char in canonical:
+        if char in string.ascii_letters + string.digits:
+            result.append(char)
+        elif char == '・':  # 中点は削除
+            continue
+        elif '\u3040' <= char <= '\u9fff':  # 日本語文字の範囲
+            result.append(char)
+        # それ以外の文字（記号、スペース等）は削除
+    
+    # 小文字化
+    key = ''.join(result).lower()
     
     return key
 

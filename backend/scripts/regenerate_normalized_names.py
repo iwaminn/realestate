@@ -10,7 +10,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.database import SessionLocal
 from app.models import Building, PropertyListing, MasterProperty
-from app.utils.building_name_normalizer import normalize_building_name
+from app.utils.building_name_normalizer import normalize_building_name, get_search_key_for_building
 from sqlalchemy import func
 import time
 
@@ -85,15 +85,21 @@ def regenerate_building_normalized_names():
                     # 最も多い建物名を採用
                     most_common_name = listings[0].listing_building_name
                     new_normalized_name = normalize_building_name(most_common_name)
+                    # canonical_nameは元の建物名から直接生成
+                    new_canonical_name = get_search_key_for_building(most_common_name)
                     
                     # 変更があった場合のみ更新
-                    if building.normalized_name != new_normalized_name:
+                    if building.normalized_name != new_normalized_name or building.canonical_name != new_canonical_name:
                         old_name = building.normalized_name
+                        old_canonical = building.canonical_name
                         building.normalized_name = new_normalized_name
+                        building.canonical_name = new_canonical_name
                         changed_count += 1
                         
                         if i <= 10 or changed_count <= 10:
                             print(f"  建物ID {building.id}: 「{old_name}」→「{new_normalized_name}」")
+                            if old_canonical != new_canonical_name:
+                                print(f"    canonical: 「{old_canonical}」→「{new_canonical_name}」")
                     
                     success_count += 1
                 else:
