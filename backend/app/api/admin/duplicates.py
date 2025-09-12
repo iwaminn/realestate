@@ -265,6 +265,27 @@ async def get_duplicate_buildings(
             func.count(Building.id) > 1
         ).all()
         
+        # パターン5: 住所、総階数、築年が一致（建物名は異なってもOK）
+        # これは最も可能性の高い重複パターン
+        address_floor_year_groups = db.query(
+            func.regexp_replace(Building.normalized_address, r'-.*', '', 'g').label('address_prefix'),
+            Building.total_floors,
+            Building.built_year,
+            func.array_agg(Building.id).label('building_ids')
+        ).filter(
+            Building.id.in_(
+                db.query(MasterProperty.building_id).distinct()
+            ),
+            Building.total_floors.isnot(None),
+            Building.built_year.isnot(None)
+        ).group_by(
+            func.regexp_replace(Building.normalized_address, r'-.*', '', 'g'),
+            Building.total_floors,
+            Building.built_year
+        ).having(
+            func.count(Building.id) > 1
+        ).all()
+        
         # パターン2〜4の結果を処理して、canonical_nameが部分一致する建物を抽出
         partial_match_groups = []
         
@@ -359,6 +380,18 @@ async def get_duplicate_buildings(
                     'type': 'address_year_name',
                     'building_ids': list(all_ids),
                     'address_prefix': group.address_prefix,
+                    'built_year': group.built_year
+                })
+        
+        # パターン5の処理: 住所、総階数、築年が一致
+        for group in address_floor_year_groups:
+            building_ids = group.building_ids if group.building_ids else []
+            if len(building_ids) > 1:
+                partial_match_groups.append({
+                    'type': 'address_floor_year',
+                    'building_ids': building_ids,
+                    'address_prefix': group.address_prefix,
+                    'total_floors': group.total_floors,
                     'built_year': group.built_year
                 })
         
@@ -1323,7 +1356,6 @@ def get_duplicate_properties(
             INNER JOIN buildings b ON mp.building_id = b.id
             WHERE 
                 mp.id IN (SELECT master_property_id FROM active_listings)
-                AND (:building_ids IS NULL OR mp.building_id = ANY(:building_ids))
         ),
         property_groups AS (
             -- 同じ属性でグループ化（階数、面積）
@@ -1341,12 +1373,12 @@ def get_duplicate_properties(
                     ELSE REGEXP_REPLACE(
                         REGEXP_REPLACE(
                             REGEXP_REPLACE(
-                                REGEXP_REPLACE(layout, '\+[A-Z]+', '', 'g'),  -- +S, +WIC等を除去
-                                '([0-9]+)S(LDK|DK|K)', '\1\2', 'g'  -- SLDK → LDK, SDK → DK
+                                REGEXP_REPLACE(layout, '\\+[A-Z]+', '', 'g'),  -- +S, +WIC等を除去
+                                '([0-9]+)S(LDK|DK|K)', '\\1\\2', 'g'  -- SLDK → LDK, SDK → DK
                             ),
-                            '([0-9]+)LD$', '\1LDK', 'g'  -- LD → LDK
+                            '([0-9]+)LD$', '\\1LDK', 'g'  -- LD → LDK
                         ),
-                        '([0-9]+)K$', '\1DK', 'g'  -- K → DK
+                        '([0-9]+)K$', '\\1DK', 'g'  -- K → DK
                     )
                 END as base_layout,
                 building_name,
@@ -1366,12 +1398,12 @@ def get_duplicate_properties(
                     ELSE REGEXP_REPLACE(
                         REGEXP_REPLACE(
                             REGEXP_REPLACE(
-                                REGEXP_REPLACE(layout, '\+[A-Z]+', '', 'g'),
-                                '([0-9]+)S(LDK|DK|K)', '\1\2', 'g'
+                                REGEXP_REPLACE(layout, '\\+[A-Z]+', '', 'g'),
+                                '([0-9]+)S(LDK|DK|K)', '\\1\\2', 'g'
                             ),
-                            '([0-9]+)LD$', '\1LDK', 'g'
+                            '([0-9]+)LD$', '\\1LDK', 'g'
                         ),
-                        '([0-9]+)K$', '\1DK', 'g'
+                        '([0-9]+)K$', '\\1DK', 'g'
                     )
                 END,
                 building_name
@@ -1406,14 +1438,22 @@ def get_duplicate_properties(
         FROM property_groups pg
     """)
     
-    results = db.execute(query, {
-        "building_ids": building_ids
-    }).fetchall()
+    # パラメータなしでクエリを実行
+    results = db.execute(query).fetchall()
+    
+    # デバッグログ
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"SQL query returned {len(results)} rows")
     
     # 4. 結果を処理（除外ペアのチェックと正規化）
     duplicate_groups = []
     
     for row in results:
+        # building_nameフィルタリング（building_idsが指定されている場合）
+        if building_ids and row.building_id not in building_ids:
+            continue
+            
         # property_idsを取得
         property_ids = row.property_ids if row.property_ids else []
         
@@ -1441,7 +1481,8 @@ def get_duplicate_properties(
             "layout": row.base_layout if hasattr(row, 'base_layout') else None,
             "direction": None,  # 方角は個別物件で異なる可能性があるため省略
             "area": float(row.rounded_area) if row.rounded_area else None,
-            "properties": property_details
+            "properties": property_details,
+            "property_ids": property_ids  # デバッグ用に追加
         })
     
     # 5. ページング処理
@@ -2436,6 +2477,78 @@ async def merge_properties(
             """),
             {"candidates": json.dumps(candidate_ids), "match_id": match.id}
         )
+    
+    # property_price_changesテーブルの参照を更新
+    # 二次物件の価格改定履歴を主物件に移行
+    # 同じ日付のレコードがある場合は、より多い投票数を持つ方を残す
+    
+    # まず、重複する日付のレコードを確認
+    duplicate_dates = db.execute(
+        text("""
+            SELECT ppc1.change_date
+            FROM property_price_changes ppc1
+            INNER JOIN property_price_changes ppc2 
+                ON ppc1.change_date = ppc2.change_date
+            WHERE ppc1.master_property_id = :primary_id
+                AND ppc2.master_property_id = :secondary_id
+        """),
+        {"primary_id": request.primary_property_id, "secondary_id": request.secondary_property_id}
+    ).fetchall()
+    
+    if duplicate_dates:
+        # 重複する日付がある場合、より多い投票数を持つレコードを保持
+        for (change_date,) in duplicate_dates:
+            # 両方のレコードを取得
+            primary_record = db.execute(
+                text("""
+                    SELECT new_price_votes, old_price_votes
+                    FROM property_price_changes
+                    WHERE master_property_id = :primary_id AND change_date = :change_date
+                """),
+                {"primary_id": request.primary_property_id, "change_date": change_date}
+            ).first()
+            
+            secondary_record = db.execute(
+                text("""
+                    SELECT new_price_votes, old_price_votes
+                    FROM property_price_changes
+                    WHERE master_property_id = :secondary_id AND change_date = :change_date
+                """),
+                {"secondary_id": request.secondary_property_id, "change_date": change_date}
+            ).first()
+            
+            # 投票数の合計を比較
+            primary_votes = (primary_record.new_price_votes or 0) + (primary_record.old_price_votes or 0)
+            secondary_votes = (secondary_record.new_price_votes or 0) + (secondary_record.old_price_votes or 0)
+            
+            if secondary_votes > primary_votes:
+                # 二次物件のレコードの方が信頼性が高い場合、主物件のレコードを削除
+                db.execute(
+                    text("""
+                        DELETE FROM property_price_changes
+                        WHERE master_property_id = :primary_id AND change_date = :change_date
+                    """),
+                    {"primary_id": request.primary_property_id, "change_date": change_date}
+                )
+            else:
+                # 主物件のレコードを保持、二次物件のレコードを削除
+                db.execute(
+                    text("""
+                        DELETE FROM property_price_changes
+                        WHERE master_property_id = :secondary_id AND change_date = :change_date
+                    """),
+                    {"secondary_id": request.secondary_property_id, "change_date": change_date}
+                )
+    
+    # 残りの二次物件のレコードを主物件に移行
+    db.execute(
+        text("""
+            UPDATE property_price_changes 
+            SET master_property_id = :primary_id 
+            WHERE master_property_id = :secondary_id
+        """),
+        {"primary_id": request.primary_property_id, "secondary_id": request.secondary_property_id}
+    )
     
     # PropertyMergeHistoryの参照を更新（二次物件が他の統合履歴で参照されている場合）
     # primary_property_idとして参照されている場合、主物件IDに更新
