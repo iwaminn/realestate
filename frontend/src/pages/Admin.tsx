@@ -50,6 +50,7 @@ import { PropertyManagement } from '../components/admin/PropertyManagement';
 import { BuildingManagement } from '../components/admin/BuildingManagement';
 import { UserManagement } from '../components/admin/UserManagement';
 import { ScheduleManagement } from '../components/admin/ScheduleManagement';
+import { DataUpdateManagement } from '../components/admin/DataUpdateManagement';
 
 
 const Admin: React.FC = () => {
@@ -109,6 +110,7 @@ const Admin: React.FC = () => {
           <Tab label="物件重複管理" />
           <Tab label="建物重複管理" />
           <Tab label="スクレイピング" />
+          <Tab label="データ更新" />
           <Tab label="掲載情報管理" />
           <Tab label="物件管理" />
           <Tab label="建物管理" />
@@ -191,23 +193,29 @@ const Admin: React.FC = () => {
 
       {activeTab === 3 && (
         <Box>
-          <ListingManagement />
+          <DataUpdateManagement />
         </Box>
       )}
 
       {activeTab === 4 && (
         <Box>
-          <PropertyManagement />
+          <ListingManagement />
         </Box>
       )}
 
       {activeTab === 5 && (
         <Box>
-          <BuildingManagement />
+          <PropertyManagement />
         </Box>
       )}
 
       {activeTab === 6 && (
+        <Box>
+          <BuildingManagement />
+        </Box>
+      )}
+
+      {activeTab === 7 && (
         <Box>
           <UserManagement />
         </Box>

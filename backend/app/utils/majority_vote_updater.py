@@ -25,6 +25,17 @@ class MajorityVoteUpdater:
     def __init__(self, session: Session):
         self.session = session
 
+    def add_to_price_change_queue(self, master_property_id: int, reason: str = "majority_vote_update"):
+        """
+        価格改定履歴の再計算キューに追加
+        """
+        try:
+            from .price_change_calculator import PriceChangeCalculator
+            calculator = PriceChangeCalculator(self.session)
+            calculator.add_to_queue(master_property_id, reason, priority=1)
+        except Exception as e:
+            logger.warning(f"価格改定キューへの追加に失敗（物件ID: {master_property_id}）: {e}")
+
 
     
     @staticmethod
@@ -529,6 +540,10 @@ class MajorityVoteUpdater:
                 logger.info(f"物件ID {master_property.id} の駐車場情報を更新")
                 master_property.parking_info = majority_parking
                 updated = True
+        
+        # 更新があった場合は価格改定キューに追加
+        if updated:
+            self.add_to_price_change_queue(master_property.id, "property_updated")
         
         return updated
     

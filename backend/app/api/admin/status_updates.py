@@ -30,6 +30,61 @@ class SoldPriceUpdateResult(BaseModel):
     confidence: float
 
 
+@router.get("/listing-status-stats")
+async def get_listing_status_stats(
+    db: Session = Depends(get_db)
+):
+    """掲載状態の統計情報を取得"""
+    
+    try:
+        now = datetime.now()
+        threshold_24h = now - timedelta(hours=24)
+        today_start = datetime.combine(now.date(), datetime.min.time())
+        
+        # 掲載中の数
+        total_active = db.query(func.count(PropertyListing.id)).filter(
+            PropertyListing.is_active == True
+        ).scalar() or 0
+        
+        # 非掲載の数
+        total_inactive = db.query(func.count(PropertyListing.id)).filter(
+            PropertyListing.is_active == False
+        ).scalar() or 0
+        
+        # 販売終了物件数
+        total_sold = db.query(func.count(MasterProperty.id)).filter(
+            MasterProperty.sold_at.isnot(None)
+        ).scalar() or 0
+        
+        # 本日確認済みの掲載数
+        checked_today = db.query(func.count(PropertyListing.id)).filter(
+            PropertyListing.last_confirmed_at >= today_start
+        ).scalar() or 0
+        
+        # 24時間以上確認されていない掲載数
+        not_checked_24h = db.query(func.count(PropertyListing.id)).filter(
+            PropertyListing.is_active == True,
+            PropertyListing.last_confirmed_at < threshold_24h
+        ).scalar() or 0
+        
+        # 最も古い未確認日時
+        oldest_unchecked = db.query(func.min(PropertyListing.last_confirmed_at)).filter(
+            PropertyListing.is_active == True
+        ).scalar()
+        
+        return {
+            "total_active_listings": total_active,
+            "total_inactive_listings": total_inactive,
+            "total_sold_properties": total_sold,
+            "listings_checked_today": checked_today,
+            "listings_not_checked_24h": not_checked_24h,
+            "oldest_unchecked_date": oldest_unchecked.isoformat() if oldest_unchecked else None
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"統計情報の取得に失敗: {str(e)}")
+
+
 @router.post("/update-listing-status")
 async def update_listing_status(
     db: Session = Depends(get_db)

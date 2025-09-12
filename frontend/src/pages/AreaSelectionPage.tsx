@@ -132,8 +132,8 @@ const AreaSelectionPage: React.FC = () => {
 
       setUpdatesLoading(true);
       try {
-        // 1回のAPIリクエストで全データを取得
-        const details = await propertyApi.getRecentUpdates(24);
+        // 1回のAPIリクエストで全データを取得（キャッシュ版APIを使用）
+        const details = await propertyApi.getRecentUpdates(24, true);
         
         // 全体の合計を計算
         let totalPriceChanges = 0;

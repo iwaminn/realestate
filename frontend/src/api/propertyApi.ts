@@ -407,8 +407,9 @@ export const propertyApi = {
   },
 
   // 直近の価格改定・新着物件を取得
-  getRecentUpdates: async (hours: number = 24): Promise<RecentUpdatesResponse> => {
-    const response = await api.get('/properties/recent-updates', {
+  getRecentUpdates: async (hours: number = 24, useCache: boolean = true): Promise<RecentUpdatesResponse> => {
+    const endpoint = useCache ? '/v2/properties/recent-updates' : '/properties/recent-updates';
+    const response = await api.get(endpoint, {
       params: { hours }
     });
     return response.data;

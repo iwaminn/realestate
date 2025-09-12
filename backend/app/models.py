@@ -643,6 +643,64 @@ class PendingUser(Base):
     )
 
 
+class PropertyPriceChange(Base):
+    """価格改定履歴キャッシュテーブル（多数決ベースの価格変更を事前計算）"""
+    __tablename__ = "property_price_changes"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    master_property_id = Column(Integer, ForeignKey("master_properties.id", ondelete="CASCADE"), nullable=False)
+    
+    # 価格変更情報
+    change_date = Column(Date, nullable=False)                   # 価格改定日
+    new_price = Column(Integer, nullable=False)                  # 新価格（万円）
+    old_price = Column(Integer, nullable=False)                  # 旧価格（万円）
+    price_diff = Column(Integer)                                 # 価格差（万円）
+    price_diff_rate = Column(Float)                              # 価格変動率（%）
+    
+    # 多数決の詳細
+    new_price_votes = Column(Integer)                            # 新価格の投票数
+    old_price_votes = Column(Integer)                            # 旧価格の投票数
+    
+    # メタ情報
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    
+    __table_args__ = (
+        UniqueConstraint('master_property_id', 'change_date', name='unique_property_price_change'),
+        Index('idx_property_price_changes_property', 'master_property_id'),
+        Index('idx_property_price_changes_date', 'change_date'),
+        Index('idx_property_price_changes_property_date', 'master_property_id', 'change_date'),
+    )
+
+
+class PropertyPriceChangeQueue(Base):
+    """価格改定履歴の再計算キューテーブル"""
+    __tablename__ = "property_price_change_queue"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    master_property_id = Column(Integer, ForeignKey("master_properties.id", ondelete="CASCADE"), nullable=False)
+    
+    # キュー情報
+    reason = Column(String(100))                                 # キューに追加された理由
+    priority = Column(Integer, default=0)                        # 優先度（0が最高）
+    
+    # 処理状態
+    status = Column(String(20), default='pending')               # pending/processing/completed/failed
+    processed_at = Column(DateTime)                              # 処理完了時刻
+    error_message = Column(Text)                                 # エラーメッセージ（失敗時）
+    
+    # メタ情報
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+    
+    __table_args__ = (
+        # 注: 条件付きユニーク制約は、スクリプトで別途作成
+        Index('idx_property_price_queue_property', 'master_property_id'),
+        Index('idx_property_price_queue_status', 'status'),
+        Index('idx_property_price_queue_priority_status', 'priority', 'status'),
+    )
+
+
 # 他のモデルをインポート（循環参照を避けるため最後にインポート）
 from .models_property_matching import AmbiguousPropertyMatch
 # from .models_scraping_task import ScrapingTask, ScrapingTaskProgress  # 循環インポート回避のためコメントアウト
