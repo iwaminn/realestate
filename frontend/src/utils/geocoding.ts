@@ -3,6 +3,8 @@
  * バックエンドAPIを経由して座標を取得（サーバー側でキャッシュ）
  */
 
+import axios from './axiosConfig';
+
 /**
  * 建物IDから座標を取得（バックエンドAPI経由）
  * @param buildingId 建物ID
@@ -10,14 +12,8 @@
  */
 export async function getCoordinatesFromBuilding(buildingId: number): Promise<{ lat: number; lng: number } | null> {
   try {
-    const response = await fetch(`http://localhost:8000/api/geocoding/building/${buildingId}`);
-    
-    if (!response.ok) {
-      console.error('座標取得APIエラー:', response.status);
-      return null;
-    }
-    
-    const data = await response.json();
+    const response = await axios.get(`/api/geocoding/building/${buildingId}`);
+    const data = response.data;
     
     if (data && data.latitude !== undefined && data.longitude !== undefined) {
       console.log(`座標取得成功 (${data.cached ? 'キャッシュ' : 'API'}): 建物ID ${buildingId} -> lat: ${data.latitude}, lng: ${data.longitude}`);
@@ -39,20 +35,8 @@ export async function getCoordinatesFromBuilding(buildingId: number): Promise<{ 
  */
 export async function getCoordinatesFromAddress(address: string): Promise<{ lat: number; lng: number } | null> {
   try {
-    const response = await fetch('http://localhost:8000/api/geocoding/geocode', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ address })
-    });
-    
-    if (!response.ok) {
-      console.error('ジオコーディングAPIエラー:', response.status);
-      return null;
-    }
-    
-    const data = await response.json();
+    const response = await axios.post('/api/geocoding/geocode', { address });
+    const data = response.data;
     
     if (data && data.latitude !== undefined && data.longitude !== undefined) {
       console.log(`座標取得成功: ${address} -> lat: ${data.latitude}, lng: ${data.longitude}`);
