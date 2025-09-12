@@ -306,7 +306,7 @@ const PropertyUpdatesPage: React.FC = () => {
   return (
     <Container maxWidth="xl" sx={{ 
       py: 4, 
-      px: isMobile ? 0.5 : 3  // スマートフォンでは左右余白を最小限に
+      px: isMobile ? 0 : 3  // スマートフォンでは左右余白をゼロに
     }}>
       {/* ヘッダー */}
       <Box sx={{ mb: 4 }}>
@@ -474,7 +474,7 @@ const PropertyUpdatesPage: React.FC = () => {
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableCell sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 200, sm: 250 }, whiteSpace: { xs: 'nowrap', md: 'normal' } }}>
+                  <TableCell sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 180, sm: 250 } }}>
                     <TableSortLabel
                       active={sortField === 'building_name'}
                       direction={sortField === 'building_name' ? sortOrder : 'desc'}
@@ -482,6 +482,26 @@ const PropertyUpdatesPage: React.FC = () => {
                     >
                       <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>建物名・部屋番号・エリア</Box>
                       <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>建物名・エリア</Box>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell align="right" sx={{ pl: { xs: 0, sm: 0.5 }, pr: { xs: 0.5, sm: 0.5 }, minWidth: { xs: 25, sm: 'auto' }, whiteSpace: 'nowrap' }}>
+                    <TableSortLabel
+                      active={sortField === 'floor_number'}
+                      direction={sortField === 'floor_number' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('floor_number')}
+                    >
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>階数</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>階</Box>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 35, sm: 'auto' }, whiteSpace: 'nowrap' }}>
+                    <TableSortLabel
+                      active={sortField === 'area'}
+                      direction={sortField === 'area' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('area')}
+                    >
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>専有面積</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>㎡</Box>
                     </TableSortLabel>
                   </TableCell>
                   <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 35, sm: 'auto' }, whiteSpace: 'nowrap' }}>
@@ -506,26 +526,6 @@ const PropertyUpdatesPage: React.FC = () => {
                     >
                       <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>変動幅・率</Box>
                       <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>変動</Box>
-                    </TableSortLabel>
-                  </TableCell>
-                  <TableCell align="right" sx={{ pl: { xs: 0, sm: 0.5 }, pr: { xs: 0.5, sm: 0.5 }, minWidth: { xs: 25, sm: 'auto' }, whiteSpace: 'nowrap' }}>
-                    <TableSortLabel
-                      active={sortField === 'floor_number'}
-                      direction={sortField === 'floor_number' ? sortOrder : 'desc'}
-                      onClick={() => handleSort('floor_number')}
-                    >
-                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>階数</Box>
-                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>階</Box>
-                    </TableSortLabel>
-                  </TableCell>
-                  <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 35, sm: 'auto' }, whiteSpace: 'nowrap' }}>
-                    <TableSortLabel
-                      active={sortField === 'area'}
-                      direction={sortField === 'area' ? sortOrder : 'desc'}
-                      onClick={() => handleSort('area')}
-                    >
-                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>専有面積</Box>
-                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>㎡</Box>
                     </TableSortLabel>
                   </TableCell>
                   <TableCell sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 40, sm: 'auto' }, whiteSpace: 'nowrap' }}>
@@ -578,7 +578,7 @@ const PropertyUpdatesPage: React.FC = () => {
                     onClick={() => navigate(`/properties/${property.id}`)}
                     sx={{ cursor: 'pointer' }}
                   >
-                    <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: { xs: 'nowrap', md: 'normal' } }}>
+                    <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
                       <Box>
                         {property.building_name}
                         {property.room_number && ` ${property.room_number}号室`}
@@ -586,6 +586,22 @@ const PropertyUpdatesPage: React.FC = () => {
                           {getWard(property.address)}
                         </Typography>
                       </Box>
+                    </TableCell>
+                    <TableCell align="right" sx={{ pl: { xs: 0, sm: 0.5 }, pr: { xs: 0.5, sm: 0.5 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                      {property.floor_number ? (
+                        <>
+                          <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.floor_number}</Box>
+                          <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>{property.floor_number}階</Box>
+                        </>
+                      ) : '-'}
+                    </TableCell>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                      {property.area ? (
+                        <>
+                          <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.area}</Box>
+                          <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>{property.area}㎡</Box>
+                        </>
+                      ) : '-'}
                     </TableCell>
                     <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
                       <Box sx={{ fontWeight: 'bold' }}>
@@ -620,22 +636,6 @@ const PropertyUpdatesPage: React.FC = () => {
                             </Typography>
                           )}
                         </Box>
-                      ) : '-'}
-                    </TableCell>
-                    <TableCell align="right" sx={{ pl: { xs: 0, sm: 0.5 }, pr: { xs: 0.5, sm: 0.5 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
-                      {property.floor_number ? (
-                        <>
-                          <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.floor_number}</Box>
-                          <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>{property.floor_number}階</Box>
-                        </>
-                      ) : '-'}
-                    </TableCell>
-                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
-                      {property.area ? (
-                        <>
-                          <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.area}</Box>
-                          <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>{property.area}㎡</Box>
-                        </>
                       ) : '-'}
                     </TableCell>
                     <TableCell sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>{property.layout || '-'}</TableCell>
@@ -836,7 +836,7 @@ const PropertyUpdatesPage: React.FC = () => {
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableCell sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 200, sm: 250 }, whiteSpace: { xs: 'nowrap', md: 'normal' } }}>
+                  <TableCell sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 180, sm: 250 } }}>
                     <TableSortLabel
                       active={sortField === 'building_name'}
                       direction={sortField === 'building_name' ? sortOrder : 'desc'}
@@ -844,15 +844,6 @@ const PropertyUpdatesPage: React.FC = () => {
                     >
                       <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>建物名・部屋番号・エリア</Box>
                       <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>建物名・エリア</Box>
-                    </TableSortLabel>
-                  </TableCell>
-                  <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 35, sm: 'auto' }, whiteSpace: 'nowrap' }}>
-                    <TableSortLabel
-                      active={sortField === 'price'}
-                      direction={sortField === 'price' ? sortOrder : 'desc'}
-                      onClick={() => handleSort('price')}
-                    >
-                      価格
                     </TableSortLabel>
                   </TableCell>
                   <TableCell align="right" sx={{ pl: { xs: 0, sm: 0.5 }, pr: { xs: 0.5, sm: 0.5 }, minWidth: { xs: 25, sm: 'auto' }, whiteSpace: 'nowrap' }}>
@@ -873,6 +864,15 @@ const PropertyUpdatesPage: React.FC = () => {
                     >
                       <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>専有面積</Box>
                       <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>㎡</Box>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 35, sm: 'auto' }, whiteSpace: 'nowrap' }}>
+                    <TableSortLabel
+                      active={sortField === 'price'}
+                      direction={sortField === 'price' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('price')}
+                    >
+                      価格
                     </TableSortLabel>
                   </TableCell>
                   <TableCell sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 40, sm: 'auto' }, whiteSpace: 'nowrap' }}>
@@ -925,7 +925,7 @@ const PropertyUpdatesPage: React.FC = () => {
                     onClick={() => navigate(`/properties/${property.id}`)}
                     sx={{ cursor: 'pointer' }}
                   >
-                    <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: { xs: 'nowrap', md: 'normal' } }}>
+                    <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1 } }}>
                         <Typography 
                           component="span"
@@ -953,11 +953,6 @@ const PropertyUpdatesPage: React.FC = () => {
                         </Box>
                       </Box>
                     </TableCell>
-                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
-                      <Box sx={{ fontWeight: 'bold', color: theme.palette.success.main }}>
-                        {formatPrice(property.price, !isMobile)}
-                      </Box>
-                    </TableCell>
                     <TableCell align="right" sx={{ pl: { xs: 0, sm: 0.5 }, pr: { xs: 0.5, sm: 0.5 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
                       {property.floor_number ? (
                         <>
@@ -973,6 +968,11 @@ const PropertyUpdatesPage: React.FC = () => {
                           <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>{property.area}㎡</Box>
                         </>
                       ) : '-'}
+                    </TableCell>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                      <Box sx={{ fontWeight: 'bold', color: theme.palette.success.main }}>
+                        {formatPrice(property.price, !isMobile)}
+                      </Box>
                     </TableCell>
                     <TableCell sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>{property.layout || '-'}</TableCell>
                     <TableCell sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>{property.direction || '-'}</TableCell>

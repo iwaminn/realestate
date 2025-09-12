@@ -483,7 +483,7 @@ const BuildingPropertiesPage: React.FC = () => {
   return (
     <Container maxWidth="xl" sx={{ 
       py: isMobile ? 2 : 4, 
-      px: isMobile ? 1 : 3
+      px: isMobile ? 0 : 3
     }}>
       <Button
         component={Link}
@@ -1073,11 +1073,12 @@ const BuildingPropertiesPage: React.FC = () => {
                       variant="outlined"
                       size="small"
                       sx={{
-                        fontSize: { xs: '0.65rem', sm: '0.875rem' },
-                        px: { xs: 1, sm: 2 },
-                        py: { xs: 0.25, sm: 1 },
-                        minWidth: { xs: 35, sm: 64 },
-                        whiteSpace: 'nowrap'
+                        fontSize: { xs: '0.75rem', sm: '0.875rem' },
+                        px: { xs: 1.5, sm: 2 },
+                        py: { xs: 0.5, sm: 1 },
+                        minWidth: { xs: 50, sm: 64 },
+                        whiteSpace: 'nowrap',
+                        fontWeight: { xs: 500, sm: 400 }
                       }}
                     >
                       詳細
