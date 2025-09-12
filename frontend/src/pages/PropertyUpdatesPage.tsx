@@ -209,16 +209,16 @@ const PropertyUpdatesPage: React.FC = () => {
     updateSearchParams({ page: '0' }); // ページを最初に戻す
   };
 
-  const formatPrice = (price: number) => {
+  const formatPrice = (price: number, showUnit: boolean = true) => {
     if (price >= 10000) {
       const oku = Math.floor(price / 10000);
       const man = price % 10000;
       if (man === 0) {
-        return `${oku}億円`;
+        return `${oku}億${showUnit ? '円' : ''}`;
       }
-      return `${oku}億${man.toLocaleString()}万円`;
+      return `${oku}億${man.toLocaleString()}万${showUnit ? '円' : ''}`;
     }
-    return `${price.toLocaleString()}万円`;
+    return `${price.toLocaleString()}万${showUnit ? '円' : ''}`;
   };
 
   const formatDate = (dateString?: string) => {
@@ -472,70 +472,98 @@ const PropertyUpdatesPage: React.FC = () => {
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableCell sx={isMobile ? { minWidth: 250, whiteSpace: 'nowrap' } : {}}>
+                  <TableCell sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 200, sm: 250 }, whiteSpace: { xs: 'nowrap', md: 'normal' } }}>
                     <TableSortLabel
                       active={sortField === 'building_name'}
                       direction={sortField === 'building_name' ? sortOrder : 'desc'}
                       onClick={() => handleSort('building_name')}
                     >
-                      {isMobile ? '建物名・エリア' : '建物名・部屋番号・エリア'}
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>建物名・部屋番号・エリア</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>建物名・エリア</Box>
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell align="right" sx={isMobile ? { minWidth: 100, whiteSpace: 'nowrap' } : {}}>
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 35, sm: 'auto' }, whiteSpace: 'nowrap' }}>
                     <TableSortLabel
                       active={sortField === 'price'}
                       direction={sortField === 'price' ? sortOrder : 'desc'}
                       onClick={() => handleSort('price')}
                     >
-                      {isMobile ? '現在' : '現在価格'}
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>現在価格</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>現在</Box>
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell align="right" sx={isMobile ? { minWidth: 100, whiteSpace: 'nowrap' } : {}}>{isMobile ? '前回' : '前回価格'}</TableCell>
-                  <TableCell align="right" sx={isMobile ? { minWidth: 150, whiteSpace: 'nowrap' } : {}}>
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 35, sm: 'auto' }, whiteSpace: 'nowrap' }}>
+                    <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>前回価格</Box>
+                    <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>前回</Box>
+                  </TableCell>
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 45, sm: 'auto' }, whiteSpace: 'nowrap' }}>
                     <TableSortLabel
                       active={sortField === 'price_diff'}
                       direction={sortField === 'price_diff' ? sortOrder : 'desc'}
                       onClick={() => handleSort('price_diff')}
                     >
-                      {isMobile ? '変動' : '変動幅・変動率'}
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>変動幅・率</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>変動</Box>
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : {}}>
+                  <TableCell align="right" sx={{ pl: { xs: 0, sm: 0.5 }, pr: { xs: 0.5, sm: 0.5 }, minWidth: { xs: 25, sm: 'auto' }, whiteSpace: 'nowrap' }}>
                     <TableSortLabel
                       active={sortField === 'floor_number'}
                       direction={sortField === 'floor_number' ? sortOrder : 'desc'}
                       onClick={() => handleSort('floor_number')}
                     >
-                      階数
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>階数</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>階</Box>
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 70, whiteSpace: 'nowrap' } : {}}>
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 35, sm: 'auto' }, whiteSpace: 'nowrap' }}>
                     <TableSortLabel
                       active={sortField === 'area'}
                       direction={sortField === 'area' ? sortOrder : 'desc'}
                       onClick={() => handleSort('area')}
                     >
-                      面積
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>専有面積</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>㎡</Box>
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 70, whiteSpace: 'nowrap' } : {}}>間取り</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : {}}>方角</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : {}}>
+                  <TableCell sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 40, sm: 'auto' }, whiteSpace: 'nowrap' }}>
+                    <TableSortLabel
+                      active={sortField === 'layout'}
+                      direction={sortField === 'layout' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('layout')}
+                    >
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>間取り</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>間取</Box>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 20, sm: 'auto' }, whiteSpace: 'nowrap' }}>
+                    <TableSortLabel
+                      active={sortField === 'direction'}
+                      direction={sortField === 'direction' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('direction')}
+                    >
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>方角</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>向</Box>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 20, sm: 'auto' }, whiteSpace: 'nowrap' }}>
                     <TableSortLabel
                       active={sortField === 'built_year'}
                       direction={sortField === 'built_year' ? sortOrder : 'desc'}
                       onClick={() => handleSort('built_year')}
                     >
-                      築年
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>築年</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>築年</Box>
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 80, whiteSpace: 'nowrap' } : {}}>
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 45, sm: 'auto' }, whiteSpace: 'nowrap' }}>
                     <TableSortLabel
                       active={sortField === 'days_on_market'}
                       direction={sortField === 'days_on_market' ? sortOrder : 'desc'}
                       onClick={() => handleSort('days_on_market')}
                     >
-                      {isMobile ? '日数' : '経過日数'}
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>経過日数</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>経過</Box>
                     </TableSortLabel>
                   </TableCell>
                 </TableRow>
@@ -548,7 +576,7 @@ const PropertyUpdatesPage: React.FC = () => {
                     onClick={() => navigate(`/properties/${property.id}`)}
                     sx={{ cursor: 'pointer' }}
                   >
-                    <TableCell sx={isMobile ? { minWidth: 240 } : {}}>
+                    <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: { xs: 'nowrap', md: 'normal' } }}>
                       <Box>
                         {property.building_name}
                         {property.room_number && ` ${property.room_number}号室`}
@@ -557,34 +585,34 @@ const PropertyUpdatesPage: React.FC = () => {
                         </Typography>
                       </Box>
                     </TableCell>
-                    <TableCell align="right" sx={isMobile ? { minWidth: 90, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>
-                      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
-                        {formatPrice(property.price)}
-                      </Typography>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                      <Box sx={{ fontWeight: 'bold' }}>
+                        {formatPrice(property.price, !isMobile)}
+                      </Box>
                     </TableCell>
-                    <TableCell align="right" sx={isMobile ? { minWidth: 90, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
                       {property.previous_price ? (
-                        <Typography variant="body2" sx={{ textDecoration: 'line-through', color: 'text.secondary' }}>
-                          {formatPrice(property.previous_price)}
-                        </Typography>
+                        <Box sx={{ textDecoration: 'line-through', color: 'text.secondary' }}>
+                          {formatPrice(property.previous_price, !isMobile)}
+                        </Box>
                       ) : '-'}
                     </TableCell>
-                    <TableCell align="right" sx={isMobile ? { minWidth: 140 } : {}}>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
                       {property.price_diff ? (
                         <Box>
                           <Chip
                             icon={property.price_diff < 0 ? <TrendingDownIcon /> : <TrendingUpIcon />}
-                            label={`${property.price_diff > 0 ? '+' : ''}${property.price_diff.toLocaleString()}万円`}
+                            label={`${property.price_diff > 0 ? '+' : ''}${property.price_diff.toLocaleString()}万${isMobile ? '' : '円'}`}
                             color={property.price_diff < 0 ? 'primary' : 'error'}
                             size="small"
-                            sx={{ mb: 0.5 }}
+                            sx={{ height: { xs: 20, sm: 'auto' }, fontSize: { xs: '0.65rem', sm: '0.75rem' }, '& .MuiChip-icon': { fontSize: { xs: '0.8rem', sm: '1rem' } }, mb: { xs: 0, sm: 0.5 } }}
                           />
                           {property.price_diff_rate && (
                             <Typography 
                               variant="caption" 
                               display="block"
                               color={property.price_diff_rate < 0 ? 'primary' : 'error'}
-                              sx={{ fontWeight: 'bold', textAlign: 'center' }}
+                              sx={{ fontSize: { xs: '0.6rem', sm: '0.75rem' }, fontWeight: 'bold', textAlign: 'center' }}
                             >
                               ({property.price_diff_rate > 0 ? '+' : ''}{property.price_diff_rate}%)
                             </Typography>
@@ -592,18 +620,38 @@ const PropertyUpdatesPage: React.FC = () => {
                         </Box>
                       ) : '-'}
                     </TableCell>
-                    <TableCell sx={isMobile ? { minWidth: 50, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>{property.floor_number ? `${property.floor_number}階` : '-'}</TableCell>
-                    <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>{property.area ? `${property.area}㎡` : '-'}</TableCell>
-                    <TableCell sx={isMobile ? { minWidth: 60 } : {}}>{property.layout || '-'}</TableCell>
-                    <TableCell sx={isMobile ? { minWidth: 50 } : {}}>{property.direction || '-'}</TableCell>
-                    <TableCell sx={isMobile ? { minWidth: 50, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>
-                      {property.built_year ? (
-                        `築${new Date().getFullYear() - property.built_year}年`
+                    <TableCell align="right" sx={{ pl: { xs: 0, sm: 0.5 }, pr: { xs: 0.5, sm: 0.5 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                      {property.floor_number ? (
+                        <>
+                          <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.floor_number}</Box>
+                          <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>{property.floor_number}階</Box>
+                        </>
                       ) : '-'}
                     </TableCell>
-                    <TableCell sx={isMobile ? { minWidth: 70, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                      {property.area ? (
+                        <>
+                          <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.area}</Box>
+                          <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>{property.area}㎡</Box>
+                        </>
+                      ) : '-'}
+                    </TableCell>
+                    <TableCell sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>{property.layout || '-'}</TableCell>
+                    <TableCell sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>{property.direction || '-'}</TableCell>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                      {property.built_year ? (
+                        <>
+                          <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>築{new Date().getFullYear() - property.built_year}年</Box>
+                          <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>築{new Date().getFullYear() - property.built_year}年</Box>
+                        </>
+                      ) : '-'}
+                    </TableCell>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
                       {property.days_on_market !== null && property.days_on_market !== undefined ? (
-                        `${property.days_on_market}日`
+                        <>
+                          <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.days_on_market}日</Box>
+                          <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>{property.days_on_market}日</Box>
+                        </>
                       ) : '-'}
                     </TableCell>
                   </TableRow>
@@ -778,16 +826,17 @@ const PropertyUpdatesPage: React.FC = () => {
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableCell sx={isMobile ? { minWidth: 250, whiteSpace: 'nowrap' } : {}}>
+                  <TableCell sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 200, sm: 250 }, whiteSpace: { xs: 'nowrap', md: 'normal' } }}>
                     <TableSortLabel
                       active={sortField === 'building_name'}
                       direction={sortField === 'building_name' ? sortOrder : 'desc'}
                       onClick={() => handleSort('building_name')}
                     >
-                      {isMobile ? '建物名・エリア' : '建物名・部屋番号・エリア'}
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>建物名・部屋番号・エリア</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>建物名・エリア</Box>
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell align="right" sx={isMobile ? { minWidth: 100, whiteSpace: 'nowrap' } : {}}>
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 35, sm: 'auto' }, whiteSpace: 'nowrap' }}>
                     <TableSortLabel
                       active={sortField === 'price'}
                       direction={sortField === 'price' ? sortOrder : 'desc'}
@@ -796,42 +845,64 @@ const PropertyUpdatesPage: React.FC = () => {
                       価格
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : {}}>
+                  <TableCell align="right" sx={{ pl: { xs: 0, sm: 0.5 }, pr: { xs: 0.5, sm: 0.5 }, minWidth: { xs: 25, sm: 'auto' }, whiteSpace: 'nowrap' }}>
                     <TableSortLabel
                       active={sortField === 'floor_number'}
                       direction={sortField === 'floor_number' ? sortOrder : 'desc'}
                       onClick={() => handleSort('floor_number')}
                     >
-                      階数
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>階数</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>階</Box>
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 70, whiteSpace: 'nowrap' } : {}}>
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 35, sm: 'auto' }, whiteSpace: 'nowrap' }}>
                     <TableSortLabel
                       active={sortField === 'area'}
                       direction={sortField === 'area' ? sortOrder : 'desc'}
                       onClick={() => handleSort('area')}
                     >
-                      面積
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>専有面積</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>㎡</Box>
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 70, whiteSpace: 'nowrap' } : {}}>間取り</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : {}}>方角</TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : {}}>
+                  <TableCell sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 40, sm: 'auto' }, whiteSpace: 'nowrap' }}>
+                    <TableSortLabel
+                      active={sortField === 'layout'}
+                      direction={sortField === 'layout' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('layout')}
+                    >
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>間取り</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>間取</Box>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 20, sm: 'auto' }, whiteSpace: 'nowrap' }}>
+                    <TableSortLabel
+                      active={sortField === 'direction'}
+                      direction={sortField === 'direction' ? sortOrder : 'desc'}
+                      onClick={() => handleSort('direction')}
+                    >
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>方角</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>向</Box>
+                    </TableSortLabel>
+                  </TableCell>
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, minWidth: { xs: 20, sm: 'auto' }, whiteSpace: 'nowrap' }}>
                     <TableSortLabel
                       active={sortField === 'built_year'}
                       direction={sortField === 'built_year' ? sortOrder : 'desc'}
                       onClick={() => handleSort('built_year')}
                     >
-                      築年
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>築年</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>築年</Box>
                     </TableSortLabel>
                   </TableCell>
-                  <TableCell sx={isMobile ? { minWidth: 90, whiteSpace: 'nowrap' } : {}}>
+                  <TableCell sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 45, sm: 'auto' }, whiteSpace: 'nowrap' }}>
                     <TableSortLabel
                       active={sortField === 'created_at'}
                       direction={sortField === 'created_at' ? sortOrder : 'desc'}
                       onClick={() => handleSort('created_at')}
                     >
-                      {isMobile ? '掲載日' : '掲載日'}
+                      <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>掲載日</Box>
+                      <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>掲載</Box>
                     </TableSortLabel>
                   </TableCell>
                 </TableRow>
@@ -844,14 +915,25 @@ const PropertyUpdatesPage: React.FC = () => {
                     onClick={() => navigate(`/properties/${property.id}`)}
                     sx={{ cursor: 'pointer' }}
                   >
-                    <TableCell sx={isMobile ? { minWidth: 240 } : {}}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                        <Chip
-                          icon={<NewReleasesIcon />}
-                          label="NEW"
-                          color="success"
-                          size="small"
-                        />
+                    <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: { xs: 'nowrap', md: 'normal' } }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1 } }}>
+                        <Typography 
+                          component="span"
+                          sx={{
+                            backgroundColor: theme.palette.success.main,
+                            color: 'white',
+                            px: 0.5,
+                            py: 0.1,
+                            borderRadius: 0.5,
+                            fontSize: { xs: '0.6rem', sm: '0.7rem' },
+                            fontWeight: 'bold',
+                            display: 'inline-block',
+                            lineHeight: 1.2,
+                            minWidth: 28
+                          }}
+                        >
+                          NEW
+                        </Typography>
                         <Box>
                           {property.building_name}
                           {property.room_number && ` ${property.room_number}号室`}
@@ -861,21 +943,38 @@ const PropertyUpdatesPage: React.FC = () => {
                         </Box>
                       </Box>
                     </TableCell>
-                    <TableCell align="right" sx={isMobile ? { minWidth: 100, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>
-                      <Typography variant="body2" sx={{ fontWeight: 'bold', color: theme.palette.success.main }}>
-                        {formatPrice(property.price)}
-                      </Typography>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                      <Box sx={{ fontWeight: 'bold', color: theme.palette.success.main }}>
+                        {formatPrice(property.price, !isMobile)}
+                      </Box>
                     </TableCell>
-                    <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>{property.floor_number ? `${property.floor_number}階` : '-'}</TableCell>
-                    <TableCell sx={isMobile ? { minWidth: 70 } : {}}>{property.area ? `${property.area}㎡` : '-'}</TableCell>
-                    <TableCell sx={isMobile ? { minWidth: 70 } : {}}>{property.layout || '-'}</TableCell>
-                    <TableCell sx={isMobile ? { minWidth: 60 } : {}}>{property.direction || '-'}</TableCell>
-                    <TableCell sx={isMobile ? { minWidth: 60, whiteSpace: 'nowrap' } : { whiteSpace: 'nowrap' }}>
-                      {property.built_year ? (
-                        `築${new Date().getFullYear() - property.built_year}年`
+                    <TableCell align="right" sx={{ pl: { xs: 0, sm: 0.5 }, pr: { xs: 0.5, sm: 0.5 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                      {property.floor_number ? (
+                        <>
+                          <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.floor_number}</Box>
+                          <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>{property.floor_number}階</Box>
+                        </>
                       ) : '-'}
                     </TableCell>
-                    <TableCell sx={isMobile ? { minWidth: 90 } : {}}>{formatDate(property.created_at)}</TableCell>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                      {property.area ? (
+                        <>
+                          <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.area}</Box>
+                          <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>{property.area}㎡</Box>
+                        </>
+                      ) : '-'}
+                    </TableCell>
+                    <TableCell sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>{property.layout || '-'}</TableCell>
+                    <TableCell sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>{property.direction || '-'}</TableCell>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                      {property.built_year ? (
+                        <>
+                          <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>築{new Date().getFullYear() - property.built_year}年</Box>
+                          <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>築{new Date().getFullYear() - property.built_year}年</Box>
+                        </>
+                      ) : '-'}
+                    </TableCell>
+                    <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>{formatDate(property.created_at)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

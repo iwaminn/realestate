@@ -132,8 +132,8 @@ const AreaSelectionPage: React.FC = () => {
 
       setUpdatesLoading(true);
       try {
-        // 1回のAPIリクエストで全データを取得（キャッシュ版APIを使用）
-        const details = await propertyApi.getRecentUpdates(24, true);
+        // 1回のAPIリクエストで全データを取得
+        const details = await propertyApi.getRecentUpdates(24);
         
         // 全体の合計を計算
         let totalPriceChanges = 0;
@@ -596,36 +596,6 @@ const AreaSelectionPage: React.FC = () => {
           </Grid>
         </Box>
       )}
-
-      <Divider sx={{ my: 4 }} />
-
-      {/* 統計情報 */}
-      <Box sx={{ mb: 4 }}>
-        <Grid container spacing={3} justifyContent="center">
-          <Grid item xs={12} sm={6} md={5}>
-            <Paper sx={{ p: 3, textAlign: 'center' }}>
-              <ApartmentIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-              <Typography variant="h4" gutterBottom>
-                {totalCount.toLocaleString()}
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                掲載中の物件数
-              </Typography>
-            </Paper>
-          </Grid>
-          <Grid item xs={12} sm={6} md={5}>
-            <Paper sx={{ p: 3, textAlign: 'center' }}>
-              <LocationOnIcon color="primary" sx={{ fontSize: 40, mb: 1 }} />
-              <Typography variant="h4" gutterBottom>
-                6
-              </Typography>
-              <Typography variant="body2" color="text.secondary">
-                対応エリア（都心6区）
-              </Typography>
-            </Paper>
-          </Grid>
-        </Grid>
-      </Box>
 
       {/* エリア選択 */}
       <>
