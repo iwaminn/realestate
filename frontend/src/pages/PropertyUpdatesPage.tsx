@@ -306,7 +306,7 @@ const PropertyUpdatesPage: React.FC = () => {
   return (
     <Container maxWidth="xl" sx={{ 
       py: 4, 
-      px: isMobile ? 1 : 3  // スマートフォンでは左右余白を狭く
+      px: isMobile ? 0.5 : 3  // スマートフォンでは左右余白を最小限に
     }}>
       {/* ヘッダー */}
       <Box sx={{ mb: 4 }}>
@@ -413,40 +413,42 @@ const PropertyUpdatesPage: React.FC = () => {
       {/* 価格改定履歴タブ */}
       <TabPanel value={tabValue} index={0}>
         {/* 統計情報 */}
-        <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={12} md={4}>
+        <Grid container spacing={isMobile ? 1 : 2} sx={{ mb: isMobile ? 2 : 3 }}>
+          <Grid item xs={4} md={4}>
             <Paper sx={{ 
-              p: isMobile ? 1.5 : 2, 
+              p: isMobile ? 1 : 2, 
               textAlign: 'center' 
             }}>
-              <Typography variant="h6">{filteredPriceChanges.filter(p => p.price_diff !== null && p.price_diff !== undefined).length}</Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant={isMobile ? "body1" : "h6"} sx={{ fontWeight: 'bold' }}>
+                {filteredPriceChanges.filter(p => p.price_diff !== null && p.price_diff !== undefined).length}
+              </Typography>
+              <Typography variant={isMobile ? "caption" : "body2"} color="text.secondary">
                 価格改定物件数
               </Typography>
             </Paper>
           </Grid>
-          <Grid item xs={12} md={4}>
+          <Grid item xs={4} md={4}>
             <Paper sx={{ 
-              p: isMobile ? 1.5 : 2, 
+              p: isMobile ? 1 : 2, 
               textAlign: 'center' 
             }}>
-              <Typography variant="h6" color="primary">
+              <Typography variant={isMobile ? "body1" : "h6"} color="primary" sx={{ fontWeight: 'bold' }}>
                 {filteredPriceChanges.filter(p => p.price_diff && p.price_diff < 0).length}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant={isMobile ? "caption" : "body2"} color="text.secondary">
                 値下げ物件
               </Typography>
             </Paper>
           </Grid>
-          <Grid item xs={12} md={4}>
+          <Grid item xs={4} md={4}>
             <Paper sx={{ 
-              p: isMobile ? 1.5 : 2, 
+              p: isMobile ? 1 : 2, 
               textAlign: 'center' 
             }}>
-              <Typography variant="h6" color="error">
+              <Typography variant={isMobile ? "body1" : "h6"} color="error" sx={{ fontWeight: 'bold' }}>
                 {filteredPriceChanges.filter(p => p.price_diff && p.price_diff > 0).length}
               </Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant={isMobile ? "caption" : "body2"} color="text.secondary">
                 値上げ物件
               </Typography>
             </Paper>
@@ -760,48 +762,56 @@ const PropertyUpdatesPage: React.FC = () => {
       {/* 新規掲載物件タブ */}
       <TabPanel value={tabValue} index={1}>
         {/* 統計情報 */}
-        <Grid container spacing={2} sx={{ mb: 3 }}>
-          <Grid item xs={12} md={3}>
+        <Grid container spacing={isMobile ? 1 : 2} sx={{ mb: isMobile ? 2 : 3 }}>
+          <Grid item xs={3} md={3}>
             <Paper sx={{ 
-              p: isMobile ? 1.5 : 2, 
+              p: isMobile ? 1 : 2, 
               textAlign: 'center' 
             }}>
-              <Typography variant="h6">{filteredNewListings.length}</Typography>
-              <Typography variant="body2" color="text.secondary">
-                新規掲載物件数
+              <Typography variant={isMobile ? "body1" : "h6"} sx={{ fontWeight: 'bold' }}>
+                {filteredNewListings.length}
+              </Typography>
+              <Typography variant={isMobile ? "caption" : "body2"} color="text.secondary" sx={{ fontSize: isMobile ? '0.6rem' : 'inherit' }}>
+                新規掲載物件
               </Typography>
             </Paper>
           </Grid>
-          <Grid item xs={12} md={3}>
+          <Grid item xs={3} md={3}>
             <Paper sx={{ 
-              p: isMobile ? 1.5 : 2, 
+              p: isMobile ? 1 : 2, 
               textAlign: 'center' 
             }}>
-              <Typography variant="h6">{priceRangeStats.under5000}</Typography>
-              <Typography variant="body2" color="text.secondary">
+              <Typography variant={isMobile ? "body1" : "h6"} sx={{ fontWeight: 'bold' }}>
+                {priceRangeStats.under5000}
+              </Typography>
+              <Typography variant={isMobile ? "caption" : "body2"} color="text.secondary" sx={{ fontSize: isMobile ? '0.6rem' : 'inherit' }}>
                 5,000万円未満
               </Typography>
             </Paper>
           </Grid>
-          <Grid item xs={12} md={3}>
+          <Grid item xs={3} md={3}>
             <Paper sx={{ 
-              p: isMobile ? 1.5 : 2, 
+              p: isMobile ? 1 : 2, 
               textAlign: 'center' 
             }}>
-              <Typography variant="h6">{priceRangeStats.under10000}</Typography>
-              <Typography variant="body2" color="text.secondary">
-                5,000万円〜1億円
+              <Typography variant={isMobile ? "body1" : "h6"} sx={{ fontWeight: 'bold' }}>
+                {priceRangeStats.under10000}
+              </Typography>
+              <Typography variant={isMobile ? "caption" : "body2"} color="text.secondary" sx={{ fontSize: isMobile ? '0.6rem' : 'inherit', lineHeight: isMobile ? 1.2 : 'inherit' }}>
+                {isMobile ? '5千万〜1億' : '5,000万円〜1億円'}
               </Typography>
             </Paper>
           </Grid>
-          <Grid item xs={12} md={3}>
+          <Grid item xs={3} md={3}>
             <Paper sx={{ 
-              p: isMobile ? 1.5 : 2, 
+              p: isMobile ? 1 : 2, 
               textAlign: 'center' 
             }}>
-              <Typography variant="h6">{priceRangeStats.over20000}</Typography>
-              <Typography variant="body2" color="text.secondary">
-                2億円以上
+              <Typography variant={isMobile ? "body1" : "h6"} sx={{ fontWeight: 'bold' }}>
+                {priceRangeStats.over20000}
+              </Typography>
+              <Typography variant={isMobile ? "caption" : "body2"} color="text.secondary" sx={{ fontSize: isMobile ? '0.6rem' : 'inherit' }}>
+                {isMobile ? '2億円以上' : '2億円以上'}
               </Typography>
             </Paper>
           </Grid>
