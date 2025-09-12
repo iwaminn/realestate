@@ -30,6 +30,11 @@ class Building(Base):
     land_rights = Column(String(500))                          # 敷地の権利形態
     station_info = Column(Text)                                # 交通情報（建物レベル）
     
+    # 座標情報（キャッシュ用）
+    latitude = Column(Float)                                   # 緯度
+    longitude = Column(Float)                                  # 経度
+    geocoded_at = Column(DateTime)                            # ジオコーディング実行日時
+    
     # 管理情報
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

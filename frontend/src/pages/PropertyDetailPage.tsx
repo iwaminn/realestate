@@ -42,8 +42,11 @@ import {
   Cached,
   AccountBalanceWallet,
   Map,
+  Warning,
+  Shield,
 } from '@mui/icons-material';
 import { BookmarkButton } from '../components/BookmarkButton';
+import { getHazardMapUrlFromBuilding } from '../utils/geocoding';
 import {
   LineChart,
   Line,
@@ -65,6 +68,7 @@ const PropertyDetailPage: React.FC = () => {
   const [propertyDetail, setPropertyDetail] = useState<PropertyDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [hazardMapUrl, setHazardMapUrl] = useState<string>('https://disaportal.gsi.go.jp/hazardmap/maps/index.html');
 
   useEffect(() => {
     if (id) {
@@ -80,6 +84,21 @@ const PropertyDetailPage: React.FC = () => {
 
 
       setPropertyDetail(data);
+      
+      // 建物IDから座標を取得してハザードマップURLを生成（非同期）
+      if (data?.master_property?.building?.id) {
+        const buildingId = data.master_property.building.id;
+        const address = data.master_property.building.address;
+        // 住所に「号」まで含まれている場合のみ
+        if (address && address.match(/\d+-\d+-\d+|\d+号/)) {
+          // 非同期で座標を取得（ページ表示をブロックしない）
+          getHazardMapUrlFromBuilding(buildingId).then(url => {
+            setHazardMapUrl(url);
+          }).catch(error => {
+            console.error('ハザードマップURL生成エラー:', error);
+          });
+        }
+      }
     } catch (err) {
       setError('物件詳細の取得に失敗しました。');
       console.error(err);
@@ -355,8 +374,10 @@ const PropertyDetailPage: React.FC = () => {
                       </Typography>
                       {/* 住所に「号」まで含まれている場合、Google Mapsへのリンクを表示 */}
                       {building.address && building.address.match(/\d+-\d+-\d+|\d+号/) && (
-                        <Box
-                          component="a"
+                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                          {/* Google Mapsリンク */}
+                          <Box
+                            component="a"
                           href={`https://www.google.com/maps/search/${encodeURIComponent(building.address)}`}
                           target="_blank"
                           rel="noopener noreferrer"
@@ -399,6 +420,49 @@ const PropertyDetailPage: React.FC = () => {
                             Google Mapsで表示
                           </Typography>
                         </Box>
+                        
+                        {/* ハザードマップリンク */}
+                        <Box
+                          component="a"
+                          href={hazardMapUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          sx={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            padding: '4px 8px',
+                            borderRadius: '4px',
+                            border: '1px solid #ff9800',
+                            textDecoration: 'none',
+                            backgroundColor: '#fff3e0',
+                            transition: 'all 0.2s',
+                            flexShrink: 0,
+                            '&:hover': {
+                              backgroundColor: '#ffe0b2',
+                              boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                            }
+                          }}
+                        >
+                          <Warning
+                            sx={{
+                              width: 18,
+                              height: 18,
+                              mr: 0.75,
+                              color: '#ff6f00'
+                            }}
+                          />
+                          <Typography
+                            variant="body2"
+                            sx={{
+                              fontSize: '0.8125rem',
+                              color: '#ff6f00',
+                              fontWeight: 500
+                            }}
+                          >
+                            ハザードマップで確認
+                          </Typography>
+                        </Box>
+                      </Box>
                       )}
                     </Box>
                   }

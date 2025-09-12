@@ -37,10 +37,12 @@ import {
   ArrowBack as ArrowBackIcon,
   TableChart as TableChartIcon,
   ViewModule as ViewModuleIcon,
-  Cached as CachedIcon
+  Cached as CachedIcon,
+  Warning as WarningIcon
 } from '@mui/icons-material';
 import { propertyApi } from '../api/propertyApi';
 import { Property } from '../types/property';
+import { getHazardMapUrlFromBuilding } from '../utils/geocoding';
 
 interface BuildingStats {
   total_units: number;
@@ -74,6 +76,7 @@ const [properties, setProperties] = useState<Property[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [maxFloorFromProperties, setMaxFloorFromProperties] = useState<number | null>(null);
+  const [hazardMapUrl, setHazardMapUrl] = useState<string>('https://disaportal.gsi.go.jp/hazardmap/maps/index.html');
   
   // URLパラメータから各種設定を取得
   const getParamsFromUrl = () => {
@@ -143,7 +146,20 @@ const [properties, setProperties] = useState<Property[]>([]);
       setProperties(response.properties);
       setBuilding(response.building);
       
-
+      // 建物IDから座標を取得してハザードマップURLを生成（非同期）
+      if (response.building?.id) {
+        const buildingId = response.building.id;
+        const address = response.building.address;
+        // 住所に「号」まで含まれている場合のみ
+        if (address && address.match(/\d+-\d+-\d+|\d+号/)) {
+          // 非同期で座標を取得（ページ表示をブロックしない）
+          getHazardMapUrlFromBuilding(buildingId).then(url => {
+            setHazardMapUrl(url);
+          }).catch(error => {
+            console.error('ハザードマップURL生成エラー:', error);
+          });
+        }
+      }
       
       // 統計情報を計算
       if (response.properties.length > 0) {
@@ -517,50 +533,92 @@ const [properties, setProperties] = useState<Property[]>([]);
                   <Typography variant="h6">
                     {building.address || '不明'}
                   </Typography>
-                  {/* 住所に「号」まで含まれている場合、Google Mapsへのリンクを表示 */}
+                  {/* 住所に「号」まで含まれている場合、Google Mapsとハザードマップへのリンクを表示 */}
                   {building.address && building.address.match(/\d+-\d+-\d+|\d+号/) && (
-                    <Box
-                      component="a"
-                      href={`https://www.google.com/maps/search/${encodeURIComponent(building.address)}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      sx={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        padding: '4px 8px',
-                        borderRadius: '4px',
-                        border: '1px solid #dadce0',
-                        textDecoration: 'none',
-                        backgroundColor: 'white',
-                        transition: 'all 0.2s',
-                        width: 'fit-content',
-                        '&:hover': {
-                          backgroundColor: '#f1f3f4',
-                          boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
-                        }
-                      }}
-                    >
-                      {/* Google Maps公式アイコン */}
+                    <Box sx={{ display: 'flex', gap: 1 }}>
                       <Box
-                        component="img"
-                        src="https://www.gstatic.com/images/branding/product/1x/maps_24dp.png"
-                        alt="Google Maps"
+                        component="a"
+                        href={`https://www.google.com/maps/search/${encodeURIComponent(building.address)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
                         sx={{
-                          width: 18,
-                          height: 18,
-                          mr: 0.75
-                        }}
-                      />
-                      <Typography
-                        variant="body2"
-                        sx={{
-                          fontSize: '0.8125rem',
-                          color: '#1a73e8',
-                          fontWeight: 500
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          border: '1px solid #dadce0',
+                          textDecoration: 'none',
+                          backgroundColor: 'white',
+                          transition: 'all 0.2s',
+                          width: 'fit-content',
+                          '&:hover': {
+                            backgroundColor: '#f1f3f4',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                          }
                         }}
                       >
-                        Google Mapsで表示
-                      </Typography>
+                        {/* Google Maps公式アイコン */}
+                        <Box
+                          component="img"
+                          src="https://www.gstatic.com/images/branding/product/1x/maps_24dp.png"
+                          alt="Google Maps"
+                          sx={{
+                            width: 18,
+                            height: 18,
+                            mr: 0.75
+                          }}
+                        />
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            fontSize: '0.8125rem',
+                            color: '#1a73e8',
+                            fontWeight: 500
+                          }}
+                        >
+                          Google Mapsで表示
+                        </Typography>
+                      </Box>
+                      <Box
+                        component="a"
+                        href={hazardMapUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        sx={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          padding: '4px 8px',
+                          borderRadius: '4px',
+                          border: '1px solid #ff9800',
+                          textDecoration: 'none',
+                          backgroundColor: '#fff3e0',
+                          transition: 'all 0.2s',
+                          width: 'fit-content',
+                          '&:hover': {
+                            backgroundColor: '#ffe0b2',
+                            boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                          }
+                        }}
+                      >
+                        <WarningIcon
+                          sx={{
+                            width: 18,
+                            height: 18,
+                            mr: 0.75,
+                            color: '#ff9800'
+                          }}
+                        />
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            fontSize: '0.8125rem',
+                            color: '#ff9800',
+                            fontWeight: 500
+                          }}
+                        >
+                          ハザードマップ
+                        </Typography>
+                      </Box>
                     </Box>
                   )}
                 </Box>
