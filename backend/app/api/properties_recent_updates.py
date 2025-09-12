@@ -16,10 +16,10 @@ from ..models import (
     Building
 )
 
-router = APIRouter(prefix="/api", tags=["properties-v2"])
+router = APIRouter(prefix="/api", tags=["properties"])
 
 
-@router.get("/v2/properties/recent-updates", response_model=Dict[str, Any])
+@router.get("/properties/recent-updates", response_model=Dict[str, Any])
 async def get_recent_updates_cached(
     hours: int = Query(24, ge=1, le=168, description="過去N時間以内の更新"),
     db: Session = Depends(get_db)

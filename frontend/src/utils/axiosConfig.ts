@@ -1,9 +1,8 @@
 import axios from 'axios';
+import { API_CONFIG } from '../config/api';
 
-// APIのベースURLを設定（開発環境）
-if (import.meta.env.DEV) {
-  axios.defaults.baseURL = 'http://localhost:8000';
-}
+// APIのベースURLを設定
+axios.defaults.baseURL = API_CONFIG.BASE_URL;
 
 // Axiosのインターセプターを設定
 axios.interceptors.request.use(

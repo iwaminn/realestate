@@ -3,8 +3,7 @@
  */
 
 import { Bookmark, BookmarkCreate, BookmarkStatus } from '../types/property';
-
-const API_BASE_URL = 'http://localhost:8000';
+import { API_CONFIG } from '../config/api';
 
 export class BookmarkService {
   /**
@@ -27,7 +26,7 @@ export class BookmarkService {
    * 物件をブックマークに追加
    */
   static async addBookmark(propertyId: number): Promise<Bookmark> {
-    const response = await fetch(`${API_BASE_URL}/api/bookmarks/`, {
+    const response = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/`, {
       method: 'POST',
       headers: this.getAuthHeaders(),
       body: JSON.stringify({
@@ -55,7 +54,7 @@ export class BookmarkService {
    * 物件をブックマークから削除
    */
   static async removeBookmark(propertyId: number): Promise<void> {
-    const response = await fetch(`${API_BASE_URL}/api/bookmarks/${propertyId}`, {
+    const response = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/${propertyId}`, {
       method: 'DELETE',
       headers: this.getAuthHeaders(),
     });
@@ -75,7 +74,7 @@ export class BookmarkService {
    * ブックマーク一覧を取得
    */
   static async getBookmarks(): Promise<Bookmark[]> {
-    const response = await fetch(`${API_BASE_URL}/api/bookmarks/`, {
+    const response = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/`, {
       headers: this.getAuthHeaders(),
     });
 
@@ -93,7 +92,7 @@ export class BookmarkService {
    * 物件のブックマーク状態をチェック
    */
   static async checkBookmarkStatus(propertyId: number): Promise<BookmarkStatus> {
-    const response = await fetch(`${API_BASE_URL}/api/bookmarks/check/${propertyId}`, {
+    const response = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/check/${propertyId}`, {
       headers: this.getAuthHeaders(),
     });
 
