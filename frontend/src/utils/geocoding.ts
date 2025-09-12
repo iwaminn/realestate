@@ -10,7 +10,7 @@
  */
 export async function getCoordinatesFromBuilding(buildingId: number): Promise<{ lat: number; lng: number } | null> {
   try {
-    const response = await fetch(`http://localhost:8001/api/geocoding/building/${buildingId}`);
+    const response = await fetch(`http://localhost:8000/api/geocoding/building/${buildingId}`);
     
     if (!response.ok) {
       console.error('座標取得APIエラー:', response.status);
@@ -39,7 +39,7 @@ export async function getCoordinatesFromBuilding(buildingId: number): Promise<{ 
  */
 export async function getCoordinatesFromAddress(address: string): Promise<{ lat: number; lng: number } | null> {
   try {
-    const response = await fetch('http://localhost:8001/api/geocoding/geocode', {
+    const response = await fetch('http://localhost:8000/api/geocoding/geocode', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
