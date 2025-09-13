@@ -4249,25 +4249,19 @@ class BaseScraper(ABC):
     
     def _should_skip_due_to_price_mismatch(self, site_property_id: str) -> bool:
         """価格不一致履歴によりスキップすべきか判定"""
-        # 現在のテーブル構造では価格不一致のリトライ管理は未実装
-        # 将来的に実装する場合はここに処理を追加
-        return False
-        
-        # 以下は将来実装時のコード（コメントアウト）
-        """
         try:
             with self.transaction_scope() as session:
                 # price_mismatch_historyテーブルから確認
                 result = session.execute(
-                text('''
-                    SELECT retry_count, attempted_at
-                    FROM price_mismatch_history 
-                    WHERE site_property_id = :site_id 
-                    AND source_site = :site
-                    AND is_resolved = false
-                    ORDER BY attempted_at DESC
-                    LIMIT 1
-                '''),
+                    text('''
+                        SELECT retry_count, attempted_at
+                        FROM price_mismatch_history 
+                        WHERE site_property_id = :site_id 
+                        AND source_site = :site
+                        AND is_resolved = false
+                        ORDER BY attempted_at DESC
+                        LIMIT 1
+                    '''),
                     {'site_id': site_property_id, 'site': self.source_site.value}
                 ).first()
                 
@@ -4297,7 +4291,6 @@ class BaseScraper(ABC):
             self._handle_transaction_error(e, "価格不一致チェック")
             # エラーが発生した場合はスキップしない（処理を続行）
             return False
-        """
     
     def _calculate_retry_interval(self, error_count: int) -> int:
         """エラー回数に基づいて再試行間隔を計算（時間単位）"""
