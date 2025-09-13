@@ -161,8 +161,8 @@ const BuildingPropertiesPage: React.FC = () => {
           // 非同期で座標を取得（ページ表示をブロックしない）
           getHazardMapUrlFromBuilding(buildingId).then(url => {
             setHazardMapUrl(url);
-          }).catch(error => {
-            console.error('ハザードマップURL生成エラー:', error);
+          }).catch(() => {
+            // ハザードマップURL生成エラーは無視（デフォルトURLを使用）
           });
         }
       }
@@ -237,7 +237,6 @@ const BuildingPropertiesPage: React.FC = () => {
         }
       }
     } catch (err: any) {
-      console.error('[BuildingPropertiesPage] Error:', err);
       const errorMessage = err.response?.data?.detail || err.message || '建物の物件情報の取得に失敗しました';
       setError(errorMessage);
     } finally {
@@ -655,12 +654,29 @@ const BuildingPropertiesPage: React.FC = () => {
       {/* 販売概要 */}
       {stats && (
         <Paper elevation={2} sx={{ p: isMobile ? 2 : 3, mb: isMobile ? 2 : 4 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: statsExpanded ? 2 : 0 }}>
+          <Box 
+            sx={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'space-between', 
+              mb: statsExpanded ? 2 : 0,
+              ...(isMobile ? {
+                cursor: 'pointer',
+                '&:hover': {
+                  backgroundColor: 'action.hover'
+                },
+                p: 1,
+                mx: -1,
+                borderRadius: 1
+              } : {})
+            }}
+            onClick={isMobile ? () => setStatsExpanded(!statsExpanded) : undefined}
+          >
             <Typography variant="h6">販売概要</Typography>
             {isMobile && (
               <IconButton 
-                onClick={() => setStatsExpanded(!statsExpanded)}
                 size="small"
+                sx={{ pointerEvents: 'none' }}
               >
                 {statsExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
               </IconButton>
@@ -924,14 +940,19 @@ const BuildingPropertiesPage: React.FC = () => {
                   <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>販売終了日</Box>
                   <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>終了</Box>
                 </TableCell>}
-                <TableCell align="center" sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 35, sm: 'auto' }, whiteSpace: 'nowrap' }}>
-                  操作
-                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {sortedProperties.map((property) => (
-                <TableRow key={property.id} hover sx={{ opacity: property.sold_at ? 0.7 : 1 }}>
+                <TableRow 
+                  key={property.id} 
+                  hover 
+                  sx={{ 
+                    opacity: property.sold_at ? 0.7 : 1,
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => navigate(`/properties/${property.id}`)}
+                >
                   <TableCell align="right" sx={{ pl: { xs: 0, sm: 2 }, pr: { xs: 0.5, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
                     <Box display="flex" alignItems="center" justifyContent="flex-end" flexWrap="nowrap">
                       {property.sold_at && (
@@ -1108,24 +1129,6 @@ const BuildingPropertiesPage: React.FC = () => {
                       ) : '-'}
                     </TableCell>
                   )}
-                  <TableCell align="center" sx={{ px: { xs: 1, sm: 2 } }}>
-                    <Button
-                      component={Link}
-                      to={`/properties/${property.id}`}
-                      variant="outlined"
-                      size="small"
-                      sx={{
-                        fontSize: { xs: '0.75rem', sm: '0.875rem' },
-                        px: { xs: 1.5, sm: 2 },
-                        py: { xs: 0.5, sm: 1 },
-                        minWidth: { xs: 50, sm: 64 },
-                        whiteSpace: 'nowrap',
-                        fontWeight: { xs: 500, sm: 400 }
-                      }}
-                    >
-                      詳細
-                    </Button>
-                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -1136,7 +1139,15 @@ const BuildingPropertiesPage: React.FC = () => {
         <Grid container spacing={3}>
           {sortedProperties.map((property) => (
             <Grid item xs={12} md={6} key={property.id}>
-              <Card>
+              <Card 
+                sx={{ 
+                  cursor: 'pointer',
+                  '&:hover': {
+                    boxShadow: 3
+                  }
+                }}
+                onClick={() => navigate(`/properties/${property.id}`)}
+              >
                 <CardContent>
                   <Box display="flex" justifyContent="space-between" alignItems="flex-start">
                     <Box display="flex" alignItems="center">
@@ -1261,6 +1272,39 @@ const BuildingPropertiesPage: React.FC = () => {
                           )}
                         </Typography>
                       </Grid>
+                      {property.price_change_info && (
+                        <Grid item xs={12}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Typography variant="body2" color="text.secondary">
+                              価格改定: {formatDate(property.price_change_info.date)}
+                            </Typography>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                              <Typography 
+                                variant="body2" 
+                                sx={{ 
+                                  fontSize: '0.875rem',
+                                  color: 'text.secondary',
+                                  textDecoration: 'line-through'
+                                }}
+                              >
+                                {formatPrice(property.price_change_info.previous_price, true)}
+                              </Typography>
+                              <Typography 
+                                variant="body2" 
+                                sx={{ 
+                                  fontSize: '0.875rem',
+                                  color: property.price_change_info.change_amount > 0 ? 'error.main' : 'success.main',
+                                  fontWeight: 'bold'
+                                }}
+                              >
+                                {property.price_change_info.change_amount > 0 ? '↑' : '↓'}
+                                {formatPrice(Math.abs(property.price_change_info.change_amount), true)}
+                                ({property.price_change_info.change_rate > 0 ? '+' : ''}{property.price_change_info.change_rate}%)
+                              </Typography>
+                            </Box>
+                          </Box>
+                        </Grid>
+                      )}
                       {property.sold_at && (
                         <Grid item xs={12}>
                           <Typography variant="body2" color="text.secondary">
@@ -1271,19 +1315,7 @@ const BuildingPropertiesPage: React.FC = () => {
                     </Grid>
                   </Box>
 
-                  <Divider sx={{ my: 2 }} />
 
-                  <Box display="flex" justifyContent="center">
-                    <Button
-                      component={Link}
-                      to={`/properties/${property.id}`}
-                      variant="contained"
-                      size="small"
-                      fullWidth
-                    >
-                      詳細を見る
-                    </Button>
-                  </Box>
                 </CardContent>
               </Card>
             </Grid>

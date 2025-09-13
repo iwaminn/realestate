@@ -589,7 +589,7 @@ const PropertyDetailPage: React.FC = () => {
               </Typography>
             </Box>
             <Typography variant="body2" sx={{ opacity: 0.9 }}>
-              {property.display_building_name || building.normalized_name}
+              {building.normalized_name}
               {building.total_units && ` （総戸数: ${building.total_units}戸）`}の他の部屋も確認できます
             </Typography>
           </Box>
@@ -622,7 +622,7 @@ const PropertyDetailPage: React.FC = () => {
               minWidth: { xs: '100%', md: 'auto' }
             }}
           >
-            {property.display_building_name || building.normalized_name}の全物件を見る
+            {building.normalized_name}の全物件を見る
           </Button>
         </Box>
       </Paper>

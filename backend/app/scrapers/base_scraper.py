@@ -4817,6 +4817,7 @@ class BaseScraper(ABC):
                             built_year=property_data.get('built_year'),
                             built_month=property_data.get('built_month'),
                             total_floors=property_data.get('total_floors'),
+                            total_units=property_data.get('total_units'),
                             structure=property_data.get('structure'),
                             land_rights=property_data.get('land_rights'),
                             station_info=property_data.get('station_info')
@@ -4833,6 +4834,7 @@ class BaseScraper(ABC):
                         built_year=property_data.get('built_year'),
                         built_month=property_data.get('built_month'),
                         total_floors=property_data.get('total_floors'),
+                        total_units=property_data.get('total_units'),
                         structure=property_data.get('structure'),
                         land_rights=property_data.get('land_rights'),
                         station_info=property_data.get('station_info')
