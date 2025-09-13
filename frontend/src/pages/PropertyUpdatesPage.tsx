@@ -83,7 +83,7 @@ const PropertyUpdatesPage: React.FC = () => {
   const [viewMode, setViewMode] = useState<'table' | 'card'>('table');
   
   // 並び替えの状態管理
-  type SortField = 'building_name' | 'price' | 'price_diff' | 'area' | 'floor_number' | 'built_year' | 'days_on_market' | 'changed_at' | 'created_at';
+  type SortField = 'building_name' | 'price' | 'price_diff' | 'area' | 'floor_number' | 'built_year' | 'days_on_market' | 'changed_at' | 'created_at' | 'layout' | 'direction';
   type SortOrder = 'asc' | 'desc';
   const [sortField, setSortField] = useState<SortField>('price_diff');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
@@ -662,7 +662,6 @@ const PropertyUpdatesPage: React.FC = () => {
             </Table>
           </TableContainer>
         ) : (
-          /* カード表示 */
           <Grid container spacing={isMobile ? 1 : 2}>
             {paginatedData.map((property) => (
               <Grid item xs={12} sm={6} md={4} key={`${property.id}-${property.changed_at || property.created_at}`}>
@@ -991,7 +990,6 @@ const PropertyUpdatesPage: React.FC = () => {
             </Table>
           </TableContainer>
         ) : (
-          /* カード表示 */
           <Grid container spacing={isMobile ? 1 : 2}>
             {paginatedData.map((property) => (
               <Grid item xs={12} sm={6} md={4} key={`${property.id}-${property.created_at}`}>

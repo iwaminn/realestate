@@ -13,6 +13,14 @@ export interface Building {
   parking_info?: string;
 }
 
+export interface PriceChangeInfo {
+  date: string;
+  previous_price: number;
+  current_price: number;
+  change_amount: number;
+  change_rate: number;
+}
+
 export interface Property {
   id: number;
   building: Building;
@@ -44,6 +52,7 @@ export interface Property {
   final_price?: number;  // 最終価格（販売終了時の価格）
   is_bookmarked?: boolean;  // ブックマーク状態
   display_building_name?: string;  // 物件レベルの建物名
+  price_change_info?: PriceChangeInfo;  // 価格変更情報
 }
 
 export interface Listing {

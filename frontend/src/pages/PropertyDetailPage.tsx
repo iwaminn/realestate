@@ -44,6 +44,8 @@ import {
   Map,
   Warning,
   Shield,
+  ExpandMore,
+  ExpandLess,
 } from '@mui/icons-material';
 import { BookmarkButton } from '../components/BookmarkButton';
 import { getHazardMapUrlFromBuilding } from '../utils/geocoding';
@@ -69,6 +71,7 @@ const PropertyDetailPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hazardMapUrl, setHazardMapUrl] = useState<string>('https://disaportal.gsi.go.jp/hazardmap/maps/index.html');
+  const [showAllListings, setShowAllListings] = useState(false);
 
   useEffect(() => {
     if (id) {
@@ -80,9 +83,6 @@ const PropertyDetailPage: React.FC = () => {
     try {
       setLoading(true);
       const data = await propertyApi.getPropertyDetail(propertyId);
-
-
-
       setPropertyDetail(data);
       
       // 建物IDから座標を取得してハザードマップURLを生成（非同期）
@@ -94,14 +94,13 @@ const PropertyDetailPage: React.FC = () => {
           // 非同期で座標を取得（ページ表示をブロックしない）
           getHazardMapUrlFromBuilding(buildingId).then(url => {
             setHazardMapUrl(url);
-          }).catch(error => {
-            console.error('ハザードマップURL生成エラー:', error);
+          }).catch(() => {
+            // ハザードマップURL生成エラーは無視（デフォルトURLを使用）
           });
         }
       }
     } catch (err) {
       setError('物件詳細の取得に失敗しました。');
-      console.error(err);
     } finally {
       setLoading(false);
     }
@@ -200,7 +199,8 @@ const PropertyDetailPage: React.FC = () => {
     });
     
     // 日付ごとに代表価格を算出
-    Array.from(dateMap.entries()).sort(([a], [b]) => a.localeCompare(b)).forEach(([date, data]) => {
+    const dateEntries = Array.from(dateMap.entries()) as [string, { prices: number[], sources: Set<string> }][];
+    dateEntries.sort((a, b) => a[0].localeCompare(b[0])).forEach(([date, data]) => {
       const uniquePrices = [...new Set(data.prices)];
       const representativePrice = uniquePrices.length === 1 ? uniquePrices[0] : Math.min(...uniquePrices);
       
@@ -282,9 +282,7 @@ const PropertyDetailPage: React.FC = () => {
                     sx={{ mr: 1 }} 
                   />
                 )}
-                {property.source_sites.map(site => (
-                  <Chip key={site} label={site} color="primary" sx={{ mr: 1 }} />
-                ))}
+
                 <Chip label={`${property.listing_count}件の掲載`} color="secondary" sx={{ mr: 1 }} />
                 
                 {/* ブックマークボタン */}
@@ -374,7 +372,13 @@ const PropertyDetailPage: React.FC = () => {
                       </Typography>
                       {/* 住所に「号」まで含まれている場合、Google Mapsへのリンクを表示 */}
                       {building.address && building.address.match(/\d+-\d+-\d+|\d+号/) && (
-                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                        <Box sx={{ 
+                          display: 'flex', 
+                          gap: { xs: 1.5, md: 1 }, 
+                          flexDirection: { xs: 'column', md: 'row' },
+                          mt: { xs: 2, md: 1 },
+                          width: { xs: '100%', md: 'auto' }
+                        }}>
                           {/* Google Mapsリンク */}
                           <Box
                             component="a"
@@ -382,19 +386,23 @@ const PropertyDetailPage: React.FC = () => {
                           target="_blank"
                           rel="noopener noreferrer"
                           sx={{
-                            display: 'inline-flex',
+                            display: 'flex',
                             alignItems: 'center',
-                            mt: { xs: 1, md: 0 },
-                            padding: '4px 8px',
-                            borderRadius: '4px',
+                            justifyContent: 'center',
+                            padding: { xs: '12px 16px', md: '4px 8px' },
+                            borderRadius: '8px',
                             border: '1px solid #dadce0',
                             textDecoration: 'none',
                             backgroundColor: 'white',
                             transition: 'all 0.2s',
-                            flexShrink: 0,
+                            width: { xs: '100%', md: 'auto' },
+                            minHeight: { xs: '48px', md: 'auto' },
                             '&:hover': {
                               backgroundColor: '#f1f3f4',
-                              boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                            },
+                            '&:active': {
+                              backgroundColor: '#e8eaed'
                             }
                           }}
                         >
@@ -404,15 +412,15 @@ const PropertyDetailPage: React.FC = () => {
                             src="https://www.gstatic.com/images/branding/product/1x/maps_24dp.png"
                             alt="Google Maps"
                             sx={{
-                              width: 18,
-                              height: 18,
-                              mr: 0.75
+                              width: { xs: 20, md: 18 },
+                              height: { xs: 20, md: 18 },
+                              mr: 1
                             }}
                           />
                           <Typography
                             variant="body2"
                             sx={{
-                              fontSize: '0.8125rem',
+                              fontSize: { xs: '0.9375rem', md: '0.8125rem' },
                               color: '#1a73e8',
                               fontWeight: 500
                             }}
@@ -428,33 +436,38 @@ const PropertyDetailPage: React.FC = () => {
                           target="_blank"
                           rel="noopener noreferrer"
                           sx={{
-                            display: 'inline-flex',
+                            display: 'flex',
                             alignItems: 'center',
-                            padding: '4px 8px',
-                            borderRadius: '4px',
+                            justifyContent: 'center',
+                            padding: { xs: '12px 16px', md: '4px 8px' },
+                            borderRadius: '8px',
                             border: '1px solid #ff9800',
                             textDecoration: 'none',
                             backgroundColor: '#fff3e0',
                             transition: 'all 0.2s',
-                            flexShrink: 0,
+                            width: { xs: '100%', md: 'auto' },
+                            minHeight: { xs: '48px', md: 'auto' },
                             '&:hover': {
                               backgroundColor: '#ffe0b2',
-                              boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+                              boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
+                            },
+                            '&:active': {
+                              backgroundColor: '#ffcc80'
                             }
                           }}
                         >
                           <Warning
                             sx={{
-                              width: 18,
-                              height: 18,
-                              mr: 0.75,
+                              width: { xs: 20, md: 18 },
+                              height: { xs: 20, md: 18 },
+                              mr: 1,
                               color: '#ff6f00'
                             }}
                           />
                           <Typography
                             variant="body2"
                             sx={{
-                              fontSize: '0.8125rem',
+                              fontSize: { xs: '0.9375rem', md: '0.8125rem' },
                               color: '#ff6f00',
                               fontWeight: 500
                             }}
@@ -555,11 +568,70 @@ const PropertyDetailPage: React.FC = () => {
         </Grid>
       </Paper>
 
+      {/* 同じ建物の他の物件へのリンク */}
+      <Paper elevation={1} sx={{ 
+        p: { xs: 2, md: 3 }, 
+        mb: 3,
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        color: 'white'
+      }}>
+        <Box sx={{ 
+          display: 'flex', 
+          flexDirection: { xs: 'column', md: 'row' },
+          alignItems: { xs: 'stretch', md: 'center' },
+          gap: 2
+        }}>
+          <Box sx={{ flex: 1 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
+              <Business sx={{ fontSize: 24, mr: 1 }} />
+              <Typography variant="h6" fontWeight="bold">
+                同じ建物内の他の物件
+              </Typography>
+            </Box>
+            <Typography variant="body2" sx={{ opacity: 0.9 }}>
+              {property.display_building_name || building.normalized_name}
+              {building.total_units && ` （総戸数: ${building.total_units}戸）`}の他の部屋も確認できます
+            </Typography>
+          </Box>
+          <Button
+            variant="contained"
+            startIcon={<Apartment />}
+            onClick={() => {
+              const url = `/buildings/${building.id}/properties`;
+              if (property.sold_at || property.has_active_listing === false) {
+                navigate(`${url}?includeInactive=true`);
+              } else {
+                navigate(url);
+              }
+            }}
+            size="large"
+            sx={{
+              backgroundColor: 'white',
+              color: 'primary.main',
+              px: { xs: 3, md: 4 },
+              py: 1.5,
+              textTransform: 'none',
+              fontSize: '1rem',
+              fontWeight: 600,
+              boxShadow: 2,
+              '&:hover': {
+                backgroundColor: '#f5f5f5',
+                transform: 'translateY(-2px)',
+                boxShadow: 4
+              },
+              minWidth: { xs: '100%', md: 'auto' }
+            }}
+          >
+            {property.display_building_name || building.normalized_name}の全物件を見る
+          </Button>
+        </Box>
+      </Paper>
+
       {/* 掲載情報一覧 - アクティブな掲載がある場合のみ表示 */}
       {active_listings.length > 0 && (
         <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
           <Typography variant="h5" gutterBottom>
-            掲載情報一覧
+            掲載情報一覧 ({active_listings.length}件)
           </Typography>
           {isMobile && (
             <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
@@ -586,15 +658,21 @@ const PropertyDetailPage: React.FC = () => {
                   width: isMobile ? '100px' : '20%',
                   minWidth: isMobile ? '90px' : 'auto'
                 }}>売出確認日</TableCell>
-                <TableCell align="center" sx={{ 
-                  width: isMobile ? '60px' : '10%',
-                  minWidth: isMobile ? '60px' : 'auto'
-                }}>詳細</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
-              {active_listings.map((listing) => (
-                <TableRow key={listing.id}>
+              {(showAllListings ? active_listings : active_listings.slice(0, 5)).map((listing) => (
+                <TableRow 
+                  key={listing.id}
+                  hover
+                  sx={{ 
+                    cursor: 'pointer',
+                    '&:hover': {
+                      backgroundColor: 'action.hover'
+                    }
+                  }}
+                  onClick={() => window.open(listing.url, '_blank')}
+                >
                   <TableCell>
                     <Chip label={listing.source_site} size="small" />
                   </TableCell>
@@ -607,22 +685,48 @@ const PropertyDetailPage: React.FC = () => {
                       ? format(new Date(listing.published_at), 'yyyy/MM/dd', { locale: ja })
                       : format(new Date(listing.first_seen_at), 'yyyy/MM/dd', { locale: ja })}
                   </TableCell>
-                  <TableCell align="center">
-                    <Button
-                      size="small"
-                      startIcon={<OpenInNew />}
-                      href={listing.url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      見る
-                    </Button>
-                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         </TableContainer>
+        
+        {/* もっと見る/閉じるボタン */}
+        {active_listings.length > 5 && (
+          <Box sx={{ 
+            display: 'flex', 
+            justifyContent: 'center', 
+            mt: 2,
+            pt: 2,
+            borderTop: '1px solid',
+            borderColor: 'divider'
+          }}>
+            <Button
+              onClick={() => setShowAllListings(!showAllListings)}
+              variant="outlined"
+              size="large"
+              startIcon={showAllListings ? <ExpandLess /> : <ExpandMore />}
+              sx={{
+                px: 4,
+                py: 1,
+                textTransform: 'none',
+                fontSize: '1rem',
+                fontWeight: 500,
+                borderRadius: 2,
+                '&:hover': {
+                  backgroundColor: 'primary.light',
+                  color: 'white',
+                  borderColor: 'primary.main'
+                }
+              }}
+            >
+              {showAllListings ? 
+                '閉じる' : 
+                `残り${active_listings.length - 5}件をすべて表示`
+              }
+            </Button>
+          </Box>
+        )}
       </Paper>
       )}
       
@@ -664,7 +768,17 @@ const PropertyDetailPage: React.FC = () => {
               </TableHead>
               <TableBody>
                 {all_listings.slice(0, 5).map((listing) => (
-                  <TableRow key={listing.id}>
+                  <TableRow 
+                    key={listing.id}
+                    hover
+                    sx={{ 
+                      cursor: 'pointer',
+                      '&:hover': {
+                        backgroundColor: 'action.hover'
+                      }
+                    }}
+                    onClick={() => window.open(listing.url, '_blank')}
+                  >
                     <TableCell>
                       <Chip label={listing.source_site} size="small" />
                     </TableCell>
@@ -686,9 +800,13 @@ const PropertyDetailPage: React.FC = () => {
 
       {/* 価格推移グラフ */}
       {priceChartData.length > 0 && (
-        <Paper elevation={1} sx={{ p: 3, mb: 3 }}>
-          <Typography variant="h5" gutterBottom sx={{ display: 'flex', alignItems: 'center' }}>
-            <Timeline sx={{ mr: 1 }} />
+        <Paper elevation={1} sx={{ p: isMobile ? 2 : 3, mb: 3 }}>
+          <Typography 
+            variant={isMobile ? "h6" : "h5"} 
+            gutterBottom 
+            sx={{ display: 'flex', alignItems: 'center' }}
+          >
+            <Timeline sx={{ mr: 1, fontSize: isMobile ? 20 : 24 }} />
             価格推移
           </Typography>
           
@@ -699,13 +817,21 @@ const PropertyDetailPage: React.FC = () => {
             </Alert>
           )}
           
-          <Box sx={{ height: 400, mt: 2 }}>
+          <Box sx={{ height: isMobile ? 250 : 400, mt: 2 }}>
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={priceChartData}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
+                <XAxis 
+                  dataKey="date" 
+                  tick={{ fontSize: isMobile ? 10 : 12 }}
+                  angle={isMobile ? -45 : 0}
+                  textAnchor={isMobile ? "end" : "middle"}
+                  height={isMobile ? 60 : 30}
+                />
                 <YAxis
-                  tickFormatter={(value) => `${value.toLocaleString()}万`}
+                  tickFormatter={(value) => isMobile ? `${value.toLocaleString()}` : `${value.toLocaleString()}万`}
+                  tick={{ fontSize: isMobile ? 10 : 12 }}
+                  width={isMobile ? 45 : 60}
                 />
                 <Tooltip
                   formatter={(value: number) => [`${value.toLocaleString()}万円`, '価格']}
@@ -761,18 +887,66 @@ const PropertyDetailPage: React.FC = () => {
           
           {/* 価格変更サマリー */}
           {price_timeline && price_timeline.summary && (
-            <Box sx={{ mt: 2, display: 'flex', justifyContent: 'space-around', textAlign: 'center' }}>
-              <Box>
-                <Typography variant="body2" color="text.secondary">初回価格</Typography>
-                <Typography variant="h6">{formatPrice(price_timeline.summary.initial_price)}</Typography>
+            <Box sx={{ 
+              mt: 2, 
+              display: 'flex', 
+              justifyContent: 'space-around', 
+              textAlign: 'center',
+              flexDirection: { xs: 'row', sm: 'row' },
+              gap: { xs: 1, sm: 2 }
+            }}>
+              <Box sx={{ flex: 1 }}>
+                <Typography 
+                  variant={isMobile ? "caption" : "body2"} 
+                  color="text.secondary"
+                  sx={{ fontSize: isMobile ? '0.7rem' : '0.875rem' }}
+                >
+                  初回価格
+                </Typography>
+                <Typography 
+                  variant={isMobile ? "body1" : "h6"}
+                  sx={{ 
+                    fontSize: isMobile ? '0.875rem' : '1.25rem',
+                    fontWeight: isMobile ? 600 : 500
+                  }}
+                >
+                  {formatPrice(price_timeline.summary.initial_price)}
+                </Typography>
               </Box>
-              <Box>
-                <Typography variant="body2" color="text.secondary">現在価格</Typography>
-                <Typography variant="h6">{formatPrice(price_timeline.summary.current_price)}</Typography>
+              <Box sx={{ flex: 1 }}>
+                <Typography 
+                  variant={isMobile ? "caption" : "body2"} 
+                  color="text.secondary"
+                  sx={{ fontSize: isMobile ? '0.7rem' : '0.875rem' }}
+                >
+                  現在価格
+                </Typography>
+                <Typography 
+                  variant={isMobile ? "body1" : "h6"}
+                  sx={{ 
+                    fontSize: isMobile ? '0.875rem' : '1.25rem',
+                    fontWeight: isMobile ? 600 : 500
+                  }}
+                >
+                  {formatPrice(price_timeline.summary.current_price)}
+                </Typography>
               </Box>
-              <Box>
-                <Typography variant="body2" color="text.secondary">変動額</Typography>
-                <Typography variant="h6" color={price_timeline.summary.total_change > 0 ? 'error' : price_timeline.summary.total_change < 0 ? 'success' : 'inherit'}>
+              <Box sx={{ flex: 1 }}>
+                <Typography 
+                  variant={isMobile ? "caption" : "body2"} 
+                  color="text.secondary"
+                  sx={{ fontSize: isMobile ? '0.7rem' : '0.875rem' }}
+                >
+                  変動額
+                </Typography>
+                <Typography 
+                  variant={isMobile ? "body1" : "h6"} 
+                  color={price_timeline.summary.total_change > 0 ? 'error' : price_timeline.summary.total_change < 0 ? 'success' : 'inherit'}
+                  sx={{ 
+                    fontSize: isMobile ? '0.875rem' : '1.25rem',
+                    fontWeight: isMobile ? 600 : 500
+                  }}
+                >
                   {price_timeline.summary.total_change > 0 ? '+' : ''}{price_timeline.summary.total_change}万円
                 </Typography>
               </Box>
@@ -780,51 +954,6 @@ const PropertyDetailPage: React.FC = () => {
           )}
         </Paper>
       )}
-
-      {/* 同じ建物の他の物件 */}
-      <Paper elevation={2} sx={{ p: 3, mt: 3, backgroundColor: '#f8f9fa' }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-          <Business sx={{ fontSize: 28, color: 'primary.main', mr: 2 }} />
-          <Typography variant="h6" color="text.primary">
-            同じ建物内の他の物件
-          </Typography>
-        </Box>
-        
-        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-          {property.display_building_name || building.normalized_name}
-          {building.total_units && ` （総戸数: ${building.total_units}戸）`}
-        </Typography>
-        
-        <Button
-          variant="contained"
-          startIcon={<Apartment />}
-          onClick={() => {
-      
-            const url = `/buildings/${building.id}/properties`;
-            // 販売終了物件や掲載終了物件の場合は、includeInactive=trueを追加
-            if (property.sold_at || property.has_active_listing === false) {
-        
-              navigate(`${url}?includeInactive=true`);
-            } else {
-              navigate(url);
-            }
-          }}
-          fullWidth
-          size="large"
-          sx={{
-            py: 1.5,
-            textTransform: 'none',
-            fontSize: '1rem',
-            fontWeight: 500
-          }}
-        >
-          {property.display_building_name || building.normalized_name}の全物件を見る
-        </Button>
-        
-        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1, textAlign: 'center' }}>
-          同じ建物内で販売中の他の部屋を確認できます
-        </Typography>
-      </Paper>
     </Box>
   );
 };

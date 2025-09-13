@@ -45,7 +45,7 @@ import {
   ExpandLess as ExpandLessIcon
 } from '@mui/icons-material';
 import { propertyApi } from '../api/propertyApi';
-import { Property } from '../types/property';
+import { Property, PriceChangeInfo } from '../types/property';
 import { getHazardMapUrlFromBuilding } from '../utils/geocoding';
 
 interface BuildingStats {
@@ -916,14 +916,14 @@ const BuildingPropertiesPage: React.FC = () => {
                     <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>売出</Box>
                   </TableSortLabel>
                 </TableCell>
+                <TableCell sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 60, sm: 'auto' }, whiteSpace: 'nowrap' }}>
+                  <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>価格改定履歴</Box>
+                  <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>改定</Box>
+                </TableCell>
                 {includeInactive && <TableCell sx={{ px: { xs: 1, sm: 2 }, whiteSpace: 'nowrap' }}>
                   <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>販売終了日</Box>
                   <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>終了</Box>
                 </TableCell>}
-                <TableCell sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 35, sm: 'auto' }, whiteSpace: 'nowrap' }}>
-                  <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>掲載情報</Box>
-                  <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>掲載</Box>
-                </TableCell>
                 <TableCell align="center" sx={{ px: { xs: 1, sm: 2 }, minWidth: { xs: 35, sm: 'auto' }, whiteSpace: 'nowrap' }}>
                   操作
                 </TableCell>
@@ -1021,6 +1021,83 @@ const BuildingPropertiesPage: React.FC = () => {
                       </Box>
                     )}
                   </TableCell>
+                  <TableCell sx={{ px: { xs: 0.5, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                    {property.price_change_info ? (
+                      <Box sx={{ 
+                        display: { xs: 'flex', sm: 'block' },
+                        flexDirection: { xs: 'column', sm: 'unset' },
+                        alignItems: { xs: 'flex-start', sm: 'unset' },
+                        gap: { xs: 0.25, sm: 0 }
+                      }}>
+                        {/* PC版：日付表示 */}
+                        <Box sx={{ display: { xs: 'none', sm: 'block' } }}>
+                          <Typography variant="body2" sx={{ fontSize: '0.875rem', whiteSpace: 'nowrap' }}>
+                            {formatDate(property.price_change_info.date)}
+                          </Typography>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
+                            <Typography 
+                              variant="body2" 
+                              sx={{ 
+                                fontSize: '0.8rem',
+                                color: 'text.secondary',
+                                textDecoration: 'line-through',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              {formatPrice(property.price_change_info.previous_price, true)}
+                            </Typography>
+                            <Typography 
+                              variant="body2" 
+                              sx={{ 
+                                fontSize: '0.8rem',
+                                color: property.price_change_info.change_amount > 0 ? 'error.main' : 'success.main',
+                                fontWeight: 'bold',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              {property.price_change_info.change_amount > 0 ? '↑' : '↓'}
+                              {formatPrice(Math.abs(property.price_change_info.change_amount), true)}
+                              ({property.price_change_info.change_rate > 0 ? '+' : ''}{property.price_change_info.change_rate}%)
+                            </Typography>
+                          </Box>
+                        </Box>
+                        
+                        {/* モバイル版：コンパクト表示 */}
+                        <Box sx={{ display: { xs: 'flex', sm: 'none' }, flexDirection: 'column', gap: 0.25 }}>
+                          <Typography variant="body2" sx={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+                            {calculateDaysFromPublished(property.price_change_info.date)}
+                          </Typography>
+                          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
+                            <Typography 
+                              variant="body2" 
+                              sx={{ 
+                                fontSize: '0.7rem',
+                                color: 'text.secondary',
+                                textDecoration: 'line-through',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              {formatPrice(property.price_change_info.previous_price, true)}
+                            </Typography>
+                            <Typography 
+                              variant="body2" 
+                              sx={{ 
+                                fontSize: '0.75rem',
+                                color: property.price_change_info.change_amount > 0 ? 'error.main' : 'success.main',
+                                fontWeight: 'bold',
+                                whiteSpace: 'nowrap'
+                              }}
+                            >
+                              {property.price_change_info.change_amount > 0 ? '↑' : '↓'}
+                              {formatPrice(Math.abs(property.price_change_info.change_amount), true)}
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </Box>
+                    ) : (
+                      '-'
+                    )}
+                  </TableCell>
                   {includeInactive && (
                     <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
                       {property.sold_at ? (
@@ -1031,41 +1108,6 @@ const BuildingPropertiesPage: React.FC = () => {
                       ) : '-'}
                     </TableCell>
                   )}
-                  <TableCell sx={{ px: { xs: 1, sm: 2 } }}>
-                    <Tooltip 
-                      title={
-                        <Box>
-                          {property.source_sites.map((site) => (
-                            <Box key={site} sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
-                              <Box 
-                                sx={{ 
-                                  width: 8, 
-                                  height: 8, 
-                                  borderRadius: '50%',
-                                  backgroundColor: getSourceColor(site),
-                                  mr: 1
-                                }} 
-                              />
-                              <Typography variant="body2">{site}</Typography>
-                            </Box>
-                          ))}
-                        </Box>
-                      }
-                      arrow
-                      placement="left"
-                    >
-                      <Chip
-                        label={`${property.listing_count || property.source_sites.length}件`}
-                        size="small"
-                        variant="outlined"
-                        sx={{ 
-                          cursor: 'pointer',
-                          fontSize: { xs: '0.7rem', sm: '0.75rem' },
-                          height: { xs: 20, sm: 24 }
-                        }}
-                      />
-                    </Tooltip>
-                  </TableCell>
                   <TableCell align="center" sx={{ px: { xs: 1, sm: 2 } }}>
                     <Button
                       component={Link}

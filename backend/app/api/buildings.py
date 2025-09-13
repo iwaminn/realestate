@@ -262,6 +262,34 @@ async def get_building_properties(
     
     results = query.all()
     
+    # 価格変更履歴を一括取得（パフォーマンス最適化）
+    from ..models import PropertyPriceChange
+    from sqlalchemy import and_
+    
+    property_ids = [mp.id for mp, *_ in results]
+    
+    # 各物件の最新の価格変更を取得するサブクエリ
+    latest_changes_subquery = db.query(
+        PropertyPriceChange.master_property_id,
+        func.max(PropertyPriceChange.change_date).label('max_date')
+    ).filter(
+        PropertyPriceChange.master_property_id.in_(property_ids)
+    ).group_by(
+        PropertyPriceChange.master_property_id
+    ).subquery()
+    
+    # 最新の価格変更データを取得
+    price_changes = db.query(PropertyPriceChange).join(
+        latest_changes_subquery,
+        and_(
+            PropertyPriceChange.master_property_id == latest_changes_subquery.c.master_property_id,
+            PropertyPriceChange.change_date == latest_changes_subquery.c.max_date
+        )
+    ).all()
+    
+    # 物件IDをキーとする辞書に変換
+    price_change_map = {pc.master_property_id: pc for pc in price_changes}
+    
     # 結果を整形
     properties = []
     for mp, min_price, max_price, majority_price, listing_count, source_sites, has_active, last_confirmed, delisted, station_info, earliest_published_at in results:
@@ -272,6 +300,18 @@ async def get_building_properties(
         else:
             display_price = majority_price
             final_price = None
+        
+        # 価格変更情報を取得
+        price_change_info = None
+        if mp.id in price_change_map:
+            pc = price_change_map[mp.id]
+            price_change_info = {
+                "date": pc.change_date.isoformat(),
+                "previous_price": pc.old_price,
+                "current_price": pc.new_price,
+                "change_amount": pc.price_diff,
+                "change_rate": round(pc.price_diff_rate, 1) if pc.price_diff_rate else 0
+            }
         
         properties.append({
             "id": mp.id,
@@ -294,7 +334,9 @@ async def get_building_properties(
             "repair_fund": mp.repair_fund,
             "earliest_published_at": earliest_published_at,
             "sold_at": mp.sold_at.isoformat() if mp.sold_at else None,
-            "final_price": mp.final_price
+            "final_price": mp.final_price,
+            "latest_price_update": mp.latest_price_change_at.isoformat() if mp.latest_price_change_at else None,
+            "price_change_info": price_change_info
         })
     
     return {
