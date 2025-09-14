@@ -927,6 +927,9 @@ const TaskLogs = React.memo(({ task, logPage, setLogPage }: any) => {
 
 // エラーログコンポーネント
 const TaskErrorLogs = React.memo(({ task }: any) => {
+  const [errorLogPage, setErrorLogPage] = React.useState(1);
+  const itemsPerPage = 30;
+  
   if (!task.error_logs || task.error_logs.length === 0) {
     return (
       <Typography variant="body2" color="text.secondary" align="center" py={2}>
@@ -935,96 +938,131 @@ const TaskErrorLogs = React.memo(({ task }: any) => {
     );
   }
   
+  const reversedLogs = task.error_logs.slice().reverse();
+  const startIndex = (errorLogPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedLogs = reversedLogs.slice(startIndex, endIndex);
+  const totalPages = Math.ceil(task.error_logs.length / itemsPerPage);
+  
   return (
     <Box sx={{ 
-      maxHeight: 400, 
-      overflow: 'auto', 
       bgcolor: 'grey.50', 
       p: 1, 
       borderRadius: 1,
-      width: '100%',
-      overflowX: 'hidden'
+      width: '100%'
     }}>
-      <List dense sx={{ width: '100%' }}>
-        {task.error_logs.slice().reverse().map((log, index) => (
-          <ListItem key={index} sx={{ 
-            py: 0.5,
-            borderBottom: '1px solid',
-            borderColor: 'grey.200',
-            bgcolor: 'error.50',
-            display: 'block',
-            width: '100%',
-            maxWidth: '100%'
-          }}>
-            <ListItemText
-              sx={{ overflow: 'hidden' }}
-              primary={
-                <Box>
-                  <Box display="flex" alignItems="center" gap={1} sx={{ mb: 0.5 }}>
-                    <Typography variant="caption" color="text.secondary">
-                      {new Date(log.timestamp).toLocaleTimeString('ja-JP')}
-                    </Typography>
-                    <Chip
-                      label={log.reason?.includes('システムエラー') ? 'システムエラー' : log.reason?.split(':')[0] || log.reason}
-                      size="small"
-                      color="error"
-                      sx={{ height: 20, flexShrink: 0 }}
-                    />
-                  </Box>
-                  {log.reason?.includes(':') && (
-                    <Typography 
-                      variant="body2" 
-                      color="error" 
-                      component="div"
-                      sx={{ 
-                        wordBreak: 'break-all',
-                        overflowWrap: 'break-word',
-                        whiteSpace: 'pre-wrap',
-                        maxWidth: '100%'
-                      }}
-                    >
-                      {log.reason.substring(log.reason.indexOf(':') + 1).trim()}
-                    </Typography>
-                  )}
-                </Box>
-              }
-              secondary={
-                <Box>
-                  <Typography variant="caption" component="div" color="text.secondary">
-                    {log.scraper} - {log.area_code || log.area}
-                  </Typography>
-                  {log.building_name && (
-                    <Typography variant="caption" component="div">
-                      建物名: {log.building_name} {log.price && `| 価格: ${log.price}`}
-                    </Typography>
-                  )}
-                  {log.url && (
-                    <Typography 
-                      variant="caption" 
-                      component="div"
-                      sx={{ 
-                        wordBreak: 'break-all',
-                        overflow: 'hidden'
-                      }}
-                    >
-                      <a href={log.url} target="_blank" rel="noopener noreferrer" 
-                         style={{ color: '#1976d2', textDecoration: 'none' }}>
-                        {log.url}
-                      </a>
-                    </Typography>
-                  )}
-                </Box>
-              }
+      {totalPages > 1 && (
+        <Box sx={{ mb: 1 }}>
+          <Typography variant="caption" color="text.secondary" align="center" display="block" sx={{ mb: 0.5 }}>
+            全{task.error_logs.length}件 (1ページ = 最新、{totalPages}ページ = 最古)
+          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+            <Pagination
+              count={totalPages}
+              page={errorLogPage}
+              onChange={(_, page) => setErrorLogPage(page)}
+              size="small"
+              color="primary"
             />
-          </ListItem>
-        ))}
-      </List>
+          </Box>
+        </Box>
+      )}
+      <Box sx={{ maxHeight: 400, overflow: 'auto', overflowX: 'hidden' }}>
+        <List dense sx={{ width: '100%' }}>
+          {paginatedLogs.map((log, index) => (
+            <ListItem key={index} sx={{ 
+              py: 0.5,
+              borderBottom: '1px solid',
+              borderColor: 'grey.200',
+              bgcolor: 'error.50',
+              display: 'block',
+              width: '100%',
+              maxWidth: '100%'
+            }}>
+              <ListItemText
+                sx={{ overflow: 'hidden' }}
+                primary={
+                  <Box>
+                    <Box display="flex" alignItems="center" gap={1} sx={{ mb: 0.5 }}>
+                      <Typography variant="caption" color="text.secondary">
+                        {new Date(log.timestamp).toLocaleTimeString('ja-JP')}
+                      </Typography>
+                      <Chip
+                        label={log.reason?.includes('システムエラー') ? 'システムエラー' : log.reason?.split(':')[0] || log.reason}
+                        size="small"
+                        color="error"
+                        sx={{ height: 20, flexShrink: 0 }}
+                      />
+                    </Box>
+                    {log.reason?.includes(':') && (
+                      <Typography 
+                        variant="body2" 
+                        color="error" 
+                        component="div"
+                        sx={{ 
+                          wordBreak: 'break-all',
+                          overflowWrap: 'break-word',
+                          whiteSpace: 'pre-wrap',
+                          maxWidth: '100%'
+                        }}
+                      >
+                        {log.reason.substring(log.reason.indexOf(':') + 1).trim()}
+                      </Typography>
+                    )}
+                  </Box>
+                }
+                secondary={
+                  <Box>
+                    <Typography variant="caption" component="div" color="text.secondary">
+                      {log.scraper} - {log.area_code || log.area}
+                    </Typography>
+                    {log.building_name && (
+                      <Typography variant="caption" component="div">
+                        建物名: {log.building_name} {log.price && `| 価格: ${log.price}`}
+                      </Typography>
+                    )}
+                    {log.url && (
+                      <Typography 
+                        variant="caption" 
+                        component="div"
+                        sx={{ 
+                          wordBreak: 'break-all',
+                          overflow: 'hidden'
+                        }}
+                      >
+                        <a href={log.url} target="_blank" rel="noopener noreferrer" 
+                           style={{ color: '#1976d2', textDecoration: 'none' }}>
+                          {log.url}
+                        </a>
+                      </Typography>
+                    )}
+                  </Box>
+                }
+              />
+            </ListItem>
+          ))}
+        </List>
+      </Box>
+      {totalPages > 1 && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 1 }}>
+          <Pagination
+            count={totalPages}
+            page={errorLogPage}
+            onChange={(_, page) => setErrorLogPage(page)}
+            size="small"
+            color="primary"
+          />
+        </Box>
+      )}
     </Box>
   );
 });
 
 // 警告ログコンポーネント
 const TaskWarningLogs = React.memo(({ task }: any) => {
+  const [warningLogPage, setWarningLogPage] = React.useState(1);
+  const itemsPerPage = 30;
+  
   if (!task.warning_logs || task.warning_logs.length === 0) {
     return (
       <Typography variant="body2" color="text.secondary" align="center" py={2}>
@@ -1033,57 +1071,92 @@ const TaskWarningLogs = React.memo(({ task }: any) => {
     );
   }
   
+  const reversedLogs = task.warning_logs.slice().reverse();
+  const startIndex = (warningLogPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedLogs = reversedLogs.slice(startIndex, endIndex);
+  const totalPages = Math.ceil(task.warning_logs.length / itemsPerPage);
+  
   return (
-    <Box sx={{ maxHeight: 400, overflow: 'auto', bgcolor: 'grey.50', p: 1, borderRadius: 1 }}>
-      <List dense>
-        {task.warning_logs.slice().reverse().map((log, index) => (
-          <ListItem key={index} sx={{ 
-            py: 0.5,
-            borderBottom: '1px solid',
-            borderColor: 'grey.200',
-            bgcolor: 'warning.50'
-          }}>
-            <ListItemText 
-              primary={
-                <Box>
-                  <Typography variant="body2" component="span" fontWeight="medium">
-                    [{new Date(log.timestamp).toLocaleTimeString()}] {log.scraper}
-                  </Typography>
-                  <Typography variant="body2" component="div" color="warning.main">
-                    {log.reason || log.message || '警告'}
-                  </Typography>
-                </Box>
-              }
-              secondary={
-                <Box>
-                  {(log.building_name || log.price || log.site_property_id) && (
-                    <Typography variant="caption" component="div" color="text.secondary">
-                      {log.building_name && `建物名: ${log.building_name}`}
-                      {log.price && ` | 価格: ${log.price}`}
-                      {log.site_property_id && ` | 掲載情報ID: ${log.site_property_id}`}
-                    </Typography>
-                  )}
-                  {log.url && (
-                    <Typography 
-                      variant="caption" 
-                      component="div"
-                      sx={{ 
-                        wordBreak: 'break-all',
-                        overflow: 'hidden'
-                      }}
-                    >
-                      <a href={log.url} target="_blank" rel="noopener noreferrer" 
-                         style={{ color: '#ed6c02', textDecoration: 'none' }}>
-                        {log.url}
-                      </a>
-                    </Typography>
-                  )}
-                </Box>
-              }
+    <Box sx={{ bgcolor: 'grey.50', p: 1, borderRadius: 1 }}>
+      {totalPages > 1 && (
+        <Box sx={{ mb: 1 }}>
+          <Typography variant="caption" color="text.secondary" align="center" display="block" sx={{ mb: 0.5 }}>
+            全{task.warning_logs.length}件 (1ページ = 最新、{totalPages}ページ = 最古)
+          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+            <Pagination
+              count={totalPages}
+              page={warningLogPage}
+              onChange={(_, page) => setWarningLogPage(page)}
+              size="small"
+              color="primary"
             />
-          </ListItem>
-        ))}
-      </List>
+          </Box>
+        </Box>
+      )}
+      <Box sx={{ maxHeight: 400, overflow: 'auto' }}>
+        <List dense>
+          {paginatedLogs.map((log, index) => (
+            <ListItem key={index} sx={{ 
+              py: 0.5,
+              borderBottom: '1px solid',
+              borderColor: 'grey.200',
+              bgcolor: 'warning.50'
+            }}>
+              <ListItemText 
+                primary={
+                  <Box>
+                    <Typography variant="body2" component="span" fontWeight="medium">
+                      [{new Date(log.timestamp).toLocaleTimeString()}] {log.scraper}
+                    </Typography>
+                    <Typography variant="body2" component="div" color="warning.main">
+                      {log.reason || log.message || '警告'}
+                    </Typography>
+                  </Box>
+                }
+                secondary={
+                  <Box>
+                    {(log.building_name || log.price || log.site_property_id) && (
+                      <Typography variant="caption" component="div" color="text.secondary">
+                        {log.building_name && `建物名: ${log.building_name}`}
+                        {log.price && ` | 価格: ${log.price}`}
+                        {log.site_property_id && ` | 掲載情報ID: ${log.site_property_id}`}
+                      </Typography>
+                    )}
+                    {log.url && (
+                      <Typography 
+                        variant="caption" 
+                        component="div"
+                        sx={{ 
+                          wordBreak: 'break-all',
+                          overflow: 'hidden'
+                        }}
+                      >
+                        <a href={log.url} target="_blank" rel="noopener noreferrer" 
+                           style={{ color: '#ed6c02', textDecoration: 'none' }}>
+                          {log.url}
+                        </a>
+                      </Typography>
+                    )}
+                  </Box>
+                }
+              />
+            </ListItem>
+          ))}
+        </List>
+      </Box>
+      {totalPages > 1 && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 1 }}>
+          <Pagination
+            count={totalPages}
+            page={warningLogPage}
+            onChange={(_, page) => setWarningLogPage(page)}
+            size="small"
+            color="primary"
+          />
+        </Box>
+      )}
     </Box>
   );
 });
