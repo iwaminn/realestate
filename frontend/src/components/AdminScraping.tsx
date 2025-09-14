@@ -1097,7 +1097,8 @@ const AdminScraping: React.FC = () => {
   const [useCustomRefetch, setUseCustomRefetch] = useState(false);
   const [ignoreErrorHistory, setIgnoreErrorHistory] = useState(false); // 404/検証エラー履歴を無視するオプション
   const [tasks, setTasks] = useState<ScrapingTask[]>([]);
-  const [showAllTasks, setShowAllTasks] = useState(false); // タスク表示数制限用
+  const [taskPage, setTaskPage] = useState(1); // タスク一覧のページ番号
+  const [tasksPerPage] = useState(20); // 1ページあたりのタスク数
   const [loading, setLoading] = useState(false);
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set());
   const [selectedTaskLog, setSelectedTaskLog] = useState<string | null>(null);
@@ -1140,8 +1141,8 @@ const AdminScraping: React.FC = () => {
       );
       
       if (hasRunningTasks) {
-        // 実行中のタスクのみを更新（10秒ごとに変更し、頻度を削減）
-        const interval = setInterval(() => fetchTasks(true), 10000);
+        // 実行中のタスクのみを更新（5秒ごと）
+        const interval = setInterval(() => fetchTasks(true), 5000);
         return () => clearInterval(interval);
       }
     }
@@ -1381,6 +1382,9 @@ const AdminScraping: React.FC = () => {
       
       // 展開状態に追加
       setExpandedTasks(prev => new Set([...prev, response.data.task_id]));
+      
+      // 新しいタスクが追加されたら1ページ目に戻る
+      setTaskPage(1);
     } catch (error) {
       // エラーは既にsetErrorで処理されている
       alert('スクレイピングの開始に失敗しました');
@@ -1627,27 +1631,28 @@ const AdminScraping: React.FC = () => {
   
   // 表示するタスクリストをメモ化（パフォーマンス最適化）
   const displayTasks = useMemo(() => {
-    const MAX_DISPLAY_TASKS = 20; // 表示制限数
-    
-    if (showAllTasks) {
-      return tasks;
-    }
-    
     // 実行中・一時停止中のタスクを優先表示
     const activeTasks = tasks.filter(task => 
       task.status === 'running' || task.status === 'pending' || task.status === 'paused' || task.status === 'initializing'
     );
-    const otherTasks = tasks.filter(task => 
+    const completedTasks = tasks.filter(task => 
       !(task.status === 'running' || task.status === 'pending' || task.status === 'paused' || task.status === 'initializing')
     );
     
-    const displayList = [
-      ...activeTasks,
-      ...otherTasks.slice(0, Math.max(0, MAX_DISPLAY_TASKS - activeTasks.length))
-    ];
+    // アクティブなタスクを先頭に、その後は完了タスクを配置
+    const allTasks = [...activeTasks, ...completedTasks];
     
-    return displayList;
-  }, [tasks, showAllTasks]);
+    // ページングの計算
+    const startIndex = (taskPage - 1) * tasksPerPage;
+    const endIndex = startIndex + tasksPerPage;
+    
+    return allTasks.slice(startIndex, endIndex);
+  }, [tasks, taskPage, tasksPerPage]);
+  
+  // 総ページ数の計算
+  const totalPages = useMemo(() => {
+    return Math.ceil(tasks.length / tasksPerPage);
+  }, [tasks.length, tasksPerPage]);
 
   // タスク統計計算をメモ化（パフォーマンス最適化）
   const getTaskStats = useCallback((task: ScrapingTask) => {
@@ -1809,21 +1814,23 @@ const AdminScraping: React.FC = () => {
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
           <Typography variant="h6">
             実行中のタスク
-            {!showAllTasks && tasks.length > displayTasks.length && (
+            {tasks.length > 0 && (
               <Typography variant="caption" color="text.secondary" sx={{ ml: 1 }}>
-                ({displayTasks.length}/{tasks.length}件表示)
+                （全{tasks.length}件中 {Math.min((taskPage - 1) * tasksPerPage + 1, tasks.length)}-{Math.min(taskPage * tasksPerPage, tasks.length)}件を表示）
               </Typography>
             )}
           </Typography>
           <Box display="flex" alignItems="center" gap={1}>
-            {tasks.length > 20 && (
-              <Button
-                variant="outlined"
+            {totalPages > 1 && (
+              <Pagination
+                count={totalPages}
+                page={taskPage}
+                onChange={(_, page) => setTaskPage(page)}
                 size="small"
-                onClick={() => setShowAllTasks(!showAllTasks)}
-              >
-                {showAllTasks ? '最新20件のみ表示' : 'すべて表示'}
-              </Button>
+                color="primary"
+                siblingCount={1}
+                boundaryCount={1}
+              />
             )}
             <Button
               variant="outlined"
@@ -1889,6 +1896,19 @@ const AdminScraping: React.FC = () => {
               </TableBody>
             </Table>
           </TableContainer>
+          {totalPages > 1 && (
+            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+              <Pagination
+                count={totalPages}
+                page={taskPage}
+                onChange={(_, page) => setTaskPage(page)}
+                size="small"
+                color="primary"
+                siblingCount={1}
+                boundaryCount={1}
+              />
+            </Box>
+          )}
         )}
       </Paper>
 
