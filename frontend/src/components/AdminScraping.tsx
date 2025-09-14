@@ -175,8 +175,920 @@ interface ScrapingTask {
   }>;
 }
 
+// スクレイピング設定フォームを独立したコンポーネントとして分離
+const ScrapingConfigForm = React.memo(({ 
+  areas, 
+  selectedAreas, 
+  setSelectedAreas,
+  selectedScrapers,
+  setSelectedScrapers,
+  maxProperties,
+  setMaxProperties,
+  useCustomRefetch,
+  setUseCustomRefetch,
+  detailRefetchHours,
+  setDetailRefetchHours,
+  ignoreErrorHistory,
+  setIgnoreErrorHistory,
+  startScraping,
+  loading
+}: any) => {
+  const scraperOptions = [
+    { value: 'suumo', label: 'SUUMO' },
+    { value: 'homes', label: "LIFULL HOME'S" },
+    { value: 'rehouse', label: '三井のリハウス' },
+    { value: 'nomu', label: 'ノムコム' },
+    { value: 'livable', label: '東急リバブル' },
+  ];
+
+  // エリア選択のメニューアイテムをメモ化
+  const areaMenuItems = useMemo(() => {
+    return areas.map((area: Area) => (
+      <MenuItem key={area.code} value={area.code}>
+        <Checkbox checked={selectedAreas.includes(area.code)} />
+        <ListItemText primary={area.name} />
+      </MenuItem>
+    ));
+  }, [areas, selectedAreas]);
+
+  // スクレイパー選択のメニューアイテムをメモ化
+  const scraperMenuItems = useMemo(() => {
+    return scraperOptions.map(option => (
+      <MenuItem key={option.value} value={option.value}>
+        <Checkbox checked={selectedScrapers.includes(option.value)} />
+        <ListItemText primary={option.label} />
+      </MenuItem>
+    ));
+  }, [selectedScrapers]);
+
+  return (
+    <Paper sx={{ p: 3, mb: 3 }}>
+      <Typography variant="h6" gutterBottom>
+        新規スクレイピング
+      </Typography>
+      
+      <Grid container spacing={3}>
+        <Grid item xs={12} md={4}>
+          <FormControl fullWidth>
+            <InputLabel>エリア</InputLabel>
+            <Select
+              multiple
+              value={selectedAreas}
+              onChange={(e) => setSelectedAreas(e.target.value as string[])}
+              label="エリア"
+              renderValue={(selected) => (
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                  {(selected as string[]).map((value) => (
+                    <Chip 
+                      key={value} 
+                      label={areas.find((a: Area) => a.code === value)?.name || value}
+                      size="small"
+                    />
+                  ))}
+                </Box>
+              )}
+            >
+              {areaMenuItems}
+            </Select>
+          </FormControl>
+        </Grid>
+
+        <Grid item xs={12} md={4}>
+          <FormControl fullWidth>
+            <InputLabel>スクレイパー</InputLabel>
+            <Select
+              multiple
+              value={selectedScrapers}
+              onChange={(e) => setSelectedScrapers(e.target.value as string[])}
+              label="スクレイパー"
+              renderValue={(selected) => (
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                  {(selected as string[]).map((value) => (
+                    <Chip 
+                      key={value} 
+                      label={scraperOptions.find(opt => opt.value === value)?.label || value}
+                      size="small"
+                    />
+                  ))}
+                </Box>
+              )}
+              MenuProps={{
+                PaperProps: {
+                  style: {
+                    maxHeight: 400,
+                  },
+                },
+              }}
+            >
+              <Box sx={{ px: 2, py: 1, borderBottom: '1px solid rgba(0, 0, 0, 0.12)' }}>
+                <Button
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedScrapers(scraperOptions.map(opt => opt.value));
+                  }}
+                  sx={{ mr: 1 }}
+                >
+                  全選択
+                </Button>
+                <Button
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedScrapers([]);
+                  }}
+                >
+                  全解除
+                </Button>
+              </Box>
+              {scraperMenuItems}
+            </Select>
+          </FormControl>
+        </Grid>
+
+        <Grid item xs={12} md={4}>
+          <Autocomplete
+            freeSolo
+            options={[100, 200, 300, 400, 500, 1000, 2000, 3000, 4000, 5000, 10000]}
+            value={maxProperties}
+            getOptionLabel={(option) => option.toString()}
+            onChange={(_, newValue) => {
+              if (typeof newValue === 'number') {
+                setMaxProperties(newValue);
+              } else if (typeof newValue === 'string') {
+                const value = parseInt(newValue);
+                if (!isNaN(value) && value > 0 && value <= 10000) {
+                  setMaxProperties(value);
+                }
+              }
+            }}
+            onInputChange={(_, newInputValue) => {
+              const value = parseInt(newInputValue);
+              if (!isNaN(value) && value > 0 && value <= 10000) {
+                setMaxProperties(value);
+              }
+            }}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                label="処理上限数"
+                type="number"
+                helperText="一覧ページから発見した物件のうち、処理対象とする最大数"
+                InputProps={{
+                  ...params.InputProps,
+                  inputProps: {
+                    ...params.inputProps,
+                    min: 1,
+                    max: 10000,
+                  },
+                }}
+              />
+            )}
+          />
+        </Grid>
+
+        <Grid item xs={12}>
+          <Box sx={{ mb: 2 }}>
+            <FormGroup>
+              <FormControlLabel
+                  control={
+                    <Checkbox
+                      checked={useCustomRefetch}
+                      onChange={(e) => {
+                        setUseCustomRefetch(e.target.checked);
+                        if (!e.target.checked) {
+                          setIgnoreErrorHistory(false);
+                        }
+                      }}
+                      color="warning"
+                    />
+                  }
+                  label="詳細ページの再取得範囲をカスタマイズ"
+                />
+              </FormGroup>
+              {!useCustomRefetch && (
+                <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                  デフォルト: 価格変更があった物件と、90日以上詳細を取得していない物件のみ更新
+                </Typography>
+              )}
+              {useCustomRefetch && (
+                <Box sx={{ mt: 2 }}>
+                  <TextField
+                    fullWidth
+                    label="詳細ページ再取得期間"
+                    type="number"
+                    value={detailRefetchHours}
+                    onChange={(e) => {
+                      const value = parseInt(e.target.value);
+                      if (!isNaN(value) && value >= 0) {
+                        setDetailRefetchHours(value);
+                      }
+                    }}
+                    InputProps={{
+                      inputProps: { min: 0, max: 10000 },
+                      endAdornment: detailRefetchHours === 0 
+                        ? <Typography variant="caption" color="warning.main">すべて再取得</Typography>
+                        : detailRefetchHours < 24 
+                        ? <Typography variant="caption" color="text.secondary">{detailRefetchHours}時間</Typography>
+                        : <Typography variant="caption" color="text.secondary">{Math.round(detailRefetchHours / 24)}日</Typography>
+                    }}
+                    helperText={detailRefetchHours === 0 
+                      ? "すべての物件の詳細ページを再取得します" 
+                      : `${detailRefetchHours}時間（${Math.round(detailRefetchHours / 24)}日）以上経過した物件の詳細を再取得します`
+                    }
+                    size="small"
+                  />
+                  <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(0)}>すべて</Button>
+                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(24)}>1日</Button>
+                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(72)}>3日</Button>
+                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(168)}>1週間</Button>
+                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(720)}>30日</Button>
+                    <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(2160)}>90日</Button>
+                  </Box>
+                  {detailRefetchHours < 168 && (
+                    <Alert severity="warning" sx={{ mt: 1 }} icon={false}>
+                      <Typography variant="caption">
+                        短い期間を設定すると、処理時間が大幅に増加します
+                      </Typography>
+                    </Alert>
+                  )}
+                </Box>
+              )}
+              
+              {useCustomRefetch && (
+                <>
+                  <FormGroup sx={{ mt: 2 }}>
+                    <FormControlLabel
+                      control={
+                        <Checkbox
+                          checked={ignoreErrorHistory}
+                          onChange={(e) => setIgnoreErrorHistory(e.target.checked)}
+                          color="error"
+                        />
+                      }
+                      label="エラー履歴を無視して再取得"
+                    />
+                  </FormGroup>
+                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', ml: 3.5, mt: 0.5 }}>
+                    404エラーや検証エラー（面積超過等）の履歴を無視して再取得を試みます
+                  </Typography>
+                  {ignoreErrorHistory && (
+                    <Alert severity="warning" sx={{ mt: 1, ml: 3.5 }} icon={false}>
+                      <Typography variant="caption">
+                        同じエラーが再発する可能性があります
+                      </Typography>
+                    </Alert>
+                  )}
+                </>
+              )}
+          </Box>
+          <Button
+            variant="contained"
+            startIcon={<PlayIcon />}
+            onClick={startScraping}
+            disabled={loading || selectedScrapers.length === 0}
+            fullWidth
+            color={ignoreErrorHistory ? "error" : useCustomRefetch && detailRefetchHours < 168 ? "warning" : "primary"}
+          >
+            {useCustomRefetch && detailRefetchHours === 0 
+              ? "スクレイピング開始（強制再取得）" 
+              : useCustomRefetch && detailRefetchHours < 24
+              ? `スクレイピング開始（${detailRefetchHours}時間以上経過で再取得）`
+              : useCustomRefetch && detailRefetchHours < 168
+              ? `スクレイピング開始（${Math.round(detailRefetchHours / 24)}日以上経過で再取得）`
+              : "スクレイピング開始"}
+          </Button>
+        </Grid>
+      </Grid>
+    </Paper>
+  );
+});
+
+// タスク行コンポーネント（メモ化して個別の再レンダリングを防ぐ）
+const TaskRow = React.memo(({ 
+  task, 
+  expandedTasks, 
+  toggleTaskExpansion,
+  logTabValues,
+  setLogTabValues,
+  loadingButtons,
+  pauseTask,
+  resumeTask,
+  cancelTask,
+  deleteTask,
+  getStatusColor,
+  getAreaName,
+  getAreaNames,
+  calculateProgress,
+  getTaskStats,
+  logPages,
+  setLogPages
+}: any) => {
+  const progress = calculateProgress(task);
+  const stats = getTaskStats(task);
+  const areaNames = task.area_codes && task.area_codes.length > 2 ? 
+    getAreaName(task.area_codes[0]) + ` 他${task.area_codes.length - 1}件` :
+    task.area_codes ? getAreaNames(task.area_codes) : 'N/A';
+  
+  return (
+    <React.Fragment>
+      <TableRow>
+        <TableCell>
+          <IconButton
+            size="small"
+            onClick={() => toggleTaskExpansion(task.task_id)}
+          >
+            {expandedTasks.has(task.task_id) ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+          </IconButton>
+        </TableCell>
+        <TableCell>
+          <Box>
+            {task.area_codes && task.area_codes.length > 2 ? (
+              <Tooltip title={getAreaNames(task.area_codes)}>
+                <span>{areaNames}</span>
+              </Tooltip>
+            ) : (
+              <span>{areaNames}</span>
+            )}
+          </Box>
+        </TableCell>
+        <TableCell>
+          {task.scrapers ? task.scrapers.map(s => (
+            <Chip key={s} label={s} size="small" sx={{ mr: 0.5 }} />
+          )) : null}
+        </TableCell>
+        <TableCell>{task.max_properties}</TableCell>
+        <TableCell>
+          <Box display="flex" gap={0.5} alignItems="center">
+            <Chip
+              label={task.status}
+              color={getStatusColor(task.status)}
+              size="small"
+            />
+          </Box>
+        </TableCell>
+        <TableCell sx={{ minWidth: 200 }}>
+          <Box>
+            <Box display="flex" alignItems="center" mb={0.5}>
+              <LinearProgress
+                variant="determinate"
+                value={progress}
+                sx={{ flexGrow: 1, mr: 1 }}
+              />
+              <Typography variant="caption">
+                {Math.round(progress)}%
+              </Typography>
+            </Box>
+            <Box display="flex" gap={1} flexWrap="wrap">
+              <Typography variant="caption" color="success.main">
+                新規: {stats.new}
+              </Typography>
+              <Typography variant="caption" color="info.main">
+                価格更新: {stats.price_updated}
+              </Typography>
+              <Typography variant="caption" color="primary.main">
+                その他: {stats.other_updates}
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                変更なし: {stats.refetched_unchanged}
+              </Typography>
+              {stats.save_failed > 0 && (
+                <Typography variant="caption" color="error.main">
+                  保存失敗: {stats.save_failed}
+                </Typography>
+              )}
+            </Box>
+          </Box>
+        </TableCell>
+        <TableCell>
+          {task.started_at ? new Date(task.started_at).toLocaleString('ja-JP') : 
+           task.created_at ? new Date(task.created_at).toLocaleString('ja-JP') :
+           'N/A'}
+        </TableCell>
+        <TableCell align="center">
+          {task.status === 'running' && (
+            <Tooltip title="一時停止">
+              <span>
+                <IconButton
+                  size="small"
+                  color="primary"
+                  onClick={() => pauseTask(task.task_id)}
+                  disabled={loadingButtons[`pause-${task.task_id}`]}
+                  sx={{ 
+                    '&:hover': { backgroundColor: 'action.hover' },
+                    transition: 'all 0.3s'
+                  }}
+                >
+                  {loadingButtons[`pause-${task.task_id}`] ? (
+                    <CircularProgress size={20} />
+                  ) : (
+                    <PauseIcon />
+                  )}
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
+          {task.status === 'paused' && (
+            <>
+              <Tooltip title="再開">
+                <span>
+                  <IconButton
+                    size="small"
+                    color="primary"
+                    onClick={() => resumeTask(task.task_id)}
+                    disabled={loadingButtons[`resume-${task.task_id}`]}
+                    sx={{ 
+                      '&:hover': { backgroundColor: 'action.hover' },
+                      transition: 'all 0.3s'
+                    }}
+                  >
+                    {loadingButtons[`resume-${task.task_id}`] ? (
+                      <CircularProgress size={20} />
+                    ) : (
+                      <PlayIcon />
+                    )}
+                  </IconButton>
+                </span>
+              </Tooltip>
+              <Tooltip title="キャンセル">
+                <span>
+                  <IconButton
+                    size="small"
+                    color="error"
+                    onClick={() => cancelTask(task.task_id)}
+                    disabled={loadingButtons[`cancel-${task.task_id}`]}
+                    sx={{ 
+                      '&:hover': { backgroundColor: 'action.hover' },
+                      transition: 'all 0.3s'
+                    }}
+                  >
+                    {loadingButtons[`cancel-${task.task_id}`] ? (
+                      <CircularProgress size={20} />
+                    ) : (
+                      <StopIcon />
+                    )}
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </>
+          )}
+          {(task.status === 'completed' || task.status === 'cancelled' || task.status === 'error' || task.status === 'failed') && (
+            <Tooltip title="削除">
+              <span>
+                <IconButton
+                  size="small"
+                  color="error"
+                  onClick={() => deleteTask(task.task_id)}
+                  disabled={loadingButtons[`delete-${task.task_id}`]}
+                  sx={{ 
+                    '&:hover': { backgroundColor: 'action.hover' },
+                    transition: 'all 0.3s'
+                  }}
+                >
+                  {loadingButtons[`delete-${task.task_id}`] ? (
+                    <CircularProgress size={20} />
+                  ) : (
+                    <DeleteIcon />
+                  )}
+                </IconButton>
+              </span>
+            </Tooltip>
+          )}
+        </TableCell>
+      </TableRow>
+      
+      <TableRow>
+        <TableCell colSpan={8} sx={{ py: 0 }}>
+          <Collapse in={expandedTasks.has(task.task_id)}>
+            <TaskDetails 
+              task={task}
+              logTabValue={logTabValues[task.task_id] || 0}
+              setLogTabValue={(value) => setLogTabValues(prev => ({ ...prev, [task.task_id]: value }))}
+              logPage={logPages[task.task_id] || 1}
+              setLogPage={(page) => setLogPages(prev => ({ ...prev, [task.task_id]: page }))}
+            />
+          </Collapse>
+        </TableCell>
+      </TableRow>
+    </React.Fragment>
+  );
+});
+
+// タスク詳細コンポーネント（タブ切り替えの影響を分離）
+const TaskDetails = React.memo(({ task, logTabValue, setLogTabValue, logPage, setLogPage }: any) => {
+  return (
+    <Box sx={{ p: 2 }}>
+      <Tabs 
+        value={logTabValue} 
+        onChange={(e, v) => setLogTabValue(v)} 
+        sx={{ mb: 2 }}
+      >
+        <Tab label="進捗状況" />
+        <Tab label="物件更新履歴" disabled={!task.logs || task.logs.length === 0} />
+        <Tab 
+          label="エラーログ" 
+          disabled={!task.error_logs || task.error_logs.length === 0} 
+        />
+        <Tab 
+          label="警告ログ" 
+          disabled={!task.warning_logs || task.warning_logs.length === 0} 
+        />
+      </Tabs>
+      
+      {logTabValue === 0 && <TaskProgress task={task} />}
+      {logTabValue === 1 && task.logs && <TaskLogs task={task} logPage={logPage} setLogPage={setLogPage} />}
+      {logTabValue === 2 && <TaskErrorLogs task={task} />}
+      {logTabValue === 3 && <TaskWarningLogs task={task} />}
+    </Box>
+  );
+});
+
+// 進捗状況コンポーネント
+const TaskProgress = React.memo(({ task }: any) => {
+  if (!task.progress) {
+    return <Typography>進捗情報がありません</Typography>;
+  }
+  
+  const sortedProgress = Object.entries(task.progress).sort(([keyA], [keyB]) => {
+    const scraperA = keyA.split('_')[0];
+    const scraperB = keyB.split('_')[0];
+    const indexA = task.scrapers.indexOf(scraperA);
+    const indexB = task.scrapers.indexOf(scraperB);
+    if (indexA !== indexB) return indexA - indexB;
+    return keyA.localeCompare(keyB);
+  });
+  
+  return (
+    <Grid container spacing={2}>
+      {sortedProgress.map(([key, progress]: [string, any]) => (
+        <Grid item xs={12} md={4} key={key}>
+          <Paper variant="outlined" sx={{ p: 2 }}>
+            <Box component="div" fontWeight="medium" fontSize="0.875rem" sx={{ mb: 1 }}>
+              {progress.scraper || 'N/A'} - {progress.area || progress.area_name || 'N/A'}
+            </Box>
+            <List dense>
+              <ListItem>
+                <ListItemText
+                  primary="ステータス"
+                  secondary={
+                    <Chip
+                      label={
+                        task.status === 'paused' && (progress.status === 'running' || progress.status === 'pending') 
+                          ? 'paused' 
+                          : task.status === 'cancelled' && progress.status === 'running'
+                          ? 'cancelled'
+                          : progress.status
+                      }
+                      color={getStatusColor(
+                        task.status === 'paused' && (progress.status === 'running' || progress.status === 'pending')
+                          ? 'paused'
+                          : task.status === 'cancelled' && progress.status === 'running'
+                          ? 'cancelled'
+                          : progress.status
+                      )}
+                      size="small"
+                    />
+                  }
+                />
+              </ListItem>
+              {/* 詳細統計 */}
+              <ListItem>
+                <ListItemText
+                  primary="処理進捗"
+                  secondary={
+                    <Box>
+                      <Box color="text.secondary">
+                        一覧ページから発見: {progress.properties_found || 0}件
+                      </Box>
+                      <Box color="text.secondary">
+                        処理状況: {progress.properties_attempted || 0} / {progress.properties_processed || progress.properties_found || task.max_properties} 件
+                        {(progress.properties_processed || progress.properties_found || task.max_properties) > 0 && (
+                          <span style={{ marginLeft: '8px', color: '#666' }}>
+                            ({Math.round(((progress.properties_attempted || 0) / (progress.properties_processed || progress.properties_found || task.max_properties)) * 100)}%)
+                          </span>
+                        )}
+                      </Box>
+                      <Box color="text.secondary">
+                        詳細取得成功: {progress.detail_fetched || 0}件
+                      </Box>
+                      <Box color="text.secondary">
+                        詳細スキップ: {progress.detail_skipped || progress.skipped_listings || 0}件
+                      </Box>
+                      <Box color="text.secondary">
+                        エラー: {progress.errors || ((progress.detail_fetch_failed || 0) + (progress.save_failed || 0) + (progress.other_errors || 0))}件
+                      </Box>
+                    </Box>
+                  }
+                />
+              </ListItem>
+              <ListItem>
+                <ListItemText
+                  primary="詳細取得した物件の内訳"
+                  secondary={
+                    <Box>
+                      <Box sx={{ pl: 2 }}>
+                        <Box color="success.main">
+                          • 新規登録: {progress.new || progress.new_listings || 0}件
+                        </Box>
+                        <Box color="info.main">
+                          • 価格更新: {progress.price_updated || 0}件
+                        </Box>
+                        <Box color="primary.main">
+                          • その他更新: {progress.other_updates || 0}件
+                        </Box>
+                        <Box color="text.secondary">
+                          • 変更なし: {progress.refetched_unchanged || 0}件
+                        </Box>
+                      </Box>
+                    </Box>
+                  }
+                />
+              </ListItem>
+              {progress.error && (
+                <ListItem>
+                  <ListItemText
+                    primary="エラー"
+                    secondary={
+                      <Typography variant="caption" color="error">
+                        {progress.error}
+                      </Typography>
+                    }
+                  />
+                </ListItem>
+              )}
+            </List>
+          </Paper>
+        </Grid>
+      ))}
+    </Grid>
+  );
+  
+  function getStatusColor(status: string): 'default' | 'primary' | 'secondary' | 'error' | 'info' | 'success' | 'warning' {
+    switch (status) {
+      case 'pending': return 'default';
+      case 'running': return 'primary';
+      case 'paused': return 'warning';
+      case 'completed': return 'success';
+      case 'failed': return 'error';
+      case 'cancelled': return 'secondary';
+      default: return 'default';
+    }
+  }
+});
+
+// ログ表示コンポーネント
+const TaskLogs = React.memo(({ task, logPage, setLogPage }: any) => {
+  const itemsPerPage = 30;
+  const reversedLogs = task.logs.slice().reverse();
+  const startIndex = (logPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedLogs = reversedLogs.slice(startIndex, endIndex);
+  
+  return (
+    <Box sx={{ bgcolor: 'grey.50', p: 1, borderRadius: 1 }}>
+      {task.logs.length > itemsPerPage && (
+        <Box sx={{ mb: 1 }}>
+          <Typography variant="caption" color="text.secondary" align="center" display="block" sx={{ mb: 0.5 }}>
+            全{task.logs.length}件 (1ページ = 最新、{Math.ceil(task.logs.length / itemsPerPage)}ページ = 最古)
+          </Typography>
+          <Box sx={{ display: 'flex', justifyContent: 'center' }}>
+            <Pagination
+              count={Math.ceil(task.logs.length / itemsPerPage)}
+              page={logPage}
+              onChange={(_, page) => setLogPage(page)}
+              size="small"
+              color="primary"
+            />
+          </Box>
+        </Box>
+      )}
+      <Box sx={{ maxHeight: 400, overflow: 'auto' }}>
+        <List dense>
+          {paginatedLogs.map((log, index) => (
+            <ListItem key={index} sx={{ 
+              py: 0.5,
+              borderBottom: '1px solid',
+              borderColor: 'grey.200'
+            }}>
+              <ListItemText
+                primary={
+                  <Box display="flex" alignItems="center" gap={1}>
+                    <Typography variant="caption" color="text.secondary">
+                      {new Date(log.timestamp).toLocaleTimeString('ja-JP')}
+                    </Typography>
+                    <Chip
+                      label={(() => {
+                        switch(log.type) {
+                          case 'new': return '新規';
+                          case 'price_updated': return '価格更新';
+                          case 'other_updates': return 'その他更新';
+                          case 'refetched_unchanged': return '変更なし';
+                          default: return '更新';
+                        }
+                      })()}
+                      size="small"
+                      color={(() => {
+                        switch(log.type) {
+                          case 'new': return 'success';
+                          case 'price_updated': return 'warning';
+                          case 'other_updates': return 'info';
+                          case 'refetched_unchanged': return 'default';
+                          default: return 'info';
+                        }
+                      })() as any}
+                      sx={{ height: 20 }}
+                    />
+                    <Typography variant="body2">
+                      {log.title || log.message}
+                    </Typography>
+                  </Box>
+                }
+                secondary={
+                  <Box>
+                    <Typography variant="caption" component="div" color="text.secondary">
+                      {log.scraper} - {log.area}
+                    </Typography>
+                    {log.price_change && (
+                      <Typography variant="caption" component="div" color="warning.main">
+                        価格変更: {log.price_change.old.toLocaleString()}万円 → {log.price_change.new.toLocaleString()}万円
+                      </Typography>
+                    )}
+                  </Box>
+                }
+              />
+            </ListItem>
+          ))}
+        </List>
+      </Box>
+    </Box>
+  );
+});
+
+// エラーログコンポーネント
+const TaskErrorLogs = React.memo(({ task }: any) => {
+  if (!task.error_logs || task.error_logs.length === 0) {
+    return (
+      <Typography variant="body2" color="text.secondary" align="center" py={2}>
+        エラーログがありません
+      </Typography>
+    );
+  }
+  
+  return (
+    <Box sx={{ 
+      maxHeight: 400, 
+      overflow: 'auto', 
+      bgcolor: 'grey.50', 
+      p: 1, 
+      borderRadius: 1,
+      width: '100%',
+      overflowX: 'hidden'
+    }}>
+      <List dense sx={{ width: '100%' }}>
+        {task.error_logs.slice().reverse().map((log, index) => (
+          <ListItem key={index} sx={{ 
+            py: 0.5,
+            borderBottom: '1px solid',
+            borderColor: 'grey.200',
+            bgcolor: 'error.50',
+            display: 'block',
+            width: '100%',
+            maxWidth: '100%'
+          }}>
+            <ListItemText
+              sx={{ overflow: 'hidden' }}
+              primary={
+                <Box>
+                  <Box display="flex" alignItems="center" gap={1} sx={{ mb: 0.5 }}>
+                    <Typography variant="caption" color="text.secondary">
+                      {new Date(log.timestamp).toLocaleTimeString('ja-JP')}
+                    </Typography>
+                    <Chip
+                      label={log.reason?.includes('システムエラー') ? 'システムエラー' : log.reason?.split(':')[0] || log.reason}
+                      size="small"
+                      color="error"
+                      sx={{ height: 20, flexShrink: 0 }}
+                    />
+                  </Box>
+                  {log.reason?.includes(':') && (
+                    <Typography 
+                      variant="body2" 
+                      color="error" 
+                      component="div"
+                      sx={{ 
+                        wordBreak: 'break-all',
+                        overflowWrap: 'break-word',
+                        whiteSpace: 'pre-wrap',
+                        maxWidth: '100%'
+                      }}
+                    >
+                      {log.reason.substring(log.reason.indexOf(':') + 1).trim()}
+                    </Typography>
+                  )}
+                </Box>
+              }
+              secondary={
+                <Box>
+                  <Typography variant="caption" component="div" color="text.secondary">
+                    {log.scraper} - {log.area_code || log.area}
+                  </Typography>
+                  {log.building_name && (
+                    <Typography variant="caption" component="div">
+                      建物名: {log.building_name} {log.price && `| 価格: ${log.price}`}
+                    </Typography>
+                  )}
+                  {log.url && (
+                    <Typography 
+                      variant="caption" 
+                      component="div"
+                      sx={{ 
+                        wordBreak: 'break-all',
+                        overflow: 'hidden'
+                      }}
+                    >
+                      <a href={log.url} target="_blank" rel="noopener noreferrer" 
+                         style={{ color: '#1976d2', textDecoration: 'none' }}>
+                        {log.url}
+                      </a>
+                    </Typography>
+                  )}
+                </Box>
+              }
+            />
+          </ListItem>
+        ))}
+      </List>
+    </Box>
+  );
+});
+
+// 警告ログコンポーネント
+const TaskWarningLogs = React.memo(({ task }: any) => {
+  if (!task.warning_logs || task.warning_logs.length === 0) {
+    return (
+      <Typography variant="body2" color="text.secondary" align="center" py={2}>
+        警告ログがありません
+      </Typography>
+    );
+  }
+  
+  return (
+    <Box sx={{ maxHeight: 400, overflow: 'auto', bgcolor: 'grey.50', p: 1, borderRadius: 1 }}>
+      <List dense>
+        {task.warning_logs.slice().reverse().map((log, index) => (
+          <ListItem key={index} sx={{ 
+            py: 0.5,
+            borderBottom: '1px solid',
+            borderColor: 'grey.200',
+            bgcolor: 'warning.50'
+          }}>
+            <ListItemText 
+              primary={
+                <Box>
+                  <Typography variant="body2" component="span" fontWeight="medium">
+                    [{new Date(log.timestamp).toLocaleTimeString()}] {log.scraper}
+                  </Typography>
+                  <Typography variant="body2" component="div" color="warning.main">
+                    {log.reason || log.message || '警告'}
+                  </Typography>
+                </Box>
+              }
+              secondary={
+                <Box>
+                  {(log.building_name || log.price || log.site_property_id) && (
+                    <Typography variant="caption" component="div" color="text.secondary">
+                      {log.building_name && `建物名: ${log.building_name}`}
+                      {log.price && ` | 価格: ${log.price}`}
+                      {log.site_property_id && ` | 掲載情報ID: ${log.site_property_id}`}
+                    </Typography>
+                  )}
+                  {log.url && (
+                    <Typography 
+                      variant="caption" 
+                      component="div"
+                      sx={{ 
+                        wordBreak: 'break-all',
+                        overflow: 'hidden'
+                      }}
+                    >
+                      <a href={log.url} target="_blank" rel="noopener noreferrer" 
+                         style={{ color: '#ed6c02', textDecoration: 'none' }}>
+                        {log.url}
+                      </a>
+                    </Typography>
+                  )}
+                </Box>
+              }
+            />
+          </ListItem>
+        ))}
+      </List>
+    </Box>
+  );
+});
+
 const AdminScraping: React.FC = () => {
-  console.log('AdminScraping render', new Date().toISOString());
   const [areas, setAreas] = useState<Area[]>([]);
   const [selectedAreas, setSelectedAreas] = useState<string[]>(['13103']); // 港区
   const [selectedScrapers, setSelectedScrapers] = useState<string[]>(['suumo']);
@@ -199,33 +1111,7 @@ const AdminScraping: React.FC = () => {
   const [logPages, setLogPages] = useState<{ [taskId: string]: number }>({});  // 各タスクのログページ番号
   const [lastLogTimestamps, setLastLogTimestamps] = useState<{ [taskId: string]: string }>({});  // 各タスクの最後のログタイムスタンプ
 
-  const scraperOptions = [
-    { value: 'suumo', label: 'SUUMO' },
-    { value: 'homes', label: "LIFULL HOME'S" },
-    { value: 'rehouse', label: '三井のリハウス' },
-    { value: 'nomu', label: 'ノムコム' },
-    { value: 'livable', label: '東急リバブル' },
-  ];
 
-  // エリア選択のメニューアイテムをメモ化
-  const areaMenuItems = useMemo(() => {
-    return areas.map(area => (
-      <MenuItem key={area.code} value={area.code}>
-        <Checkbox checked={selectedAreas.includes(area.code)} />
-        <ListItemText primary={area.name} />
-      </MenuItem>
-    ));
-  }, [areas, selectedAreas]);
-
-  // スクレイパー選択のメニューアイテムをメモ化
-  const scraperMenuItems = useMemo(() => {
-    return scraperOptions.map(option => (
-      <MenuItem key={option.value} value={option.value}>
-        <Checkbox checked={selectedScrapers.includes(option.value)} />
-        <ListItemText primary={option.label} />
-      </MenuItem>
-    ));
-  }, [selectedScrapers]);
 
   useEffect(() => {
     const init = async () => {
@@ -901,247 +1787,23 @@ const AdminScraping: React.FC = () => {
       
 
 
-      <Paper sx={{ p: 3, mb: 3 }}>
-        <Typography variant="h6" gutterBottom>
-          新規スクレイピング
-        </Typography>
-        
-        <Grid container spacing={3}>
-          <Grid item xs={12} md={4}>
-            <FormControl fullWidth>
-              <InputLabel>エリア</InputLabel>
-              <Select
-                multiple
-                value={selectedAreas}
-                onChange={(e) => setSelectedAreas(e.target.value as string[])}
-                label="エリア"
-                renderValue={(selected) => (
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                    {(selected as string[]).map((value) => (
-                      <Chip 
-                        key={value} 
-                        label={areas.find(a => a.code === value)?.name || value}
-                        size="small"
-                      />
-                    ))}
-                  </Box>
-                )}
-              >
-                {areaMenuItems}
-              </Select>
-            </FormControl>
-          </Grid>
-
-          <Grid item xs={12} md={4}>
-            <FormControl fullWidth>
-              <InputLabel>スクレイパー</InputLabel>
-              <Select
-                multiple
-                value={selectedScrapers}
-                onChange={(e) => setSelectedScrapers(e.target.value as string[])}
-                label="スクレイパー"
-                renderValue={(selected) => (
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
-                    {(selected as string[]).map((value) => (
-                      <Chip 
-                        key={value} 
-                        label={scraperOptions.find(opt => opt.value === value)?.label || value}
-                        size="small"
-                      />
-                    ))}
-                  </Box>
-                )}
-                MenuProps={{
-                  PaperProps: {
-                    style: {
-                      maxHeight: 400,
-                    },
-                  },
-                }}
-              >
-                <Box sx={{ px: 2, py: 1, borderBottom: '1px solid rgba(0, 0, 0, 0.12)' }}>
-                  <Button
-                    size="small"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedScrapers(scraperOptions.map(opt => opt.value));
-                    }}
-                    sx={{ mr: 1 }}
-                  >
-                    全選択
-                  </Button>
-                  <Button
-                    size="small"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSelectedScrapers([]);
-                    }}
-                  >
-                    全解除
-                  </Button>
-                </Box>
-                {scraperMenuItems}
-              </Select>
-            </FormControl>
-          </Grid>
-
-          <Grid item xs={12} md={4}>
-            <Autocomplete
-              freeSolo
-              options={[100, 200, 300, 400, 500, 1000, 2000, 3000, 4000, 5000, 10000]}
-              value={maxProperties}
-              getOptionLabel={(option) => option.toString()}
-              onChange={(_, newValue) => {
-                if (typeof newValue === 'number') {
-                  setMaxProperties(newValue);
-                } else if (typeof newValue === 'string') {
-                  const value = parseInt(newValue);
-                  if (!isNaN(value) && value > 0 && value <= 10000) {
-                    setMaxProperties(value);
-                  }
-                }
-              }}
-              onInputChange={(_, newInputValue) => {
-                const value = parseInt(newInputValue);
-                if (!isNaN(value) && value > 0 && value <= 10000) {
-                  setMaxProperties(value);
-                }
-              }}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  label="処理上限数"
-                  type="number"
-                  helperText="一覧ページから発見した物件のうち、処理対象とする最大数"
-                  InputProps={{
-                    ...params.InputProps,
-                    inputProps: {
-                      ...params.inputProps,
-                      min: 1,
-                      max: 10000,
-                    },
-                  }}
-                />
-              )}
-            />
-          </Grid>
-
-          <Grid item xs={12}>
-            <Box sx={{ mb: 2 }}>
-              <FormGroup>
-                <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={useCustomRefetch}
-                        onChange={(e) => {
-                          setUseCustomRefetch(e.target.checked);
-                          // カスタマイズを無効にした場合、エラー履歴無視もリセット
-                          if (!e.target.checked) {
-                            setIgnoreErrorHistory(false);
-                          }
-                        }}
-                        color="warning"
-                      />
-                    }
-                    label="詳細ページの再取得範囲をカスタマイズ"
-                  />
-                </FormGroup>
-                {!useCustomRefetch && (
-                  <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
-                    デフォルト: 価格変更があった物件と、90日以上詳細を取得していない物件のみ更新
-                  </Typography>
-                )}
-                {useCustomRefetch && (
-                  <Box sx={{ mt: 2 }}>
-                    <TextField
-                      fullWidth
-                      label="詳細ページ再取得期間"
-                      type="number"
-                      value={detailRefetchHours}
-                      onChange={(e) => {
-                        const value = parseInt(e.target.value);
-                        if (!isNaN(value) && value >= 0) {
-                          setDetailRefetchHours(value);
-                        }
-                      }}
-                      InputProps={{
-                        inputProps: { min: 0, max: 10000 },
-                        endAdornment: detailRefetchHours === 0 
-                          ? <Typography variant="caption" color="warning.main">すべて再取得</Typography>
-                          : detailRefetchHours < 24 
-                          ? <Typography variant="caption" color="text.secondary">{detailRefetchHours}時間</Typography>
-                          : <Typography variant="caption" color="text.secondary">{Math.round(detailRefetchHours / 24)}日</Typography>
-                      }}
-                      helperText={detailRefetchHours === 0 
-                        ? "すべての物件の詳細ページを再取得します" 
-                        : `${detailRefetchHours}時間（${Math.round(detailRefetchHours / 24)}日）以上経過した物件の詳細を再取得します`
-                      }
-                      size="small"
-                    />
-                    <Box sx={{ mt: 1, display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-                      <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(0)}>すべて</Button>
-                      <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(24)}>1日</Button>
-                      <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(72)}>3日</Button>
-                      <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(168)}>1週間</Button>
-                      <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(720)}>30日</Button>
-                      <Button size="small" variant="outlined" onClick={() => setDetailRefetchHours(2160)}>90日</Button>
-                    </Box>
-                    {detailRefetchHours < 168 && (
-                      <Alert severity="warning" sx={{ mt: 1 }} icon={false}>
-                        <Typography variant="caption">
-                          短い期間を設定すると、処理時間が大幅に増加します
-                        </Typography>
-                      </Alert>
-                    )}
-                  </Box>
-                )}
-                
-                {useCustomRefetch && (
-                  <>
-                    <FormGroup sx={{ mt: 2 }}>
-                      <FormControlLabel
-                        control={
-                          <Checkbox
-                            checked={ignoreErrorHistory}
-                            onChange={(e) => setIgnoreErrorHistory(e.target.checked)}
-                            color="error"
-                          />
-                        }
-                        label="エラー履歴を無視して再取得"
-                      />
-                    </FormGroup>
-                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', ml: 3.5, mt: 0.5 }}>
-                      404エラーや検証エラー（面積超過等）の履歴を無視して再取得を試みます
-                    </Typography>
-                    {ignoreErrorHistory && (
-                      <Alert severity="warning" sx={{ mt: 1, ml: 3.5 }} icon={false}>
-                        <Typography variant="caption">
-                          同じエラーが再発する可能性があります
-                        </Typography>
-                      </Alert>
-                    )}
-                  </>
-                )}
-            </Box>
-            <Button
-              variant="contained"
-              startIcon={<PlayIcon />}
-              onClick={startScraping}
-              disabled={loading || selectedScrapers.length === 0}
-              fullWidth
-              color={ignoreErrorHistory ? "error" : useCustomRefetch && detailRefetchHours < 168 ? "warning" : "primary"}
-            >
-              {useCustomRefetch && detailRefetchHours === 0 
-                ? "スクレイピング開始（強制再取得）" 
-                : useCustomRefetch && detailRefetchHours < 24
-                ? `スクレイピング開始（${detailRefetchHours}時間以上経過で再取得）`
-                : useCustomRefetch && detailRefetchHours < 168
-                ? `スクレイピング開始（${Math.round(detailRefetchHours / 24)}日以上経過で再取得）`
-                : "スクレイピング開始"}
-            </Button>
-          </Grid>
-        </Grid>
-      </Paper>
+      <ScrapingConfigForm
+        areas={areas}
+        selectedAreas={selectedAreas}
+        setSelectedAreas={setSelectedAreas}
+        selectedScrapers={selectedScrapers}
+        setSelectedScrapers={setSelectedScrapers}
+        maxProperties={maxProperties}
+        setMaxProperties={setMaxProperties}
+        useCustomRefetch={useCustomRefetch}
+        setUseCustomRefetch={setUseCustomRefetch}
+        detailRefetchHours={detailRefetchHours}
+        setDetailRefetchHours={setDetailRefetchHours}
+        ignoreErrorHistory={ignoreErrorHistory}
+        setIgnoreErrorHistory={setIgnoreErrorHistory}
+        startScraping={startScraping}
+        loading={loading}
+      />
 
       <Paper sx={{ p: 3 }}>
         <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
@@ -1202,751 +1864,28 @@ const AdminScraping: React.FC = () => {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {displayTasks.map(task => {
-                  // タスクごとの計算結果をメモ化
-                  const progress = calculateProgress(task);
-                  const stats = getTaskStats(task);
-                  const areaNames = task.area_codes && task.area_codes.length > 2 ? 
-                    getAreaName(task.area_codes[0]) + ` 他${task.area_codes.length - 1}件` :
-                    task.area_codes ? getAreaNames(task.area_codes) : 'N/A';
-                  
-                  return (
-                  <React.Fragment key={task.task_id}>
-                    <TableRow>
-                      <TableCell>
-                        <IconButton
-                          size="small"
-                          onClick={() => toggleTaskExpansion(task.task_id)}
-                        >
-                          {expandedTasks.has(task.task_id) ? <ExpandLessIcon /> : <ExpandMoreIcon />}
-                        </IconButton>
-                      </TableCell>
-                      <TableCell>
-                        <Box>
-                          {task.area_codes && task.area_codes.length > 2 ? (
-                            <Tooltip title={getAreaNames(task.area_codes)}>
-                              <span>
-                                {areaNames}
-                              </span>
-                            </Tooltip>
-                          ) : (
-                            <span>
-                              {areaNames}
-                            </span>
-                          )}
-                        </Box>
-                      </TableCell>
-                      <TableCell>
-                        {task.scrapers ? task.scrapers.map(s => (
-                          <Chip key={s} label={s} size="small" sx={{ mr: 0.5 }} />
-                        )) : null}
-                      </TableCell>
-                      <TableCell>{task.max_properties}</TableCell>
-                      <TableCell>
-                        <Box display="flex" gap={0.5} alignItems="center">
-                          <Chip
-                            label={task.status}
-                            color={getStatusColor(task.status)}
-                            size="small"
-                          />
-                        </Box>
-                      </TableCell>
-                      <TableCell sx={{ minWidth: 200 }}>
-                        <Box>
-                          <Box display="flex" alignItems="center" mb={0.5}>
-                            <LinearProgress
-                              variant="determinate"
-                              value={progress}
-                              sx={{ flexGrow: 1, mr: 1 }}
-                            />
-                            <Typography variant="caption">
-                              {Math.round(progress)}%
-                            </Typography>
-                          </Box>
-                          <Box display="flex" gap={1} flexWrap="wrap">
-                            <Typography variant="caption" color="success.main">
-                              新規: {stats.new}
-                            </Typography>
-                            <Typography variant="caption" color="info.main">
-                              価格更新: {stats.price_updated}
-                            </Typography>
-                            <Typography variant="caption" color="primary.main">
-                              その他: {stats.other_updates}
-                            </Typography>
-                            <Typography variant="caption" color="text.secondary">
-                              変更なし: {stats.refetched_unchanged}
-                            </Typography>
-                            {stats.save_failed > 0 && (
-                              <Typography variant="caption" color="error.main">
-                                保存失敗: {stats.save_failed}
-                              </Typography>
-                            )}
-                          </Box>
-                        </Box>
-                      </TableCell>
-                      <TableCell>
-                        {task.started_at ? new Date(task.started_at).toLocaleString('ja-JP') : 
-                         task.created_at ? new Date(task.created_at).toLocaleString('ja-JP') :
-                         'N/A'}
-                      </TableCell>
-                      <TableCell align="center">
-                        {task.status === 'running' && (
-                          <Tooltip title="一時停止">
-                            <span>
-                              <IconButton
-                                size="small"
-                                color="primary"
-                                onClick={() => pauseTask(task.task_id)}
-                                disabled={loadingButtons[`pause-${task.task_id}`]}
-                                sx={{ 
-                                  '&:hover': { backgroundColor: 'action.hover' },
-                                  transition: 'all 0.3s'
-                                }}
-                              >
-                                {loadingButtons[`pause-${task.task_id}`] ? (
-                                  <CircularProgress size={20} />
-                                ) : (
-                                  <PauseIcon />
-                                )}
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                        )}
-                        {task.status === 'paused' && (
-                          <>
-                            <Tooltip title="再開">
-                              <span>
-                                <IconButton
-                                  size="small"
-                                  color="primary"
-                                  onClick={() => resumeTask(task.task_id)}
-                                  disabled={loadingButtons[`resume-${task.task_id}`]}
-                                  sx={{ 
-                                    '&:hover': { backgroundColor: 'action.hover' },
-                                    transition: 'all 0.3s'
-                                  }}
-                                >
-                                  {loadingButtons[`resume-${task.task_id}`] ? (
-                                    <CircularProgress size={20} />
-                                  ) : (
-                                    <PlayIcon />
-                                  )}
-                                </IconButton>
-                              </span>
-                            </Tooltip>
-                            <Tooltip title="キャンセル">
-                              <span>
-                                <IconButton
-                                  size="small"
-                                  color="error"
-                                  onClick={() => cancelTask(task.task_id)}
-                                  disabled={loadingButtons[`cancel-${task.task_id}`]}
-                                  sx={{ 
-                                    '&:hover': { backgroundColor: 'action.hover' },
-                                    transition: 'all 0.3s'
-                                  }}
-                                >
-                                  {loadingButtons[`cancel-${task.task_id}`] ? (
-                                    <CircularProgress size={20} />
-                                  ) : (
-                                    <StopIcon />
-                                  )}
-                                </IconButton>
-                              </span>
-                            </Tooltip>
-                          </>
-                        )}
-                        {(task.status === 'completed' || task.status === 'cancelled' || task.status === 'error' || task.status === 'failed') && (
-                          <Tooltip title="削除">
-                            <span>
-                              <IconButton
-                                size="small"
-                                color="error"
-                                onClick={() => deleteTask(task.task_id)}
-                                disabled={loadingButtons[`delete-${task.task_id}`]}
-                                sx={{ 
-                                  '&:hover': { backgroundColor: 'action.hover' },
-                                  transition: 'all 0.3s'
-                                }}
-                              >
-                                {loadingButtons[`delete-${task.task_id}`] ? (
-                                  <CircularProgress size={20} />
-                                ) : (
-                                  <DeleteIcon />
-                                )}
-                              </IconButton>
-                            </span>
-                          </Tooltip>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                    
-                    <TableRow>
-                      <TableCell colSpan={8} sx={{ py: 0 }}>
-                        <Collapse in={expandedTasks.has(task.task_id)}>
-                          <Box sx={{ p: 2 }}>
-                            <Tabs 
-                              value={logTabValues[task.task_id] || 0} 
-                              onChange={(e, v) => setLogTabValues(prev => ({ ...prev, [task.task_id]: v }))} 
-                              sx={{ mb: 2 }}
-                            >
-                              <Tab label="進捗状況" />
-                              <Tab label="物件更新履歴" disabled={!task.logs || task.logs.length === 0} />
-                              <Tab 
-                                label="エラーログ" 
-                                disabled={!task.error_logs || task.error_logs.length === 0} 
-                              />
-                              <Tab 
-                                label="警告ログ" 
-                                disabled={!task.warning_logs || task.warning_logs.length === 0} 
-                              />
-                            </Tabs>
-                            
-                            {(logTabValues[task.task_id] || 0) === 0 && (
-                              <Grid container spacing={2}>
-                              {(() => {
-                                if (!task.progress) {
-                                  return <Typography>進捗情報がありません</Typography>;
-                                }
-                                // スクレイパーの順序を保持するため、task.scrapersの順序でソート
-                                const sortedProgress = Object.entries(task.progress).sort(([keyA], [keyB]) => {
-                                  const scraperA = keyA.split('_')[0];
-                                  const scraperB = keyB.split('_')[0];
-                                  const indexA = task.scrapers.indexOf(scraperA);
-                                  const indexB = task.scrapers.indexOf(scraperB);
-                                  // scrapers配列の順序でソート
-                                  if (indexA !== indexB) return indexA - indexB;
-                                  // 同じスクレイパーの場合はエリアでソート
-                                  return keyA.localeCompare(keyB);
-                                });
-                                return sortedProgress.map(([key, progress]) => (
-                                <Grid item xs={12} md={4} key={key}>
-                                  <Paper variant="outlined" sx={{ p: 2 }}>
-                                    <Box component="div" fontWeight="medium" fontSize="0.875rem" sx={{ mb: 1 }}>
-                                      {progress.scraper || 'N/A'} - {progress.area || progress.area_name || 'N/A'}
-                                    </Box>
-                                    <List dense>
-                                      <ListItem>
-                                        <ListItemText
-                                          primary="ステータス"
-                                          secondary={
-                                            <Chip
-                                              label={
-                                                // タスクが一時停止中で、スクレイパーが実行中またはペンディングの場合はpausedを表示
-                                                task.status === 'paused' && (progress.status === 'running' || progress.status === 'pending') 
-                                                  ? 'paused' 
-                                                  // タスクがキャンセル済みで、スクレイパーが実行中の場合はcancelledを表示
-                                                  : task.status === 'cancelled' && progress.status === 'running'
-                                                  ? 'cancelled'
-                                                  : progress.status
-                                              }
-                                              color={getStatusColor(
-                                                task.status === 'paused' && (progress.status === 'running' || progress.status === 'pending')
-                                                  ? 'paused'
-                                                  : task.status === 'cancelled' && progress.status === 'running'
-                                                  ? 'cancelled'
-                                                  : progress.status
-                                              )}
-                                              size="small"
-                                            />
-                                          }
-                                        />
-                                      </ListItem>
-                                      {/* 詳細統計 */}
-                                      {true && (
-                                        <>
-                                          <ListItem>
-                                            <ListItemText
-                                              primary="処理進捗"
-                                              secondary={
-                                                <Box>
-                                                  <Box color="text.secondary">
-                                                    一覧ページから発見: {progress.properties_found || 0}件
-                                                  </Box>
-                                                  <Box color="text.secondary">
-                                                    処理状況: {progress.properties_attempted || 0} / {progress.properties_processed || progress.properties_found || task.max_properties} 件
-                                                    {(progress.properties_processed || progress.properties_found || task.max_properties) > 0 && (
-                                                      <span style={{ marginLeft: '8px', color: '#666' }}>
-                                                        ({Math.round(((progress.properties_attempted || 0) / (progress.properties_processed || progress.properties_found || task.max_properties)) * 100)}%)
-                                                      </span>
-                                                    )}
-                                                  </Box>
-                                                  <Box color="text.secondary">
-                                                    詳細取得成功: {progress.detail_fetched || 0}件
-                                                  </Box>
-                                                  <Box color="text.secondary">
-                                                    詳細スキップ: {progress.detail_skipped || progress.skipped_listings || 0}件
-                                                  </Box>
-                                                  <Box color="text.secondary">
-                                                    エラー: {progress.errors || ((progress.detail_fetch_failed || 0) + (progress.save_failed || 0) + (progress.other_errors || 0))}件
-                                                  </Box>
-                                                </Box>
-                                              }
-                                            />
-                                          </ListItem>
-                                          <ListItem>
-                                            <ListItemText
-                                              primary="詳細取得した物件の内訳"
-                                              secondary={
-                                                <Box>
-                                                  <Box sx={{ pl: 2 }}>
-                                                    <Box color="success.main">
-                                                      • 新規登録: {progress.new || progress.new_listings || 0}件
-                                                    </Box>
-                                                    <Box color="info.main">
-                                                      • 価格更新: {progress.price_updated || 0}件
-                                                    </Box>
-                                                    <Box color="primary.main">
-                                                      • その他更新: {progress.other_updates || 0}件
-                                                    </Box>
-                                                    <Box color="text.secondary">
-                                                      • 変更なし: {progress.refetched_unchanged || 0}件
-                                                    </Box>
-                                                  </Box>
-                                                </Box>
-                                              }
-                                            />
-                                          </ListItem>
-                                          {false && progress.new_listings !== undefined && (
-                                            <ListItem>
-                                              <ListItemText
-                                                primary="詳細取得した物件の内訳"
-                                                secondary={
-                                                  <Box>
-                                                    <Box sx={{ pl: 2 }}>
-                                                      <Box color="success.main">
-                                                        • 新規登録: {progress.new_listings || 0}件
-                                                      </Box>
-                                                      <Box color="info.main">
-                                                        • 価格更新: {progress.price_updated || 0}件
-                                                      </Box>
-                                                      <Box color="primary.main">
-                                                        • その他更新: {progress.other_updates || 0}件
-                                                      </Box>
-                                                      <Box color="text.secondary">
-                                                        • 変更なし: {progress.refetched_unchanged || 0}件
-                                                      </Box>
-                                                  </Box>
-                                                </Box>
-                                              }
-                                            />
-                                          </ListItem>
-                                          )}
-                                          {((progress.detail_fetch_failed || 0) > 0 || 
-                                            (progress.save_failed || 0) > 0 || 
-                                            (progress.price_missing || 0) > 0 || 
-                                            (progress.building_info_missing || 0) > 0 || 
-                                            (progress.other_errors || 0) > 0) && (
-                                            <ListItem>
-                                              <ListItemText
-                                                primary="エラー情報"
-                                                secondary={
-                                                  <Box sx={{ pl: 2 }}>
-                                                    {(progress.detail_fetch_failed || 0) > 0 && (
-                                                      <>
-                                                        <Box color="error">
-                                                          • 詳細取得失敗: {progress.detail_fetch_failed}件
-                                                        </Box>
-                                                        <Box sx={{ pl: 3, fontSize: '0.75rem', color: 'text.secondary' }}>
-                                                          （保存処理はスキップされました）
-                                                        </Box>
-                                                      </>
-                                                    )}
-                                                    {(progress.save_failed || 0) > 0 && (
-                                                      <>
-                                                        <Box color="error">
-                                                          • 保存失敗: {progress.save_failed}件（詳細取得成功後）
-                                                        </Box>
-                                                        <Box sx={{ pl: 3 }}>
-                                                          {(progress.price_missing || 0) > 0 && (
-                                                            <Box sx={{ fontSize: '0.75rem', color: 'error.main' }}>
-                                                              └ 価格情報なし: {progress.price_missing}件
-                                                            </Box>
-                                                          )}
-                                                          {(progress.building_info_missing || 0) > 0 && (
-                                                            <Box sx={{ fontSize: '0.75rem', color: 'error.main' }}>
-                                                              └ 建物名なし: {progress.building_info_missing}件
-                                                            </Box>
-                                                          )}
-                                                          {(progress.other_errors || 0) > 0 && (
-                                                            <Box sx={{ fontSize: '0.75rem', color: 'error.main' }}>
-                                                              └ その他の必須情報不足: {progress.other_errors}件
-                                                            </Box>
-                                                          )}
-                                                        </Box>
-                                                      </>
-                                                    )}
-                                                    {/* 保存失敗以外のエラー（将来的な拡張用） */}
-                                                    {((progress.price_missing || 0) > 0 || 
-                                                      (progress.building_info_missing || 0) > 0 || 
-                                                      (progress.other_errors || 0) > 0) && 
-                                                     (progress.save_failed || 0) === 0 && (
-                                                      <Box sx={{ fontSize: '0.75rem', color: 'warning.main', mt: 1 }}>
-                                                        ※ 必須情報不足エラーが検出されましたが、保存失敗が0件です
-                                                      </Box>
-                                                    )}
-                                                  </Box>
-                                                }
-                                              />
-                                            </ListItem>
-                                          )}
-                                        </>
-                                      )}
-                                      {progress.error && (
-                                        <ListItem>
-                                          <ListItemText
-                                            primary="エラー"
-                                            secondary={
-                                              <Typography variant="caption" color="error">
-                                                {progress.error}
-                                              </Typography>
-                                            }
-                                          />
-                                        </ListItem>
-                                      )}
-                                      {/* 開始・終了時刻 */}
-                                      {(progress.start_time || progress.end_time) && (
-                                        <ListItem>
-                                          <ListItemText
-                                            primary="実行時間"
-                                            secondary={
-                                              <Box>
-                                                {progress.start_time && (
-                                                  <Typography variant="caption" color="text.secondary">
-                                                    開始: {new Date(progress.start_time).toLocaleString('ja-JP')}
-                                                  </Typography>
-                                                )}
-                                                {progress.end_time && (
-                                                  <Typography variant="caption" color="text.secondary">
-                                                    終了: {new Date(progress.end_time).toLocaleString('ja-JP')}
-                                                  </Typography>
-                                                )}
-                                              </Box>
-                                            }
-                                          />
-                                        </ListItem>
-                                      )}
-                                    </List>
-                                  </Paper>
-                                </Grid>
-                              ));
-                              })()}
-                              </Grid>
-                            )}
-                            
-                            {(logTabValues[task.task_id] || 0) === 1 && task.logs && (
-                              <Box sx={{ bgcolor: 'grey.50', p: 1, borderRadius: 1 }}>
-                                {/* ページネーション */}
-                                {task.logs.length > 30 && (
-                                  <Box sx={{ mb: 1 }}>
-                                    <Typography variant="caption" color="text.secondary" align="center" display="block" sx={{ mb: 0.5 }}>
-                                      全{task.logs.length}件 (1ページ = 最新、{Math.ceil(task.logs.length / 30)}ページ = 最古)
-                                    </Typography>
-                                    <Box sx={{ display: 'flex', justifyContent: 'center' }}>
-                                      <Pagination
-                                        count={Math.ceil(task.logs.length / 30)}
-                                        page={logPages[task.task_id] || 1}
-                                        onChange={(_, page) => setLogPages({ ...logPages, [task.task_id]: page })}
-                                        size="small"
-                                        color="primary"
-                                      />
-                                    </Box>
-                                  </Box>
-                                )}
-                                <Box sx={{ maxHeight: 400, overflow: 'auto' }}>
-                                  <List dense>
-                                    {(() => {
-                                      const currentPage = logPages[task.task_id] || 1;
-                                      const itemsPerPage = 30;
-                                      const reversedLogs = task.logs.slice().reverse();
-                                      const startIndex = (currentPage - 1) * itemsPerPage;
-                                      const endIndex = startIndex + itemsPerPage;
-                                      const paginatedLogs = reversedLogs.slice(startIndex, endIndex);
-                                      
-                                      return paginatedLogs.map((log, index) => (
-                                    <ListItem key={index} sx={{ 
-                                      py: 0.5,
-                                      borderBottom: '1px solid',
-                                      borderColor: 'grey.200'
-                                    }}>
-                                      <ListItemText
-                                        primary={
-                                          <Box display="flex" alignItems="center" gap={1}>
-                                            <Typography variant="caption" color="text.secondary">
-                                              {new Date(log.timestamp).toLocaleTimeString('ja-JP')}
-                                            </Typography>
-                                            <Chip
-                                              label={(() => {
-                                                switch(log.type) {
-                                                  case 'new': return '新規';
-                                                  case 'price_updated': return '価格更新';
-                                                  case 'other_updates': return 'その他更新';
-                                                  case 'refetched_unchanged': return '変更なし';
-                                                  default: return '更新';
-                                                }
-                                              })()}
-                                              size="small"
-                                              color={(() => {
-                                                switch(log.type) {
-                                                  case 'new': return 'success';
-                                                  case 'price_updated': return 'warning';
-                                                  case 'other_updates': return 'info';
-                                                  case 'refetched_unchanged': return 'default';
-                                                  default: return 'info';
-                                                }
-                                              })()}
-                                              sx={{ height: 20 }}
-                                            />
-                                            <Typography variant="body2">
-                                              {(() => {
-                                                // メッセージから建物名、物件詳細、価格を抽出して整形
-                                                const message = log.message;
-                                                
-                                                // 新規登録の場合
-                                                if (message.includes('新規登録:')) {
-                                                  // パターン: "新規登録: 建物名 階数 / 面積 / 間取り / 方角 - 価格万円 - URL"
-                                                  const match = message.match(/新規登録:\s*([^-]+?)\s*-\s*(\d+)万円/);
-                                                  if (match) {
-                                                    const details = match[1].trim();
-                                                    const price = match[2];
-                                                    return `新規物件登録: ${details} (${price}万円)`;
-                                                  }
-                                                }
-                                                
-                                                // 価格更新の場合
-                                                if (message.includes('価格更新:')) {
-                                                  // パターン: "価格更新: 建物名 階数 / 面積 / 間取り / 方角 - 旧価格万円 → 新価格万円 - URL"
-                                                  const match = message.match(/価格更新:\s*([^-]+?)\s*-\s*(\d+)万円\s*→\s*(\d+)万円/);
-                                                  if (match) {
-                                                    const details = match[1].trim();
-                                                    const oldPrice = match[2];
-                                                    const newPrice = match[3];
-                                                    return `価格更新: ${details} (${oldPrice}万円 → ${newPrice}万円)`;
-                                                  }
-                                                }
-                                                
-                                                // その他更新の場合
-                                                if (message.includes('その他更新:')) {
-                                                  // パターン: "その他更新: 建物名 階数 / 面積 / 間取り / 方角 - 詳細: 更新内容 - URL"
-                                                  const match = message.match(/その他更新:\s*([^-]+?)(?:\s*-\s*詳細:\s*([^-]+))?\s*-\s*https?:/);
-                                                  if (match) {
-                                                    const details = match[1].trim();
-                                                    const updateDetails = match[2] ? match[2].trim() : '';
-                                                    return updateDetails 
-                                                      ? `その他更新: ${details} (${updateDetails})`
-                                                      : `その他更新: ${details}`;
-                                                  }
-                                                }
-                                                
-                                                // デフォルトはそのまま表示
-                                                return log.message;
-                                              })()}
-                                            </Typography>
-                                          </Box>
-                                        }
-                                        secondary={
-                                          <Box>
-                                            <Typography variant="caption" component="div" color="text.secondary">
-                                              {log.scraper} - {log.area}
-                                            </Typography>
-                                            {log.price_change && (
-                                              <Typography variant="caption" component="div" color="warning.main">
-                                                価格変更: {log.price_change.old.toLocaleString()}万円 → {log.price_change.new.toLocaleString()}万円
-                                              </Typography>
-                                            )}
-                                            {log.update_details && (
-                                              <Typography variant="caption" component="div" color="info.main">
-                                                更新内容: {log.update_details}
-                                              </Typography>
-                                            )}
-                                          </Box>
-                                        }
-                                      />
-                                    </ListItem>
-                                  ));
-                                })()}
-                              </List>
-                            </Box>
-                            {task.logs.length === 0 && (
-                              <Typography variant="body2" color="text.secondary" align="center" py={2}>
-                                物件更新履歴がありません
-                              </Typography>
-                            )}
-                            {/* 下部にもページネーション */}
-                            {task.logs.length > 30 && (
-                              <Box sx={{ display: 'flex', justifyContent: 'center', mt: 1 }}>
-                                <Pagination
-                                  count={Math.ceil(task.logs.length / 30)}
-                                  page={logPages[task.task_id] || 1}
-                                  onChange={(_, page) => setLogPages({ ...logPages, [task.task_id]: page })}
-                                  size="small"
-                                  color="primary"
-                                />
-                              </Box>
-                            )}
-                          </Box>
-                            )}
-                            
-                            {(logTabValues[task.task_id] || 0) === 2 && (
-                              <Box sx={{ 
-                                maxHeight: 400, 
-                                overflow: 'auto', 
-                                bgcolor: 'grey.50', 
-                                p: 1, 
-                                borderRadius: 1,
-                                width: '100%',
-                                overflowX: 'hidden'
-                              }}>
-                                {task.error_logs && task.error_logs.length > 0 ? (
-                                <List dense sx={{ width: '100%' }}>
-                                  {task.error_logs.slice().reverse().map((log, index) => (
-                                    <ListItem key={index} sx={{ 
-                                      py: 0.5,
-                                      borderBottom: '1px solid',
-                                      borderColor: 'grey.200',
-                                      bgcolor: 'error.50',
-                                      display: 'block',
-                                      width: '100%',
-                                      maxWidth: '100%'
-                                    }}>
-                                      <ListItemText
-                                        sx={{ overflow: 'hidden' }}
-                                        primary={
-                                          <Box>
-                                            <Box display="flex" alignItems="center" gap={1} sx={{ mb: 0.5 }}>
-                                              <Typography variant="caption" color="text.secondary">
-                                                {new Date(log.timestamp).toLocaleTimeString('ja-JP')}
-                                              </Typography>
-                                              <Chip
-                                                label={log.reason?.includes('システムエラー') ? 'システムエラー' : log.reason?.split(':')[0] || log.reason}
-                                                size="small"
-                                                color="error"
-                                                sx={{ height: 20, flexShrink: 0 }}
-                                              />
-                                            </Box>
-                                            {log.reason?.includes(':') && (
-                                              <Typography 
-                                                variant="body2" 
-                                                color="error" 
-                                                component="div"
-                                                sx={{ 
-                                                  wordBreak: 'break-all',
-                                                  overflowWrap: 'break-word',
-                                                  whiteSpace: 'pre-wrap',
-                                                  maxWidth: '100%'
-                                                }}
-                                              >
-                                                {log.reason.substring(log.reason.indexOf(':') + 1).trim()}
-                                              </Typography>
-                                            )}
-                                          </Box>
-                                        }
-                                        secondary={
-                                          <Box>
-                                            <Typography variant="caption" component="div" color="text.secondary">
-                                              {log.scraper} - {log.area_code || log.area}
-                                            </Typography>
-                                            {log.building_name && (
-                                              <Typography variant="caption" component="div">
-                                                建物名: {log.building_name} {log.price && `| 価格: ${log.price}`}
-                                              </Typography>
-                                            )}
-                                            {log.url && (
-                                              <Typography 
-                                                variant="caption" 
-                                                component="div"
-                                                sx={{ 
-                                                  wordBreak: 'break-all',
-                                                  overflow: 'hidden'
-                                                }}
-                                              >
-                                                <a href={log.url} target="_blank" rel="noopener noreferrer" 
-                                                   style={{ color: '#1976d2', textDecoration: 'none' }}>
-                                                  {log.url}
-                                                </a>
-                                              </Typography>
-                                            )}
-                                          </Box>
-                                        }
-                                      />
-                                    </ListItem>
-                                  ))}
-                                </List>
-                                ) : (
-                                  <Typography variant="body2" color="text.secondary" align="center" py={2}>
-                                    エラーログがありません
-                                  </Typography>
-                                )}
-                              </Box>
-                            )}
-
-                            {(logTabValues[task.task_id] || 0) === 3 && (
-                              <Box sx={{ maxHeight: 400, overflow: 'auto', bgcolor: 'grey.50', p: 1, borderRadius: 1 }}>
-                                {task.warning_logs && task.warning_logs.length > 0 ? (
-                                <List dense>
-                                  {task.warning_logs.slice().reverse().map((log, index) => (
-                                    <ListItem key={index} sx={{ 
-                                      py: 0.5,
-                                      borderBottom: '1px solid',
-                                      borderColor: 'grey.200',
-                                      bgcolor: 'warning.50'
-                                    }}>
-                                      <ListItemText 
-                                        primary={
-                                          <Box>
-                                            <Typography variant="body2" component="span" fontWeight="medium">
-                                              [{new Date(log.timestamp).toLocaleTimeString()}] {log.scraper}
-                                            </Typography>
-                                            <Typography variant="body2" component="div" color="warning.main">
-                                              {log.reason || '警告'}
-                                            </Typography>
-                                          </Box>
-                                        }
-                                        secondary={
-                                          <Box>
-                                            {(log.building_name || log.price || log.site_property_id) && (
-                                              <Typography variant="caption" component="div" color="text.secondary">
-                                                {log.building_name && `建物名: ${log.building_name}`}
-                                                {log.price && ` | 価格: ${log.price}`}
-                                                {log.site_property_id && ` | 掲載情報ID: ${log.site_property_id}`}
-                                              </Typography>
-                                            )}
-                                            {log.url && (
-                                              <Typography 
-                                                variant="caption" 
-                                                component="div"
-                                                sx={{ 
-                                                  wordBreak: 'break-all',
-                                                  overflow: 'hidden'
-                                                }}
-                                              >
-                                                <a href={log.url} target="_blank" rel="noopener noreferrer" 
-                                                   style={{ color: '#ed6c02', textDecoration: 'none' }}>
-                                                  {log.url}
-                                                </a>
-                                              </Typography>
-                                            )}
-                                          </Box>
-                                        }
-                                      />
-                                    </ListItem>
-                                  ))}
-                                </List>
-                                ) : (
-                                  <Typography variant="body2" color="text.secondary" align="center" py={2}>
-                                    警告ログがありません
-                                  </Typography>
-                                )}
-                              </Box>
-                            )}
-
-
-                          </Box>
-                        </Collapse>
-                      </TableCell>
-                    </TableRow>
-                  </React.Fragment>
-                )})}
+                {displayTasks.map(task => (
+                  <TaskRow
+                    key={task.task_id}
+                    task={task}
+                    expandedTasks={expandedTasks}
+                    toggleTaskExpansion={toggleTaskExpansion}
+                    logTabValues={logTabValues}
+                    setLogTabValues={setLogTabValues}
+                    loadingButtons={loadingButtons}
+                    pauseTask={pauseTask}
+                    resumeTask={resumeTask}
+                    cancelTask={cancelTask}
+                    deleteTask={deleteTask}
+                    getStatusColor={getStatusColor}
+                    getAreaName={getAreaName}
+                    getAreaNames={getAreaNames}
+                    calculateProgress={calculateProgress}
+                    getTaskStats={getTaskStats}
+                    logPages={logPages}
+                    setLogPages={setLogPages}
+                  />
+                ))}
               </TableBody>
             </Table>
           </TableContainer>
