@@ -176,6 +176,7 @@ interface ScrapingTask {
 }
 
 const AdminScraping: React.FC = () => {
+  console.log('AdminScraping render', new Date().toISOString());
   const [areas, setAreas] = useState<Area[]>([]);
   const [selectedAreas, setSelectedAreas] = useState<string[]>(['13103']); // 港区
   const [selectedScrapers, setSelectedScrapers] = useState<string[]>(['suumo']);
@@ -196,6 +197,7 @@ const AdminScraping: React.FC = () => {
   const [deleteDialogMessage, setDeleteDialogMessage] = useState('');
   const [alerts, setAlerts] = useState<ScraperAlert[]>([]);
   const [logPages, setLogPages] = useState<{ [taskId: string]: number }>({});  // 各タスクのログページ番号
+  const [lastLogTimestamps, setLastLogTimestamps] = useState<{ [taskId: string]: string }>({});  // 各タスクの最後のログタイムスタンプ
 
   const scraperOptions = [
     { value: 'suumo', label: 'SUUMO' },
@@ -204,6 +206,26 @@ const AdminScraping: React.FC = () => {
     { value: 'nomu', label: 'ノムコム' },
     { value: 'livable', label: '東急リバブル' },
   ];
+
+  // エリア選択のメニューアイテムをメモ化
+  const areaMenuItems = useMemo(() => {
+    return areas.map(area => (
+      <MenuItem key={area.code} value={area.code}>
+        <Checkbox checked={selectedAreas.includes(area.code)} />
+        <ListItemText primary={area.name} />
+      </MenuItem>
+    ));
+  }, [areas, selectedAreas]);
+
+  // スクレイパー選択のメニューアイテムをメモ化
+  const scraperMenuItems = useMemo(() => {
+    return scraperOptions.map(option => (
+      <MenuItem key={option.value} value={option.value}>
+        <Checkbox checked={selectedScrapers.includes(option.value)} />
+        <ListItemText primary={option.label} />
+      </MenuItem>
+    ));
+  }, [selectedScrapers]);
 
   useEffect(() => {
     const init = async () => {
@@ -333,13 +355,48 @@ const AdminScraping: React.FC = () => {
           })
         );
         
+        // アクティブなタスクのログ差分を取得
+        const logDiffs = await Promise.all(
+          response.data.map(async (task: ScrapingTask) => {
+            const lastTimestamp = lastLogTimestamps[task.task_id];
+            if (lastTimestamp) {
+              try {
+                const diffResponse = await axios.get(
+                  `/api/admin/scraping/tasks/${task.task_id}/logs/diff`,
+                  { params: { last_log_timestamp: lastTimestamp } }
+                );
+                return { taskId: task.task_id, diff: diffResponse.data };
+              } catch (error) {
+                return null;
+              }
+            }
+            return null;
+          })
+        );
+        
         // タスクリストを更新
         setTasks(prev => {
           // 既存のタスクを更新
           const updatedTasks = prev.map(existingTask => {
-            // アクティブなタスクは最新データで更新
+            // アクティブなタスクは最新データで更新（ログは差分のみ追加）
             const activeTask = response.data.find((t: ScrapingTask) => t.task_id === existingTask.task_id);
             if (activeTask) {
+              const logDiff = logDiffs.find(ld => ld && ld.taskId === existingTask.task_id);
+              if (logDiff && logDiff.diff) {
+                // 既存のログに差分を追加
+                const updatedTask = { ...activeTask };
+                updatedTask.logs = [...(existingTask.logs || []), ...(logDiff.diff.logs || [])];
+                updatedTask.error_logs = [...(existingTask.error_logs || []), ...(logDiff.diff.error_logs || [])];
+                updatedTask.warning_logs = [...(existingTask.warning_logs || []), ...(logDiff.diff.warning_logs || [])];
+                
+                // 最後のタイムスタンプを更新
+                if (updatedTask.logs.length > 0) {
+                  const lastLog = updatedTask.logs[updatedTask.logs.length - 1];
+                  setLastLogTimestamps(prev => ({ ...prev, [existingTask.task_id]: lastLog.timestamp }));
+                }
+                
+                return updatedTask;
+              }
               return activeTask;
             }
             
@@ -357,12 +414,28 @@ const AdminScraping: React.FC = () => {
           const existingTaskIds = new Set(prev.map(t => t.task_id));
           const newTasks = response.data.filter((t: ScrapingTask) => !existingTaskIds.has(t.task_id));
           
+          // 新しいタスクの最後のタイムスタンプを記録
+          newTasks.forEach((task: ScrapingTask) => {
+            if (task.logs && task.logs.length > 0) {
+              const lastLog = task.logs[task.logs.length - 1];
+              setLastLogTimestamps(prev => ({ ...prev, [task.task_id]: lastLog.timestamp }));
+            }
+          });
+          
           return [...updatedTasks, ...newTasks];
         });
       } else {
         // 初回または手動更新時は全タスクを取得
         // 並列タスクの詳細情報は既にバックエンドで含まれているため、追加のAPIリクエストは不要
         setTasks(response.data);
+        
+        // 各タスクの最後のログタイムスタンプを記録
+        response.data.forEach((task: ScrapingTask) => {
+          if (task.logs && task.logs.length > 0) {
+            const lastLog = task.logs[task.logs.length - 1];
+            setLastLogTimestamps(prev => ({ ...prev, [task.task_id]: lastLog.timestamp }));
+          }
+        });
       }
     } catch (error: any) {
       // エラーは既にsetErrorで処理されている
@@ -854,12 +927,7 @@ const AdminScraping: React.FC = () => {
                   </Box>
                 )}
               >
-                {areas.map(area => (
-                  <MenuItem key={area.code} value={area.code}>
-                    <Checkbox checked={selectedAreas.includes(area.code)} />
-                    <ListItemText primary={area.name} />
-                  </MenuItem>
-                ))}
+                {areaMenuItems}
               </Select>
             </FormControl>
           </Grid>
@@ -912,12 +980,7 @@ const AdminScraping: React.FC = () => {
                     全解除
                   </Button>
                 </Box>
-                {scraperOptions.map(option => (
-                  <MenuItem key={option.value} value={option.value}>
-                    <Checkbox checked={selectedScrapers.includes(option.value)} />
-                    <ListItemText primary={option.label} />
-                  </MenuItem>
-                ))}
+                {scraperMenuItems}
               </Select>
             </FormControl>
           </Grid>

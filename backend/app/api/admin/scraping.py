@@ -1820,6 +1820,86 @@ def get_all_scraping_tasks(
     
     return tasks
 
+@router.get("/scraping/tasks/{task_id}/logs/diff")
+def get_task_logs_diff(
+    task_id: str,
+    last_log_timestamp: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """タスクのログ差分を取得（最後に取得したタイムスタンプ以降のログのみ）"""
+    from ...models_scraping_task import ScrapingTaskLog
+    from datetime import datetime
+    
+    # ログを取得するクエリを構築
+    query = db.query(ScrapingTaskLog).filter(
+        ScrapingTaskLog.task_id == task_id
+    )
+    
+    # タイムスタンプが指定されている場合は、それ以降のログのみ取得
+    if last_log_timestamp:
+        try:
+            last_timestamp = datetime.fromisoformat(last_log_timestamp.replace('Z', '+00:00'))
+            query = query.filter(ScrapingTaskLog.timestamp > last_timestamp)
+        except:
+            pass  # タイムスタンプのパースに失敗した場合は全ログを返す
+    
+    # ログを取得
+    logs = query.order_by(ScrapingTaskLog.timestamp.asc()).all()
+    
+    # ログを種類別に分類
+    property_logs = []
+    error_logs = []
+    warning_logs = []
+    
+    for log in logs:
+        log_data = log.log_data or {}
+        
+        if log.log_type == 'property_update':
+            property_logs.append({
+                'timestamp': log.timestamp.isoformat(),
+                'type': log_data.get('type', 'update'),
+                'scraper': log_data.get('scraper', ''),
+                'area': log_data.get('area', ''),
+                'url': log_data.get('url', ''),
+                'title': log_data.get('title', ''),
+                'price': log_data.get('price', 0),
+                'message': log_data.get('message', ''),
+                'price_change': log_data.get('price_change'),
+                'update_details': log_data.get('update_details')
+            })
+        elif log.log_type == 'error':
+            error_logs.append({
+                'timestamp': log.timestamp.isoformat(),
+                'scraper': log_data.get('scraper', ''),
+                'area': log_data.get('area'),
+                'area_code': log_data.get('area_code'),
+                'url': log_data.get('url'),
+                'reason': log_data.get('reason', ''),
+                'building_name': log_data.get('building_name'),
+                'price': log_data.get('price')
+            })
+        elif log.log_type == 'warning':
+            warning_logs.append({
+                'timestamp': log.timestamp.isoformat(),
+                'scraper': log_data.get('scraper', ''),
+                'area': log_data.get('area'),
+                'area_code': log_data.get('area_code'),
+                'url': log_data.get('url'),
+                'reason': log_data.get('reason'),
+                'building_name': log_data.get('building_name'),
+                'price': log_data.get('price'),
+                'site_property_id': log_data.get('site_property_id'),
+                'message': log_data.get('message')
+            })
+    
+    return {
+        'task_id': task_id,
+        'logs': property_logs,
+        'error_logs': error_logs,
+        'warning_logs': warning_logs,
+        'has_more': False  # 今後の拡張用
+    }
+
 
 @router.post("/scraping/pause/{task_id}")
 def pause_scraping(task_id: str, db: Session = Depends(get_db)):
