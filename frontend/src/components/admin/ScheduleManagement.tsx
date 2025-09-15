@@ -101,7 +101,7 @@ export const ScheduleManagement: React.FC = () => {
     description: '',
     scrapers: [] as string[],
     areas: [] as string[],
-    schedule_type: 'interval' as 'interval' | 'daily',
+    schedule_type: 'daily' as 'interval' | 'daily',
     interval_minutes: 60,
     daily_hour: 9,
     daily_minute: 0,
@@ -563,8 +563,8 @@ export const ScheduleManagement: React.FC = () => {
                   label="スケジュールタイプ"
                   onChange={(e) => setFormData({ ...formData, schedule_type: e.target.value as 'interval' | 'daily' })}
                 >
-                  <MenuItem value="interval">間隔指定</MenuItem>
                   <MenuItem value="daily">毎日指定時刻</MenuItem>
+                  <MenuItem value="interval">間隔指定</MenuItem>
                 </Select>
               </FormControl>
             </Grid>
@@ -749,8 +749,8 @@ export const ScheduleManagement: React.FC = () => {
                   label="スケジュールタイプ"
                   onChange={(e) => setFormData({ ...formData, schedule_type: e.target.value as 'interval' | 'daily' })}
                 >
-                  <MenuItem value="interval">間隔指定</MenuItem>
                   <MenuItem value="daily">毎日指定時刻</MenuItem>
+                  <MenuItem value="interval">間隔指定</MenuItem>
                 </Select>
               </FormControl>
             </Grid>

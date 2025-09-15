@@ -3893,6 +3893,9 @@ class BaseScraper(ABC):
                         elif key == 'listing_total_floors' and old_value is not None:
                             other_changed = True
                             changed_fields.append(f'総階数({old_value}階→{value}階)')
+                        elif key == 'listing_total_units' and old_value is not None:
+                            other_changed = True
+                            changed_fields.append(f'総戸数({old_value}戸→{value}戸)')
                         elif key == 'listing_balcony_area' and old_value is not None:
                             other_changed = True
                             changed_fields.append(f'バルコニー面積({old_value}㎡→{value}㎡)')
@@ -4909,6 +4912,7 @@ class BaseScraper(ABC):
                         'listing_layout': property_data.get('layout'),
                         'listing_direction': property_data.get('direction'),
                         'listing_total_floors': property_data.get('total_floors'),
+                        'listing_total_units': property_data.get('total_units'),
                         'listing_balcony_area': property_data.get('balcony_area'),
                         'listing_built_year': property_data.get('built_year'),
                         'listing_built_month': property_data.get('built_month'),

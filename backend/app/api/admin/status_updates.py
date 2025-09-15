@@ -113,6 +113,7 @@ async def update_listing_status(
         
         for listing in reactivate_listings:
             listing.is_active = True
+            listing.delisted_at = None  # 非掲載日時をクリア
             listing.updated_at = now
             properties_to_update.add(listing.master_property_id)
             
@@ -139,6 +140,7 @@ async def update_listing_status(
         # 各掲載を非アクティブに更新
         for listing in inactive_listings:
             listing.is_active = False
+            listing.delisted_at = now  # 非掲載日時を設定
             listing.updated_at = now
             properties_to_update.add(listing.master_property_id)
             
