@@ -147,11 +147,11 @@ def test_update_from_listing(db_session, sample_data):
     ).all()
     
     # 新しい建物名が追加されているか確認
-    names = [ln.listing_name for ln in listing_names]
+    names = [ln.normalized_name for ln in listing_names]
     assert "パークハウス渋谷 中古" in names
     
     # サイト情報が正しく記録されているか確認
-    new_entry = next((ln for ln in listing_names if ln.listing_name == "パークハウス渋谷 中古"), None)
+    new_entry = next((ln for ln in listing_names if ln.normalized_name == "パークハウス渋谷 中古"), None)
     assert new_entry is not None
     assert "REHOUSE" in new_entry.source_sites
 
@@ -177,7 +177,7 @@ def test_update_from_property_merge(db_session, sample_data):
         BuildingListingName.building_id == 1
     ).all()
     
-    names = [ln.listing_name for ln in building1_names]
+    names = [ln.normalized_name for ln in building1_names]
     assert "タワーマンション新宿" in names
 
 
@@ -221,7 +221,7 @@ def test_update_from_building_merge(db_session, sample_data):
     assert len(building2_names) == 0
     
     # タワーマンション新宿の名前が建物1に移動されているか確認
-    names = [ln.listing_name for ln in building1_names]
+    names = [ln.normalized_name for ln in building1_names]
     assert "タワーマンション新宿" in names
 
 
@@ -239,12 +239,12 @@ def test_refresh_building_names(db_session, sample_data):
     ).all()
     
     # 期待される建物名が登録されているか確認
-    names = [ln.listing_name for ln in listing_names]
+    names = [ln.normalized_name for ln in listing_names]
     assert "パークハウス渋谷" in names
     assert "PARK HOUSE 渋谷" in names
     
     # 出現回数が正しく集計されているか確認
-    park_house = next((ln for ln in listing_names if ln.listing_name == "パークハウス渋谷"), None)
+    park_house = next((ln for ln in listing_names if ln.normalized_name == "パークハウス渋谷"), None)
     assert park_house is not None
     assert park_house.occurrence_count == 2  # listing1とlisting3
     
@@ -294,7 +294,7 @@ def test_get_building_names(db_session, sample_data):
     
     # 必要な情報が含まれているか確認
     for name_info in names:
-        assert "listing_name" in name_info
+        assert "normalized_name" in name_info
         assert "canonical_name" in name_info
         assert "source_sites" in name_info
         assert "occurrence_count" in name_info
@@ -335,7 +335,7 @@ def test_property_split(db_session, sample_data):
     ).all()
     
     assert len(building3_names) > 0
-    names = [ln.listing_name for ln in building3_names]
+    names = [ln.normalized_name for ln in building3_names]
     assert "パークハウス渋谷" in names
 
 
@@ -375,7 +375,7 @@ def test_building_split(db_session, sample_data):
     ).all()
     
     assert len(building3_names) > 0
-    names = [ln.listing_name for ln in building3_names]
+    names = [ln.normalized_name for ln in building3_names]
     assert "パークハウス渋谷" in names
 
 

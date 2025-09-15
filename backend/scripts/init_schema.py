@@ -16,7 +16,7 @@ from backend.app.models import Base
 
 # すべてのモデルを明示的にインポート（テーブル作成を保証）
 from backend.app.models import (
-    Building, BuildingAlias, BuildingExternalId,
+    Building, BuildingExternalId,
     BuildingMergeHistory, BuildingMergeExclusion,
     MasterProperty, PropertyListing, ListingPriceHistory,
     PropertyMergeHistory, PropertyMergeExclusion,

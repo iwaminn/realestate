@@ -127,7 +127,6 @@ def main():
         # 同期対象のテーブル
         tables_to_sync = [
             ('buildings', 'Building'),
-            ('building_aliases', 'BuildingAlias'),
             ('master_properties', 'MasterProperty'),
             ('property_listings', 'PropertyListing'),
             ('listing_price_history', 'ListingPriceHistory'),

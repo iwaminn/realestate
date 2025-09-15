@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-建物掲載名テーブルの作成と既存データの移行スクリプト
+BuildingListingNameテーブルの構造更新と既存データの移行スクリプト
 
 このスクリプトは以下の処理を行います：
-1. building_listing_namesテーブルを作成
-2. 既存のproperty_listingsから建物名を集約
-3. 検索用に正規化された名前を生成
+1. listing_nameカラムをnormalized_nameカラムに移行
+2. 既存のデータを正規化して保存
+3. 古いカラムの削除（オプション）
 """
 
 import os
@@ -23,7 +23,8 @@ from backend.app.database import SessionLocal, engine
 from backend.app.models import (
     Base, Building, PropertyListing, BuildingListingName, MasterProperty
 )
-from backend.app.scrapers.data_normalizer import normalize_building_name
+from backend.app.utils.building_name_normalizer import canonicalize_building_name
+from backend.app.utils.building_name_normalizer import normalize_building_name
 from sqlalchemy import text, func
 from sqlalchemy.exc import OperationalError
 
@@ -35,156 +36,130 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def create_table_if_not_exists():
-    """building_listing_namesテーブルを作成"""
+def add_normalized_name_column():
+    """normalized_nameカラムを追加"""
     try:
-        # テーブルが存在するか確認
         with engine.connect() as conn:
+            # カラムが存在するか確認
             result = conn.execute(text("""
-                SELECT EXISTS (
-                    SELECT FROM information_schema.tables 
-                    WHERE table_name = 'building_listing_names'
-                )
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'building_listing_names' 
+                AND column_name = 'normalized_name'
             """))
-            exists = result.scalar()
             
-            if not exists:
-                logger.info("building_listing_namesテーブルを作成します...")
-                BuildingListingName.__table__.create(engine)
-                logger.info("テーブルの作成が完了しました")
+            if not result.fetchone():
+                logger.info("normalized_nameカラムを追加中...")
+                conn.execute(text("""
+                    ALTER TABLE building_listing_names 
+                    ADD COLUMN normalized_name VARCHAR(200)
+                """))
+                conn.commit()
+                logger.info("✅ normalized_nameカラムを追加しました")
             else:
-                logger.info("building_listing_namesテーブルは既に存在します")
+                logger.info("ℹ️ normalized_nameカラムは既に存在します")
                 
     except Exception as e:
-        logger.error(f"テーブル作成中にエラーが発生しました: {e}")
-        raise
+        logger.warning(f"カラム追加時のエラー（無視可能）: {e}")
 
 
-def normalize_for_search(name: str) -> str:
-    """検索用に建物名を正規化"""
-    if not name:
-        return ""
-    
-    # data_normalizerの正規化を使用
-    normalized = normalize_building_name(name)
-    
-    # 追加の正規化（検索用）
-    # 全角英数字を半角に変換
-    import unicodedata
-    normalized = unicodedata.normalize('NFKC', normalized)
-    
-    # 小文字に統一
-    normalized = normalized.lower()
-    
-    # 連続するスペースを1つに
-    import re
-    normalized = re.sub(r'\s+', ' ', normalized).strip()
-    
-    return normalized
+def check_listing_name_column():
+    """listing_nameカラムの存在を確認"""
+    try:
+        with engine.connect() as conn:
+            result = conn.execute(text("""
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name = 'building_listing_names' 
+                AND column_name = 'listing_name'
+            """))
+            return result.fetchone() is not None
+    except:
+        return False
 
 
 def migrate_existing_data():
-    """既存のproperty_listingsから建物名を集約"""
+    """既存データをnormalized_nameカラムに移行"""
     db = SessionLocal()
     try:
-        logger.info("既存データの移行を開始します...")
+        has_listing_name = check_listing_name_column()
         
-        # すべての建物を取得
-        buildings = db.query(Building).all()
-        total_buildings = len(buildings)
-        logger.info(f"{total_buildings}件の建物を処理します")
-        
-        for idx, building in enumerate(buildings, 1):
-            if idx % 100 == 0:
-                logger.info(f"進捗: {idx}/{total_buildings} ({idx*100/total_buildings:.1f}%)")
+        if has_listing_name:
+            # listing_nameカラムが存在する場合、データを移行
+            logger.info("listing_nameからnormalized_nameへの移行を開始...")
             
-            # この建物に紐づく掲載情報から建物名を取得
-            listing_names = db.query(
-                PropertyListing.listing_building_name,
-                PropertyListing.source_site,
-                func.count(PropertyListing.id).label('count'),
-                func.min(PropertyListing.first_seen_at).label('first_seen'),
-                func.max(PropertyListing.last_scraped_at).label('last_seen')
-            ).join(
-                MasterProperty,
-                PropertyListing.master_property_id == MasterProperty.id
-            ).filter(
-                MasterProperty.building_id == building.id,
-                PropertyListing.listing_building_name.isnot(None),
-                PropertyListing.listing_building_name != ''
-            ).group_by(
-                PropertyListing.listing_building_name,
-                PropertyListing.source_site
+            with engine.connect() as conn:
+                entries = conn.execute(text("""
+                    SELECT id, listing_name 
+                    FROM building_listing_names 
+                    WHERE listing_name IS NOT NULL 
+                    AND (normalized_name IS NULL OR normalized_name = '')
+                """)).fetchall()
+                
+                total_count = len(entries)
+                logger.info(f"移行対象: {total_count}件")
+                
+                if total_count > 0:
+                    updated_count = 0
+                    for entry_id, listing_name in entries:
+                        normalized_name = normalize_building_name(listing_name)
+                        conn.execute(text("""
+                            UPDATE building_listing_names 
+                            SET normalized_name = :normalized_name 
+                            WHERE id = :id
+                        """), {'normalized_name': normalized_name, 'id': entry_id})
+                        
+                        updated_count += 1
+                        if updated_count % 100 == 0:
+                            logger.info(f"  {updated_count}/{total_count} 件完了...")
+                            conn.commit()
+                    
+                    conn.commit()
+                    logger.info(f"✅ {updated_count}件のデータを移行しました")
+                else:
+                    logger.info("ℹ️ 移行するデータはありません")
+        else:
+            # listing_nameカラムが存在しない場合、property_listingsから再構築
+            logger.info("listing_nameカラムが存在しません。property_listingsから再構築します...")
+            
+            # normalized_nameが空のエントリを取得
+            empty_entries = db.query(BuildingListingName).filter(
+                BuildingListingName.normalized_name.is_(None)
             ).all()
             
-            # 建物名ごとに集約
-            name_aggregation = defaultdict(lambda: {
-                'sites': set(),
-                'count': 0,
-                'first_seen': None,
-                'last_seen': None
-            })
-            
-            for name, site, count, first_seen, last_seen in listing_names:
-                if not name:
-                    continue
-                    
-                agg = name_aggregation[name]
-                agg['sites'].add(site)
-                agg['count'] += count
+            if empty_entries:
+                logger.info(f"再構築対象: {len(empty_entries)}件")
                 
-                if agg['first_seen'] is None or (first_seen and first_seen < agg['first_seen']):
-                    agg['first_seen'] = first_seen
-                    
-                if agg['last_seen'] is None or (last_seen and last_seen > agg['last_seen']):
-                    agg['last_seen'] = last_seen
-            
-            # BuildingListingNameに保存
-            for listing_name, agg_data in name_aggregation.items():
-                canonical_name = normalize_for_search(listing_name)
+                # BuildingListingNameManagerを使用して再構築
+                from backend.app.utils.building_listing_name_manager import BuildingListingNameManager
+                manager = BuildingListingNameManager(db)
                 
-                # 既存レコードを確認
-                existing = db.query(BuildingListingName).filter(
-                    BuildingListingName.building_id == building.id,
-                    BuildingListingName.listing_name == listing_name
-                ).first()
+                # 建物IDをユニークに取得
+                building_ids = set(entry.building_id for entry in empty_entries)
                 
-                if existing:
-                    # 更新
-                    existing.canonical_name = canonical_name
-                    existing.source_sites = ','.join(sorted(agg_data['sites']))
-                    existing.occurrence_count = agg_data['count']
-                    existing.last_seen_at = agg_data['last_seen'] or datetime.now()
-                else:
-                    # 新規作成
-                    new_entry = BuildingListingName(
-                        building_id=building.id,
-                        listing_name=listing_name,
-                        canonical_name=canonical_name,
-                        source_sites=','.join(sorted(agg_data['sites'])),
-                        occurrence_count=agg_data['count'],
-                        first_seen_at=agg_data['first_seen'] or datetime.now(),
-                        last_seen_at=agg_data['last_seen'] or datetime.now()
-                    )
-                    db.add(new_entry)
-            
-            # 定期的にコミット
-            if idx % 50 == 0:
+                for building_id in building_ids:
+                    logger.info(f"建物ID {building_id} の名前を再構築中...")
+                    manager.refresh_building_names(building_id)
+                
                 db.commit()
-        
-        # 最終コミット
-        db.commit()
+                logger.info(f"✅ {len(building_ids)}件の建物の名前を再構築しました")
+            else:
+                logger.info("ℹ️ すべてのエントリにnormalized_nameが設定されています")
         
         # 統計を表示
-        total_entries = db.query(func.count(BuildingListingName.id)).scalar()
-        unique_names = db.query(func.count(func.distinct(BuildingListingName.listing_name))).scalar()
+        total = db.query(BuildingListingName).count()
+        with_normalized = db.query(BuildingListingName).filter(
+            BuildingListingName.normalized_name.isnot(None)
+        ).count()
         
-        logger.info(f"""
-移行完了:
-- 処理した建物数: {total_buildings}
-- 作成されたエントリ数: {total_entries}
-- ユニークな建物名数: {unique_names}
-        """)
+        logger.info(f"\n統計:")
+        logger.info(f"- 全レコード数: {total}")
+        logger.info(f"- normalized_name設定済み: {with_normalized}")
+        
+        if total == with_normalized:
+            logger.info("✅ すべてのレコードにnormalized_nameが設定されています")
+        else:
+            logger.warning(f"⚠️ {total - with_normalized}件のレコードにnormalized_nameが未設定です")
         
     except Exception as e:
         logger.error(f"データ移行中にエラーが発生しました: {e}")
@@ -194,52 +169,47 @@ def migrate_existing_data():
         db.close()
 
 
-def create_fulltext_index():
-    """全文検索用のインデックスを作成（PostgreSQL）"""
-    try:
-        with engine.connect() as conn:
-            # 日本語全文検索用の設定を確認
-            result = conn.execute(text("""
-                SELECT EXISTS (
-                    SELECT 1 FROM pg_extension WHERE extname = 'pg_trgm'
-                )
-            """))
-            
-            if not result.scalar():
-                logger.info("pg_trgm拡張をインストールします...")
-                conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+def drop_listing_name_column():
+    """listing_nameカラムを削除（オプション）"""
+    if not check_listing_name_column():
+        logger.info("listing_nameカラムは既に削除されています")
+        return
+        
+    print("\nlisting_nameカラムを削除しますか？")
+    print("⚠️ 警告: この操作は元に戻せません")
+    
+    response = input("削除を実行しますか？ (yes/no): ")
+    if response.lower() == 'yes':
+        try:
+            with engine.connect() as conn:
+                conn.execute(text("""
+                    ALTER TABLE building_listing_names 
+                    DROP COLUMN listing_name
+                """))
                 conn.commit()
-            
-            # trigramインデックスを作成（部分一致検索用）
-            logger.info("trigramインデックスを作成します...")
-            conn.execute(text("""
-                CREATE INDEX IF NOT EXISTS idx_building_listing_names_trgm
-                ON building_listing_names 
-                USING gin (canonical_name gin_trgm_ops)
-            """))
-            conn.commit()
-            
-            logger.info("インデックスの作成が完了しました")
-            
-    except Exception as e:
-        logger.error(f"インデックス作成中にエラーが発生しました: {e}")
-        # エラーが発生してもスクリプトは続行
+                logger.info("✅ listing_nameカラムを削除しました")
+        except Exception as e:
+            logger.error(f"❌ カラム削除エラー: {e}")
+    else:
+        logger.info("カラム削除をキャンセルしました")
 
 
 def main():
     """メイン処理"""
-    logger.info("建物掲載名の移行処理を開始します")
+    logger.info("="*60)
+    logger.info("BuildingListingName移行スクリプト")
+    logger.info("="*60)
     
-    # 1. テーブル作成
-    create_table_if_not_exists()
+    # 1. normalized_nameカラムを追加
+    add_normalized_name_column()
     
     # 2. 既存データの移行
     migrate_existing_data()
     
-    # 3. インデックス作成
-    create_fulltext_index()
+    # 3. listing_nameカラムの削除（オプション）
+    drop_listing_name_column()
     
-    logger.info("すべての処理が完了しました")
+    logger.info("\nすべての処理が完了しました")
 
 
 if __name__ == "__main__":

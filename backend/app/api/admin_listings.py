@@ -292,19 +292,90 @@ async def get_detach_candidates(
         listing_direction = listing.listing_direction or current_property.direction
         listing_room = current_property.room_number  # PropertyListingには部屋番号フィールドがない
         
-        # 同じ建物内の候補物件を検索
+        # 掲載情報から適切な建物を検索（スクレイピング時と同じロジック）
+        from ..models import BuildingListingName, Building
+        from ..utils.building_name_normalizer import canonicalize_building_name
+        from ..utils.address_normalizer import AddressNormalizer
+        
+        suggested_building_ids = set()
+        
+        # 掲載情報の属性を取得
+        listing_building_name = listing.listing_building_name
+        listing_address = listing.listing_address
+        listing_total_floors = listing.listing_total_floors
+        listing_total_units = listing.listing_total_units
+        listing_built_year = listing.listing_built_year
+        
+        if listing_building_name:
+            # 建物名を正規化して検索
+            canonical_name = canonicalize_building_name(listing_building_name)
+            
+            # 1. BuildingListingNameテーブルから建物名で候補を検索
+            name_matching_buildings = db.query(BuildingListingName.building_id).filter(
+                BuildingListingName.canonical_name == canonical_name
+            ).distinct().all()
+            
+            # 2. 各候補建物を住所・属性でスコアリング
+            if name_matching_buildings:
+                addr_normalizer = AddressNormalizer() if listing_address else None
+                normalized_address = addr_normalizer.normalize_for_comparison(listing_address) if listing_address else None
+                
+                for (building_id,) in name_matching_buildings:
+                    building = db.query(Building).filter(Building.id == building_id).first()
+                    if building:
+                        score = 0
+                        
+                        # 住所の一致度を評価
+                        if normalized_address and building.normalized_address:
+                            if building.normalized_address == normalized_address:
+                                score += 50  # 住所完全一致
+                            elif normalized_address in building.normalized_address or building.normalized_address in normalized_address:
+                                score += 20  # 住所部分一致
+                        
+                        # 総階数の一致度を評価
+                        if listing_total_floors and building.total_floors:
+                            if building.total_floors == listing_total_floors:
+                                score += 20  # 総階数完全一致
+                            elif abs(building.total_floors - listing_total_floors) <= 1:
+                                score += 10  # 総階数±1階以内
+                        
+                        # 総戸数の一致度を評価
+                        if listing_total_units and building.total_units:
+                            if building.total_units == listing_total_units:
+                                score += 15  # 総戸数完全一致
+                            elif abs(building.total_units - listing_total_units) <= 5:
+                                score += 5  # 総戸数±5戸以内
+                        
+                        # 築年の一致度を評価
+                        if listing_built_year and building.built_year:
+                            if building.built_year == listing_built_year:
+                                score += 15  # 築年完全一致
+                            elif abs(building.built_year - listing_built_year) <= 1:
+                                score += 5  # 築年±1年以内
+                        
+                        # 高スコアの建物を候補に追加（閾値を設定）
+                        if score >= 20:  # 最低限のスコアを持つ建物のみ
+                            suggested_building_ids.add(building_id)
+        
+        # 候補物件を検索
         candidates = []
         
-        # 同じ建物内の物件を検索（現在の物件を除外）
-        query = db.query(MasterProperty).filter(
-            MasterProperty.building_id == current_property.building_id,
+        # すべての物件を検索（現在の物件を除外）
+        all_properties_query = db.query(MasterProperty).join(
+            Building, MasterProperty.building_id == Building.id
+        ).filter(
             MasterProperty.id != current_property.id
         )
         
         # 条件に合う物件を検索
-        for prop in query.all():
+        for prop in all_properties_query.all():
             score = 0
             match_details = []
+            
+            # 建物名マッチによる加点（掲載情報の建物名と一致する建物内の物件）
+            if prop.building_id in suggested_building_ids:
+                score += 10  # 建物名が一致する場合は高得点
+                match_details.append("建物名一致")
             
             # 階数の比較
             if prop.floor_number == listing_floor:
@@ -379,7 +450,7 @@ async def get_detach_candidates(
                 'layout': listing_layout,
                 'direction': listing_direction
             },
-            'candidates': candidates[:10],  # 上位10件まで
+            'candidates': candidates[:20],  # 上位20件まで（より多くの候補を表示）
             'new_property_defaults': new_property_defaults,
             'can_create_new': True
         }
@@ -491,7 +562,7 @@ async def attach_listing_to_property(
     if new_property_obj:
         updater.update_master_property_by_majority(new_property_obj)
         # 最初の掲載日を更新
-        from .utils.property_utils import update_earliest_listing_date, update_latest_price_change
+        from ..utils.property_utils import update_earliest_listing_date, update_latest_price_change
         update_earliest_listing_date(db, new_property_id)
         update_latest_price_change(db, new_property_id)
     

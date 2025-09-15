@@ -27,7 +27,7 @@ def apply_building_name_filter(
         return query
     
     from ..models import BuildingListingName
-    from ..scrapers.data_normalizer import canonicalize_building_name
+    from .building_name_normalizer import canonicalize_building_name
     
     terms = building_name.split()
     for term in terms:

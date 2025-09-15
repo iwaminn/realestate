@@ -108,7 +108,7 @@ async def get_duplicate_buildings(
         
         # BuildingListingNameを使用した検索
         from ...models import BuildingListingName
-        from ...scrapers.data_normalizer import canonicalize_building_name
+        from ...utils.building_name_normalizer import canonicalize_building_name
         
         # 検索語を正規化
         canonical_search = canonicalize_building_name(search)
@@ -588,8 +588,8 @@ async def get_duplicate_buildings(
             aliases_cache[building_id] = []
         
         # 重複を避けながら追加
-        if listing.listing_name and listing.listing_name not in aliases_cache[building_id]:
-            aliases_cache[building_id].append(listing.listing_name)
+        if listing.normalized_name and listing.normalized_name not in aliases_cache[building_id]:
+            aliases_cache[building_id].append(listing.normalized_name)
     
     # ログ出力
     logger.info(f"掲載履歴キャッシュ作成: {len(all_building_ids)}件の建物, {len(all_listing_names)}件の掲載名")
@@ -1316,7 +1316,7 @@ def get_duplicate_properties(
     if building_name:
         # BuildingListingNameを使用した検索
         from ...models import BuildingListingName
-        from ...scrapers.data_normalizer import canonicalize_building_name
+        from ...utils.building_name_normalizer import canonicalize_building_name
         
         # 検索語を正規化
         canonical_search = canonicalize_building_name(building_name)
@@ -1551,7 +1551,7 @@ def search_properties_for_merge(
     
     # 建物名で検索（BuildingListingName対応）
     from ...models import BuildingListingName
-    from ...scrapers.data_normalizer import canonicalize_building_name
+    from ...utils.building_name_normalizer import canonicalize_building_name
     
     # 検索語を正規化
     canonical_search = canonicalize_building_name(query)

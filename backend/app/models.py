@@ -43,7 +43,6 @@ class Building(Base):
     # リレーションシップ
     properties = relationship("MasterProperty", back_populates="building")
     external_ids = relationship("BuildingExternalId", back_populates="building")
-    aliases = relationship("BuildingAlias", back_populates="building")
     
     __table_args__ = (
         Index('idx_buildings_normalized_name', 'normalized_name'),
@@ -57,30 +56,6 @@ class Building(Base):
         Index('idx_buildings_attributes', 'built_year', 'total_floors', 'total_units'),
     )
 
-
-class BuildingAlias(Base):
-    """建物エイリアステーブル"""
-    __tablename__ = "building_aliases"
-    
-    id = Column(Integer, primary_key=True, index=True)
-    building_id = Column(Integer, ForeignKey("buildings.id", ondelete="CASCADE"), nullable=False)
-    alias_name = Column(String(200), nullable=False)          # エイリアス名
-    alias_type = Column(String(50))                           # エイリアスタイプ（例: 'english', 'katakana', 'abbreviation'）
-    source_site = Column(String(50))                          # どのサイトで使用されているか
-    is_primary = Column(Boolean, default=False)               # 主要なエイリアスかどうか
-    confidence_score = Column(Float)                           # 信頼度スコア
-    created_at = Column(DateTime, server_default=func.now())
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
-    
-    # リレーションシップ
-    building = relationship("Building", back_populates="aliases")
-    
-    __table_args__ = (
-        UniqueConstraint('building_id', 'alias_name', name='unique_building_alias'),
-        Index('idx_building_aliases_name', 'alias_name'),
-        Index('idx_building_aliases_building', 'building_id'),
-        Index('idx_building_aliases_type', 'alias_type'),
-    )
 
 
 class MasterProperty(Base):
@@ -310,7 +285,7 @@ class BuildingListingName(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     building_id = Column(Integer, ForeignKey("buildings.id", ondelete="CASCADE"), nullable=False)
-    listing_name = Column(String(200), nullable=False)        # 掲載で使用されている建物名
+    normalized_name = Column(String(200), nullable=False)     # 表示用に軽く正規化された名前（スペース統一など）
     canonical_name = Column(String(200))                      # 検索用に正規化された名前（スペース・記号なし）
     source_sites = Column(Text)                               # この名前を使用しているサイト（カンマ区切り）
     occurrence_count = Column(Integer, default=1)             # この名前の出現回数

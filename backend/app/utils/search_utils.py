@@ -68,7 +68,7 @@ def generate_search_patterns(text: str) -> List[str]:
     if not text:
         return []
     
-    from ..scrapers.data_normalizer import normalize_building_name
+    from .building_name_normalizer import normalize_building_name
     
     patterns = set()
     

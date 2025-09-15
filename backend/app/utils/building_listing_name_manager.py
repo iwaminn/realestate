@@ -21,7 +21,8 @@ from ..models import (
     PropertyListing,
     BuildingListingName
 )
-from ..scrapers.data_normalizer import normalize_building_name, canonicalize_building_name
+from .building_name_normalizer import canonicalize_building_name
+from .building_name_normalizer import normalize_building_name
 
 logger = logging.getLogger(__name__)
 
@@ -261,6 +262,7 @@ class BuildingListingNameManager:
         for canonical_name, group_data in canonical_groups.items():
             # 最も頻出する表記を選択
             most_common_name = max(group_data['names'].items(), key=lambda x: x[1])[0]
+            normalized_name = normalize_building_name(most_common_name)
             total_count = sum(group_data['names'].values())
             
             logger.debug(f"Creating entry: building_id={building_id}, canonical_name={canonical_name}, listing_name={most_common_name}")
@@ -273,7 +275,7 @@ class BuildingListingNameManager:
             
             if existing:
                 logger.warning(f"Entry already exists for building_id={building_id}, canonical_name={canonical_name}. Updating instead.")
-                existing.listing_name = most_common_name
+                existing.normalized_name = normalized_name
                 existing.source_sites = ','.join(sorted(group_data['sites']))
                 existing.occurrence_count = total_count
                 existing.last_seen_at = group_data['last_seen'] or datetime.now()
@@ -282,12 +284,12 @@ class BuildingListingNameManager:
                 from sqlalchemy import text
                 insert_sql = text("""
                     INSERT INTO building_listing_names 
-                    (building_id, listing_name, canonical_name, source_sites, occurrence_count, first_seen_at, last_seen_at)
+                    (building_id, normalized_name, canonical_name, source_sites, occurrence_count, first_seen_at, last_seen_at)
                     VALUES 
-                    (:building_id, :listing_name, :canonical_name, :source_sites, :occurrence_count, :first_seen_at, :last_seen_at)
+                    (:building_id, :normalized_name, :canonical_name, :source_sites, :occurrence_count, :first_seen_at, :last_seen_at)
                     ON CONFLICT (building_id, canonical_name) 
                     DO UPDATE SET
-                        listing_name = EXCLUDED.listing_name,
+                        normalized_name = EXCLUDED.normalized_name,
                         source_sites = EXCLUDED.source_sites,
                         occurrence_count = EXCLUDED.occurrence_count,
                         last_seen_at = EXCLUDED.last_seen_at
@@ -297,7 +299,7 @@ class BuildingListingNameManager:
                     logger.info(f"Inserting BuildingListingName: building_id={building_id}, canonical_name={canonical_name}")
                     self.db.execute(insert_sql, {
                         'building_id': building_id,
-                        'listing_name': most_common_name,
+                        'normalized_name': normalized_name,
                         'canonical_name': canonical_name,
                         'source_sites': ','.join(sorted(group_data['sites'])),
                         'occurrence_count': total_count,
@@ -346,6 +348,8 @@ class BuildingListingNameManager:
             )
             return
             
+        # normalized_nameは表示用に軽く正規化（スペース統一など）
+        normalized_name = normalize_building_name(listing_name)
         # canonical_nameはスペース・記号を完全に削除
         canonical_name = canonicalize_building_name(listing_name)
         
@@ -374,9 +378,9 @@ class BuildingListingNameManager:
                     from sqlalchemy import text
                     insert_sql = text("""
                         INSERT INTO building_listing_names 
-                        (building_id, listing_name, canonical_name, source_sites, occurrence_count, first_seen_at, last_seen_at)
+                        (building_id, normalized_name, canonical_name, source_sites, occurrence_count, first_seen_at, last_seen_at)
                         VALUES 
-                        (:building_id, :listing_name, :canonical_name, :source_sites, :occurrence_count, :first_seen_at, :last_seen_at)
+                        (:building_id, :normalized_name, :canonical_name, :source_sites, :occurrence_count, :first_seen_at, :last_seen_at)
                         ON CONFLICT (building_id, canonical_name) 
                         DO UPDATE SET
                             occurrence_count = building_listing_names.occurrence_count + 1,
@@ -391,7 +395,7 @@ class BuildingListingNameManager:
                     current_time = datetime.now()
                     self.db.execute(insert_sql, {
                         'building_id': building_id,
-                        'listing_name': listing_name,
+                        'normalized_name': normalized_name,
                         'canonical_name': canonical_name,
                         'source_sites': source_site,
                         'occurrence_count': 1,
@@ -456,7 +460,7 @@ class BuildingListingNameManager:
                 
                 # より出現回数が多い表記を保持
                 if source_name.occurrence_count > target_name.occurrence_count:
-                    target_name.listing_name = source_name.listing_name
+                    target_name.normalized_name = source_name.normalized_name
                 
                 # サイト情報をマージ
                 source_sites = set(source_name.source_sites.split(',')) if source_name.source_sites else set()
@@ -522,12 +526,12 @@ class BuildingListingNameManager:
                 from sqlalchemy import text
                 insert_sql = text("""
                     INSERT INTO building_listing_names 
-                    (building_id, listing_name, canonical_name, source_sites, occurrence_count, first_seen_at, last_seen_at)
+                    (building_id, normalized_name, canonical_name, source_sites, occurrence_count, first_seen_at, last_seen_at)
                     VALUES 
-                    (:building_id, :listing_name, :canonical_name, :source_sites, :occurrence_count, :first_seen_at, :last_seen_at)
+                    (:building_id, :normalized_name, :canonical_name, :source_sites, :occurrence_count, :first_seen_at, :last_seen_at)
                     ON CONFLICT (building_id, canonical_name) 
                     DO UPDATE SET
-                        listing_name = EXCLUDED.listing_name,
+                        normalized_name = EXCLUDED.normalized_name,
                         source_sites = EXCLUDED.source_sites,
                         occurrence_count = EXCLUDED.occurrence_count,
                         last_seen_at = EXCLUDED.last_seen_at
@@ -535,7 +539,7 @@ class BuildingListingNameManager:
                 
                 self.db.execute(insert_sql, {
                     'building_id': to_building_id,
-                    'listing_name': source_name.listing_name,
+                    'normalized_name': source_name.normalized_name,
                     'canonical_name': source_name.canonical_name,
                     'source_sites': source_name.source_sites,
                     'occurrence_count': source_name.occurrence_count,
@@ -561,7 +565,7 @@ class BuildingListingNameManager:
         
         return [
             {
-                'listing_name': name.listing_name,
+                'normalized_name': name.normalized_name,
                 'canonical_name': name.canonical_name,
                 'source_sites': name.source_sites.split(',') if name.source_sites else [],
                 'occurrence_count': name.occurrence_count,
@@ -581,13 +585,12 @@ class BuildingListingNameManager:
         Returns:
             マッチした建物IDのリスト
         """
+        # canonical_nameで検索
+        canonical_search_term = canonicalize_building_name(search_term)
         building_ids = self.db.query(
             BuildingListingName.building_id
         ).filter(
-            or_(
-                BuildingListingName.listing_name.ilike(f"%{search_term}%"),
-                BuildingListingName.canonical_name.ilike(f"%{search_term}%")
-            )
+            BuildingListingName.canonical_name.ilike(f"%{canonical_search_term}%")
         ).distinct().all()
         
         return [bid[0] for bid in building_ids]

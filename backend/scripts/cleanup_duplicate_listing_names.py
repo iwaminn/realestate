@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker
 from backend.app.models import BuildingListingName
-from backend.app.scrapers.data_normalizer import normalize_building_name
+from backend.app.utils.building_name_normalizer import normalize_building_name, canonicalize_building_name
 import logging
 import os
 
@@ -66,7 +66,7 @@ def cleanup_duplicate_listing_names(dry_run: bool = True):
             for entry in entries:
                 # canonical_nameが設定されていない場合は正規化
                 if not entry.canonical_name:
-                    entry.canonical_name = normalize_building_name(entry.listing_name)
+                    entry.canonical_name = canonicalize_building_name(entry.normalized_name)
                 canonical_groups[entry.canonical_name].append(entry)
             
             # 重複があるグループを処理
@@ -100,8 +100,8 @@ def cleanup_duplicate_listing_names(dry_run: bool = True):
                     
                     logger.info(
                         f"建物ID {building_id}: "
-                        f"'{entry.listing_name}' (出現回数: {entry.occurrence_count}) を "
-                        f"'{primary_entry.listing_name}' (出現回数: {primary_entry.occurrence_count}) に統合"
+                        f"'{entry.normalized_name}' (出現回数: {entry.occurrence_count}) を "
+                        f"'{primary_entry.normalized_name}' (出現回数: {primary_entry.occurrence_count}) に統合"
                     )
                     
                     if not dry_run:

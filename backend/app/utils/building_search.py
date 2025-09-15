@@ -205,7 +205,7 @@ def apply_building_name_filter_with_alias(
         return query
     
     # 検索語の正規化
-    from ..scrapers.data_normalizer import normalize_building_name
+    from .building_name_normalizer import normalize_building_name
     import re
     
     # 検索文字列を正規化して分割
@@ -245,6 +245,7 @@ def apply_building_name_filter_with_alias(
     # 重複を除去
     search_terms = list(dict.fromkeys(search_terms))
     
+    # 全ての検索語を満たす必要がある（AND条件）
     for term in search_terms:
         if not term:  # 空文字列をスキップ
             continue
@@ -262,7 +263,7 @@ def apply_building_name_filter_with_alias(
         # 掲載情報の建物名での検索（BuildingListingNameテーブル使用）
         if search_aliases:
             # 検索語をcanonical形式に変換
-            from ..scrapers.data_normalizer import canonicalize_building_name
+            from .building_name_normalizer import canonicalize_building_name
             canonical_term = canonicalize_building_name(term)
             
             listing_building_ids = db_session.query(
@@ -281,7 +282,8 @@ def apply_building_name_filter_with_alias(
             listing_building_ids = listing_building_ids.distinct()
             conditions.append(building_table.id.in_(listing_building_ids.subquery()))
         
-        # 各検索語に対してOR条件を適用（AND条件でつなげる）
+        # この検索語について、いずれかの条件を満たす必要がある（OR条件）
+        # 全ての検索語について、この条件を満たす必要がある（AND条件）
         if conditions:
             query = query.filter(or_(*conditions))
     

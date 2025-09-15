@@ -1144,6 +1144,7 @@ export const PropertyManagement: React.FC = () => {
                             <TableRow>
                               <TableCell padding="checkbox"></TableCell>
                               <TableCell>物件ID</TableCell>
+                              <TableCell>建物名</TableCell>
                               <TableCell>階数</TableCell>
                               <TableCell>面積</TableCell>
                               <TableCell>間取り</TableCell>
@@ -1164,6 +1165,7 @@ export const PropertyManagement: React.FC = () => {
                                   <Checkbox checked={selectedDetachPropertyId === candidate.id} />
                                 </TableCell>
                                 <TableCell>{candidate.id}</TableCell>
+                                <TableCell>{candidate.display_building_name || '-'}</TableCell>
                                 <TableCell>
                                   {candidate.floor_number ? `${candidate.floor_number}階` : '-'}
                                 </TableCell>

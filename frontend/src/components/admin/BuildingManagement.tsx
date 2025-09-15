@@ -259,6 +259,8 @@ export const BuildingManagement: React.FC = () => {
       hasActiveListings: '',
     });
     setPage(0);
+    // クリア後に再検索を実行
+    setTimeout(() => fetchBuildings(), 0);
   };
 
   const openEditDialog = () => {

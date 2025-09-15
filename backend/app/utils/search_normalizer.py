@@ -2,7 +2,7 @@
 
 import re
 import unicodedata
-from .building_name_normalizer import normalize_building_name, get_search_key_for_building
+from .building_name_normalizer import normalize_building_name, canonicalize_building_name
 
 
 def normalize_search_text(text: str) -> str:
@@ -118,7 +118,7 @@ def create_search_patterns(search: str) -> list[str]:
     
     # canonicalize形式（すべてのスペース・記号を削除、小文字化）も追加
     # これにより「白金ざ　すかい」→「白金ザスカイ」のようなcanonical形式でも検索可能
-    from ..scrapers.data_normalizer import canonicalize_building_name
+    from .building_name_normalizer import canonicalize_building_name
     canonical = canonicalize_building_name(search)
     if canonical not in patterns:
         patterns.append(canonical)
@@ -152,4 +152,4 @@ def get_search_key_for_comparison(text: str) -> str:
         return ""
     
     # 共通の検索キー生成関数を使用
-    return get_search_key_for_building(text)
+    return canonicalize_building_name(text)

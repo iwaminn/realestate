@@ -115,7 +115,7 @@ async def get_buildings(
         # ひらがなをカタカナに変換してから検索
         from ..utils.search_normalizer import normalize_search_text, create_search_patterns
         from ..models import BuildingListingName
-        from ..scrapers.data_normalizer import canonicalize_building_name
+        from ..utils.building_name_normalizer import canonicalize_building_name
         
         # 検索語を正規化（ひらがな→カタカナ変換）
         normalized_search = normalize_search_text(search)
@@ -373,7 +373,7 @@ async def suggest_buildings(
     
     # スペース区切りでAND検索対応（ひらがな→カタカナ変換）
     from ..utils.search_normalizer import normalize_search_text
-    from ..scrapers.data_normalizer import canonicalize_building_name
+    from ..utils.building_name_normalizer import canonicalize_building_name
     
     # 検索語を正規化（ひらがな→カタカナ変換）
     normalized_q = normalize_search_text(q)
@@ -422,17 +422,17 @@ async def suggest_buildings(
         first_canonical = canonical_terms[0]
         query = db.query(
             BuildingListingName.building_id,
-            BuildingListingName.listing_name,
+            BuildingListingName.normalized_name,
             BuildingListingName.canonical_name,
             func.max(BuildingListingName.occurrence_count).label('max_count')
         ).filter(
             or_(
-                BuildingListingName.listing_name.ilike(f"%{first_term}%"),
+                BuildingListingName.normalized_name.ilike(f"%{first_term}%"),
                 BuildingListingName.canonical_name.ilike(f"%{first_canonical}%")
             )
         ).group_by(
             BuildingListingName.building_id,
-            BuildingListingName.listing_name,
+            BuildingListingName.normalized_name,
             BuildingListingName.canonical_name
         )
         
@@ -440,7 +440,7 @@ async def suggest_buildings(
         
         # 残りの検索語でフィルタリング
         for listing in candidates:
-            listing_name_lower = listing.listing_name.lower() if listing.listing_name else ""
+            listing_name_lower = listing.normalized_name.lower() if listing.normalized_name else ""
             canonical_name = listing.canonical_name if listing.canonical_name else ""
             
             # 全ての検索語が含まれているかチェック
@@ -461,16 +461,16 @@ async def suggest_buildings(
         canonical_q = canonicalize_building_name(q)
         query = db.query(
             BuildingListingName.building_id,
-            BuildingListingName.listing_name,
+            BuildingListingName.normalized_name,
             func.max(BuildingListingName.occurrence_count).label('max_count')
         ).filter(
             or_(
-                BuildingListingName.listing_name.ilike(f"%{q}%"),
+                BuildingListingName.normalized_name.ilike(f"%{q}%"),
                 BuildingListingName.canonical_name.ilike(f"%{canonical_q}%")
             )
         ).group_by(
             BuildingListingName.building_id,
-            BuildingListingName.listing_name
+            BuildingListingName.normalized_name
         )
         listing_matches = query.all()
     

@@ -26,7 +26,7 @@ from ..models import (
 from ..utils.building_normalizer import BuildingNameNormalizer
 from ..utils.building_name_normalizer import (
     normalize_building_name as normalize_building_name_common,
-    get_search_key_for_building as get_search_key_for_building_common,
+    canonicalize_building_name,
     extract_room_number as extract_room_number_common
 )
 from ..utils.property_utils import update_earliest_listing_date
@@ -2332,7 +2332,7 @@ class BaseScraper(ABC):
         建物検索用のキーを生成
         共通モジュールの関数を使用
         """
-        return get_search_key_for_building_common(building_name)
+        return canonicalize_building_name(building_name)
     
     def safe_flush(self, session):
         """セッションのflushを安全に実行（エラー時は自動ロールバック）"""
@@ -2868,7 +2868,7 @@ class BaseScraper(ABC):
         # === 2. BuildingListingNameテーブルでの検索（別名での完全一致） ===
         from sqlalchemy import or_
         from ..models import BuildingListingName
-        from .data_normalizer import canonicalize_building_name
+        from ..utils.building_name_normalizer import canonicalize_building_name
         
         # 検索語を正規化
         canonical_search = canonicalize_building_name(search_key)

@@ -14,7 +14,7 @@ sys.path.insert(0, str(project_root))
 
 from backend.app.database import SessionLocal
 from backend.app.models import (
-    Building, BuildingAlias, MasterProperty, PropertyListing,
+    Building, MasterProperty, PropertyListing,
     ListingPriceHistory, BuildingExternalId, BuildingMergeHistory,
     BuildingMergeExclusion, PropertyMergeHistory, PropertyMergeExclusion,
     Url404Retry
@@ -57,7 +57,6 @@ def clear_all_tables():
             BuildingMergeExclusion,
             BuildingMergeHistory,
             BuildingExternalId,
-            BuildingAlias,
             
             # 建物
             Building,

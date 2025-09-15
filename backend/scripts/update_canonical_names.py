@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from backend.app.models import BuildingListingName, Building
-from backend.app.scrapers.data_normalizer import canonicalize_building_name
+from backend.app.utils.building_name_normalizer import canonicalize_building_name
 import logging
 
 # ロギング設定

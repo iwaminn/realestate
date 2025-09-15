@@ -7,6 +7,29 @@ import re
 import jaconv
 
 
+def normalize_building_name_with_ad_removal(building_name: str) -> str:
+    """
+    建物名を正規化する（広告文削除付き）
+    
+    スクレイピング時など、広告文が含まれている可能性がある場合に使用
+    
+    Args:
+        building_name: 正規化する建物名（広告文が含まれる可能性あり）
+        
+    Returns:
+        広告文を削除して正規化された建物名
+    """
+    if not building_name:
+        return ""
+    
+    # まず広告文を削除（棟名や番号は保持）
+    from ..scrapers.base_scraper import extract_building_name_from_ad_text
+    cleaned_name = extract_building_name_from_ad_text(building_name)
+    
+    # その後、通常の正規化を適用
+    return normalize_building_name(cleaned_name)
+
+
 def normalize_building_name(building_name: str) -> str:
     """
     建物名を正規化する共通メソッド
@@ -84,24 +107,34 @@ def normalize_building_name(building_name: str) -> str:
     return normalized
 
 
-def get_search_key_for_building(building_name: str) -> str:
+def canonicalize_building_name(building_name: str) -> str:
     """
-    建物検索用のキーを生成（normalize_building_nameをベースに追加処理）
+    建物名を正規化して検索用キーを生成
     
-    normalize_building_nameの処理に加えて：
-    - すべての記号とスペースを完全削除（より緩い一致のため）
-    - ひらがなをカタカナに変換
-    - 小文字化
+    処理内容：
+    1. normalize_building_nameで基本的な正規化
+    2. ひらがなをカタカナに変換
+    3. 英数字と日本語文字以外を削除
+    4. 小文字化
     
     注意：棟表記（東棟、西棟など）は除去しません。
     異なる棟は別々の建物として扱われます。
+    
+    Args:
+        building_name: 正規化する建物名
+        
+    Returns:
+        検索用に完全に正規化された建物名
     """
+    if not building_name:
+        return ""
+    
     # まず標準的な正規化を適用
-    key = normalize_building_name(building_name)
+    normalized = normalize_building_name(building_name)
     
     # ひらがなをカタカナに変換
     canonical = ''
-    for char in key:
+    for char in normalized:
         # ひらがなの範囲（U+3040〜U+309F）をカタカナ（U+30A0〜U+30FF）に変換
         if '\u3040' <= char <= '\u309f':
             canonical += chr(ord(char) + 0x60)
@@ -114,16 +147,12 @@ def get_search_key_for_building(building_name: str) -> str:
     for char in canonical:
         if char in string.ascii_letters + string.digits:
             result.append(char)
-        elif char == '・':  # 中点は削除
-            continue
         elif '\u3040' <= char <= '\u9fff':  # 日本語文字の範囲
             result.append(char)
         # それ以外の文字（記号、スペース等）は削除
     
     # 小文字化
-    key = ''.join(result).lower()
-    
-    return key
+    return ''.join(result).lower()
 
 
 def extract_room_number(building_name: str) -> tuple[str, str]:

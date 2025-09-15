@@ -154,7 +154,7 @@ async def search_buildings_for_merge(
     """建物検索（統合用）"""
     from ..utils.search_normalizer import create_search_patterns, normalize_search_text
     from ..models import BuildingListingName
-    from ..scrapers.data_normalizer import canonicalize_building_name
+    from ..utils.building_name_normalizer import canonicalize_building_name
     
     # 検索文字列を正規化してAND検索用に分割
     normalized_search = normalize_search_text(query)
@@ -166,10 +166,10 @@ async def search_buildings_for_merge(
     # BuildingListingNameから検索
     alias_matches = db.query(
         BuildingListingName.building_id,
-        BuildingListingName.listing_name.label('alias_name')
+        BuildingListingName.normalized_name.label('alias_name')
     ).filter(
         or_(
-            BuildingListingName.listing_name.ilike(f"%{query}%"),
+            BuildingListingName.normalized_name.ilike(f"%{query}%"),
             BuildingListingName.canonical_name.ilike(f"%{canonical_search}%")
         )
     ).distinct().all()
@@ -243,7 +243,7 @@ async def search_buildings_for_merge(
         listing_names = db.query(
             BuildingListingName.building_id,
             func.string_agg(
-                BuildingListingName.listing_name, 
+                BuildingListingName.normalized_name, 
                 ', '
             ).label('aliases')
         ).filter(
@@ -333,7 +333,7 @@ async def get_building_detail(
     # 掲載情報の建物名を取得
     from ..models import BuildingListingName
     listing_names = db.query(
-        BuildingListingName.listing_name,
+        BuildingListingName.normalized_name,
         BuildingListingName.source_sites,
         BuildingListingName.occurrence_count,
         BuildingListingName.first_seen_at,
@@ -406,7 +406,7 @@ async def get_building_detail(
         'aliases': unique_aliases,  # エイリアス情報を追加
         'listing_names': [  # 掲載情報の建物名を追加
             {
-                'name': ln.listing_name,
+                'name': ln.normalized_name,
                 'source_sites': ln.source_sites.split(',') if ln.source_sites else [],
                 'occurrence_count': ln.occurrence_count,
                 'first_seen_at': ln.first_seen_at.isoformat() if ln.first_seen_at else None,
@@ -770,7 +770,7 @@ async def get_detach_candidates(
     
     # 2. BuildingListingNameから検索
     from ..models import BuildingListingName
-    from ..scrapers.data_normalizer import canonicalize_building_name
+    from ..utils.building_name_normalizer import canonicalize_building_name
     
     # 検索語を正規化
     canonical_search = canonicalize_building_name(most_common_building_name)
@@ -778,10 +778,10 @@ async def get_detach_candidates(
     # BuildingListingNameから該当する建物を検索
     listing_name_matches = db.query(BuildingListingName).filter(
         or_(
-            BuildingListingName.listing_name == most_common_building_name,
-            BuildingListingName.listing_name == most_common_building_name.replace(' ', '　'),
+            BuildingListingName.normalized_name == most_common_building_name,
+            BuildingListingName.normalized_name == most_common_building_name.replace(' ', '　'),
             BuildingListingName.canonical_name == canonical_search,
-            func.replace(BuildingListingName.listing_name, '　', ' ') == most_common_building_name
+            func.replace(BuildingListingName.normalized_name, '　', ' ') == most_common_building_name
         )
     ).all()
     
@@ -797,7 +797,7 @@ async def get_detach_candidates(
             
             # 掲載名の一致
             score += 10
-            match_details.append(f"掲載名一致({listing_match.listing_name})")
+            match_details.append(f"掲載名一致({listing_match.normalized_name})")
             
             # 住所の比較
             if property_address_normalized and building.address:
@@ -833,7 +833,7 @@ async def get_detach_candidates(
                     'score': score,
                     'match_details': match_details,
                     'match_type': 'alias',
-                    'alias_name': listing_match.listing_name
+                    'alias_name': listing_match.normalized_name
                 })
     
     # スコア順にソート
