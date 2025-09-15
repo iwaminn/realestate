@@ -1969,19 +1969,19 @@ const AdminScraping: React.FC = () => {
               </TableBody>
             </Table>
           </TableContainer>
-          {totalPages > 1 && (
-            <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
-              <Pagination
-                count={totalPages}
-                page={taskPage}
-                onChange={(_, page) => setTaskPage(page)}
-                size="small"
-                color="primary"
-                siblingCount={1}
-                boundaryCount={1}
-              />
-            </Box>
-          )}
+        )}
+        {totalPages > 1 && (
+          <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
+            <Pagination
+              count={totalPages}
+              page={taskPage}
+              onChange={(_, page) => setTaskPage(page)}
+              size="small"
+              color="primary"
+              siblingCount={1}
+              boundaryCount={1}
+            />
+          </Box>
         )}
       </Paper>
 

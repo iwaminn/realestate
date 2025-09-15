@@ -23,7 +23,21 @@ def normalize_building_name(building_name: str) -> str:
     # 1. 全角英数字と記号を半角に変換
     normalized = jaconv.z2h(building_name, kana=False, ascii=True, digit=True)
     
-    # 2. 記号類の処理
+    # 2. ローマ数字の正規化を先に実行（フィルタリング前に変換）
+    # 全角ローマ数字を半角に変換
+    roman_map = {
+        'Ⅰ': 'I', 'Ⅱ': 'II', 'Ⅲ': 'III', 'Ⅳ': 'IV', 'Ⅴ': 'V',
+        'Ⅵ': 'VI', 'Ⅶ': 'VII', 'Ⅷ': 'VIII', 'Ⅸ': 'IX', 'Ⅹ': 'X',
+        'Ⅺ': 'XI', 'Ⅻ': 'XII',
+        # 小文字版も追加
+        'ⅰ': 'I', 'ⅱ': 'II', 'ⅲ': 'III', 'ⅳ': 'IV', 'ⅴ': 'V',
+        'ⅵ': 'VI', 'ⅶ': 'VII', 'ⅷ': 'VIII', 'ⅸ': 'IX', 'ⅹ': 'X',
+        'ⅺ': 'XI', 'ⅻ': 'XII'
+    }
+    for full_width, half_width in roman_map.items():
+        normalized = normalized.replace(full_width, half_width)
+    
+    # 3. 記号類の処理
     # 意味のある記号（・、&、-、~）は保持、装飾記号はスペースに変換
     
     # 各種ダッシュをハイフンに統一
@@ -31,7 +45,7 @@ def normalize_building_name(building_name: str) -> str:
         normalized = normalized.replace(dash_char, '-')
     
     # 波ダッシュをチルダに統一
-    normalized = normalized.replace('\u301c', '~').replace('～', '~')
+    normalized = normalized.replace('\u301c', '~').replace('\uff5e', '~')
     
     # 装飾記号をスペースに変換（●■★◆▲◇□◎○△▽♪など）
     # 保持する記号: 英数字、日本語、・（中点）、&、-、~、括弧、スペース
@@ -51,15 +65,6 @@ def normalize_building_name(building_name: str) -> str:
             result.append(' ')
     normalized = ''.join(result)
     
-    # 3. ローマ数字の正規化（全角ローマ数字を半角に変換）
-    roman_map = {
-        'Ⅰ': 'I', 'Ⅱ': 'II', 'Ⅲ': 'III', 'Ⅳ': 'IV', 'Ⅴ': 'V',
-        'Ⅵ': 'VI', 'Ⅶ': 'VII', 'Ⅷ': 'VIII', 'Ⅸ': 'IX', 'Ⅹ': 'X',
-        'Ⅺ': 'XI', 'Ⅻ': 'XII'
-    }
-    for full_width, half_width in roman_map.items():
-        normalized = normalized.replace(full_width, half_width)
-    
     # 4. 単位の正規化（㎡とm2を統一）
     normalized = normalized.replace('㎡', 'm2').replace('m²', 'm2')
     
@@ -71,6 +76,7 @@ def normalize_building_name(building_name: str) -> str:
     # 全角スペースも半角スペースに変換
     normalized = normalized.replace('　', ' ')
     # 連続するスペースを1つの半角スペースに統一
+    import re
     normalized = re.sub(r'\s+', ' ', normalized)
     # 前後の空白を除去
     normalized = normalized.strip()
