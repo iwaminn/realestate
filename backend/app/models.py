@@ -29,6 +29,7 @@ class Building(Base):
     construction_type = Column(String(100))                    # 構造（RC造など）
     land_rights = Column(String(500))                          # 敷地の権利形態
     station_info = Column(Text)                                # 交通情報（建物レベル）
+    is_valid_name = Column(Boolean, nullable=False, server_default='true')  # 建物名が妥当かどうか（広告文でないか）
     
     # 座標情報（キャッシュ用）
     latitude = Column(Float)                                   # 緯度

@@ -3002,6 +3002,7 @@ class BaseScraper(ABC):
         original_building_name = building_name
         
         # 広告文が含まれている場合は、建物名部分のみを抽出
+        is_ad_text_only = False  # フラグを初期化
         extracted_name = extract_building_name_from_ad_text(building_name)
         if extracted_name and extracted_name != building_name:
             self.logger.debug(f"広告文から建物名を抽出: '{building_name}' → '{extracted_name}'")
@@ -3010,6 +3011,10 @@ class BaseScraper(ABC):
             # 広告文のみで建物名が含まれていない場合でも、元の名前をそのまま使用
             self.logger.warning(f"建物名が広告文のみ: '{building_name}' - そのまま使用")
             building_name = original_building_name
+            # 広告文のみの場合はフラグを立てる（後で使用）
+            is_ad_text_only = True
+        else:
+            is_ad_text_only = False
         
         # 外部IDがある場合は先に検索
         if external_property_id:
@@ -3155,7 +3160,8 @@ class BaseScraper(ABC):
             basement_floors=basement_floors,  # 地下階数も設定
             construction_type=structure,      # structureはconstruction_typeとして保存
             land_rights=land_rights,          # 土地権利も設定
-            station_info=station_info         # 交通情報も設定
+            station_info=station_info,        # 交通情報も設定
+            is_valid_name=not is_ad_text_only  # 広告文のみの場合はFalse
         )
         session.add(building)
         self.safe_flush(session)

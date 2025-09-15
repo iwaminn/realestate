@@ -80,7 +80,7 @@ async def get_recent_updates_cached(
         .subquery()
     )
     
-    # 指定期間内に初めて掲載された物件を取得
+    # 指定期間内に初めて掲載された物件を取得（広告文建物を除外）
     new_listings_query = (
         db.query(
             MasterProperty,
@@ -100,7 +100,8 @@ async def get_recent_updates_cached(
         .filter(
             PropertyListing.is_active == True,
             first_listing_subq.c.first_created_at >= cutoff_time,
-            MasterProperty.sold_at.is_(None)
+            MasterProperty.sold_at.is_(None),
+            Building.is_valid_name == True  # 広告文のみの建物を除外
         )
         .distinct(MasterProperty.id)
     ).all()
