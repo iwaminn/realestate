@@ -322,6 +322,12 @@ class SuumoScraper(BaseScraper):
             # 詳細情報を保存
             property_data['detail_info'] = detail_info
             
+            # detail_infoから建物情報をトップレベルにコピー（base_scraperで使用するため）
+            if 'total_floors' in detail_info:
+                property_data['total_floors'] = detail_info['total_floors']
+            if 'total_units' in detail_info:
+                property_data['total_units'] = detail_info['total_units']
+            
             
             # 建物名取得元の統計を更新
             self._update_building_name_statistics(property_data)

@@ -888,7 +888,7 @@ class MajorityVoteUpdater:
                 )
             
             # 正規化して比較・更新
-            from ..utils.building_name_normalizer import normalize_building_name, get_search_key_for_building
+            from ..utils.building_name_normalizer import normalize_building_name, canonicalize_building_name
             normalized_best_name = normalize_building_name(best_name)
             
             # 現在の名前と異なる場合は更新
@@ -899,7 +899,7 @@ class MajorityVoteUpdater:
                     vote_summary[name] = weight
                 
                 # canonical_nameも更新（検索用）
-                new_canonical_name = get_search_key_for_building(normalized_best_name)
+                new_canonical_name = canonicalize_building_name(normalized_best_name)
                 
                 logger.info(
                     f"建物名更新: '{building.normalized_name}' → '{normalized_best_name}' "
