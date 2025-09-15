@@ -900,7 +900,7 @@ const TaskLogs = React.memo(({ task, logPage, setLogPage }: any) => {
                       sx={{ height: 20 }}
                     />
                     <Typography variant="body2">
-                      {log.title || log.message}
+                      {log.message || log.title}
                     </Typography>
                   </Box>
                 }
