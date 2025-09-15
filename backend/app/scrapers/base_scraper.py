@@ -3007,8 +3007,8 @@ class BaseScraper(ABC):
             self.logger.debug(f"広告文から建物名を抽出: '{building_name}' → '{extracted_name}'")
             building_name = extracted_name
         elif not extracted_name:
-            # 抽出に失敗した場合は元の名前をそのまま使用
-            self.logger.debug(f"建物名抽出に失敗、元の名前を使用: '{building_name}'")
+            # 広告文のみで建物名が含まれていない場合でも、元の名前をそのまま使用
+            self.logger.warning(f"建物名が広告文のみ: '{building_name}' - そのまま使用")
             building_name = original_building_name
         
         # 外部IDがある場合は先に検索
@@ -4710,7 +4710,14 @@ class BaseScraper(ABC):
         url = property_data.get('url', '不明')
         failure_reason = ""
         
-        if not property_data.get('price'):
+        # validate_property_dataで収集された詳細なエラー情報があるか確認
+        validation_errors = property_data.get('_validation_errors', [])
+        
+        if validation_errors:
+            # 詳細なエラー情報がある場合はそれを使用
+            self._scraping_stats['other_errors'] += 1
+            failure_reason = f"バリデーションエラー: {'; '.join(validation_errors)}"
+        elif not property_data.get('price'):
             self._scraping_stats['price_missing'] += 1
             failure_reason = "価格情報なし"
         elif not property_data.get('building_name'):
@@ -4720,8 +4727,26 @@ class BaseScraper(ABC):
             self._scraping_stats['other_errors'] += 1
             failure_reason = "サイト物件IDなし"
         else:
-            self._scraping_stats['other_errors'] += 1
-            failure_reason = "その他のバリデーションエラー"
+            # 詳細ページで必須のフィールドをチェック
+            missing_fields = []
+            if property_data.get('detail_fetched', False):
+                # 詳細ページ取得後に必須となるフィールド
+                required_detail_fields = {
+                    'address': '住所',
+                    'area': '面積',
+                    'layout': '間取り',
+                    'built_year': '築年'
+                }
+                for field, field_jp in required_detail_fields.items():
+                    if not property_data.get(field):
+                        missing_fields.append(field_jp)
+            
+            if missing_fields:
+                self._scraping_stats['other_errors'] += 1
+                failure_reason = f"必須フィールド未取得: {', '.join(missing_fields)}"
+            else:
+                self._scraping_stats['other_errors'] += 1
+                failure_reason = "その他のバリデーションエラー"
         
         print(f"  → 保存失敗: {failure_reason} (URL: {url})")
         
@@ -5978,4 +6003,35 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
     
     # 単語を再結合
     result = ' '.join(filtered_words).strip()
+    
+    # 路線名だけが残った場合は無効な建物名として空文字を返す
+    # 鉄道路線名のパターン
+    railway_patterns = [
+        r'^.*線$',  # ～線で終わる
+        r'^JR.*$',  # JRで始まる
+        r'^東京メトロ.*$',  # 東京メトロで始まる
+        r'^都営.*線$',  # 都営～線
+        r'^東急.*線$',  # 東急～線
+        r'^小田急.*線$',  # 小田急～線
+        r'^京王.*線$',  # 京王～線
+        r'^西武.*線$',  # 西武～線
+        r'^東武.*線$',  # 東武～線
+        r'^京急.*線$',  # 京急～線
+        r'^相鉄.*線$',  # 相鉄～線
+        r'^京成.*線$',  # 京成～線
+        r'^つくばエクスプレス$',  # つくばエクスプレス
+        r'^りんかい線$',  # りんかい線
+        r'^ゆりかもめ$',  # ゆりかもめ
+    ]
+    
+    # 路線名だけの場合は無効
+    for pattern in railway_patterns:
+        if re.match(pattern, result):
+            # ただし、建物名キーワードを含む場合は有効
+            # 例：「東横線ハイツ」「山手線マンション」は有効
+            building_keywords_in_result = ['マンション', 'ハウス', 'レジデンス', 'ビル', 'タワー', 
+                                          'コート', 'パーク', 'プラザ', 'スクエア', 'ガーデン']
+            if not any(keyword in result for keyword in building_keywords_in_result):
+                return ""  # 路線名のみの場合は空文字を返す
+    
     return result

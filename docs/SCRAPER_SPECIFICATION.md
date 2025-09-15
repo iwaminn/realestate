@@ -213,6 +213,21 @@
 
 ### LIFULL HOME'S (HomesScraper)
 
+#### 重要な注意事項
+⚠️ **HTML構造の多様性とBot保護**
+- LIFULL HOME'Sは複数のHTMLテンプレートパターンを使用しており、物件によって構造が異なる場合があります
+- Bot保護機能により、プログラムアクセス時に405エラー（Method Not Allowed）が返されることがあります
+- 総戸数などの一部データは、Bot保護により取得できない場合があります（実装はlines 591-596に存在）
+- フォールバック処理により、複数のセレクタパターンを試行して情報取得を試みています
+
+#### HTMLテンプレートパターン
+LIFULL HOME'Sでは以下の異なるHTMLパターンが確認されています：
+1. **BasicSpecificationコンポーネント型**: `data-component="BasicSpecification"`を持つdiv要素内にテーブル配置
+2. **aboutセクション型**: `id="about"`のdiv要素内にテーブル配置  
+3. **stickyメニュー型**: `data-sticky-menu-target="section"`属性を持つセクション構造
+
+各パターンで総戸数やその他の属性（管理費、修繕積立金、築年月等）の位置が異なるため、スクレイパーは複数の方法で探索を行います。
+
 #### 一覧ページ
 - URL形式: `/mansion/chuko/tokyo/{area}/list/?page={page}`
 - セレクタ:

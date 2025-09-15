@@ -157,13 +157,20 @@ const BuildingDuplicateManager: React.FC = () => {
     setSelectedCandidates([latestGroup.primary.id, ...latestGroup.candidates.map(c => c.id)]);
     
     // 物件数が最も多い建物をデフォルトのマスターに設定
+    // 物件数が同じ場合は建物IDが小さい方を優先
     const allBuildings = [
       latestGroup.primary,
       ...latestGroup.candidates
     ];
-    const buildingWithMostProperties = allBuildings.reduce((prev, current) => 
-      current.property_count > prev.property_count ? current : prev
-    );
+    const buildingWithMostProperties = allBuildings.reduce((prev, current) => {
+      if (current.property_count > prev.property_count) {
+        return current;
+      } else if (current.property_count === prev.property_count) {
+        // 物件数が同じ場合は建物IDが小さい方を選択
+        return current.id < prev.id ? current : prev;
+      }
+      return prev;
+    });
     setSelectedMasterId(buildingWithMostProperties.id);
   };
 

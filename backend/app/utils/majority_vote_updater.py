@@ -817,18 +817,8 @@ class MajorityVoteUpdater:
         name_weights = {}  # {建物名: 重み}
         
         for building_name, source_site, count in building_name_votes:
-            # 基本的な重み（出現回数）
+            # 純粋な出現回数による重み（サイトによる重み付けなし）
             weight = count
-            
-            # ソースによる重み付け（優先度の高いサイトほど高い重み）
-            site_priority = self.get_site_priority(str(source_site))
-            if site_priority < len(self.SITE_PRIORITY):
-                # 優先度が高いサイトには追加の重みを付与
-                weight *= (len(self.SITE_PRIORITY) - site_priority + 1)
-            
-            # 広告文っぽい名前は重みを下げる
-            if self._is_advertising_text(building_name):
-                weight *= 0.1
             
             all_building_names.append(building_name)
             if building_name in name_weights:
@@ -836,18 +826,45 @@ class MajorityVoteUpdater:
             else:
                 name_weights[building_name] = weight
         
+        # 広告文除去処理を適用してから建物名をグループ化
+        from ..scrapers.base_scraper import extract_building_name_from_ad_text
+        cleaned_names = []
+        cleaned_name_weights = {}
+        
+        for name in all_building_names:
+            # 広告文除去処理
+            cleaned_name = extract_building_name_from_ad_text(name)
+            
+            # 広告文除去後に有効な建物名がない場合はスキップ
+            if not cleaned_name:
+                logger.debug(f"広告文除去により無効化された建物名: '{name}'")
+                continue
+            
+            cleaned_names.append(cleaned_name)
+            
+            # 元の重みを引き継ぐ（既に広告文判定で重みは調整済み）
+            if cleaned_name in cleaned_name_weights:
+                cleaned_name_weights[cleaned_name] += name_weights.get(name, 0)
+            else:
+                cleaned_name_weights[cleaned_name] = name_weights.get(name, 0)
+        
+        # 有効な建物名がない場合は更新しない
+        if not cleaned_names:
+            logger.warning(f"建物ID {building_id}: すべての建物名が広告文として除去されました")
+            return False
+        
         # 建物名をグループ化（基本版：スペース正規化のみ使用）
         # 物件関係を考慮した類似度ベースのグループ化は、
         # 「白金ザ・スカイ」と「白金ザ・スカイ東棟」のような
         # 異なる棟表記を適切に分離できないため、基本版を使用
-        grouped_names = grouper.group_building_names(all_building_names)
+        grouped_names = grouper.group_building_names(cleaned_names)
         
         # 2. 各グループの合計重みを計算（第1段階投票）
         group_weights = {}
         for group_key, names in grouped_names.items():
             # 重複を除いてユニークな名前のみの重みを合計
             unique_names = list(set(names))
-            total_weight = sum(name_weights.get(name, 0) for name in unique_names)
+            total_weight = sum(cleaned_name_weights.get(name, 0) for name in unique_names)
             group_weights[group_key] = total_weight
         
         # 最も重みの高いグループを選択
@@ -857,7 +874,7 @@ class MajorityVoteUpdater:
             
             # 3. 選択されたグループ内で最適な表記を選択（第2段階投票）
             # 重み情報を渡して最頻出の表記を選択
-            best_name = grouper.find_best_representation(best_group_names, name_weights)
+            best_name = grouper.find_best_representation(best_group_names, cleaned_name_weights)
             
             # デバッグ用：グループ化の効果をログ出力
             if len(grouped_names) != len(all_building_names):
@@ -878,7 +895,7 @@ class MajorityVoteUpdater:
             if normalized_best_name != building.normalized_name:
                 # ログ出力用に投票結果を整形
                 vote_summary = {}
-                for name, weight in name_weights.items():
+                for name, weight in cleaned_name_weights.items():
                     vote_summary[name] = weight
                 
                 # canonical_nameも更新（検索用）
@@ -938,17 +955,13 @@ class MajorityVoteUpdater:
                     if not cleaned_building_name:
                         continue
                     
-                    # ソースによる重み付け
-                    weight = self.get_site_priority_weight(listing.source_site)
-                    
-                    # 広告文除去済みなので、追加の広告文判定は不要
-                    
+                    # 純粋な出現回数ベース（サイト重み付けなし）
                     all_building_names.append(cleaned_building_name)
                     
                     if cleaned_building_name in name_weights:
-                        name_weights[cleaned_building_name] += weight
+                        name_weights[cleaned_building_name] += 1
                     else:
-                        name_weights[cleaned_building_name] = weight
+                        name_weights[cleaned_building_name] = 1
         else:
             # すべて非アクティブの場合、最近の掲載情報を使用
             recent_listings = self.session.query(PropertyListing).filter(
@@ -965,17 +978,13 @@ class MajorityVoteUpdater:
                     if not cleaned_building_name:
                         continue
                     
-                    # ソースによる重み付け
-                    weight = self.get_site_priority_weight(listing.source_site)
-                    
-                    # 広告文除去済みなので、追加の広告文判定は不要
-                    
+                    # 純粋な出現回数ベース（サイト重み付けなし）
                     all_building_names.append(cleaned_building_name)
                     
                     if cleaned_building_name in name_weights:
-                        name_weights[cleaned_building_name] += weight
+                        name_weights[cleaned_building_name] += 1
                     else:
-                        name_weights[cleaned_building_name] = weight
+                        name_weights[cleaned_building_name] = 1
         
         if all_building_names:
             # 建物名をグループ化（スペース正規化）
@@ -1008,15 +1017,20 @@ class MajorityVoteUpdater:
                     f"グループ '{best_group_key}' の表記ゆれを統合: {list(best_group_names)[:5]} → '{best_name}'"
                 )
             
+            # 正規化して比較・更新（建物レベルと同様の処理）
+            from ..utils.building_name_normalizer import normalize_building_name
+            normalized_best_name = normalize_building_name(best_name)
+            
             # 現在の名前と異なる場合、またはNoneの場合は更新
-            if property_obj.display_building_name != best_name:
+            if property_obj.display_building_name != normalized_best_name:
                 logger.info(
-                    f"物件建物名更新: '{property_obj.display_building_name}' → '{best_name}' "
+                    f"物件建物名更新: '{property_obj.display_building_name}' → '{normalized_best_name}' "
                     f"(物件ID: {property_id}, グループ数: {len(grouped_names)}, "
                     f"選択グループ: '{best_group_key}', "
+                    f"元の名前: '{best_name}', "
                     f"votes: {dict(sorted(name_weights.items(), key=lambda x: x[1], reverse=True)[:3])})"
                 )
-                property_obj.display_building_name = best_name
+                property_obj.display_building_name = normalized_best_name
                 self.session.flush()  # 変更を即座に反映
                 return True
         elif property_obj.display_building_name is None:
