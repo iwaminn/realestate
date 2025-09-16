@@ -45,7 +45,8 @@ from .components import (
     ProgressTrackerComponent,
     CacheManagerComponent,
     BuildingNormalizerComponent,
-    PropertyMatcherComponent
+    PropertyMatcherComponent,
+    DbRepositoryComponent
 )
 from .components.http_client import HttpClientComponent
 from .components.error_handler import ErrorHandlerComponent
@@ -120,6 +121,9 @@ class BaseScraper(ABC):
         from ..database import get_db_for_scraping
         session = get_db_for_scraping()
         
+        # DbRepositoryComponentのインスタンスを作成
+        db_repo = DbRepositoryComponent(session, self.logger)
+        
         try:
             # トランザクション分離レベルをREAD COMMITTEDに設定
             # （PostgreSQLのデフォルトだが明示的に設定）
@@ -139,7 +143,9 @@ class BaseScraper(ABC):
             self.logger.debug(f"トランザクション設定エラー（無視）: {e}")
         
         try:
-            yield session
+            # sessionとdb_repoの両方をタプルでyield（互換性維持）
+            yield session  # 既存のコードとの互換性のため、sessionのみyield
+            # 新しいコードではdb_repoを直接使用する場合は別メソッドを用意
             session.commit()
         except Exception as e:
             session.rollback()
@@ -148,6 +154,53 @@ class BaseScraper(ABC):
             raise
         finally:
             session.close()
+
+    @contextmanager
+    def db_repository_scope(self):
+        """
+        DbRepositoryComponentを使用するコンテキストマネージャー
+        
+        データベース操作をコンポーネント経由で行う新しいインターフェース。
+        トランザクション管理も含む。
+        
+        使用例:
+            with self.db_repository_scope() as db_repo:
+                building = db_repo.find_or_create_building(building_data)
+                master_property = db_repo.find_master_property(property_hash)
+                db_repo.commit()
+        """
+        from ..database import get_db_for_scraping
+        session = get_db_for_scraping()
+        
+        # DbRepositoryComponentのインスタンスを作成
+        db_repo = DbRepositoryComponent(session, self.logger)
+        
+        try:
+            # トランザクション分離レベルをREAD COMMITTEDに設定
+            session.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            
+            # ロックタイムアウトを設定（5秒）
+            session.execute("SET LOCAL lock_timeout = '5s'")
+            
+            # ステートメントタイムアウトを設定（30秒）
+            session.execute("SET LOCAL statement_timeout = '30s'")
+            
+            # デッドロック優先度を設定
+            session.execute("SET LOCAL deadlock_timeout = '1s'")
+            
+        except Exception as e:
+            self.logger.debug(f"トランザクション設定エラー（無視）: {e}")
+        
+        try:
+            yield db_repo
+            # 自動コミット
+            db_repo.commit()
+        except Exception as e:
+            db_repo.rollback()
+            self.logger.debug(f"トランザクションエラー（ロールバック済み）: {e}")
+            raise
+        finally:
+            db_repo.close()
 
     def _handle_transaction_error(self, error: Exception, context: str) -> bool:
         """
@@ -303,8 +356,6 @@ class BaseScraper(ABC):
         self._current_page = 1
         self._processed_count = 0
         
-        # 汎用的な項目別エラーキャッシュ（全スクレイパー共通）
-        self._field_error_cache = {}  # {field_name: {url: timestamp}}
         self._consecutive_error_count = 0  # 連続エラーカウンター
         
         # セレクタ検証統計
@@ -473,6 +524,18 @@ class BaseScraper(ABC):
     
     def fetch_page(self, url: str) -> Optional[BeautifulSoup]:
         """ページを取得してBeautifulSoupオブジェクトを返す（リファクタリング版）"""
+        # キャッシュチェック（開発・デバッグ用）
+        if os.getenv('SCRAPER_USE_CACHE', 'false').lower() == 'true':
+            cached_content = self.cache_manager.get_cached_page(url)
+            if cached_content:
+                self.logger.debug(f"キャッシュからページ取得: {url}")
+                soup = self.html_parser.parse_html(cached_content)
+                if soup:
+                    return soup
+        
+        # レート制限を適用
+        self.rate_limiter.wait_if_needed(self.source_site.value)
+        
         # 前回のエラー情報をクリア
         self._last_fetch_error = None
         
@@ -482,15 +545,27 @@ class BaseScraper(ABC):
             # 特定ドメインの場合の処理（必要に応じて）
             self.logger.info(f"特殊ドメインの処理: {url}")
         
+        # リクエスト開始時刻を記録
+        start_time = time.time()
+        
         # HTTPクライアントを使用してページを取得
         content, error_info = self.http_client.fetch(
             url,
             check_content=lambda html: html and len(html) > 100  # 最小限のコンテンツチェック
         )
         
+        # レスポンス時間を記録
+        response_time = time.time() - start_time
+        
         # エラーハンドリング
         if error_info:
             self._last_fetch_error = error_info
+            
+            # レート制限コンポーネントにエラーを記録
+            error_type = error_info.get('type', 'unknown')
+            if error_info.get('status_code') == 429:
+                error_type = 'rate_limit'
+            self.rate_limiter.record_error(self.source_site.value, error_type)
             
             # エラータイプに応じた処理
             if error_info.get('type') == 'http_404':
@@ -506,9 +581,16 @@ class BaseScraper(ABC):
         # コンテンツが取得できた場合はBeautifulSoupで解析
         if content:
             try:
-                self.logger.debug(f"BeautifulSoup解析開始: {url}")
-                soup = BeautifulSoup(content, 'html.parser')
-                self.logger.debug(f"BeautifulSoup解析完了: {url}")
+                # レート制限コンポーネントに成功を記録
+                self.rate_limiter.record_success(self.source_site.value, response_time)
+                
+                # キャッシュに保存（開発・デバッグ用）
+                if os.getenv('SCRAPER_USE_CACHE', 'false').lower() == 'true':
+                    self.cache_manager.cache_page(url, content, ttl=300)  # 5分間キャッシュ
+                
+                self.logger.debug(f"HTML解析開始: {url}")
+                soup = self.html_parser.parse_html(content)
+                self.logger.debug(f"HTML解析完了: {url}")
                 
                 # メンテナンスページの検出
                 if self._is_maintenance_page(soup):
@@ -641,8 +723,8 @@ class BaseScraper(ABC):
         
         # 収集フェーズの場合
         # 処理フェーズから再開する場合は収集をスキップ
-        print(f"[DEBUG-RESUME-CHECK] phase={self._scraping_stats.get('phase')}, collected_properties={len(self._collected_properties) if self._collected_properties else 0}")
-        if not (self._scraping_stats.get('phase') == 'processing' and self._collected_properties):
+        print(f"[DEBUG-RESUME-CHECK] phase={self._get_stat('phase')}, collected_properties={len(self._collected_properties) if self._collected_properties else 0}")
+        if not (self._get_stat('phase') == 'processing' and self._collected_properties):
             # 第1段階：全ページから物件情報を収集
             self.logger.info("第1段階: 物件一覧を収集中...")
             consecutive_empty_pages = 0
@@ -858,10 +940,10 @@ class BaseScraper(ABC):
                 # 必須フィールドの確認
                 if not property_data.get('url'):
                     self.log_warning(f'物件 {i+1}: URLがありません')
-                    self._scraping_stats['other_errors'] += 1
+                    self._increment_stat('other_errors')
                     total_properties += 1  # 処理件数としてカウント
                     skipped += 1  # スキップとしてカウント
-                    self._scraping_stats['detail_skipped'] += 1  # スキップとしてカウント
+                    self._increment_stat('detail_skipped')  # スキップとしてカウント
                     continue
                 
                 # サイトごとの固有処理（process_property_dataメソッドを実装）
@@ -969,7 +1051,7 @@ class BaseScraper(ABC):
                     # 1. 詳細取得成功（保存の成否に関わらず）
                     if property_data.get('detail_fetched', False):
                         detail_fetched += 1
-                        self._scraping_stats['detail_fetched'] += 1
+                        self._increment_stat('detail_fetched')
                         self.logger.info(f"詳細取得成功: URL={property_data.get('url', '不明')}, property_saved={property_data.get('property_saved', 'None')}, update_type={property_data.get('update_type', 'None')}")
                     
                     # 2. 詳細取得失敗（エラー）
@@ -981,7 +1063,7 @@ class BaseScraper(ABC):
                     # 3. 詳細スキップ（正常）
                     else:
                         skipped += 1
-                        self._scraping_stats['detail_skipped'] += 1
+                        self._increment_stat('detail_skipped')
                         self.logger.info(f"詳細スキップ: URL={property_data.get('url', '不明')}, skipped={skipped}")
                     
                     # 各物件処理後に進捗を更新（リアルタイム更新）
@@ -1001,24 +1083,24 @@ class BaseScraper(ABC):
                         
                         # 詳細取得済み物件の内訳を更新
                         if update_type == 'new':
-                            self._scraping_stats['new_listings'] += 1
+                            self._increment_stat('new_listings')
                         elif update_type == 'price_updated':
-                            self._scraping_stats['price_updated'] += 1
+                            self._increment_stat('price_updated')
                         elif update_type == 'refetched_unchanged':
-                            self._scraping_stats['refetched_unchanged'] += 1
+                            self._increment_stat('refetched_unchanged')
                             self.logger.info(f"再取得（変更なし）カウント: refetched_unchanged={self._scraping_stats['refetched_unchanged']}")
                         elif update_type == 'skipped':
                             # 詳細を取得したのにskippedは異常なケース
                             self.logger.warning(f"詳細取得済みなのにupdate_type=skipped: URL={property_data.get('url', '不明')}")
                         elif update_type == 'other_updates':
-                            self._scraping_stats['other_updates'] += 1
+                            self._increment_stat('other_updates')
                         elif update_type == 'existing':
                             # 既存レコードの更新（IntegrityError回避のケース）
-                            self._scraping_stats['other_updates'] += 1
+                            self._increment_stat('other_updates')
                             self.logger.debug(f"既存レコード更新をother_updatesとしてカウント: URL={property_data.get('url', '不明')}")
                         else:
                             # 未知のupdate_type
-                            self._scraping_stats['other_updates'] += 1
+                            self._increment_stat('other_updates')
                             self.logger.warning(f"未知のupdate_type: {update_type}, URL={property_data.get('url', '不明')}")
                     elif property_data.get('property_saved') is False:
                         # 保存失敗の場合（Noneはキャンセルなので除外）
@@ -1047,7 +1129,7 @@ class BaseScraper(ABC):
                                 f"update_type={property_data.get('update_type', 'None')}"
                             )
                             # 不明としてカウント
-                            self._scraping_stats['unknown'] = self._scraping_stats.get('unknown', 0) + 1
+                            self._scraping_stats['unknown'] = self._get_stat('unknown', 0) + 1
                 else:
                     # 従来の処理（後方互換性）
                     self.save_property(property_data)
@@ -1061,9 +1143,9 @@ class BaseScraper(ABC):
                 
                 # 最後の物件の場合、特別なログを出力
                 if i == len(all_properties) - 1:
-                    total_errors = self._scraping_stats.get('detail_fetch_failed', 0) + self._scraping_stats.get('save_failed', 0) + self._scraping_stats.get('other_errors', 0)
-                    total_counted = detail_fetched + skipped + self._scraping_stats.get('detail_fetch_failed', 0)
-                    self.logger.info(f"[DEBUG] 最後の物件({i})の処理完了。統計: detail_fetched={detail_fetched}, detail_skipped={skipped}, detail_fetch_failed={self._scraping_stats.get('detail_fetch_failed', 0)}, save_failed={self._scraping_stats.get('save_failed', 0)}, other_errors={self._scraping_stats.get('other_errors', 0)}, 合計={total_counted} (期待値={total_properties})")
+                    total_errors = self._get_stat('detail_fetch_failed', 0) + self._get_stat('save_failed', 0) + self._get_stat('other_errors', 0)
+                    total_counted = detail_fetched + skipped + self._get_stat('detail_fetch_failed', 0)
+                    self.logger.info(f"[DEBUG] 最後の物件({i})の処理完了。統計: detail_fetched={detail_fetched}, detail_skipped={skipped}, detail_fetch_failed={self._get_stat('detail_fetch_failed', 0)}, save_failed={self._get_stat('save_failed', 0)}, other_errors={self._get_stat('other_errors', 0)}, 合計={total_counted} (期待値={total_properties})")
             
             except TaskPausedException as e:
                 # タスクの一時停止例外は再スロー
@@ -1081,9 +1163,9 @@ class BaseScraper(ABC):
                 error_type_name = type(e).__name__
                 self.logger.error(f"物件 {i+1} の処理中にエラー ({error_type_name}): {e}")
                 errors += 1
-                self._scraping_stats['other_errors'] += 1
+                self._increment_stat('other_errors')
                 total_properties += 1  # 処理件数としてカウント
-                self._scraping_stats['detail_fetch_failed'] += 1  # 詳細取得失敗としてカウント
+                self._increment_stat('detail_fetch_failed')  # 詳細取得失敗としてカウント
                 
                 # エラーログを記録
                 if hasattr(self, '_save_error_log'):
@@ -1128,35 +1210,35 @@ class BaseScraper(ABC):
             'detail_fetched': detail_fetched,
             'skipped': skipped,
             'errors': errors,
-            'detail_fetch_failed': self._scraping_stats.get('detail_fetch_failed', 0),
+            'detail_fetch_failed': self._get_stat('detail_fetch_failed', 0),
             # 並列スクレイピング用の統計情報を追加
             'total': total_properties,  # 後方互換性のため
-            'new': self._scraping_stats.get('new_listings', 0),
-            'updated': self._scraping_stats.get('price_updated', 0) + self._scraping_stats.get('other_updates', 0),
+            'new': self._get_stat('new_listings', 0),
+            'updated': self._get_stat('price_updated', 0) + self._get_stat('other_updates', 0),
             # 詳細な統計情報も含める
-            'properties_found': self._scraping_stats.get('properties_found', 0),
-            'properties_processed': self._scraping_stats.get('properties_processed', 0),  # 処理予定数を追加
-            'properties_attempted': self._scraping_stats.get('properties_attempted', total_properties),
-            'new_listings': self._scraping_stats.get('new_listings', 0),
-            'price_updated': self._scraping_stats.get('price_updated', 0),
-            'other_updates': self._scraping_stats.get('other_updates', 0),
-            'refetched_unchanged': self._scraping_stats.get('refetched_unchanged', 0),
-            'save_failed': self._scraping_stats.get('save_failed', 0),
-            'price_missing': self._scraping_stats.get('price_missing', 0),
-            'building_info_missing': self._scraping_stats.get('building_info_missing', 0),
-            'other_errors': self._scraping_stats.get('other_errors', 0),
+            'properties_found': self._get_stat('properties_found', 0),
+            'properties_processed': self._get_stat('properties_processed', 0),  # 処理予定数を追加
+            'properties_attempted': self._get_stat('properties_attempted', total_properties),
+            'new_listings': self._get_stat('new_listings', 0),
+            'price_updated': self._get_stat('price_updated', 0),
+            'other_updates': self._get_stat('other_updates', 0),
+            'refetched_unchanged': self._get_stat('refetched_unchanged', 0),
+            'save_failed': self._get_stat('save_failed', 0),
+            'price_missing': self._get_stat('price_missing', 0),
+            'building_info_missing': self._get_stat('building_info_missing', 0),
+            'other_errors': self._get_stat('other_errors', 0),
             # 建物名取得の統計
-            'building_name_from_table': self._scraping_stats.get('building_name_from_table', 0),
-            'building_name_missing': self._scraping_stats.get('building_name_missing', 0),
+            'building_name_from_table': self._get_stat('building_name_from_table', 0),
+            'building_name_missing': self._get_stat('building_name_missing', 0),
             # 重複警告の統計
             'duplicate_properties': getattr(self, '_duplicate_property_count', 0),
             # 価格不一致の統計
-            'price_mismatch': self._scraping_stats.get('price_mismatch', 0)
+            'price_mismatch': self._get_stat('price_mismatch', 0)
         }
         
         # 詳細な統計ログ
-        detail_fetch_failed = self._scraping_stats.get('detail_fetch_failed', 0)
-        other_errors = self._scraping_stats.get('other_errors', 0)
+        detail_fetch_failed = self._get_stat('detail_fetch_failed', 0)
+        other_errors = self._get_stat('other_errors', 0)
         duplicate_count = getattr(self, '_duplicate_property_count', 0)
         total_calculated = detail_fetched + skipped + detail_fetch_failed
         self.logger.info(
@@ -1174,20 +1256,20 @@ class BaseScraper(ABC):
             self.logger.info(f"その他のエラー（URLなしなど）: {other_errors}件")
         
         # 価格不一致があれば表示
-        price_mismatch_count = self._scraping_stats.get('price_mismatch', 0)
+        price_mismatch_count = self._get_stat('price_mismatch', 0)
         if price_mismatch_count > 0:
             self.logger.error(f"価格不一致エラー: {price_mismatch_count}件の物件で一覧と詳細の価格が異なりました（更新をスキップ）")
         
         # HTML構造エラーの統計を表示（全スクレイパー共通）
-        html_errors = self._scraping_stats.get('html_structure_errors', {})
-        html_errors_new = self._scraping_stats.get('html_structure_errors_new', {})
+        html_errors = self._get_stat('html_structure_errors', {})
+        html_errors_new = self._get_stat('html_structure_errors_new', {})
         
         # SUUMOの後方互換性：建物名専用の統計
         if self.source_site == 'suumo':
-            table_count = self._scraping_stats.get('building_name_from_table', 0)
-            missing_count = self._scraping_stats.get('building_name_missing', 0)
-            missing_new_count = self._scraping_stats.get('building_name_missing_new', 0)
-            error_skipped_count = self._scraping_stats.get('building_name_error_skipped', 0)
+            table_count = self._get_stat('building_name_from_table', 0)
+            missing_count = self._get_stat('building_name_missing', 0)
+            missing_new_count = self._get_stat('building_name_missing_new', 0)
+            error_skipped_count = self._get_stat('building_name_error_skipped', 0)
             
             # 建物名の統計（後方互換性のため）
             if table_count > 0 or missing_count > 0 or error_skipped_count > 0:
@@ -1219,11 +1301,11 @@ class BaseScraper(ABC):
         
         # 詳細取得の内訳を表示
         if detail_fetched > 0:
-            save_failed = self._scraping_stats.get('save_failed', 0)
-            new_listings = self._scraping_stats.get('new_listings', 0)
-            price_updated = self._scraping_stats.get('price_updated', 0) 
-            other_updates = self._scraping_stats.get('other_updates', 0)
-            refetched_unchanged = self._scraping_stats.get('refetched_unchanged', 0)
+            save_failed = self._get_stat('save_failed', 0)
+            new_listings = self._get_stat('new_listings', 0)
+            price_updated = self._get_stat('price_updated', 0) 
+            other_updates = self._get_stat('other_updates', 0)
+            refetched_unchanged = self._get_stat('refetched_unchanged', 0)
             
             # 合計を計算
             accounted_for = new_listings + price_updated + other_updates + refetched_unchanged + save_failed
@@ -1255,14 +1337,14 @@ class BaseScraper(ABC):
     
     def _check_resume_state(self) -> Tuple[List[Dict[str, Any]], int, bool]:
         """再開時の状態をチェックし、適切な状態を返す"""
-        self.logger.info(f"[DEBUG] 再開チェック: phase={self._scraping_stats.get('phase')}, collected={len(self._collected_properties)}, page={self._current_page}, processed={self._processed_count}")
-        debug_log(f"[{self.source_site}] 再開チェック: phase={self._scraping_stats.get('phase')}, collected={len(self._collected_properties)}, page={self._current_page}, processed={self._processed_count}")
+        self.logger.info(f"[DEBUG] 再開チェック: phase={self._get_stat('phase')}, collected={len(self._collected_properties)}, page={self._current_page}, processed={self._processed_count}")
+        debug_log(f"[{self.source_site}] 再開チェック: phase={self._get_stat('phase')}, collected={len(self._collected_properties)}, page={self._current_page}, processed={self._processed_count}")
         
-        if self._scraping_stats.get('phase') == 'processing' and self._collected_properties:
+        if self._get_stat('phase') == 'processing' and self._collected_properties:
             # 処理フェーズから再開
             self.logger.info(f"処理フェーズから再開: 処理済み={self._processed_count}/{len(self._collected_properties)}件")
             return self._collected_properties, self._current_page, True
-        elif self._scraping_stats.get('phase') == 'collecting' and self._collected_properties:
+        elif self._get_stat('phase') == 'collecting' and self._collected_properties:
             # 収集フェーズから再開
             self.logger.info(f"収集フェーズから再開: ページ={self._current_page}, 収集済み={len(self._collected_properties)}件")
             return self._collected_properties, self._current_page, False
@@ -1296,6 +1378,88 @@ class BaseScraper(ABC):
             'building_info_missing': 0,
             'other_errors': 0
         }
+
+    @property
+    def scraping_stats(self) -> Dict[str, Any]:
+        """
+        スクレイピング統計へのアクセサ（後方互換性のため）
+        段階的にProgressTrackerComponentへ移行
+        """
+        # 現時点では既存の_scraping_statsを返す
+        # 将来的にはself.progress_tracker.get_statistics()から取得
+        return self._scraping_stats
+    
+    def _increment_stat(self, key: str, value: int = 1) -> None:
+        """
+        統計値をインクリメント（ProgressTrackerComponentへの移行準備）
+        
+        Args:
+            key: 統計キー
+            value: インクリメント値
+        """
+        if key not in self._scraping_stats:
+            self._scraping_stats[key] = 0
+        self._scraping_stats[key] += value
+        
+        # ProgressTrackerComponentにも同期（段階的移行）
+        # TODO: 将来的にはProgressTrackerComponentのみを使用
+        if hasattr(self, 'progress_tracker') and self.progress_tracker:
+            # detail_typeの変換マッピング
+            detail_type_map = {
+                'new_listings': 'new',
+                'price_updated': 'updated',
+                'other_updates': 'updated',
+                'refetched_unchanged': 'unchanged',
+                'detail_fetch_failed': 'error',
+                'save_failed': 'error',
+                'other_errors': 'error'
+            }
+            
+            if key in detail_type_map:
+                for _ in range(value):
+                    self.progress_tracker.update(
+                        success=(key not in ['detail_fetch_failed', 'save_failed', 'other_errors']),
+                        detail_type=detail_type_map.get(key)
+                    )
+    
+    def _get_stat(self, key: str, default: Any = 0) -> Any:
+        """
+        統計値を取得（ProgressTrackerComponentへの移行準備）
+        
+        Args:
+            key: 統計キー
+            default: デフォルト値
+            
+        Returns:
+            統計値
+        """
+        return self._scraping_stats.get(key, default)
+    
+    def _set_stat(self, key: str, value: Any) -> None:
+        """
+        統計値を設定（ProgressTrackerComponentへの移行準備）
+        
+        Args:
+            key: 統計キー
+            value: 設定値
+        """
+        self._scraping_stats[key] = value
+    
+    def _update_progress_tracker_phase(self, phase: str) -> None:
+        """
+        ProgressTrackerComponentのフェーズを更新
+        
+        Args:
+            phase: フェーズ名（collecting/processing/completed）
+        """
+        if hasattr(self, 'progress_tracker') and self.progress_tracker:
+            # 現在のフェーズを終了
+            if hasattr(self.progress_tracker, 'current_phase') and self.progress_tracker.current_phase:
+                self.progress_tracker.end_phase()
+            
+            # 新しいフェーズを開始
+            if phase != 'completed':
+                self.progress_tracker.start_phase(phase)
     
     def _handle_pause_if_needed(self, all_properties: List[Dict[str, Any]], page: int, phase_name: str):
         """一時停止フラグをチェックし、必要に応じて待機（データベースベース）"""
@@ -1472,21 +1636,21 @@ class BaseScraper(ABC):
         if hasattr(self, '_progress_callback') and self._progress_callback:
             self.logger.info(f"進捗コールバックを呼び出します (task_id={self.task_id})")
             stats = {
-                'properties_found': self._scraping_stats.get('properties_found', 0),
-                'properties_processed': self._scraping_stats.get('properties_processed', 0),  # 処理予定数を追加
-                'properties_attempted': self._scraping_stats.get('properties_attempted', 0),
-                'processed': self._scraping_stats.get('properties_attempted', 0),
-                'new': self._scraping_stats.get('new_listings', 0),
-                'new_listings': self._scraping_stats.get('new_listings', 0),  # フロントエンド互換性のため
-                'updated': self._scraping_stats.get('price_updated', 0) + self._scraping_stats.get('other_updates', 0),
-                'price_updated': self._scraping_stats.get('price_updated', 0),  # 価格更新を個別に追加
-                'other_updates': self._scraping_stats.get('other_updates', 0),  # その他更新を個別に追加
-                'refetched_unchanged': self._scraping_stats.get('refetched_unchanged', 0),  # 再取得（変更なし）を追加
-                'detail_fetched': self._scraping_stats.get('detail_fetched', 0),
-                'detail_skipped': self._scraping_stats.get('detail_skipped', 0),
-                'errors': self._scraping_stats.get('detail_fetch_failed', 0) + self._scraping_stats.get('save_failed', 0) + self._scraping_stats.get('other_errors', 0),
-                'price_missing': self._scraping_stats.get('price_missing', 0),
-                'building_info_missing': self._scraping_stats.get('building_info_missing', 0)
+                'properties_found': self._get_stat('properties_found', 0),
+                'properties_processed': self._get_stat('properties_processed', 0),  # 処理予定数を追加
+                'properties_attempted': self._get_stat('properties_attempted', 0),
+                'processed': self._get_stat('properties_attempted', 0),
+                'new': self._get_stat('new_listings', 0),
+                'new_listings': self._get_stat('new_listings', 0),  # フロントエンド互換性のため
+                'updated': self._get_stat('price_updated', 0) + self._get_stat('other_updates', 0),
+                'price_updated': self._get_stat('price_updated', 0),  # 価格更新を個別に追加
+                'other_updates': self._get_stat('other_updates', 0),  # その他更新を個別に追加
+                'refetched_unchanged': self._get_stat('refetched_unchanged', 0),  # 再取得（変更なし）を追加
+                'detail_fetched': self._get_stat('detail_fetched', 0),
+                'detail_skipped': self._get_stat('detail_skipped', 0),
+                'errors': self._get_stat('detail_fetch_failed', 0) + self._get_stat('save_failed', 0) + self._get_stat('other_errors', 0),
+                'price_missing': self._get_stat('price_missing', 0),
+                'building_info_missing': self._get_stat('building_info_missing', 0)
             }
             try:
                 self._progress_callback(stats)
@@ -1693,7 +1857,7 @@ class BaseScraper(ABC):
                 property_data['detail_fetched'] = False
                 property_data['detail_fetch_attempted'] = False  # 404エラー履歴によるスキップは試行とみなさない
                 # 404エラー履歴によるスキップは詳細取得失敗にカウントしない
-                # self._scraping_stats['detail_fetch_failed'] += 1
+                # self._increment_stat('detail_fetch_failed')
                 
                 # 404エラー履歴によるスキップはエラーログに記録しない
                 # （正常な動作なので、エラーとして扱わない）
@@ -1826,7 +1990,7 @@ class BaseScraper(ABC):
                     print(f"  → 価格不一致のため更新をスキップ (一覧: {list_price}万円, 詳細: {detail_price}万円)")
                     property_data['detail_fetched'] = False
                     self._last_detail_fetched = False
-                    self._scraping_stats['detail_fetch_failed'] += 1
+                    self._increment_stat('detail_fetch_failed')
                     property_data['detail_fetch_attempted'] = True
                     property_data['property_saved'] = False
                     return False
@@ -1837,7 +2001,7 @@ class BaseScraper(ABC):
                     print(f"  → 建物名検証失敗のため更新をスキップ")
                     property_data['detail_fetched'] = False
                     self._last_detail_fetched = False
-                    self._scraping_stats['detail_fetch_failed'] += 1
+                    self._increment_stat('detail_fetch_failed')
                     property_data['detail_fetch_attempted'] = True
                     property_data['property_saved'] = False
                     return False
@@ -1857,7 +2021,7 @@ class BaseScraper(ABC):
                 print("  → 詳細取得失敗")
                 property_data['detail_fetched'] = False
                 self._last_detail_fetched = False  # フラグを記録
-                self._scraping_stats['detail_fetch_failed'] += 1
+                self._increment_stat('detail_fetch_failed')
                 # 詳細取得失敗も統計カウントのために明示的に設定
                 property_data['detail_fetch_attempted'] = True
                 
@@ -3681,7 +3845,7 @@ class BaseScraper(ABC):
                 
                 # 連続して疑わしい更新が発生した場合は例外を発生
                 suspicious_threshold = int(os.getenv('SCRAPER_SUSPICIOUS_UPDATE_THRESHOLD', '5'))
-                if self._scraping_stats.get('suspicious_updates', 0) >= suspicious_threshold:
+                if self._get_stat('suspicious_updates', 0) >= suspicious_threshold:
                     raise Exception(
                         f"連続して{suspicious_threshold}件の疑わしい更新を検出しました。"
                         f"HTML構造が変更された可能性があります。"
@@ -4150,7 +4314,7 @@ class BaseScraper(ABC):
     def get_resume_state(self) -> Dict[str, Any]:
         """再開用の状態を取得"""
         return {
-            'phase': self._scraping_stats.get('phase', 'collecting'),
+            'phase': self._get_stat('phase''collecting'),
             'current_page': self._current_page,
             'collected_properties': self._collected_properties,
             'processed_count': self._processed_count,
@@ -4721,16 +4885,16 @@ class BaseScraper(ABC):
         
         if validation_errors:
             # 詳細なエラー情報がある場合はそれを使用
-            self._scraping_stats['other_errors'] += 1
+            self._increment_stat('other_errors')
             failure_reason = f"バリデーションエラー: {'; '.join(validation_errors)}"
         elif not property_data.get('price'):
-            self._scraping_stats['price_missing'] += 1
+            self._increment_stat('price_missing')
             failure_reason = "価格情報なし"
         elif not property_data.get('building_name'):
-            self._scraping_stats['building_info_missing'] += 1
+            self._increment_stat('building_info_missing')
             failure_reason = "建物名なし"
         elif not property_data.get('site_property_id'):
-            self._scraping_stats['other_errors'] += 1
+            self._increment_stat('other_errors')
             failure_reason = "サイト物件IDなし"
         else:
             # 詳細ページで必須のフィールドをチェック
@@ -4748,10 +4912,10 @@ class BaseScraper(ABC):
                         missing_fields.append(field_jp)
             
             if missing_fields:
-                self._scraping_stats['other_errors'] += 1
+                self._increment_stat('other_errors')
                 failure_reason = f"必須フィールド未取得: {', '.join(missing_fields)}"
             else:
-                self._scraping_stats['other_errors'] += 1
+                self._increment_stat('other_errors')
                 failure_reason = "その他のバリデーションエラー"
         
         print(f"  → 保存失敗: {failure_reason} (URL: {url})")
@@ -5012,11 +5176,15 @@ class BaseScraper(ABC):
     
     def _has_recent_field_error(self, field_name: str, url: str) -> bool:
         """特定フィールドで最近（24時間以内）にエラーが記録されているかチェック"""
-        if field_name not in self._field_error_cache:
-            return False
+        # CacheManagerComponentを使用してエラーキャッシュをチェック
+        cache_key = self.cache_manager.get_data_cache_key(
+            'field_error',
+            field_name=field_name,
+            url=url
+        )
         
-        if url in self._field_error_cache[field_name]:
-            error_time = self._field_error_cache[field_name][url]
+        error_time = self.cache_manager.get(cache_key)
+        if error_time:
             hours_since_error = (datetime.now() - error_time).total_seconds() / 3600
             # 24時間以内のエラーは既知として扱う
             return hours_since_error < 24
@@ -5024,20 +5192,19 @@ class BaseScraper(ABC):
     
     def _record_field_error(self, field_name: str, url: str):
         """フィールド別のエラーを記録"""
-        if field_name not in self._field_error_cache:
-            self._field_error_cache[field_name] = {}
+        # CacheManagerComponentを使用してエラーを記録
+        cache_key = self.cache_manager.get_data_cache_key(
+            'field_error',
+            field_name=field_name,
+            url=url
+        )
         
-        self._field_error_cache[field_name][url] = datetime.now()
+        # 24時間のTTLでキャッシュに保存
+        self.cache_manager.set(cache_key, datetime.now(), ttl=86400)  # 24時間
         
-        # キャッシュサイズ管理（各フィールドで500件まで）
-        if len(self._field_error_cache[field_name]) > 500:
-            now = datetime.now()
-            old_urls = [
-                u for u, t in self._field_error_cache[field_name].items()
-                if (now - t).total_seconds() > 86400  # 24時間
-            ]
-            for u in old_urls:
-                del self._field_error_cache[field_name][u]
+        # 定期的に期限切れエントリをクリーンアップ
+        if len(self.cache_manager.cache) > 450:  # しきい値に近づいたらクリーンアップ
+            self.cache_manager.cleanup_expired()
     
     def has_critical_field_errors(self, url: str, critical_fields: Optional[List[str]] = None) -> bool:
         """重要項目でエラーが発生している物件かチェック
@@ -5074,8 +5241,8 @@ class BaseScraper(ABC):
         
         # フィールド別のエラー率をチェック
         for field in critical_fields:
-            error_count = self._scraping_stats.get('html_structure_errors', {}).get(field, 0)
-            new_error_count = self._scraping_stats.get('html_structure_errors_new', {}).get(field, 0)
+            error_count = self._get_stat('html_structure_errors', {}).get(field, 0)
+            new_error_count = self._get_stat('html_structure_errors_new', {}).get(field, 0)
             
             # エラー率を計算
             error_rate = error_count / self._scraping_stats['properties_attempted']
@@ -5336,15 +5503,16 @@ class BaseScraper(ABC):
             'しばらくお待ちください'
         ]
         
-        page_text = soup.get_text().lower()
+        # ページ全体のテキストを取得（HtmlParserComponentを使用）
+        page_text = self.html_parser.extract_text(soup).lower()
         for pattern in maintenance_patterns:
             if pattern.lower() in page_text:
                 return True
         
         # titleタグもチェック
         title = soup.find('title')
-        if title and title.text:
-            title_text = title.text.lower()
+        if title:
+            title_text = self.html_parser.extract_text(title).lower()
             for pattern in maintenance_patterns:
                 if pattern.lower() in title_text:
                     return True
@@ -5358,31 +5526,15 @@ class BaseScraper(ABC):
             element_name: 要素の説明（例: "価格テーブル", "物件情報セクション"）
             is_critical: 致命的な欠落かどうか
         """
-        # 統計を更新
+        # ErrorHandlerComponentを使用して欠落要素を追跡
+        self.error_manager.track_missing_element(element_name, is_critical)
+        
+        # 統計を更新（後方互換性のため）
+        if 'missing_elements' not in self._scraping_stats:
+            self._scraping_stats['missing_elements'] = {}
         if element_name not in self._scraping_stats['missing_elements']:
             self._scraping_stats['missing_elements'][element_name] = 0
         self._scraping_stats['missing_elements'][element_name] += 1
-        
-        count = self._scraping_stats['missing_elements'][element_name]
-        
-        # 連続して欠落している場合は警告
-        if count >= 3:
-            self.logger.warning(
-                f"重要な要素 '{element_name}' が{count}回連続で見つかりません。"
-                f"HTML構造が変更された可能性があります。"
-            )
-            
-            # 致命的な要素が5回連続で欠落した場合
-            if is_critical and count >= 5:
-                self._record_critical_error_alert(
-                    field_name=f"missing_{element_name}",
-                    error_count=count,
-                    error_rate=1.0  # 100%欠落
-                )
-                raise Exception(
-                    f"致命的なHTML構造の変更を検出しました。"
-                    f"'{element_name}' が{count}回連続で見つかりません。"
-                )
     
     def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
         """site_property_idの妥当性を検証（共通部分）
@@ -5600,23 +5752,27 @@ class BaseScraper(ABC):
             url: 物件URL
             log_error: エラーログを出力するか
         """
-        # ErrorManagerを使用してエラーを記録
+        # ErrorHandlerComponentを使用してエラーを記録
         self.error_manager.record_field_error(
             field_name=field_name,
             error_type='extraction',
             is_critical=True
         )
-        should_stop = False  # TODO: Implement proper stop logic based on error thresholds
         
-        # 統計を更新（従来の互換性のため）
+        # 統計を更新（後方互換性のため）
         if 'html_structure_errors' not in self._scraping_stats:
             self._scraping_stats['html_structure_errors'] = {}
         if field_name not in self._scraping_stats['html_structure_errors']:
             self._scraping_stats['html_structure_errors'][field_name] = 0
         self._scraping_stats['html_structure_errors'][field_name] += 1
         
-        # 新規エラーかチェック（簡略化）
-        is_new_error = True  # TODO: Implement proper recent error tracking
+        # エラー統計を取得して、新規エラーかチェック
+        stats = self.error_manager.get_statistics()
+        field_errors = stats.get('field_errors', {}).get(field_name, {})
+        error_count = field_errors.get('extraction', 0)
+        
+        # 初回エラーまたは最近のエラーでない場合
+        is_new_error = error_count <= 1
         
         if is_new_error:
             if 'html_structure_errors_new' not in self._scraping_stats:
@@ -5634,12 +5790,9 @@ class BaseScraper(ABC):
             if log_error:
                 self.logger.debug(f"{field_name}取得エラー（既知）: {url}")
         
-        # 重大エラー閾値を超えた場合は例外を発生
-        if should_stop:
-            raise Exception(f"重大エラー閾値を超えました: {field_name}")
-        
-        # プロセス済みカウントを増加（簡略化）
-        pass  # TODO: Implement proper processed count tracking
+        # エラーハンドラーで停止判定
+        if hasattr(self.error_manager, '_should_stop') and self.error_manager._should_stop():
+            raise Exception(f"重大エラー閾値を超えました: {field_name}")  # TODO: Implement proper processed count tracking
     
     def log_detailed_error(self, error_type: str, url: str, exception: Exception, additional_info: Dict[str, Any] = None):
         """詳細なエラーログを出力する共通メソッド
@@ -5841,8 +5994,8 @@ class BaseScraper(ABC):
         for tag in element_copy.find_all(['button', 'img', 'input', 'svg', 'iframe']):
             tag.decompose()
         
-        # テキストを取得
-        address_text = element_copy.get_text(strip=True)
+        # HtmlParserComponentを使用してテキストを取得
+        address_text = self.html_parser.extract_text(element_copy)
         
         # 念のため、残っている可能性のあるUIテキストをクリーニング
         # （JavaScriptで動的に追加される場合などに対応）

@@ -39,7 +39,7 @@ class DbRepositoryComponent:
         Returns:
             建物オブジェクト
         """
-        from backend.app.models import Building
+        from ...models import Building, MasterProperty, PropertyListing, ListingPriceHistory
         
         # 必須フィールドチェック
         if not building_data.get('normalized_name'):
@@ -316,3 +316,164 @@ class DbRepositoryComponent:
     def close(self) -> None:
         """セッションを閉じる"""
         self.session.close()
+    
+    def generate_property_hash(self, property_data: Dict[str, Any]) -> str:
+        """
+        物件ハッシュを生成
+        
+        Args:
+            property_data: 物件データ
+            
+        Returns:
+            物件ハッシュ値
+        """
+        # ハッシュ生成: 建物ID + 所在階 + 平米数 + 間取り + 方角
+        # 注：部屋番号は含めない（サイトによって公開状況が異なるため）
+        hash_components = [
+            str(property_data.get('building_id', '')),
+            str(property_data.get('floor_number', '')),
+            str(property_data.get('area', '')),
+            str(property_data.get('layout', '')),
+            str(property_data.get('direction', ''))
+        ]
+        
+        hash_string = '_'.join(hash_components)
+        return hashlib.md5(hash_string.encode()).hexdigest()
+    
+    def find_existing_property(self, 
+                               building_id: int,
+                               floor_number: int,
+                               area: float,
+                               layout: str,
+                               direction: Optional[str] = None,
+                               room_number: Optional[str] = None) -> Optional[Any]:
+        """
+        既存物件を検索（緩い条件で）
+        
+        Args:
+            building_id: 建物ID
+            floor_number: 階数
+            area: 面積
+            layout: 間取り
+            direction: 方角
+            room_number: 部屋番号
+            
+        Returns:
+            既存物件オブジェクト
+        """
+        from ...models import MasterProperty
+        
+        query = self.session.query(MasterProperty).filter(
+            MasterProperty.building_id == building_id,
+            MasterProperty.floor_number == floor_number,
+            MasterProperty.layout == layout
+        )
+        
+        # 面積の許容誤差 ±0.5㎡
+        query = query.filter(
+            MasterProperty.area.between(area - 0.5, area + 0.5)
+        )
+        
+        # 方角がある場合は考慮
+        if direction:
+            query = query.filter(MasterProperty.direction == direction)
+        
+        # 部屋番号の扱い
+        if room_number:
+            # 両方に部屋番号がある場合は一致が必要
+            query = query.filter(
+                or_(
+                    MasterProperty.room_number == room_number,
+                    MasterProperty.room_number.is_(None)
+                )
+            )
+        
+        properties = query.all()
+        
+        # 複数候補がある場合は最も近い面積のものを選択
+        if len(properties) > 1:
+            properties.sort(key=lambda p: abs(p.area - area))
+        
+        return properties[0] if properties else None
+    
+    def get_active_listings_count(self, master_property_id: int) -> int:
+        """
+        アクティブな掲載数を取得
+        
+        Args:
+            master_property_id: マスター物件ID
+            
+        Returns:
+            アクティブな掲載数
+        """
+        from ...models import PropertyListing
+        
+        return self.session.query(PropertyListing).filter(
+            PropertyListing.master_property_id == master_property_id,
+            PropertyListing.is_active == True
+        ).count()
+    
+    def get_listing_building_names(self, master_property_id: int) -> List[str]:
+        """
+        物件の全掲載建物名を取得
+        
+        Args:
+            master_property_id: マスター物件ID
+            
+        Returns:
+            建物名のリスト
+        """
+        from ...models import PropertyListing
+        
+        listings = self.session.query(PropertyListing.listing_building_name).filter(
+            PropertyListing.master_property_id == master_property_id,
+            PropertyListing.listing_building_name.isnot(None)
+        ).distinct().all()
+        
+        return [l[0] for l in listings if l[0]]
+    
+    def update_building_external_id(self, 
+                                   building_id: int,
+                                   source_site: str,
+                                   external_id: str) -> None:
+        """
+        建物の外部IDを更新
+        
+        Args:
+            building_id: 建物ID
+            source_site: ソースサイト
+            external_id: 外部ID
+        """
+        from ...models import BuildingExternalId
+        
+        # 既存の外部IDを検索
+        external = self.session.query(BuildingExternalId).filter_by(
+            building_id=building_id,
+            source_site=source_site
+        ).first()
+        
+        if external:
+            if external.external_id != external_id:
+                external.external_id = external_id
+                self.logger.debug(f"建物外部IDを更新: {external_id}")
+        else:
+            # 新規作成
+            try:
+                external = BuildingExternalId(
+                    building_id=building_id,
+                    source_site=source_site,
+                    external_id=external_id
+                )
+                self.session.add(external)
+                self.session.flush()
+                self.logger.debug(f"建物外部IDを作成: {external_id}")
+            except Exception as e:
+                self.logger.error(f"建物外部ID作成エラー: {e}")
+    
+    def begin_nested(self):
+        """ネストされたトランザクションを開始"""
+        return self.session.begin_nested()
+    
+    def flush(self):
+        """変更をフラッシュ（コミットせずにIDを取得）"""
+        self.session.flush()

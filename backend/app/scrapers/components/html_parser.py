@@ -27,6 +27,27 @@ class HtmlParserComponent:
         """
         self.logger = logger or logging.getLogger(__name__)
     
+    def parse_html(self, content: str, parser: str = 'html.parser') -> Optional[BeautifulSoup]:
+        """
+        HTML文字列をBeautifulSoupオブジェクトに変換
+        
+        Args:
+            content: HTML文字列
+            parser: パーサーの種類（デフォルト: html.parser）
+            
+        Returns:
+            BeautifulSoupオブジェクト
+        """
+        if not content:
+            return None
+        
+        try:
+            soup = BeautifulSoup(content, parser)
+            return soup
+        except Exception as e:
+            self.logger.error(f"HTML解析エラー: {e}")
+            return None
+
     def extract_text(self, element: Optional[Union[Tag, str]]) -> str:
         """
         要素からテキストを安全に抽出

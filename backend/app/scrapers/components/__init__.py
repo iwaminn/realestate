@@ -15,6 +15,7 @@ from .progress_tracker import ProgressTrackerComponent
 from .cache_manager import CacheManagerComponent
 from .building_normalizer import BuildingNormalizerComponent
 from .property_matcher import PropertyMatcherComponent
+from .db_repository import DbRepositoryComponent
 
 __all__ = [
     'HttpClientComponent',
