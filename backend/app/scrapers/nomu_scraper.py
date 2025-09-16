@@ -14,6 +14,7 @@ from .constants import SourceSite
 from .base_scraper import BaseScraper
 from ..models import PropertyListing
 from .area_config import get_area_code
+from .parsers import NomuParser
 from . import (
     normalize_integer, extract_price, extract_area, extract_floor_number,
     normalize_layout, normalize_direction, extract_monthly_fee,
@@ -33,6 +34,7 @@ class NomuScraper(BaseScraper):
     
     def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False, task_id=None):
         super().__init__(SourceSite.NOMU, force_detail_fetch, max_properties, ignore_error_history, task_id)
+        self.parser = NomuParser(logger=self.logger)
     
     def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
         """ノムコムのsite_property_idの妥当性を検証
@@ -71,26 +73,8 @@ class NomuScraper(BaseScraper):
     
     
     def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
-        """物件一覧を解析"""
-        properties = []
-        
-        # ノムコムの物件カードを検索
-        property_cards = soup.find_all("div", class_="item_resultsmall")
-        
-        if not property_cards:
-            print("物件カードが見つかりません")
-            return properties
-        
-        for card in property_cards:
-            try:
-                property_data = self.parse_property_card(card)
-                if property_data:
-                    properties.append(property_data)
-            except Exception as e:
-                self.logger.error(f"物件カード解析エラー - {type(e).__name__}: {str(e)}")
-                continue
-        
-        return properties
+        """物件一覧を解析 - パーサーに委譲"""
+        return self.parser.parse_property_list(soup)
     
     def parse_property_card(self, card: BeautifulSoup) -> Optional[Dict[str, Any]]:
         """物件カードから情報を抽出"""
@@ -293,17 +277,15 @@ class NomuScraper(BaseScraper):
         return self.save_property_common(property_data, existing_listing)
     
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
-        """物件詳細ページを解析"""
+        """物件詳細ページを解析 - パーサーに委譲"""
         soup = self.fetch_page(url)
         if not soup:
             return None
             
-        detail_data = {
-            'url': url,
-            '_page_text': soup.get_text()  # 建物名一致確認用
-        }
+        # パーサーで基本的な解析を実行
+        detail_data = self.parser.parse_property_detail(soup)
         
-        # URLから物件IDを抽出
+        # URLから物件IDを抽出（スクレイパー固有の処理）
         id_match = re.search(r'/mansion/id/([^/]+)/', url)
         if not id_match:
             self.logger.error(f"[NOMU] 詳細ページでURLから物件IDを抽出できませんでした: {url}")
@@ -317,27 +299,8 @@ class NomuScraper(BaseScraper):
             return None
             
         detail_data['site_property_id'] = site_property_id
-        
-        # 建物名を取得
-        self._extract_building_name(soup, detail_data)
-        
-        # 価格を取得
-        self._extract_detail_price(soup, detail_data)
-        
-        # 住所と駅情報を取得
-        self._extract_address_and_station(soup, detail_data, url)
-        
-        # 物件詳細情報を取得
-        self._extract_mansion_table_info(soup, detail_data)
-        
-        # 管理費と修繕積立金を取得
-        self._extract_fees(soup, detail_data)
-        
-        # 面積と間取りを優先的に取得（現在のページ構造対応）
-        self._extract_area_and_layout_current_format(soup, detail_data)
-        
-        # その他の詳細情報を取得
-        self._extract_additional_details(soup, detail_data)
+        detail_data['url'] = url
+        detail_data['_page_text'] = soup.get_text()  # 建物名一致確認用
         
         # 詳細ページでの必須フィールドを検証
         if not self.validate_detail_page_fields(detail_data, url):

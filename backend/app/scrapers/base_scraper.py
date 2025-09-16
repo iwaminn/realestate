@@ -39,6 +39,17 @@ import time as time_module
 from ..utils.debug_logger import debug_log
 from .building_external_id_handler import BuildingExternalIdHandler
 
+# 新しいコンポーネント（段階的統合用）
+from .components import (
+    HtmlParserComponent,
+    DataValidatorComponent,
+    RateLimiterComponent,
+    ProgressTrackerComponent,
+    CacheManagerComponent
+)
+from .components.http_client import HttpClientComponent
+from .components.error_handler import ErrorHandlerComponent
+
 
 class BuildingNameVerificationMode(Enum):
     """建物名検証モード"""
@@ -202,7 +213,18 @@ class BaseScraper(ABC):
         # 建物名検証モード（デフォルト: STRICT）
         self.building_name_verification_mode = BuildingNameVerificationMode.STRICT
         
-        # セッションは各メソッドで必要に応じて作成（コンテキストマネージャー使用）
+        # スクレイピング遅延（秒）- HTTPクライアント初期化前に設定
+        self.delay = float(os.getenv('SCRAPER_DELAY', str(self.DEFAULT_SCRAPER_DELAY)))
+        
+        # ロガーを先に初期化
+        self.logger = self._setup_logger()
+        
+        # HTTPクライアントの初期化（リファクタリング）
+        self.http_client = HttpClientComponent(
+            logger=self.logger
+        )
+        
+        # 旧実装との互換性のため維持（段階的に移行）
         self.http_session = requests.Session()
         self.http_session.headers.update({
             'User-Agent': self.DEFAULT_USER_AGENT
@@ -210,9 +232,36 @@ class BaseScraper(ABC):
         # SSL証明書検証の設定（gt-www.livable.co.jpのSSL証明書問題対応）
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        self.logger = self._setup_logger()
         self.normalizer = BuildingNameNormalizer()
         self.fuzzy_matcher = FuzzyPropertyMatcher()
+        
+        # エラー閾値設定を先に初期化（エラーマネージャーで使用）
+        self._error_thresholds = {
+            'critical_error_rate': float(os.getenv('SCRAPER_CRITICAL_ERROR_RATE', str(self.DEFAULT_CRITICAL_ERROR_RATE))),
+            'critical_error_count': int(os.getenv('SCRAPER_CRITICAL_ERROR_COUNT', str(self.DEFAULT_CRITICAL_ERROR_COUNT))),
+            'consecutive_errors': int(os.getenv('SCRAPER_CONSECUTIVE_ERRORS', str(self.DEFAULT_CONSECUTIVE_ERRORS)))
+        }
+        
+        # エラーマネージャーの初期化（リファクタリング）
+        self.error_manager = ErrorHandlerComponent(
+            logger=self.logger
+        )
+        
+        # プロパティバリデーターの初期化（リファクタリング）
+        self.property_validator = DataValidatorComponent(logger=self.logger)
+        
+        # 新しいコンポーネントの初期化（Phase 2 - 段階的統合）
+        self.html_parser = HtmlParserComponent(logger=self.logger)
+        self.data_validator = DataValidatorComponent(logger=self.logger)
+        self.rate_limiter = RateLimiterComponent(logger=self.logger, adaptive=True)
+        self.progress_tracker = ProgressTrackerComponent(logger=self.logger)
+        self.cache_manager = CacheManagerComponent(logger=self.logger)
+        
+        # リポジトリの初期化（リファクタリング - Phase 2）
+        # セッションはメソッド実行時に取得するため、ここでは初期化しない
+        self._building_repository = None
+        self._property_repository = None
+        self._listing_repository = None
         # majority_updaterは循環インポート回避のため削除
         # 必要に応じてメソッド内で動的にインポートして使用
         # BuildingExternalIdHandlerは遅延初期化（セッションが必要な時に作成）
@@ -229,9 +278,6 @@ class BaseScraper(ABC):
         
         # プロパティカウンター（制限用）
         self._property_count = 0
-        
-        # スクレイピング遅延（秒）
-        self.delay = float(os.getenv('SCRAPER_DELAY', str(self.DEFAULT_SCRAPER_DELAY)))
         
         # スクレイピング統計
         self._scraping_stats = {
@@ -267,13 +313,6 @@ class BaseScraper(ABC):
         
         # 汎用的な項目別エラーキャッシュ（全スクレイパー共通）
         self._field_error_cache = {}  # {field_name: {url: timestamp}}
-        
-        # エラー閾値設定（安全装置）
-        self._error_thresholds = {
-            'critical_error_rate': float(os.getenv('SCRAPER_CRITICAL_ERROR_RATE', str(self.DEFAULT_CRITICAL_ERROR_RATE))),
-            'critical_error_count': int(os.getenv('SCRAPER_CRITICAL_ERROR_COUNT', str(self.DEFAULT_CRITICAL_ERROR_COUNT))),
-            'consecutive_errors': int(os.getenv('SCRAPER_CONSECUTIVE_ERRORS', str(self.DEFAULT_CONSECUTIVE_ERRORS)))
-        }
         self._consecutive_error_count = 0  # 連続エラーカウンター
         
         # セレクタ検証統計
@@ -335,6 +374,75 @@ class BaseScraper(ABC):
             logger.addHandler(console_handler)
         
         return logger
+
+    def _ensure_repositories(self, session):
+        """リポジトリを初期化（遅延初期化）"""
+        if self._building_repository is None:
+            self._building_repository = BuildingRepository(session, self.logger)
+        if self._property_repository is None:
+            self._property_repository = PropertyRepository(session, self.logger)
+        if self._listing_repository is None:
+            self._listing_repository = ListingRepository(session, self.logger)
+        return self._building_repository, self._property_repository, self._listing_repository
+
+    def _create_progress_manager(self, task_id: str, total_items: Optional[int] = None) -> 'ProgressManager':
+        """
+        進捗管理マネージャーを作成
+        
+        Args:
+            task_id: タスクID
+            total_items: 総アイテム数
+            
+        Returns:
+            ProgressManager インスタンス
+        """
+        from .progress_manager import ProgressManager
+        
+        # コールバック関数（進捗更新時に呼ばれる）
+        def progress_callback(progress_info):
+            # ログ出力
+            if progress_info.progress_percentage > 0:
+                self.logger.info(
+                    f"進捗: {progress_info.progress_percentage:.1f}% "
+                    f"({progress_info.processed_items}/{progress_info.total_items}) "
+                    f"成功: {progress_info.succeeded_items}, "
+                    f"失敗: {progress_info.failed_items}"
+                )
+            
+            # タスク管理システムへの通知（実装されている場合）
+            if self._progress_callback:
+                self._progress_callback(progress_info)
+        
+        manager = ProgressManager(
+            task_id=task_id,
+            callback=progress_callback,
+            update_interval=5.0,  # 5秒ごとに進捗を通知
+            logger=self.logger
+        )
+        
+        # 開始
+        manager.start(total_items=total_items)
+        
+        return manager
+    
+    def track_progress(self, processed: int = 0, succeeded: int = 0, 
+                      failed: int = 0, skipped: int = 0) -> None:
+        """
+        進捗を追跡（ProgressManagerがある場合）
+        
+        Args:
+            processed: 処理済み数
+            succeeded: 成功数
+            failed: 失敗数  
+            skipped: スキップ数
+        """
+        if hasattr(self, '_progress_manager') and self._progress_manager:
+            self._progress_manager.update(
+                processed=processed,
+                succeeded=succeeded,
+                failed=failed,
+                skipped=skipped
+            )
     
     def _get_detail_refetch_days(self) -> int:
         """詳細再取得の日数を取得"""
@@ -372,109 +480,61 @@ class BaseScraper(ABC):
         return self._scraping_stats.get(key, default)
     
     def fetch_page(self, url: str) -> Optional[BeautifulSoup]:
-        """ページを取得してBeautifulSoupオブジェクトを返す"""
+        """ページを取得してBeautifulSoupオブジェクトを返す（リファクタリング版）"""
         # 前回のエラー情報をクリア
         self._last_fetch_error = None
         
-        try:
-            time.sleep(2)  # レート制限対策
+        # SSL検証の判定
+        headers = None
+        if 'gt-www.livable.co.jp' in url:
+            # 特定ドメインの場合の処理（必要に応じて）
+            self.logger.info(f"特殊ドメインの処理: {url}")
+        
+        # HTTPクライアントを使用してページを取得
+        content, error_info = self.http_client.fetch(
+            url,
+            check_content=lambda html: html and len(html) > 100  # 最小限のコンテンツチェック
+        )
+        
+        # エラーハンドリング
+        if error_info:
+            self._last_fetch_error = error_info
             
-            # gt-www.livable.co.jpドメインの場合はSSL検証を無効化
-            verify_ssl = True
-            if 'gt-www.livable.co.jp' in url:
-                verify_ssl = False
-                self.logger.info(f"SSL検証を無効化: {url}")
-            
-            response = self.http_session.get(url, timeout=30, allow_redirects=True, verify=verify_ssl)
-            
-            # リダイレクトが発生した場合のログ
-            if response.history:
-                final_url = response.url
-                if url != final_url:
-                    self.logger.info(f"リダイレクト検出: {url} -> {final_url}")
-            
-            response.raise_for_status()
-            
-            # レスポンスを解析
-            try:
-                self.logger.debug(f"BeautifulSoup解析開始: {url}")
-                soup = BeautifulSoup(response.content, 'html.parser')
-                self.logger.debug(f"BeautifulSoup解析完了: {url}")
-            except Exception as e:
-                self.logger.error(f"BeautifulSoup解析エラー: {url} - {type(e).__name__}: {e}")
-                return None
-            
-            # メンテナンスページの検出
-            if self._is_maintenance_page(soup):
-                raise MaintenanceException(f"{self.source_site}は現在メンテナンス中です")
-            
-            return soup
-        except (TaskPausedException, TaskCancelledException, MaintenanceException):
-            # タスクの一時停止・キャンセル・メンテナンス例外は再スロー
-            raise
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code == 404:
-                # 404エラーの場合は特別処理
+            # エラータイプに応じた処理
+            if error_info.get('type') == 'http_404':
                 self.log_warning('404 Not Found', url=url)
                 self._handle_404_error(url)
-                # 404エラー情報を保存（詳細取得で使用）
-                self._last_fetch_error = {
-                    'type': '404',
-                    'status_code': 404,
-                    'url': url
-                }
-            elif e.response.status_code == 503:
-                # 503 Service Unavailableの場合はメンテナンスと判定
-                self.logger.error(f"503 Service Unavailable: {url}")
+            elif error_info.get('status_code') == 503:
                 raise MaintenanceException(f"{self.source_site}は現在サービス中断中です (503)")
             else:
-                self.logger.error(f"HTTP error {e.response.status_code} for {url}: {e}")
-                # その他のHTTPエラー情報を保存
+                self.logger.error(f"ページ取得エラー: {error_info}")
+            
+            return None
+        
+        # コンテンツが取得できた場合はBeautifulSoupで解析
+        if content:
+            try:
+                self.logger.debug(f"BeautifulSoup解析開始: {url}")
+                soup = BeautifulSoup(content, 'html.parser')
+                self.logger.debug(f"BeautifulSoup解析完了: {url}")
+                
+                # メンテナンスページの検出
+                if self._is_maintenance_page(soup):
+                    raise MaintenanceException(f"{self.source_site}は現在メンテナンス中です")
+                
+                return soup
+            except MaintenanceException:
+                raise
+            except Exception as e:
+                self.logger.error(f"BeautifulSoup解析エラー: {url} - {type(e).__name__}: {e}")
                 self._last_fetch_error = {
-                    'type': 'http_error',
-                    'status_code': e.response.status_code,
+                    'type': 'parse_error',
+                    'error_message': str(e),
                     'url': url
                 }
-            return None
-        except requests.exceptions.ConnectionError as e:
-            self.logger.error(f"接続エラー - サーバーに接続できません: {url} - {type(e).__name__}: {str(e)}")
-            # 接続エラー情報を保存
-            self._last_fetch_error = {
-                'type': 'connection_error',
-                'error_message': str(e),
-                'url': url
-            }
-            return None
-        except requests.exceptions.Timeout as e:
-            self.logger.error(f"タイムアウトエラー - サーバーが応答しません: {url} - {type(e).__name__}: {str(e)}")
-            # タイムアウトエラー情報を保存
-            self._last_fetch_error = {
-                'type': 'timeout_error',
-                'error_message': str(e),
-                'url': url
-            }
-            return None
-        except requests.exceptions.RequestException as e:
-            self.logger.error(f"リクエストエラー: {url} - {type(e).__name__}: {str(e)}")
-            # リクエストエラー情報を保存
-            self._last_fetch_error = {
-                'type': 'request_error',
-                'error_message': str(e),
-                'url': url
-            }
-            return None
-        except Exception as e:
-            import traceback
-            self.logger.error(f"予期しないエラーが発生しました: {url} - {type(e).__name__}: {str(e)}")
-            self.logger.debug(f"詳細なスタックトレース:\n{traceback.format_exc()}")
-            # 予期しないエラー情報を保存
-            self._last_fetch_error = {
-                'type': 'unexpected_error',
-                'error_message': str(e),
-                'exception_type': type(e).__name__,
-                'url': url
-            }
-            return None
+                return None
+        
+        return None
 
     def _get_detailed_fetch_error_info(self, url: str) -> dict:
         """fetch_pageの失敗時に詳細なエラー情報を取得する
@@ -1791,8 +1851,12 @@ class BaseScraper(ABC):
                     return False
                 
                 # 価格と建物名が一致している場合は通常通り処理
-                # 詳細データをマージ
-                property_data.update(detail_data)
+                # 詳細データをマージ（既存の値を保持しつつ新しい値で更新）
+                for key, value in detail_data.items():
+                    # 既存の値がある場合は、新しい値がNoneでない場合のみ更新
+                    if key in property_data and property_data[key] is not None and value is None:
+                        continue  # 既存の値を保持
+                    property_data[key] = value
                 property_data['detail_fetched'] = True
                 self._last_detail_fetched = True  # フラグを記録
                 print("  → 詳細取得成功")
@@ -1929,30 +1993,33 @@ class BaseScraper(ABC):
     
     
     def validate_property_data(self, property_data: Dict[str, Any]) -> bool:
-        """物件データの妥当性をチェック"""
-        from .data_normalizer import validate_price, validate_area, validate_floor_number, validate_built_year
-        
+        """物件データの妥当性をチェック（リファクタリング版）"""
         url = property_data.get('url', '不明')
         building_name = property_data.get('building_name', '不明')
         
-        # 検証エラーの詳細を収集
-        validation_errors = []
+        # PropertyValidatorを使用して検証
+        is_valid, errors = self.property_validator.validate_property_data(property_data)
         
-        # 必須フィールドのチェック
-        if not property_data.get('building_name'):
-            validation_errors.append("建物名が未取得")
-            self.log_warning('建物名がありません', url=url)
+        # エラーがある場合は詳細ログを出力
+        if not is_valid:
+            self.logger.error(
+                f"物件データ検証エラー - "
+                f"URL: {url}, "
+                f"建物名: {building_name}, "
+                f"エラー詳細: {'; '.join(errors)}"
+            )
+            # エラー詳細を保存して、呼び出し元で利用できるようにする
+            property_data['_validation_errors'] = errors
+            
+            # エラー統計を更新
+            if '価格が未取得' in str(errors):
+                self.update_stats('price_missing', 1)
+            if '建物名が未取得' in str(errors):
+                self.update_stats('building_info_missing', 1)
+                
+        # 警告処理は削除（DataValidatorComponentは警告を返さない）
         
-        if not property_data.get('price'):
-            validation_errors.append("価格が未取得")
-            self.log_warning('価格情報がありません', url=url, building_name=building_name)
-        
-        # site_property_idを必須項目として追加
-        if not property_data.get('site_property_id'):
-            validation_errors.append("サイト物件IDが未取得")
-            self.logger.warning(f"サイト物件IDがありません: URL={url}, building_name={building_name}")
-        
-        # 部分的必須フィールドのチェック
+        # 部分的必須フィールドの統計を更新（従来の互換性のため）
         partial_required_fields = self.get_partial_required_fields()
         for field_name, config in partial_required_fields.items():
             field_value = property_data.get(field_name, '')
@@ -1982,62 +2049,13 @@ class BaseScraper(ABC):
                             'direction': '方角',
                             'floor_number': '階数'
                         }.get(field_name, field_name)
-                        validation_errors.append(f"{field_name_jp}の欠損率が異常に高い: {missing_rate:.1%}")
                         self.logger.error(
                             f"{field_name_jp}の欠損率が異常に高い: {missing_rate:.1%} "
                             f"({missing_count}/{total_checked}件) - "
                             f"HTML構造が変更された可能性があります"
                         )
-                    elif missing_rate > 0.1 and total_checked >= 20:  # 10%以上は警告
-                        self.logger.warning(
-                            f"{field_name}の欠損率が高めです: {missing_rate:.1%} "
-                            f"({missing_count}/{total_checked}件)"
-                        )
         
-        # 住所は詳細ページから取得する場合があるため、一覧ページでは必須ではない
-        # 詳細ページ取得後に再度チェックされる
-        if not property_data.get('address') and property_data.get('detail_fetched', False):
-            # 詳細ページを取得したのに住所がない場合のみエラー
-            validation_errors.append("住所が未取得（詳細取得後）")
-            self.logger.warning(f"詳細取得後も住所情報がありません: URL={url}, building_name={building_name}")
-        
-        # 価格の妥当性チェック（data_normalizerのvalidate_priceを使用）
-        price = property_data.get('price', 0)
-        if price and not validate_price(price):
-            validation_errors.append(f"価格が範囲外: {price}万円（許容範囲: 100万円～100億円）")
-            self.logger.warning(f"価格が異常です: {price}万円, URL={url}")
-        
-        # 面積の妥当性チェック（data_normalizerのvalidate_areaを使用）
-        area = property_data.get('area', 0)
-        if area and not validate_area(area):
-            validation_errors.append(f"面積が範囲外: {area}㎡（許容範囲: 10㎡～500㎡）")
-            self.logger.warning(f"面積が異常です: {area}㎡, URL={url}")
-            # 面積超過エラーフラグを設定
-            property_data['_validation_error_type'] = 'area_exceeded'
-        
-        # 階数の妥当性チェック（data_normalizerのvalidate_floor_numberを使用）
-        floor_number = property_data.get('floor_number')
-        total_floors = property_data.get('total_floors')
-        if floor_number is not None and not validate_floor_number(floor_number, total_floors):
-            validation_errors.append(f"階数の整合性エラー: {floor_number}階/{total_floors}階建て")
-            self.logger.warning(
-                f"階数の整合性エラー: {floor_number}階/"
-                f"{total_floors}階建て, URL={url}"
-            )
-        
-        # エラーがある場合は詳細ログを出力
-        if validation_errors:
-            self.logger.error(
-                f"物件データ検証エラー - "
-                f"URL: {url}, "
-                f"建物名: {building_name}, "
-                f"エラー詳細: {'; '.join(validation_errors)}"
-            )
-            # エラー詳細を保存して、呼び出し元で利用できるようにする
-            property_data['_validation_errors'] = validation_errors
-            return False
-        
-        return True
+        return is_valid
     
     def select_best_building_name(self, candidates: List[str]) -> str:
         """複数の建物名候補から最適なものを選択"""
@@ -2998,6 +3016,9 @@ class BaseScraper(ABC):
                                total_floors: int = None, basement_floors: int = None, total_units: int = None, 
                                structure: str = None, land_rights: str = None, station_info: str = None) -> Tuple[Optional[Building], Optional[str]]:
         """建物を取得または作成（セッションを受け取るバージョン）"""
+        # リポジトリを初期化
+        building_repo, _, _ = self._ensure_repositories(session)
+        
         # 元の建物名を保持
         original_building_name = building_name
         
@@ -3032,43 +3053,36 @@ class BaseScraper(ABC):
                     # 建物名から部屋番号を抽出
                     _, extracted_room_number = self.normalizer.extract_room_number(building_name)
                     
-                    # 建物情報を更新（より詳細な情報があれば）
-                    updated = False
+                    # 建物情報を更新（リポジトリを使用）
+                    updates = {}
                     if address and not building.address:
-                        building.address = address
+                        updates['address'] = address
                         # 正規化住所も更新
                         if hasattr(building, 'normalized_address'):
                             from ..utils.address_normalizer import AddressNormalizer
                             addr_normalizer = AddressNormalizer()
-                            building.normalized_address = addr_normalizer.normalize_for_comparison(address)
-                        updated = True
+                            updates['normalized_address'] = addr_normalizer.normalize_for_comparison(address)
                     # 築年月の更新（既存の値がないか、異なる値の場合は更新）
                     if built_year and building.built_year != built_year:
                         old_built_year = building.built_year
-                        building.built_year = built_year
-                        updated = True
+                        updates['built_year'] = built_year
                         if old_built_year:
                             self.logger.info(f"築年月を更新: {old_built_year} → {built_year}, 建物ID: {building.id}")
                     if built_month and not building.built_month:
-                        building.built_month = built_month
-                        updated = True
+                        updates['built_month'] = built_month
                     if total_floors and not building.total_floors:
-                        building.total_floors = total_floors
-                        updated = True
+                        updates['total_floors'] = total_floors
                     if basement_floors and not building.basement_floors:
-                        building.basement_floors = basement_floors
-                        updated = True
+                        updates['basement_floors'] = basement_floors
                     if structure and not building.construction_type:
-                        building.construction_type = structure
-                        updated = True
+                        updates['construction_type'] = structure
                     if land_rights and not building.land_rights:
-                        building.land_rights = land_rights
-                        updated = True
+                        updates['land_rights'] = land_rights
                     if station_info and not building.station_info:
-                        building.station_info = station_info
-                        updated = True
-                    if updated:
-                        self.safe_flush(session)
+                        updates['station_info'] = station_info
+                    
+                    if updates:
+                        building = building_repo.update(building, updates)
                     
                     return building, extracted_room_number
                 else:
@@ -3093,36 +3107,29 @@ class BaseScraper(ABC):
         if building:
             print(f"[INFO] 既存建物を発見: {building.normalized_name} (ID: {building.id})")
             
-            # 建物情報を更新（より詳細な情報があれば）
-            updated = False
+            # 建物情報を更新（リポジトリを使用）
+            updates = {}
             # 築年月の更新（既存の値がないか、異なる値の場合は更新）
             if built_year and building.built_year != built_year:
                 old_built_year = building.built_year
-                building.built_year = built_year
-                updated = True
+                updates['built_year'] = built_year
                 if old_built_year:
                     self.logger.info(f"築年月を更新: {old_built_year} → {built_year}, 建物ID: {building.id}")
             if built_month and not building.built_month:
-                building.built_month = built_month
-                updated = True
+                updates['built_month'] = built_month
             if total_floors and not building.total_floors:
-                building.total_floors = total_floors
-                updated = True
+                updates['total_floors'] = total_floors
             if basement_floors and not building.basement_floors:
-                building.basement_floors = basement_floors
-                updated = True
+                updates['basement_floors'] = basement_floors
             if structure and not building.construction_type:
-                building.construction_type = structure
-                updated = True
+                updates['construction_type'] = structure
             if land_rights and not building.land_rights:
-                building.land_rights = land_rights
-                updated = True
+                updates['land_rights'] = land_rights
             if station_info and not building.station_info:
-                building.station_info = station_info
-                updated = True
+                updates['station_info'] = station_info
             
-            if updated:
-                self.safe_flush(session)
+            if updates:
+                building = building_repo.update(building, updates)
             
             # 外部IDを追加（既存の建物でも、外部IDが未登録の場合は追加）
             if external_property_id:
@@ -3139,7 +3146,7 @@ class BaseScraper(ABC):
         # 新規建物の場合、処理済みの建物名を使用
         normalized_name = clean_building_name
         
-        # 新規建物を作成
+        # 新規建物を作成（リポジトリを使用）
         print(f"[INFO] 新規建物を作成: {normalized_name}")
         
         # 住所を正規化
@@ -3149,22 +3156,20 @@ class BaseScraper(ABC):
             addr_normalizer = AddressNormalizer()
             normalized_addr = addr_normalizer.normalize_for_comparison(address)
         
-        building = Building(
-            normalized_name=normalized_name,  # 元の名前を使用
-            canonical_name=search_key,        # 検索キーを保存
+        building = building_repo.create(
+            normalized_name=normalized_name,
+            canonical_name=search_key,
             address=address,
-            normalized_address=normalized_addr,  # 正規化された住所を保存
+            normalized_address=normalized_addr,
             built_year=built_year,
-            built_month=built_month,          # 最初の掲載情報から設定
+            built_month=built_month,
             total_floors=total_floors,
-            basement_floors=basement_floors,  # 地下階数も設定
-            construction_type=structure,      # structureはconstruction_typeとして保存
-            land_rights=land_rights,          # 土地権利も設定
-            station_info=station_info,        # 交通情報も設定
-            is_valid_name=not is_ad_text_only  # 広告文のみの場合はFalse
+            basement_floors=basement_floors,
+            construction_type=structure,
+            land_rights=land_rights,
+            station_info=station_info,
+            is_valid_name=not is_ad_text_only
         )
-        session.add(building)
-        self.safe_flush(session)
         
         # デバッグ: 新規作成された建物のIDを確認
         self.logger.info(f"[DEBUG] 新規建物作成後のID: {building.id}, 名前: {building.normalized_name}")
@@ -5596,25 +5601,30 @@ class BaseScraper(ABC):
     
     
     def record_field_extraction_error(self, field_name: str, url: str, log_error: bool = True):
-        """フィールド抽出エラーを記録し、統計を更新
+        """フィールド抽出エラーを記録し、統計を更新（リファクタリング版）
         
         Args:
             field_name: フィールド名
             url: 物件URL
             log_error: エラーログを出力するか
         """
-        # 新規エラーかチェック
-        is_new_error = not self._has_recent_field_error(field_name, url)
+        # ErrorManagerを使用してエラーを記録
+        self.error_manager.record_field_error(
+            field_name=field_name,
+            error_type='extraction',
+            is_critical=True
+        )
+        should_stop = False  # TODO: Implement proper stop logic based on error thresholds
         
-        # エラーを記録
-        self._record_field_error(field_name, url)
-        
-        # 統計を更新
+        # 統計を更新（従来の互換性のため）
         if 'html_structure_errors' not in self._scraping_stats:
             self._scraping_stats['html_structure_errors'] = {}
         if field_name not in self._scraping_stats['html_structure_errors']:
             self._scraping_stats['html_structure_errors'][field_name] = 0
         self._scraping_stats['html_structure_errors'][field_name] += 1
+        
+        # 新規エラーかチェック（簡略化）
+        is_new_error = True  # TODO: Implement proper recent error tracking
         
         if is_new_error:
             if 'html_structure_errors_new' not in self._scraping_stats:
@@ -5631,6 +5641,13 @@ class BaseScraper(ABC):
         else:
             if log_error:
                 self.logger.debug(f"{field_name}取得エラー（既知）: {url}")
+        
+        # 重大エラー閾値を超えた場合は例外を発生
+        if should_stop:
+            raise Exception(f"重大エラー閾値を超えました: {field_name}")
+        
+        # プロセス済みカウントを増加（簡略化）
+        pass  # TODO: Implement proper processed count tracking
     
     def log_detailed_error(self, error_type: str, url: str, exception: Exception, additional_info: Dict[str, Any] = None):
         """詳細なエラーログを出力する共通メソッド

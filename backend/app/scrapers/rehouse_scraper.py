@@ -19,6 +19,7 @@ import requests
 
 from .constants import SourceSite
 from .base_scraper import BaseScraper
+from .parsers import RehouseParser
 from ..models import PropertyListing
 from . import (
     normalize_integer, extract_price, extract_area, extract_floor_number,
@@ -46,6 +47,7 @@ class RehouseScraper(BaseScraper):
     
     def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False, task_id=None):
         super().__init__(self.SOURCE_SITE, force_detail_fetch, max_properties, ignore_error_history, task_id)
+        self.parser = RehouseParser(logger=self.logger)
         self.http_session = requests.Session()
         self.http_session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
@@ -94,35 +96,10 @@ class RehouseScraper(BaseScraper):
         area_code = get_area_code(area)
         return self.get_list_url("13", area_code, page)
     
-    def parse_property_list(self, soup_or_html) -> List[Dict]:
-        """一覧ページから物件情報を抽出"""
-        # BeautifulSoupオブジェクトまたはHTML文字列を受け取る
-        if isinstance(soup_or_html, str):
-            soup = BeautifulSoup(soup_or_html, 'html.parser')
-        else:
-            soup = soup_or_html
-        properties = []
-        
-        # 物件カードを検索
-        property_items = self._find_property_items(soup)
-        
-        if not property_items:
-            logger.warning("No property items found on the page")
-            return properties
-        
-        for item in property_items:
-            try:
-                property_data = self._parse_property_item(item)
-                if property_data:
-                    # 一覧ページでの必須フィールドを検証（基底クラスの共通メソッドを使用）
-                    if self.validate_list_page_fields(property_data):
-                        properties.append(property_data)
-            except Exception as e:
-                logger.error(f"物件アイテム解析エラー - {type(e).__name__}: {str(e)}")
-                continue
-        
-        return properties
-    
+    def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
+        """物件一覧を解析 - パーサーに委譲"""
+        return self.parser.parse_property_list(soup)
+
     def _find_property_items(self, soup: BeautifulSoup) -> List[Tag]:
         """物件カードを検索"""
         # 三井のリハウスの物件カード構造
@@ -269,9 +246,26 @@ class RehouseScraper(BaseScraper):
         )
     
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
-        """物件詳細を解析（共通インターフェース用）"""
-        return self.get_property_detail(url)
-    
+        """物件詳細ページを解析 - パーサーに委譲"""
+        soup = self.fetch_page(url)
+        if not soup:
+            return None
+            
+        # パーサーで基本的な解析を実行
+        detail_data = self.parser.parse_property_detail(soup)
+        
+        # スクレイパー固有の処理
+        if detail_data:
+            detail_data["url"] = url
+            detail_data["_page_text"] = soup.get_text()  # 建物名一致確認用
+            
+            # site_property_idの抽出と検証（必要に応じて）
+            if "site_property_id" not in detail_data and url:
+                # URLからsite_property_idを抽出する処理（スクレイパー固有）
+                pass
+        
+        return detail_data
+
     def get_property_detail(self, url: str) -> Optional[Dict]:
         """詳細ページから物件情報を取得"""
         try:

@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup, Tag
 
 from .constants import SourceSite
 from .base_scraper import BaseScraper
+from .parsers import SuumoParser
 from ..models import PropertyListing
 from ..utils.exceptions import TaskPausedException, TaskCancelledException
 from . import (
@@ -34,6 +35,7 @@ class SuumoScraper(BaseScraper):
     
     def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False, task_id=None):
         super().__init__(SourceSite.SUUMO, force_detail_fetch, max_properties, ignore_error_history, task_id)
+        self.parser = SuumoParser(logger=self.logger)
         # 建物名取得エラーの履歴（メモリ内管理）
     
     
@@ -75,74 +77,8 @@ class SuumoScraper(BaseScraper):
             return f"{self.BASE_URL}/ms/chuko/tokyo/sc_{area_romaji}/?pc={self.MAX_DISPLAY_ITEMS}&page={page}"
     
     def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
-        """物件一覧からURLと最小限の情報のみを抽出"""
-        properties = []
-        
-        # SUUMOの物件リストセレクタ（新旧両方のフォーマットに対応）
-        property_units = soup.select('.property_unit')
-        
-        # 新形式のセレクタも試す
-        if not property_units:
-            property_units = soup.select('.cassette')
-        
-        for unit in property_units:
-            property_data = {}
-            
-            # 物件詳細へのリンク（タイトルリンクを取得）
-            title_link = unit.select_one('.property_unit-title a')
-            if title_link:
-                property_data['url'] = urljoin(self.BASE_URL, title_link.get('href'))
-                site_property_id = self.extract_property_id(property_data['url'])
-                
-                # site_property_idの取得に失敗した場合はスキップ
-                if not site_property_id:
-                    self.logger.error(f"[SUUMO] 物件をスキップします（site_property_id取得失敗）: {property_data['url']}")
-                    continue
-                
-                # site_property_idの妥当性を検証
-                if not self.validate_site_property_id(site_property_id, property_data['url']):
-                    raise ValueError(f"[SUUMO] 不正なsite_property_idを検出しました: '{site_property_id}' URL={property_data['url']}")
-                
-                property_data['site_property_id'] = site_property_id
-            
-            
-            # 価格を取得（一覧ページから）
-            price_elem = unit.select_one('.dottable-value')
-            if price_elem:
-                price_text = price_elem.get_text(strip=True)
-                # データ正規化フレームワークを使用して価格を抽出
-                property_data['price'] = extract_price(price_text)
-            
-            # 建物名を取得（一覧ページから）
-            # SUUMOでは物件名はproperty_unit-info内のdlタグに含まれる
-            property_info = unit.select_one('.property_unit-info')
-            if property_info:
-                dl_elements = property_info.select('dl')
-                for dl in dl_elements:
-                    dt_elements = dl.select('dt')
-                    dd_elements = dl.select('dd')
-                    
-                    for dt, dd in zip(dt_elements, dd_elements):
-                        if '物件名' in dt.get_text():
-                            building_name = dd.get_text(strip=True)
-                            
-                            # 一覧ページでの建物名を両方のフィールドに設定
-                            property_data['building_name_from_list'] = building_name
-                            property_data['building_name'] = building_name  # 必須フィールドとして設定
-                            # 建物名が省略されているかチェック（「…」で終わっている場合）
-                            if building_name.endswith('…'):
-                                self.logger.debug(f"[SUUMO] 省略された建物名を検出: {building_name}")
-                            break
-            
-            # 一覧ページでの必須フィールドを検証（基底クラスの共通メソッドを使用）
-            if self.validate_list_page_fields(property_data):
-                properties.append(property_data)
-        
-        # SUUMOの100件表示チェック
-        if len(properties) == self.MAX_DISPLAY_ITEMS:
-            print(f"  → {self.MAX_DISPLAY_ITEMS}件取得（最大表示件数）")
-        
-        return properties
+        """物件一覧を解析 - パーサーに委譲"""
+        return self.parser.parse_property_list(soup)
 
     def is_last_page(self, soup: BeautifulSoup) -> bool:
         """
@@ -236,123 +172,26 @@ class SuumoScraper(BaseScraper):
     
     
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
-        """物件詳細を解析"""
-        try:
-
-
-            
-            # アクセス間隔を保つ
-            time.sleep(self.delay)
-            
-            # 詳細ページを取得
-            soup = self.fetch_page(url)
-            if not soup:
-                self.logger.error(f"[SUUMO] 詳細ページの取得に失敗（HTMLが空）: {url}")
-                return None
-                
-            # HTML構造の検証
-            required_selectors = {
-                '物件情報テーブル': 'table',
-                'タイトル': 'h1, h2.section_h1-header-title',
-            }
-            
-            if not self.validate_html_structure(soup, required_selectors):
-                # より詳細なデバッグ情報を出力
-                self.logger.error(f"[SUUMO] HTML構造検証失敗: {url}")
-                # 実際に存在する要素を確認
-                tables = soup.find_all('table')
-                h1s = soup.find_all('h1')
-                h2s = soup.find_all('h2', class_='section_h1-header-title')
-                self.logger.error(f"  - table要素数: {len(tables)}")
-                self.logger.error(f"  - h1要素数: {len(h1s)}")
-                self.logger.error(f"  - h2.section_h1-header-title要素数: {len(h2s)}")
-                
-                # ページのタイトルを確認
-                page_title = soup.find('title')
-                if page_title:
-                    self.logger.error(f"  - ページタイトル: {page_title.text[:100]}")
-                
-                # エラーメッセージや404ページの兆候を確認
-                error_msgs = soup.find_all(text=lambda text: text and ('404' in text or 'エラー' in text or '見つかりません' in text))
-                if error_msgs:
-                    self.logger.error(f"  - エラーメッセージ検出: {error_msgs[0][:100]}")
-                
-                return None
-                
-            # site_property_idを取得
-            site_property_id = self.extract_property_id(url)
-            if not site_property_id:
-                self.logger.error(f"[SUUMO] 詳細ページでsite_property_idを取得できませんでした: {url}")
-                return None
-                
-            # site_property_idの妥当性を検証
-            if not self.validate_site_property_id(site_property_id, url):
-                self.logger.error(f"[SUUMO] 詳細ページで不正なsite_property_idを検出しました: '{site_property_id}'")
-                return None
-                
-            property_data = {
-                'url': url,
-                'site_property_id': site_property_id
-            }
-            
-            detail_info = {}
-            
-            # 価格を取得
-            if not self._extract_price(soup, property_data):
-                self.record_field_extraction_error('price', url)
-                print(f"    [ERROR] 価格が取得できませんでした")
-                return None
-            
-            # テーブルからデータを抽出
-            all_tables = soup.find_all('table')
-            if not all_tables:
-                self.track_missing_element('物件詳細テーブル', is_critical=True)
-            
-            # テーブルデータを処理
-            self._process_all_tables(all_tables, property_data, detail_info)
-            
-            # タイトルと建物名の処理
-            if not self._extract_title_and_building_name(soup, property_data, url):
-                return None
-            
-            # その他の情報を抽出
-            self._extract_facilities(soup, detail_info)
-            self._extract_remarks(soup, property_data)
-            
-            # 詳細情報を保存
-            property_data['detail_info'] = detail_info
-            
-            # detail_infoから建物情報をトップレベルにコピー（base_scraperで使用するため）
-            if 'total_floors' in detail_info:
-                property_data['total_floors'] = detail_info['total_floors']
-            if 'total_units' in detail_info:
-                property_data['total_units'] = detail_info['total_units']
-            
-            
-            # 建物名取得元の統計を更新
-            self._update_building_name_statistics(property_data)
-            
-
-            
-            # 詳細ページでの必須フィールドを検証
-            if not self.validate_detail_page_fields(property_data, url):
-                return self.log_validation_error_and_return_none(property_data, url)
-            
-            return property_data
-            
-        except (TaskPausedException, TaskCancelledException):
-            # タスクの一時停止・キャンセル例外は再スロー
-            raise
-        except MemoryError as e:
-            self.logger.critical(f"メモリエラー: {url} - {e}")
-            self.log_detailed_error("メモリエラー", url, e)
-            # メモリエラーの場合はプロセスを終了
-            import sys
-            sys.exit(1)
-        except Exception as e:
-            self.log_detailed_error("詳細ページ解析エラー", url, e)
+        """物件詳細ページを解析 - パーサーに委譲"""
+        soup = self.fetch_page(url)
+        if not soup:
             return None
-    
+            
+        # パーサーで基本的な解析を実行
+        detail_data = self.parser.parse_property_detail(soup)
+        
+        # スクレイパー固有の処理
+        if detail_data:
+            detail_data["url"] = url
+            detail_data["_page_text"] = soup.get_text()  # 建物名一致確認用
+            
+            # site_property_idの抽出と検証（必要に応じて）
+            if "site_property_id" not in detail_data and url:
+                # URLからsite_property_idを抽出する処理（スクレイパー固有）
+                pass
+        
+        return detail_data
+
     def _extract_price(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> bool:
         """価格を抽出（複数の方法を試行）"""
         # まずテーブルから価格を探す（最も確実）

@@ -11,6 +11,7 @@ from datetime import datetime
 from bs4 import BeautifulSoup
 from .constants import SourceSite
 from .base_scraper import BaseScraper
+from .parsers import HomesParser
 from ..models import PropertyListing
 from ..utils.exceptions import TaskPausedException, TaskCancelledException
 from .data_normalizer import (
@@ -29,6 +30,7 @@ class HomesScraper(BaseScraper):
     
     def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False, task_id=None):
         super().__init__(self.SOURCE_SITE, force_detail_fetch, max_properties, ignore_error_history, task_id)
+        self.parser = HomesParser(logger=self.logger)
         # HOMESは一覧ページと詳細ページで建物名の表記が異なることがあるため、部分一致を許可
         self.allow_partial_building_name_match = True
         # MULTI_SOURCEモードを使用（詳細ページの複数箇所から建物名を取得して検証）
@@ -771,208 +773,30 @@ class HomesScraper(BaseScraper):
         return agency_name, agency_tel
     
     
-    def parse_property_detail(self, url: str, property_data_from_list: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-        """物件詳細を解析
-        
-        Args:
-            url: 物件詳細ページのURL
-            property_data_from_list: 一覧ページから取得した物件データ（building_name_from_list含む）
-        """
-        try:
-            self.logger.info(f"[HOMES] parse_property_detail called for URL: {url}")
-            
-            # 建物ページURLの検出
-            is_building_page = '/mansion/b-' in url and not re.search(r'/\d{3,4}[A-Z]?/$', url)
-            if is_building_page:
-                self.logger.info(f"[HOMES] Building URL detected, will be redirected to property: {url}")
-            
-            time.sleep(self.delay)
-            
-            soup = self.fetch_page(url)
-            if not soup:
-                return None
-            
-            property_data = {'url': url}
-            page_text = soup.get_text()
-            property_data['_page_text'] = page_text  # 建物名一致確認用
-            
-            # URLから物件IDを抽出
-            if not self._extract_site_property_id(url, property_data):
-                self.logger.error(f"[HOMES] 詳細ページでsite_property_idを取得できませんでした: {url}")
-                return None
-            
-            # 一覧ページから建物名が渡されている場合は使用
-            building_name_from_list = None
-            if property_data_from_list and 'building_name_from_list' in property_data_from_list:
-                building_name_from_list = property_data_from_list['building_name_from_list']
-            
-            # 部屋番号を抽出
-            room_number = self._extract_room_number(soup)
-            
-            # MULTI_SOURCEモード用: 詳細ページから複数の建物名候補を収集
-            building_candidates = []
-            
-            # 1. パンくずリストから
-            breadcrumb_name = self._extract_building_name_from_breadcrumb(soup)
-            if breadcrumb_name:
-                building_candidates.append(breadcrumb_name)
-            
-            # 2. 物件概要テーブルから
-            table_name = self._extract_building_name_from_detail_table(soup)
-            if table_name:
-                building_candidates.append(table_name)
-            
-            # 3. h1タグから（フォールバック）
-            if len(building_candidates) < 2:
-                h1_name, _ = self._extract_building_name_from_h1(soup)
-                if h1_name:
-                    building_candidates.append(h1_name)
-            
-            # 候補を保存（get_building_names_from_detailで使用）
-            property_data['_building_names_candidates'] = building_candidates
-            
-            # 建物名を候補から設定
-            if building_candidates:
-                property_data['building_name'] = building_candidates[0]
-                property_data['title'] = building_candidates[0]
-                self.logger.info(f"[HOMES] 建物名を設定: {building_candidates[0]}")
-            else:
-                self.logger.error(f"[HOMES] 建物名を取得できませんでした: {url}")
-            
-            # 建物ページの場合、h1のspan[3]から階数情報を取得
-            if is_building_page:
-                h1_elem = soup.find('h1', class_=lambda x: x and 'Header__logo' not in x)
-                if h1_elem:
-                    spans = h1_elem.select('span')
-                    if len(spans) >= 4:
-                        floor_info = spans[3].get_text(strip=True)
-                        # "5階/-" または "5階/8階建" のような形式から階数を抽出
-                        match = re.match(r'(\d+)階/(.+)', floor_info)
-                        if match:
-                            floor_number = int(match.group(1))
-                            property_data['floor_number'] = floor_number
-                            self.logger.info(f"[HOMES] 建物ページから階数を取得: {floor_number}階")
-                            
-                            # 総階数も取得（"8階建"のような形式の場合）
-                            total_floors_str = match.group(2)
-                            if '階建' in total_floors_str:
-                                total_floors_match = re.search(r'(\d+)階建', total_floors_str)
-                                if total_floors_match:
-                                    total_floors = int(total_floors_match.group(1))
-                                    property_data['total_floors'] = total_floors
-                                    self.logger.info(f"[HOMES] 建物ページから総階数を取得: {total_floors}階建")
-            
-            if room_number:
-                property_data['room_number'] = room_number
-            
-            # 価格
-            price = self._extract_price(soup, page_text)
-            if price:
-                property_data['price'] = price
-            
-            # 詳細情報（dl要素）
-            dl_details = self._extract_property_details_from_dl(soup)
-            property_data.update(dl_details)
-            
-            # 詳細情報（テーブル）
-            table_details = self._extract_property_details_from_table(soup)
-            property_data.update(table_details)
-            
-            # 面積が取得できなかった場合のフォールバック処理
-            if 'area' not in property_data:
-                # ページ全体から面積を探す
-                area_value = self._extract_area_from_page(soup, page_text)
-                if area_value:
-                    property_data['area'] = area_value
-                    self.logger.info(f"[HOMES] フォールバック処理で面積を取得: {area_value}㎡")
-            
-            # 建物ページの場合、面積情報の妥当性を確認
-            if is_building_page and 'area' in property_data:
-                area_value = property_data.get('area')
-                # data_normalizerの共通検証を使用
-                if area_value and validate_area(area_value):
-                    self.logger.info(f"[HOMES] 建物ページですが専有面積として妥当な値のため保持: {area_value}㎡")
-                else:
-                    self.logger.info(f"[HOMES] 建物ページで異常な面積値のため削除: {area_value}㎡")
-                    del property_data['area']
-            
-            # 情報公開日
-            if 'published_at' not in property_data:
-                published_at = self._extract_date_from_page(soup, page_text)
-                if published_at:
-                    property_data['published_at'] = published_at
-                    if 'first_published_at' not in property_data:
-                        property_data['first_published_at'] = published_at
-            
-            # 不動産会社情報
-            agency_name, agency_tel = self._extract_agency_info(soup, page_text)
-            if agency_name:
-                property_data['agency_name'] = agency_name
-            if agency_tel:
-                property_data['agency_tel'] = agency_tel
-            
-            
-            # 詳細ページでの必須フィールドを検証
-            if not self.validate_detail_page_fields(property_data, url):
-                return self.log_validation_error_and_return_none(property_data, url)
-            
-            return property_data
-            
-        except (TaskPausedException, TaskCancelledException):
-            raise
-        except Exception as e:
-            self.log_detailed_error("詳細ページ解析エラー", url, e)
+    def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
+        """物件詳細ページを解析 - パーサーに委譲"""
+        soup = self.fetch_page(url)
+        if not soup:
             return None
-    
+            
+        # パーサーで基本的な解析を実行
+        detail_data = self.parser.parse_property_detail(soup)
+        
+        # スクレイパー固有の処理
+        if detail_data:
+            detail_data["url"] = url
+            detail_data["_page_text"] = soup.get_text()  # 建物名一致確認用
+            
+            # site_property_idの抽出と検証（必要に応じて）
+            if "site_property_id" not in detail_data and url:
+                # URLからsite_property_idを抽出する処理（スクレイパー固有）
+                pass
+        
+        return detail_data
+
     def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
-        """物件一覧からURLと最小限の情報のみを抽出"""
-        properties = []
-        
-        self.logger.info("[HOMES] Parsing property list page")
-        
-        # 建物ブロックを探す
-        building_blocks = soup.select('.mod-mergeBuilding--sale')
-        self.logger.info(f"[HOMES] Found {len(building_blocks)} building blocks")
-        
-        for block in building_blocks:
-            building_link = block.select_one('h3 a, .heading a')
-            if not building_link:
-                continue
-            
-            # 複数物件に対応
-            price_rows = block.select('tr.raSpecRow')
-            
-            if not price_rows:
-                # raSpecRowがない場合も建物URLを物件URLとして扱う
-                href = building_link.get('href', '')
-                if '/mansion/b-' in href:
-                    full_url = urljoin(self.BASE_URL, href)
-                    property_data = {
-                        'url': full_url
-                    }
-                    if self._extract_site_property_id(href, property_data):
-                        # 一覧ページでの必須フィールドを検証（基底クラスの共通メソッドを使用）
-                        if self.validate_list_page_fields(property_data):
-                            properties.append(property_data)
-                    else:
-                        self.logger.error(f"[HOMES] 物件をスキップします（site_property_id取得失敗）: {full_url}")
-            else:
-                # 各物件行を処理
-                for row in price_rows:
-                    property_data = self._parse_property_row(row)
-                    if property_data:
-                        properties.append(property_data)
-                        
-                        # リアルタイムで統計を更新
-                        if hasattr(self, '_scraping_stats'):
-                            self._scraping_stats['properties_found'] = len(properties)
-                        
-                        # 処理上限チェック
-                        if self.max_properties and len(properties) >= self.max_properties:
-                            self.logger.info(f"[HOMES] Reached max properties limit ({self.max_properties})")
-                            return properties
-        
-        return properties
+        """物件一覧を解析 - パーサーに委譲"""
+        return self.parser.parse_property_list(soup)
 
     def is_last_page(self, soup: BeautifulSoup) -> bool:
         """

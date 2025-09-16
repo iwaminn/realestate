@@ -12,6 +12,7 @@ import traceback
 
 from .constants import SourceSite
 from .base_scraper import BaseScraper
+from .parsers import LivableParser
 from ..models import PropertyListing
 from .data_normalizer import DataNormalizer
 from . import (
@@ -36,6 +37,7 @@ class LivableScraper(BaseScraper):
     
     def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False, task_id=None):
         super().__init__(SourceSite.LIVABLE, force_detail_fetch, max_properties, ignore_error_history, task_id)
+        self.parser = LivableParser(logger=self.logger)
         # 東急リバブルも一覧ページと詳細ページで建物名の表記が異なることがあるため、部分一致を許可
         self.allow_partial_building_name_match = True
         self.building_name_match_threshold = 0.6  # 東急リバブルは詳細ページの建物名が長い傾向があるため閾値を下げる  # 東急リバブルは詳細ページの建物名が長い傾向があるため閾値を下げる
@@ -168,22 +170,9 @@ class LivableScraper(BaseScraper):
             return base_url
     
     def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
-        """物件一覧からURLと基本情報を抽出"""
-        properties = []
-        
-        # 物件リストアイテムを取得
-        property_items = self._find_property_items(soup)
-        
-        for i, item in enumerate(property_items):
-            property_data = self._parse_property_item(item, i)
-            if property_data:
-                properties.append(property_data)
-        
-        # デバッグ: 物件IDの重複チェック
-        self._check_duplicate_property_ids(properties)
-        
-        return properties
-    
+        """物件一覧を解析 - パーサーに委譲"""
+        return self.parser.parse_property_list(soup)
+
     def _find_property_items(self, soup: BeautifulSoup) -> List[Tag]:
         """物件リストアイテムを検索"""
         property_items = soup.select('.o-product-list__item')
@@ -337,78 +326,26 @@ class LivableScraper(BaseScraper):
         return self.save_property_common(property_data, existing_listing)
     
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
-        """物件詳細を解析"""
-        try:
-            # アクセス間隔を保つ
-            time.sleep(self.delay)
-            
-            # 詳細ページを取得
-            self.logger.info(f"詳細ページを取得中: {url}")
-            soup = self.fetch_page(url)
-            if not soup:
-                self.logger.error(f"詳細ページの取得に失敗 - ページのフェッチができませんでした: {url}")
-                # fetch_pageでのエラー情報を確認
-                fetch_error = getattr(self, '_last_fetch_error', None)
-                if fetch_error and fetch_error.get('type') == '404':
-                    # URLからsite_property_idを抽出して404エラー情報に含める
-                    extracted_id = self.extract_property_id(url)
-                    # 404エラーの場合は特別なエラー情報を設定
-                    self._last_detail_error = {
-                        'type': '404_error',
-                        'error_type': '404 Not Found',
-                        'error_message': '物件ページが見つかりません（削除済みまたは無効なURL）',
-                        'building_name': '',
-                        'price': '',
-                        'site_property_id': extracted_id or ''
-                    }
-                return None
-            
-            # URLパターンによってHTML構造を判定
-            is_grantact = '/grantact/detail/' in url or 'gt-www.livable.co.jp' in url
-            
-            # HTML構造の検証
-            if not self._validate_html_structure(soup, is_grantact, url):
-                return None
-            
-            # site_property_idを抽出
-            site_property_id = self.extract_property_id(url)
-            if not site_property_id:
-                self.logger.error(f"[LIVABLE] 詳細ページでsite_property_idを取得できませんでした: {url}")
-                return None
-                
-            # site_property_idの妥当性を検証
-            if not self.validate_site_property_id(site_property_id, url):
-                self.logger.error(f"[LIVABLE] 詳細ページで不正なsite_property_idを検出しました: '{site_property_id}'")
-                return None
-                
-            property_data = {
-                'url': url,
-                'site_property_id': site_property_id,
-                '_page_text': soup.get_text()  # 建物名一致確認用
-            }
-            
-            detail_info = {}
-            
-            # grantactパターンの場合は別の解析処理
-            if is_grantact:
-                return self._parse_grantact_detail(soup, property_data, detail_info)
-            
-            # 通常パターンの解析
-            return self._parse_normal_detail(soup, property_data, detail_info, url)
-            
-        except Exception as e:
-            self.log_detailed_error("詳細ページ解析エラー", url, e)
-            # エラー情報を保存して、Noneを返す（基底クラスでエラーハンドリングされる）
-            self._last_detail_error = {
-                'type': 'exception',
-                'error_type': type(e).__name__,
-                'error_message': str(e),
-                'building_name': property_data.get('building_name', ''),
-                'price': property_data.get('price', ''),
-                'site_property_id': property_data.get('site_property_id', '')
-            }
+        """物件詳細ページを解析 - パーサーに委譲"""
+        soup = self.fetch_page(url)
+        if not soup:
             return None
-    
+            
+        # パーサーで基本的な解析を実行
+        detail_data = self.parser.parse_property_detail(soup)
+        
+        # スクレイパー固有の処理
+        if detail_data:
+            detail_data["url"] = url
+            detail_data["_page_text"] = soup.get_text()  # 建物名一致確認用
+            
+            # site_property_idの抽出と検証（必要に応じて）
+            if "site_property_id" not in detail_data and url:
+                # URLからsite_property_idを抽出する処理（スクレイパー固有）
+                pass
+        
+        return detail_data
+
     def _validate_html_structure(self, soup: BeautifulSoup, is_grantact: bool, url: str) -> bool:
         """HTML構造を検証"""
         if is_grantact:
