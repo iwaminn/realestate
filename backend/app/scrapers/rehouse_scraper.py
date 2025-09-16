@@ -215,20 +215,12 @@ class RehouseScraper(BaseScraper):
         """description-sectionから情報を抽出"""
         desc_text = desc_section.get_text(' ', strip=True)
         
-        # 住所を抽出（都道府県、区、市町村から始まるパターンに対応）
-        # 都道府県が含まれている完全な住所、または区・市から始まる住所を探す
-        address_patterns = [
-            r'((?:東京都|北海道|(?:京都|大阪)府|(?:青森|岩手|宮城|秋田|山形|福島|茨城|栃木|群馬|埼玉|千葉|神奈川|新潟|富山|石川|福井|山梨|長野|岐阜|静岡|愛知|三重|滋賀|兵庫|奈良|和歌山|鳥取|島根|岡山|広島|山口|徳島|香川|愛媛|高知|福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|沖縄)県)[^\s]+)',
-            r'([^\s]*[市区町村][^\s/]+)'  # 市区町村から始まる住所
-        ]
-        
-        for pattern in address_patterns:
-            addr_match = re.search(pattern, desc_text)
-            if addr_match:
-                address = addr_match.group(1)
-                # そのまま設定（基底クラスの検証に任せる）
+        # 住所が含まれている可能性がある場合のみ抽出
+        if self.contains_address_pattern(desc_text):
+            # HTML要素から住所を抽出（リンクやタグを適切に処理）
+            address = self.extract_address_from_element(desc_section)
+            if address:
                 property_data['address'] = address
-                break
         
         # 駅情報
         station_match = re.search(r'([^\s]+線\s*[^\s]+駅\s*徒歩\d+分)', desc_text)
@@ -400,9 +392,9 @@ class RehouseScraper(BaseScraper):
                 if len(cells) >= 2:
                     label = cells[0].get_text(strip=True)
                     value = cells[1].get_text(strip=True)
-                    self._process_table_field(label, value, property_data)
+                    self._process_table_field(label, value, property_data, element=cells[1])
     
-    def _process_table_field(self, label: str, value: str, property_data: Dict[str, Any]):
+    def _process_table_field(self, label: str, value: str, property_data: Dict[str, Any], element=None):
         """テーブルの1フィールドを処理"""
         # 所在階/総階数
         if '階数' in label and '階建' in label:
@@ -483,10 +475,14 @@ class RehouseScraper(BaseScraper):
         
         # 所在地/住所
         elif '所在地' in label or '住所' in label:
-            # GoogleMapsなどの不要な文字を削除
-            address = re.sub(r'GoogleMaps.*$', '', value).strip()
-            # そのまま設定（基底クラスの検証に任せる）
-            property_data['address'] = address
+            if element:
+                # HTML要素から住所を抽出（リンクやタグを適切に処理）
+                property_data['address'] = self.extract_address_from_element(element)
+            else:
+                # フォールバック: テキストから住所をクリーニング
+                # GoogleMapsなどの不要な文字を削除
+                address = re.sub(r'GoogleMaps.*$', '', value).strip()
+                property_data['address'] = self.clean_address(address)
         
         # 交通/最寄り駅
         elif '交通' in label or '駅' in label:
@@ -506,17 +502,8 @@ class RehouseScraper(BaseScraper):
     
     def _format_station_info(self, station_info: str) -> str:
         """駅情報をフォーマット"""
-        # 「分」の後で分割して、各路線情報を改行で区切る
-        stations = re.split(r'分(?=[^分])', station_info)
-        formatted_stations = []
-        for i, station in enumerate(stations):
-            station = station.strip()
-            if station:
-                # 最後の要素以外は「分」を追加
-                if i < len(stations) - 1:
-                    station += '分'
-                formatted_stations.append(station)
-        return '\n'.join(formatted_stations)
+        from .data_normalizer import format_station_info
+        return format_station_info(station_info)
     
     def _extract_dl_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
         """dlリスト構造から情報を取得"""

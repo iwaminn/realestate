@@ -472,7 +472,7 @@ class HomesScraper(BaseScraper):
             
             label = dt.get_text(strip=True)
             value = dd.get_text(strip=True)
-            self._process_detail_field(label, value, details)
+            self._process_detail_field(label, value, details, element=dd)
         
         # dl要素の別パターン（これまでの処理）
         for dl in soup.select('dl'):
@@ -524,15 +524,19 @@ class HomesScraper(BaseScraper):
         
         return details
     
-    def _process_detail_field(self, label: str, value: str, details: Dict[str, Any]):
+    def _process_detail_field(self, label: str, value: str, details: Dict[str, Any], element=None):
         """フィールドを処理してdetailsに格納"""
         # デバッグ: 面積関連のフィールドをログに記録
         if '面積' in label:
             self.logger.debug(f"[HOMES] 面積フィールド検出 - label: '{label}', value: '{value}'")
         
         if '所在地' in label or '住所' in label:
-            address = value
-            # そのまま設定（基底クラスの検証に任せる）
+            if element:
+                # HTML要素から住所を抽出（リンクやタグを適切に処理）
+                address = self.extract_address_from_element(element)
+            else:
+                # フォールバック: テキストから住所をクリーニング
+                address = self.clean_address(value)
             details['address'] = address
         elif '間取り' in label:
             layout_match = re.search(r'^([1-9]\d*[SLDK]+)', value)
@@ -577,13 +581,8 @@ class HomesScraper(BaseScraper):
                 if floor_match:
                     details['floor_number'] = int(floor_match.group(1))
         elif '交通' in label or '最寄' in label or '駅' in label:
-            station_info = value.replace('、', '\n')
-            station_info = re.sub(
-                r'(?=東京メトロ|都営|ＪＲ|京王|小田急|東急|京急|京成|新交通|東武|西武|相鉄|りんかい線|つくばエクスプレス)',
-                '\n',
-                station_info
-            ).strip()
-            details['station_info'] = station_info
+            from .data_normalizer import format_station_info
+            details['station_info'] = format_station_info(value)
         elif '向き' in label or '方角' in label or 'バルコニー' in label or '採光' in label:
             direction = normalize_direction(value)
             if direction:

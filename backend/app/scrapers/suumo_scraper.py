@@ -590,16 +590,10 @@ class SuumoScraper(BaseScraper):
     
     def _extract_station_info(self, value: str, property_data: Dict[str, Any]):
         """交通情報を抽出"""
-        # 不要な文言を削除し、路線ごとに改行を入れる
-        station_info = value.replace('[乗り換え案内]', '')
-        # 各路線の開始位置で改行を入れる
-        station_info = re.sub(
-            r'(?=東京メトロ|都営|ＪＲ|京王|小田急|東急|京急|京成|新交通|東武|西武|相鉄|りんかい線|つくばエクスプレス)',
-            '\n',
-            station_info
-        ).strip()
+        from .data_normalizer import format_station_info
+        station_info = format_station_info(value)
         property_data['station_info'] = station_info
-        print(f"    交通: {station_info.replace(chr(10), ' / ')}")  # ログでは改行を / で表示
+        print(f"    交通: {station_info.replace(chr(10), ' / ')}")  # ログでは改行を / で表示  # ログでは改行を / で表示
     
     def _extract_first_published_date(self, value: str, property_data: Dict[str, Any]):
         """情報公開日を抽出"""

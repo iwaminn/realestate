@@ -681,7 +681,7 @@ class LivableScraper(BaseScraper):
                             link.extract()
                         value = dd_copy.get_text(strip=True)
                     
-                    self._extract_property_info(label, value, property_data, detail_info)
+                    self._extract_property_info(label, value, property_data, detail_info, element=dd)
             else:
                 # table構造の場合（従来の処理）
                 rows = table.select('tr, .m-status-table__item')
@@ -707,7 +707,7 @@ class LivableScraper(BaseScraper):
                                 link.extract()
                             value = value_elem_copy.get_text(strip=True)
                         
-                        self._extract_property_info(label, value, property_data, detail_info)
+                        self._extract_property_info(label, value, property_data, detail_info, element=value_elem)
         
         # 通常のテーブルとdl要素もチェック（フォールバック）
         self._extract_from_regular_tables(soup, property_data, detail_info)
@@ -740,7 +740,7 @@ class LivableScraper(BaseScraper):
                                 link.extract()
                             value = value_cell_copy.get_text(strip=True)
                         
-                        self._extract_property_info(label, value, property_data, detail_info)
+                        self._extract_property_info(label, value, property_data, detail_info, element=value_cell)
             
             elif elem.name == 'dl':
                 dt_elements = elem.find_all('dt')
@@ -765,7 +765,7 @@ class LivableScraper(BaseScraper):
                                 link.extract()
                             value = value_elem_copy.get_text(strip=True)
                         
-                        self._extract_property_info(label, value, property_data, detail_info)
+                        self._extract_property_info(label, value, property_data, detail_info, element=value_elem)
     
     def _extract_agency_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
         """不動産会社情報を抽出"""
@@ -796,7 +796,7 @@ class LivableScraper(BaseScraper):
                 else:
                     property_data[field] = detail_info[field]
     
-    def _extract_property_info(self, label: str, value: str, property_data: Dict[str, Any], detail_info: Dict[str, Any]):
+    def _extract_property_info(self, label: str, value: str, property_data: Dict[str, Any], detail_info: Dict[str, Any], element=None):
         """ラベルと値から物件情報を抽出"""
         import re  # メソッドの最初でインポート
         # 建物名/物件名
@@ -809,7 +809,12 @@ class LivableScraper(BaseScraper):
                 # すでに住所が設定されている場合は、より完全な住所のみで上書き
                 current_address = property_data.get('address', '')
                 if not current_address or len(value) > len(current_address):
-                    property_data['address'] = self.clean_address(value)
+                    if element:
+                        # HTML要素から住所を抽出（リンクやタグを適切に処理）
+                        property_data['address'] = self.extract_address_from_element(element)
+                    else:
+                        # フォールバック: テキストから住所をクリーニング
+                        property_data['address'] = self.clean_address(value)
         
         # 階数（所在階）
         elif ('階数' in label or '所在階' in label) and '総階数' not in label:

@@ -523,7 +523,7 @@ class DataNormalizer:
     
     def clean_address(self, text: str, soup_element=None) -> str:
         """
-        住所文字列から不要なリンクテキストを除去
+        住所文字列から不要な部分を除去し、住所の本質的な部分のみを抽出
         
         Args:
             text: 住所文字列
@@ -547,28 +547,92 @@ class DataNormalizer:
         if not text:
             return ""
         
-        # よくあるリンクテキストのパターンを削除
-        patterns_to_remove = [
-            r'周辺地図を見る',
-            r'地図を見る',
-            r'地図で見る',
-            r'マップを見る',
-            r'マップで見る',
-            r'MAP',
-            r'地図',
-            r'\[地図\]',
-            r'（地図）',
-            r'※地図',
+        # HTMLタグを削除（念のため）
+        text = re.sub(r'<[^>]+>', '', text)
+        
+        # 住所の終端パターンを定義（ホワイトリスト方式）
+        # 住所は通常、以下のパターンで終わる：
+        # - ●丁目●番●号
+        # - ●丁目●-●-●
+        # - ●丁目●-●
+        # - ●丁目●番地
+        # - ●丁目●番
+        # - ●丁目
+        # - ●番地
+        # - ●番●号
+        # - （町名のみ）
+        
+        # 最も詳細な住所パターンから順に検索
+        address_patterns = [
+            # 丁目-番-号形式（例：5丁目1-2-3、５丁目１－２－３）
+            r'(.*?[0-9０-９]+丁目[0-9０-９]+[-－][0-9０-９]+[-－][0-9０-９]+)',
+            # 丁目-番形式（例：5丁目1-2）
+            r'(.*?[0-9０-９]+丁目[0-9０-９]+[-－][0-9０-９]+)',
+            # 丁目番号形式（例：5丁目1番2号）
+            r'(.*?[0-9０-９]+丁目[0-9０-９]+番[0-9０-９]+号)',
+            # 丁目番地形式（例：5丁目123番地）
+            r'(.*?[0-9０-９]+丁目[0-9０-９]+番地)',
+            # 丁目番形式（例：5丁目1番）
+            r'(.*?[0-9０-９]+丁目[0-9０-９]+番)',
+            # 丁目のみ（例：5丁目、南麻布5丁目）
+            r'(.*?[0-9０-９]+丁目)',
+            # 番地形式（例：123番地）
+            r'(.*?[0-9０-９]+番地)',
+            # 番号形式（例：1番2号）
+            r'(.*?[0-9０-９]+番[0-9０-９]+号)',
+            # ハイフン区切り（丁目なし）（例：港区芝浦4-16-1）
+            r'(.*?(?:区|市|町|村)[^0-9０-９]*[0-9０-９]+[-－][0-9０-９]+[-－][0-9０-９]+)',
+            r'(.*?(?:区|市|町|村)[^0-9０-９]*[0-9０-９]+[-－][0-9０-９]+)',
         ]
         
-        cleaned_text = text
-        for pattern in patterns_to_remove:
-            cleaned_text = re.sub(pattern, '', cleaned_text)
+        # パターンにマッチする最初のものを使用
+        for pattern in address_patterns:
+            match = re.search(pattern, text)
+            if match:
+                return match.group(1).strip()
         
-        # 余分な空白を削除
-        cleaned_text = cleaned_text.strip()
+        # パターンにマッチしない場合、区市町村までを抽出
+        # 例：「東京都港区南麻布」
+        basic_pattern = r'^(.*?(?:都|道|府|県).*?(?:区|市|町|村)[^地図\[【\(]*)'
+        match = re.search(basic_pattern, text)
+        if match:
+            # 末尾の不要な文字を削除
+            result = match.group(1).rstrip('、。・')
+            return result.strip()
         
-        return cleaned_text
+        # それでもマッチしない場合は、明らかに住所でない部分を削除
+        # 「地図」「MAP」などのキーワード以降を削除
+        unwanted_keywords = ['地図', 'MAP', 'マップ', '周辺', '詳細', '※', '＊', '[', '【', '(']
+        for keyword in unwanted_keywords:
+            if keyword in text:
+                text = text.split(keyword)[0]
+        
+        return text.strip()
+
+    def contains_address_pattern(self, text: str) -> bool:
+        """テキストに住所パターンが含まれているかを判定
+        
+        Args:
+            text: 検証するテキスト
+            
+        Returns:
+            bool: 住所パターンが含まれている場合True
+        """
+        if not text:
+            return False
+            
+        # 都道府県パターン
+        prefecture_pattern = r'(?:東京都|北海道|(?:京都|大阪)府|(?:青森|岩手|宮城|秋田|山形|福島|茨城|栃木|群馬|埼玉|千葉|神奈川|新潟|富山|石川|福井|山梨|長野|岐阜|静岡|愛知|三重|滋賀|兵庫|奈良|和歌山|鳥取|島根|岡山|広島|山口|徳島|香川|愛媛|高知|福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|沖縄)県)'
+        
+        # 市区町村パターン
+        city_pattern = r'[市区町村]'
+        
+        # 番地パターン
+        address_number_pattern = r'\d+丁目|\d+番|\d+号|\d+-\d+'
+        
+        # いずれかのパターンが含まれているかチェック
+        patterns = [prefecture_pattern, city_pattern, address_number_pattern]
+        return any(re.search(pattern, text) for pattern in patterns)
 
     # ========== 駅情報関連 ==========
     
@@ -588,24 +652,66 @@ class DataNormalizer:
         """
         if not text:
             return ""
-            
-        # 不要な文言を削除
-        text = re.sub(r'\[乗り換え案内\]|\[地図\]', '', text)
+        
+        # HTMLタグだけは削除（表示を妨げるため）
+        text = re.sub(r'<[^>]+>', '', text)
         
         # 「、」で区切られている場合は改行に変換
         text = text.replace('、', '\n')
         
         # 路線名の前で改行を入れる
-        for railway in self.railway_patterns:
-            text = re.sub(rf'(?={railway})', '\n', text)
+        railway_patterns_regex = (
+            r'(?=東京メトロ|都営|ＪＲ|JR|京王|小田急|東急|京急|京成|'
+            r'新交通|東武|西武|相鉄|りんかい線|つくばエクスプレス|'
+            r'横浜市営|東葉高速|北総|埼玉高速|多摩都市モノレール)'
+        )
+        text = re.sub(railway_patterns_regex, '\n', text)
         
-        # 連続する改行を1つに
-        text = re.sub(r'\n+', '\n', text)
+        # 各行を処理して駅情報の本質的な部分のみを抽出
+        lines = text.split('\n')
+        cleaned_lines = []
         
-        # 前後の空白・改行を削除
-        text = text.strip()
+        for line in lines:
+            line = line.strip()
+            # 空行や短い行をスキップ
+            if not line or len(line) < 3:
+                continue
+            
+            # 駅情報の終端パターンを探して、それ以降を削除
+            # バス利用の場合は「バス●分バス停名歩●分」のパターンも処理
+            # まず、バス+徒歩の複合パターンを処理
+            bus_walk_pattern = r'(.*?バス\d+分.*?(?:徒歩|歩|停歩)\d+分)'
+            bus_walk_match = re.search(bus_walk_pattern, line)
+            if bus_walk_match:
+                # バス+徒歩パターンの場合は、その部分を抽出
+                line = bus_walk_match.group(1)
+            else:
+                # 単独の終端パターンを探す
+                # パターン: 徒歩●分、歩●分、バス●分、車●分、停歩●分
+                patterns = [
+                    r'(.*?(?:徒歩|歩)\d+分)',
+                    r'(.*?バス\d+分)',
+                    r'(.*?車\d+分)',
+                    r'(.*?停歩\d+分)',
+                ]
+                
+                # 各パターンを検索し、最初にマッチしたものを使用
+                for pattern in patterns:
+                    match = re.search(pattern, line)
+                    if match:
+                        line = match.group(1)
+                        break
+                
+                # 終端パターンが見つからない場合はそのまま使用（駅名のみなど）
+            
+            # 駅情報として有効な行かチェック（路線名、駅名、徒歩などのキーワードを含む）
+            if any(keyword in line for keyword in ['駅', '線', '徒歩', '歩', '分', 'バス', '車', '停']):
+                cleaned_lines.append(line)
+            # 路線名パターンにマッチする行も有効
+            elif re.search(r'(東京メトロ|都営|ＪＲ|JR|京王|小田急|東急|京急|京成|新交通|東武|西武|相鉄|りんかい線|つくばエクスプレス)', line):
+                cleaned_lines.append(line)
         
-        return text
+        return '\n'.join(cleaned_lines)
 
     # ========== 日付関連 ==========
     

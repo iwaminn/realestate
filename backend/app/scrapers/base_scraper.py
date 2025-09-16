@@ -5743,7 +5743,7 @@ class BaseScraper(ABC):
     def clean_address(self, address: str) -> str:
         """
         住所文字列をクリーニングする共通メソッド
-        主にJavaScriptやmetaタグから取得した住所のクリーニング用
+        DataNormalizerのclean_addressメソッドを使用
         
         Args:
             address: クリーニング前の住所文字列
@@ -5751,43 +5751,25 @@ class BaseScraper(ABC):
         Returns:
             クリーニング済みの住所文字列
         """
-        if not address:
-            return address
-            
-        # 元の値を保存
-        original_address = address
-        
-        # よくある不要なUIテキストのパターンを削除
-        # (HTMLから取得した場合、Aタグは既に削除済みだが、
-        #  JavaScriptやmetaタグから取得した場合に備えて)
-        ui_patterns = [
-            r'地図を見る',
-            r'マップを見る',
-            r'地図で見る',
-            r'MAP',
-            r'>>+',
-            r'→+',
-            r'詳細地図',
-            r'周辺地図',
-            r'地図表示',
-            r'Googleマップ',
-            r'地図',
-        ]
-        
-        for pattern in ui_patterns:
-            address = re.sub(pattern, '', address)
-              
-        # 不要な記号や空白文字を削除
-        address = re.sub(r'\s+', '', address)  # 全角・半角スペースを削除
-        address = re.sub(r'[(\(][^)\)]*[)\)]', '', address)  # 括弧内の補足情報を削除
-        address = re.sub(r'[・\-―─→←↑↓》《〉〈]+$', '', address)  # 末尾の不要な記号を削除
-        
-        # 空白のみになった場合は元の値を返す
-        if not address.strip():
-            return original_address.strip()
-            
-        return address.strip()
+        from .data_normalizer import DataNormalizer
+        normalizer = DataNormalizer()
+        return normalizer.clean_address(address)
     
+    def contains_address_pattern(self, text: str) -> bool:
+        """
+        テキストに住所パターンが含まれているかを判定
+        DataNormalizerのcontains_address_patternメソッドを使用
+        
+        Args:
+            text: 検証するテキスト
+            
+        Returns:
+            bool: 住所パターンが含まれている場合True
+        """
+        from .data_normalizer import DataNormalizer
+        normalizer = DataNormalizer()
+        return normalizer.contains_address_pattern(text)
+
     def validate_address(self, address: str) -> bool:
         """
         住所が有効かどうかを検証する
