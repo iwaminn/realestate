@@ -13,6 +13,8 @@ from .error_handler import ErrorHandlerComponent
 from .rate_limiter import RateLimiterComponent
 from .progress_tracker import ProgressTrackerComponent
 from .cache_manager import CacheManagerComponent
+from .building_normalizer import BuildingNormalizerComponent
+from .property_matcher import PropertyMatcherComponent
 
 __all__ = [
     'HttpClientComponent',

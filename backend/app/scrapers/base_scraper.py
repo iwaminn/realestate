@@ -23,14 +23,12 @@ from ..models import (
     Building, MasterProperty, PropertyListing, 
     ListingPriceHistory, BuildingExternalId, Url404Retry
 )
-from ..utils.building_normalizer import BuildingNameNormalizer
 from ..utils.building_name_normalizer import (
     normalize_building_name as normalize_building_name_common,
     canonicalize_building_name,
     extract_room_number as extract_room_number_common
 )
 from ..utils.property_utils import update_earliest_listing_date
-from ..utils.fuzzy_property_matcher import FuzzyPropertyMatcher
 
 # BuildingListingNameManagerは循環インポートを避けるため遅延インポート
 from ..utils.exceptions import TaskPausedException, TaskCancelledException, MaintenanceException
@@ -45,7 +43,9 @@ from .components import (
     DataValidatorComponent,
     RateLimiterComponent,
     ProgressTrackerComponent,
-    CacheManagerComponent
+    CacheManagerComponent,
+    BuildingNormalizerComponent,
+    PropertyMatcherComponent
 )
 from .components.http_client import HttpClientComponent
 from .components.error_handler import ErrorHandlerComponent
@@ -224,16 +224,9 @@ class BaseScraper(ABC):
             logger=self.logger
         )
         
-        # 旧実装との互換性のため維持（段階的に移行）
-        self.http_session = requests.Session()
-        self.http_session.headers.update({
-            'User-Agent': self.DEFAULT_USER_AGENT
-        })
         # SSL証明書検証の設定（gt-www.livable.co.jpのSSL証明書問題対応）
         import urllib3
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-        self.normalizer = BuildingNameNormalizer()
-        self.fuzzy_matcher = FuzzyPropertyMatcher()
         
         # エラー閾値設定を先に初期化（エラーマネージャーで使用）
         self._error_thresholds = {
@@ -247,15 +240,14 @@ class BaseScraper(ABC):
             logger=self.logger
         )
         
-        # プロパティバリデーターの初期化（リファクタリング）
-        self.property_validator = DataValidatorComponent(logger=self.logger)
-        
-        # 新しいコンポーネントの初期化（Phase 2 - 段階的統合）
+        # 新しいコンポーネントの初期化
         self.html_parser = HtmlParserComponent(logger=self.logger)
         self.data_validator = DataValidatorComponent(logger=self.logger)
         self.rate_limiter = RateLimiterComponent(logger=self.logger, adaptive=True)
         self.progress_tracker = ProgressTrackerComponent(logger=self.logger)
         self.cache_manager = CacheManagerComponent(logger=self.logger)
+        self.building_normalizer = BuildingNormalizerComponent(logger=self.logger)
+        self.property_matcher = PropertyMatcherComponent(logger=self.logger)
         
         # リポジトリの初期化（リファクタリング - Phase 2）
         # セッションはメソッド実行時に取得するため、ここでは初期化しない
@@ -1998,7 +1990,7 @@ class BaseScraper(ABC):
         building_name = property_data.get('building_name', '不明')
         
         # PropertyValidatorを使用して検証
-        is_valid, errors = self.property_validator.validate_property_data(property_data)
+        is_valid, errors = self.data_validator.validate_property_data(property_data)
         
         # エラーがある場合は詳細ログを出力
         if not is_valid:
@@ -3051,7 +3043,7 @@ class BaseScraper(ABC):
                 if building:
                     print(f"[既存] 外部IDで建物を発見: {building.normalized_name} (ID: {building.id})")
                     # 建物名から部屋番号を抽出
-                    _, extracted_room_number = self.normalizer.extract_room_number(building_name)
+                    _, extracted_room_number = self.building_normalizer.extract_room_number(building_name)
                     
                     # 建物情報を更新（リポジトリを使用）
                     updates = {}
@@ -3096,7 +3088,7 @@ class BaseScraper(ABC):
                     # 重要: 孤立レコード削除後は新規建物作成として処理を続行
         
         # 建物名から部屋番号を抽出（内部処理用）
-        clean_building_name, extracted_room_number = self.normalizer.extract_room_number(building_name)
+        clean_building_name, extracted_room_number = self.building_normalizer.extract_room_number(building_name)
         
         # 比較用の検索キーを生成（最小限の正規化）
         search_key = self.get_search_key_for_building(clean_building_name)
@@ -5751,11 +5743,8 @@ class BaseScraper(ABC):
         """
         # トランザクションは transaction_scope() で自動管理される
         
-        if hasattr(self, 'http_session'):
-            try:
-                self.http_session.close()
-            except Exception:
-                pass
+        # HTTP接続のクリーンアップはHttpClientComponentが管理
+        # （旧http_sessionは削除済み）
 
     def clean_address(self, address: str) -> str:
         """
