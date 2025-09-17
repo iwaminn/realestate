@@ -629,7 +629,8 @@ class LivableParser(BaseHtmlParser):
             
             # 会社名を抽出
             if 'リバブル' in company_text:
-                property_data['agency_name'] = '東急リバブル'
+                # 東急リバブルの場合もページから取得した情報をそのまま使用
+                pass
             else:
                 # 最初の行を会社名として使用
                 lines = [line.strip() for line in company_text.split('\n') if line.strip()]
@@ -641,9 +642,7 @@ class LivableParser(BaseHtmlParser):
             if tel_match:
                 property_data['agency_tel'] = tel_match.group(1)
         else:
-            # 東急リバブル固定
-            property_data['agency_name'] = self.DEFAULT_AGENCY_NAME
-            
+            # デフォルト値を設定しない（空のままにする）
             # 電話番号を探す
             tel_elem = self.safe_select_one(soup, "span.tel, div.contact-tel")
             if tel_elem:

@@ -93,8 +93,7 @@ class NomuParser(BaseHtmlParser):
         if table:
             self._extract_card_table_info(table, property_data)
         
-        # 仲介業者名（ノムコムは野村不動産アーバンネット）
-        property_data['agency_name'] = self.DEFAULT_AGENCY_NAME
+        # 仲介業者名はデフォルト値を設定しない（詳細ページで取得）
         
         # 必須フィールドの検証
         if self._validate_card_data(property_data):
@@ -436,9 +435,7 @@ class NomuParser(BaseHtmlParser):
             if remarks_text:
                 detail_data['remarks'] = remarks_text[:500]  # 最大500文字
         
-        # 不動産会社情報（ノムコムは固定）
-        detail_data['agency_name'] = self.DEFAULT_AGENCY_NAME
-        detail_data['agency_tel'] = '0120-953-552'  # ノムコムのフリーダイヤル
+        # 不動産会社情報はデフォルト値を設定しない（ページから取得）
     
     def _process_detail_table_data(self, table_data: Dict[str, str], property_data: Dict[str, Any]) -> None:
         """
@@ -599,8 +596,7 @@ class NomuParser(BaseHtmlParser):
             soup: BeautifulSoupオブジェクト
             property_data: データ格納先
         """
-        # ノムコムは固定
-        property_data['agency_name'] = self.DEFAULT_AGENCY_NAME
+        # デフォルト値を設定しない（ページから取得）
         
         # 電話番号を探す
         tel_elem = self.safe_select_one(soup, "span.tel, div.contact_tel")

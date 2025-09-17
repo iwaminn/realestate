@@ -516,6 +516,13 @@ class SuumoParser(BaseHtmlParser):
             if total_floors:
                 property_data['total_floors'] = total_floors
         
+        # 総戸数
+        elif '総戸数' in key or '総区画数' in key:
+            # 「250戸」などから数値を抽出
+            units_match = re.search(r'(\d+)戸', value)
+            if units_match:
+                property_data['total_units'] = int(units_match.group(1))
+        
         # 方角
         elif '向き' in key or '主要採光面' in key:
             direction = self.normalize_direction(value)

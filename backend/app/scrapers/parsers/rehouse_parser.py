@@ -152,8 +152,7 @@ class RehouseParser(BaseHtmlParser):
         if desc_section:
             self._extract_description_info(desc_section, property_data)
         
-        # 仲介業者名
-        property_data['agency_name'] = self.DEFAULT_AGENCY_NAME
+        # 仲介業者名はデフォルト値を設定しない（詳細ページで取得）
         
         # 必須フィールドの検証
         if self._validate_card_data(property_data):
@@ -719,16 +718,15 @@ class RehouseParser(BaseHtmlParser):
             store_text = store_elem.get_text(' ', strip=True)
             
             # 店舗名を抽出
-            if '三井' in store_text or 'リハウス' in store_text:
-                property_data['agency_name'] = '三井のリハウス'
+            # デフォルト値を設定せず、ページから取得した情報をそのまま使用
             
             # 電話番号を抽出
             tel_match = re.search(r'(?:TEL|電話)[:：\s]*([0-9\-]+)', store_text)
             if tel_match:
                 property_data['agency_tel'] = tel_match.group(1)
         else:
-            # デフォルト値
-            property_data['agency_name'] = self.DEFAULT_AGENCY_NAME
+            # デフォルト値を設定しない（空のままにする）
+            pass
             
             # 電話番号を個別に探す
             tel_elem = self.safe_select_one(soup, "span.tel, div.phone")

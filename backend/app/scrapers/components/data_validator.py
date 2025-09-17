@@ -41,6 +41,19 @@ class DataValidatorComponent:
         'repair_fund': {'min': 0, 'max': 100000},     # 0円〜10万円
     }
     
+    # フィールド名の日本語表記マッピング
+    FIELD_NAME_MAPPING = {
+        'price': '価格',
+        'area': '面積',
+        'floor_number': '所在階',
+        'total_floors': '総階数',
+        'built_year': '築年',
+        'management_fee': '管理費',
+        'repair_fund': '修繕積立金',
+        'building_name': '建物名',
+        'layout': '間取り'
+    }
+    
     def __init__(self, logger: Optional[logging.Logger] = None):
         """
         初期化
@@ -65,7 +78,8 @@ class DataValidatorComponent:
         # 必須フィールドチェック
         for field in self.REQUIRED_FIELDS['property']:
             if not data.get(field):
-                errors.append(f"必須フィールド '{field}' が欠落しています")
+                field_name = self.FIELD_NAME_MAPPING.get(field, field)
+                errors.append(f"必須フィールド '{field_name}' が欠落しています")
         
         # 数値範囲チェック
         for field, rules in self.VALIDATION_RULES.items():
@@ -73,8 +87,9 @@ class DataValidatorComponent:
                 value = data[field]
                 if isinstance(value, (int, float)):
                     if value < rules['min'] or value > rules['max']:
+                        field_name = self.FIELD_NAME_MAPPING.get(field, field)
                         errors.append(
-                            f"'{field}' の値が範囲外です: {value} "
+                            f"'{field_name}' の値が範囲外です: {value} "
                             f"(許容範囲: {rules['min']} - {rules['max']})"
                         )
         
