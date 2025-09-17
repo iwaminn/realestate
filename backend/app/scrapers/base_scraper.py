@@ -33,20 +33,17 @@ from ..utils.property_utils import update_earliest_listing_date
 # BuildingListingNameManagerは循環インポートを避けるため遅延インポート
 from ..utils.exceptions import TaskPausedException, TaskCancelledException, MaintenanceException
 from ..utils.datetime_utils import get_utc_now
+from ..utils.fuzzy_property_matcher import FuzzyPropertyMatcher
 import time as time_module
 from ..utils.debug_logger import debug_log
 from .building_external_id_handler import BuildingExternalIdHandler
 
-# 新しいコンポーネント（段階的統合用）
+# コンポーネント
 from .components import (
     HtmlParserComponent,
     DataValidatorComponent,
     RateLimiterComponent,
-    ProgressTrackerComponent,
-    CacheManagerComponent,
-    BuildingNormalizerComponent,
-    PropertyMatcherComponent,
-    DbRepositoryComponent
+    CacheManagerComponent
 )
 from .components.http_client import HttpClientComponent
 from .components.error_handler import ErrorHandlerComponent
@@ -121,8 +118,6 @@ class BaseScraper(ABC):
         from ..database import get_db_for_scraping
         session = get_db_for_scraping()
         
-        # DbRepositoryComponentのインスタンスを作成
-        db_repo = DbRepositoryComponent(session, self.logger)
         
         try:
             # トランザクション分離レベルをREAD COMMITTEDに設定
@@ -158,22 +153,18 @@ class BaseScraper(ABC):
     @contextmanager
     def db_repository_scope(self):
         """
-        DbRepositoryComponentを使用するコンテキストマネージャー
-        
-        データベース操作をコンポーネント経由で行う新しいインターフェース。
-        トランザクション管理も含む。
+        データベースセッションのコンテキストマネージャー
         
         使用例:
-            with self.db_repository_scope() as db_repo:
-                building = db_repo.find_or_create_building(building_data)
-                master_property = db_repo.find_master_property(property_hash)
-                db_repo.commit()
+            with self.db_repository_scope() as session:
+                building = session.query(Building).filter_by(id=building_id).first()
+                if not building:
+                    building = Building(**building_data)
+                    session.add(building)
+                # コミットは自動
         """
         from ..database import get_db_for_scraping
         session = get_db_for_scraping()
-        
-        # DbRepositoryComponentのインスタンスを作成
-        db_repo = DbRepositoryComponent(session, self.logger)
         
         try:
             # トランザクション分離レベルをREAD COMMITTEDに設定
@@ -182,7 +173,7 @@ class BaseScraper(ABC):
             # ロックタイムアウトを設定（5秒）
             session.execute("SET LOCAL lock_timeout = '5s'")
             
-            # ステートメントタイムアウトを設定（30秒）
+            # ステートメントタイムアウトを設定（30秒）  
             session.execute("SET LOCAL statement_timeout = '30s'")
             
             # デッドロック優先度を設定
@@ -192,15 +183,14 @@ class BaseScraper(ABC):
             self.logger.debug(f"トランザクション設定エラー（無視）: {e}")
         
         try:
-            yield db_repo
-            # 自動コミット
-            db_repo.commit()
+            yield session
+            session.commit()
         except Exception as e:
-            db_repo.rollback()
+            session.rollback()
             self.logger.debug(f"トランザクションエラー（ロールバック済み）: {e}")
             raise
         finally:
-            db_repo.close()
+            session.close()
 
     def _handle_transaction_error(self, error: Exception, context: str) -> bool:
         """
@@ -297,12 +287,10 @@ class BaseScraper(ABC):
         self.html_parser = HtmlParserComponent(logger=self.logger)
         self.data_validator = DataValidatorComponent(logger=self.logger)
         self.rate_limiter = RateLimiterComponent(logger=self.logger, adaptive=True)
-        self.progress_tracker = ProgressTrackerComponent(logger=self.logger)
         self.cache_manager = CacheManagerComponent(logger=self.logger)
-        self.building_normalizer = BuildingNormalizerComponent(logger=self.logger)
-        self.property_matcher = PropertyMatcherComponent(logger=self.logger)
-        # fuzzy_matcherはproperty_matcher内のmatcherを参照
-        self.fuzzy_matcher = self.property_matcher.matcher
+
+
+        self.fuzzy_matcher = FuzzyPropertyMatcher()
         
         # リポジトリの初期化（リファクタリング - Phase 2）
         # セッションはメソッド実行時に取得するため、ここでは初期化しない
@@ -1404,7 +1392,7 @@ class BaseScraper(ABC):
     def scraping_stats(self) -> Dict[str, Any]:
         """
         スクレイピング統計へのアクセサ（後方互換性のため）
-        段階的にProgressTrackerComponentへ移行
+        統計値を増やす
         """
         # 現時点では既存の_scraping_statsを返す
         # 将来的にはself.progress_tracker.get_statistics()から取得
@@ -1412,7 +1400,7 @@ class BaseScraper(ABC):
     
     def _increment_stat(self, key: str, value: int = 1) -> None:
         """
-        統計値をインクリメント（ProgressTrackerComponentへの移行準備）
+        統計値をインクリメント
         
         Args:
             key: 統計キー
@@ -1422,8 +1410,7 @@ class BaseScraper(ABC):
             self._scraping_stats[key] = 0
         self._scraping_stats[key] += value
         
-        # ProgressTrackerComponentにも同期（段階的移行）
-        # TODO: 将来的にはProgressTrackerComponentのみを使用
+
         if hasattr(self, 'progress_tracker') and self.progress_tracker:
             # detail_typeの変換マッピング
             detail_type_map = {
@@ -1445,7 +1432,7 @@ class BaseScraper(ABC):
     
     def _get_stat(self, key: str, default: Any = 0) -> Any:
         """
-        統計値を取得（ProgressTrackerComponentへの移行準備）
+        統計値を取得
         
         Args:
             key: 統計キー
@@ -1458,7 +1445,7 @@ class BaseScraper(ABC):
     
     def _set_stat(self, key: str, value: Any) -> None:
         """
-        統計値を設定（ProgressTrackerComponentへの移行準備）
+        統計値を設定
         
         Args:
             key: 統計キー
@@ -1468,7 +1455,7 @@ class BaseScraper(ABC):
     
     def _update_progress_tracker_phase(self, phase: str) -> None:
         """
-        ProgressTrackerComponentのフェーズを更新
+        フェーズを更新（現在は未実装）
         
         Args:
             phase: フェーズ名（collecting/processing/completed）
@@ -3208,9 +3195,7 @@ class BaseScraper(ABC):
                                total_floors: int = None, basement_floors: int = None, total_units: int = None, 
                                structure: str = None, land_rights: str = None, station_info: str = None) -> Tuple[Optional[Building], Optional[str]]:
         """建物を取得または作成（セッションを受け取るバージョン）"""
-        # DbRepositoryComponentを直接作成
-        db_repo = DbRepositoryComponent(session, self.logger)
-        
+
         # 元の建物名を保持
         original_building_name = building_name
         
@@ -3243,7 +3228,7 @@ class BaseScraper(ABC):
                 if building:
                     print(f"[既存] 外部IDで建物を発見: {building.normalized_name} (ID: {building.id})")
                     # 建物名から部屋番号を抽出
-                    _, extracted_room_number = self.building_normalizer.extract_room_number(building_name)
+                    _, extracted_room_number = extract_room_number_common(building_name)
                     
                     # 建物情報を更新（リポジトリを使用）
                     updates = {}
@@ -3290,7 +3275,7 @@ class BaseScraper(ABC):
                     # 重要: 孤立レコード削除後は新規建物作成として処理を続行
         
         # 建物名から部屋番号を抽出（内部処理用）
-        clean_building_name, extracted_room_number = self.building_normalizer.extract_room_number(building_name)
+        clean_building_name, extracted_room_number = extract_room_number_common(building_name)
         
         # 比較用の検索キーを生成（最小限の正規化）
         search_key = self.get_search_key_for_building(clean_building_name)

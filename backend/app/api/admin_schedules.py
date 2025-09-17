@@ -574,7 +574,7 @@ async def execute_scheduled_scraping(schedule_id: int, db: Session):
         
         def run_scraping():
             try:
-                from .admin.scraping import execute_scraping_strategy, TaskHooks
+                from ..api.admin.scraping import execute_scraping_strategy, TaskHooks
                 
                 logger.info(f"Starting scheduled scraping for schedule {schedule_id}, task {task_id}")
                 
@@ -669,11 +669,9 @@ async def execute_scheduled_scraping(schedule_id: int, db: Session):
             from concurrent.futures import ThreadPoolExecutor
             
             # グローバルのexecutorを取得（存在しない場合は作成）
-            global_executor = None
             try:
-                from ..api.admin.scraping import get_global_executor
-                global_executor = get_global_executor()
-            except (ImportError, AttributeError):
+                from ..api.admin.scraping import executor as global_executor
+            except ImportError:
                 # フォールバック：専用のexecutorを作成
                 global_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix=f"schedule-{schedule_id}")
             

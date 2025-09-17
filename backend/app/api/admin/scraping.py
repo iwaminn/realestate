@@ -1863,7 +1863,7 @@ def get_task_logs_diff(
     warning_logs = []
     
     for log in logs:
-        log_data = log.log_data or {}
+        log_data = log.details or {}
         
         if log.log_type == 'property_update':
             property_logs.append({

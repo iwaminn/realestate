@@ -8,22 +8,15 @@
 from .http_client import HttpClientComponent
 from .html_parser import HtmlParserComponent
 from .data_validator import DataValidatorComponent
-from .db_repository import DbRepositoryComponent
 from .error_handler import ErrorHandlerComponent
 from .rate_limiter import RateLimiterComponent
-from .progress_tracker import ProgressTrackerComponent
 from .cache_manager import CacheManagerComponent
-from .building_normalizer import BuildingNormalizerComponent
-from .property_matcher import PropertyMatcherComponent
-from .db_repository import DbRepositoryComponent
 
 __all__ = [
     'HttpClientComponent',
-    'HtmlParserComponent', 
+    'HtmlParserComponent',
     'DataValidatorComponent',
-    'DbRepositoryComponent',
     'ErrorHandlerComponent',
     'RateLimiterComponent',
-    'ProgressTrackerComponent',
     'CacheManagerComponent',
 ]
