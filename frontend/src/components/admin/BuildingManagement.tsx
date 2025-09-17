@@ -40,7 +40,6 @@ import {
   Edit as EditIcon,
   Clear as ClearIcon,
   Home as HomeIcon,
-  Undo as UndoIcon,
   CallSplit as CallSplitIcon,
   Delete as DeleteIcon,
   ExpandMore as ExpandMoreIcon,
@@ -67,20 +66,6 @@ interface Building {
 }
 
 interface BuildingDetail extends Building {
-  // 外部建物ID
-  external_ids?: Array<{
-    source_site: string;
-    external_id: string;
-    created_at?: string;
-  }>;
-  // 統合履歴
-  aliases?: Array<{
-    id: number;  // 統合履歴IDを追加
-    name: string;
-    merged_at?: string;
-    merged_by?: string;
-    property_count?: number;  // 統合時の物件数を追加
-  }>;
   // 掲載情報の建物名（別名）
   listing_names?: Array<{
     name: string;
@@ -153,7 +138,6 @@ export const BuildingManagement: React.FC = () => {
     total_units: '',
     built_year: '',
   });
-  const [revertingMergeId, setRevertingMergeId] = useState<number | null>(null);
   const [detachingPropertyId, setDetachingPropertyId] = useState<number | null>(null);
   const [detachTargetPropertyId, setDetachTargetPropertyId] = useState<number | null>(null);  // 分離対象の物件ID
   const [detachDialogOpen, setDetachDialogOpen] = useState(false);
@@ -315,29 +299,6 @@ export const BuildingManagement: React.FC = () => {
   };
 
   // 建物統合を復元
-  const revertBuildingMerge = async (mergeHistoryId: number) => {
-    if (window.confirm('この統合を取り消しますか？元の建物が復元されます。')) {
-      setRevertingMergeId(mergeHistoryId);
-      try {
-        await axios.post(`/api/admin/revert-building-merge/${mergeHistoryId}`);
-        
-        // 詳細を再取得
-        if (selectedBuilding) {
-          await fetchBuildingDetail(selectedBuilding.id);
-        }
-        // 一覧も更新
-        await fetchBuildings();
-        
-        alert('統合を取り消しました');
-      } catch (error) {
-        console.error('統合の取り消しに失敗しました:', error);
-        alert('統合の取り消しに失敗しました');
-      } finally {
-        setRevertingMergeId(null);
-      }
-    }
-  };
-
   // 建物検索（物件分離用）
   const searchBuildingsForDetach = async () => {
     if (!buildingSearchQuery.trim()) return;
@@ -471,11 +432,6 @@ export const BuildingManagement: React.FC = () => {
   const formatPrice = (price?: number) => {
     if (price === undefined || price === null) return '-';
     return `${price.toLocaleString()}万円`;
-  };
-
-  const formatDate = (dateString?: string) => {
-    if (!dateString) return '-';
-    return format(new Date(dateString), 'yyyy/MM/dd HH:mm');
   };
 
   const calculateBuildingAge = (builtYear?: number) => {
@@ -861,104 +817,6 @@ export const BuildingManagement: React.FC = () => {
                         />
                       ))}
                     </Box>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* 統合履歴 */}
-              {selectedBuilding.aliases && selectedBuilding.aliases.length > 0 && (
-                <Card sx={{ mb: 2 }}>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom>統合履歴</Typography>
-                    <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                      この建物に統合された建物の履歴です
-                    </Typography>
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>統合された建物名</TableCell>
-                          <TableCell align="right">物件数</TableCell>
-                          <TableCell>統合日時</TableCell>
-                          <TableCell>統合者</TableCell>
-                          <TableCell align="center">操作</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {selectedBuilding.aliases.map((alias, index) => (
-                          <TableRow key={index}>
-                            <TableCell>{alias.name}</TableCell>
-                            <TableCell align="right">
-                              {alias.property_count ? (
-                                <Chip
-                                  label={`${alias.property_count}件`}
-                                  size="small"
-                                  color={alias.property_count > 0 ? "primary" : "default"}
-                                />
-                              ) : (
-                                '-'
-                              )}
-                            </TableCell>
-                            <TableCell>{alias.merged_at ? formatDate(alias.merged_at) : '-'}</TableCell>
-                            <TableCell>{alias.merged_by || 'システム'}</TableCell>
-                            <TableCell align="center">
-                              <Tooltip title="統合を取り消す">
-                                <IconButton
-                                  size="small"
-                                  color="warning"
-                                  onClick={() => revertBuildingMerge(alias.id)}
-                                  disabled={revertingMergeId === alias.id}
-                                >
-                                  {revertingMergeId === alias.id ? (
-                                    <CircularProgress size={20} />
-                                  ) : (
-                                    <UndoIcon />
-                                  )}
-                                </IconButton>
-                              </Tooltip>
-                            </TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* 外部建物ID */}
-              {selectedBuilding.external_ids && selectedBuilding.external_ids.length > 0 && (
-                <Card sx={{ mb: 2 }}>
-                  <CardContent>
-                    <Typography variant="h6" gutterBottom>外部建物ID</Typography>
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>サイト</TableCell>
-                          <TableCell>建物ID</TableCell>
-                          <TableCell>登録日時</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {selectedBuilding.external_ids.map((extId, index) => (
-                          <TableRow key={index}>
-                            <TableCell>
-                              <Chip 
-                                label={extId.source_site} 
-                                size="small" 
-                                color={
-                                  extId.source_site === 'SUUMO' ? 'primary' :
-                                  extId.source_site === 'HOMES' ? 'secondary' :
-                                  extId.source_site === 'REHOUSE' ? 'success' :
-                                  extId.source_site === 'NOMU' ? 'warning' :
-                                  'default'
-                                }
-                              />
-                            </TableCell>
-                            <TableCell>{extId.external_id}</TableCell>
-                            <TableCell>{formatDate(extId.created_at)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
                   </CardContent>
                 </Card>
               )}

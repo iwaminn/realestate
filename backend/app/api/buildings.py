@@ -485,11 +485,11 @@ async def suggest_buildings(
                 building_info[building.id] = {
                     "name": building.normalized_name,
                     "matched_by": "listing",
-                    "listing_name": listing_match.listing_name
+                    "listing_name": listing_match.normalized_name
                 }
             elif building_info[building.id].get("matched_by") != "name":
                 # 既に他の方法でマッチしていて、かつ名前マッチではない場合は掲載名情報を追加
-                building_info[building.id]["listing_name"] = listing_match.listing_name
+                building_info[building.id]["listing_name"] = listing_match.normalized_name
     
     # 建物名でグループ化して重複をチェック
     name_groups = {}
