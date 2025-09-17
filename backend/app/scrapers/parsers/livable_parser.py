@@ -485,6 +485,22 @@ class LivableParser(BaseHtmlParser):
             if total_floors:
                 property_data['total_floors'] = total_floors
         
+        # 総戸数
+        elif '総戸数' in key or '総区画数' in key:
+            # 「200戸以上」「1,095戸」などから数値を抽出
+            # カンマ、スペース、改行を除去
+            cleaned_value = value.replace(',', '').replace('，', '').replace(' ', '').replace('\n', '').replace('\t', '')
+            
+            # 「戸」を含む数値を抽出
+            units_match = re.search(r'(\d+)戸', cleaned_value)
+            if units_match:
+                property_data['total_units'] = int(units_match.group(1))
+            else:
+                # 「戸」がない場合も試す（数値のみ）
+                units_match = re.search(r'(\d+)', cleaned_value)
+                if units_match:
+                    property_data['total_units'] = int(units_match.group(1))
+        
         # 方角
         elif '向き' in key or '方位' in key:
             direction = self.normalize_direction(value)
