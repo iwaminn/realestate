@@ -325,6 +325,52 @@ async def get_building_detail(
         MasterProperty.room_number.nullslast()
     ).all()
     
+    # 各物件の掲載情報を取得
+    property_listings = {}
+    for prop in properties:
+        listings = db.query(
+            PropertyListing.id,
+            PropertyListing.source_site,
+            PropertyListing.current_price,
+            PropertyListing.is_active,
+            PropertyListing.station_info,
+            PropertyListing.listing_building_name,
+            PropertyListing.listing_address,
+            PropertyListing.listing_floor_number,
+            PropertyListing.listing_total_floors,
+            PropertyListing.listing_total_units,
+            PropertyListing.last_scraped_at,
+            PropertyListing.first_seen_at,
+            PropertyListing.agency_name,
+            PropertyListing.agency_tel
+        ).filter(
+            PropertyListing.master_property_id == prop.id
+        ).filter(
+            PropertyListing.is_active == True  # アクティブな掲載のみ
+        ).order_by(
+            PropertyListing.current_price.nullslast()
+        ).all()
+        
+        property_listings[prop.id] = [
+            {
+                'id': listing.id,
+                'source_site': listing.source_site,
+                'current_price': listing.current_price,
+                'is_active': listing.is_active,
+                'station_info': listing.station_info,
+                'listing_building_name': listing.listing_building_name,
+                'listing_address': listing.listing_address,
+                'listing_floor_number': listing.listing_floor_number,
+                'listing_total_floors': listing.listing_total_floors,
+                'listing_total_units': listing.listing_total_units,
+                'last_scraped_at': listing.last_scraped_at.isoformat() if listing.last_scraped_at else None,
+                'first_seen_at': listing.first_seen_at.isoformat() if listing.first_seen_at else None,
+                'agency_name': listing.agency_name,
+                'agency_tel': listing.agency_tel
+            }
+            for listing in listings
+        ]
+    
     # 外部建物IDを取得
     external_ids = db.query(BuildingExternalId).filter(
         BuildingExternalId.building_id == building_id
@@ -433,7 +479,8 @@ async def get_building_detail(
                 'display_building_name': p.display_building_name,  # 物件毎の建物名を追加
                 'active_listing_count': p.active_listing_count or 0,
                 'min_price': p.min_price,
-                'max_price': p.max_price
+                'max_price': p.max_price,
+                'listings': property_listings.get(p.id, [])  # 掲載情報を追加
             }
             for p in properties
         ]

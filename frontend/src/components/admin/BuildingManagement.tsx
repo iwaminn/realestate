@@ -31,6 +31,7 @@ import {
   Autocomplete,
   Tabs,
   Tab,
+  Collapse,
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -42,6 +43,8 @@ import {
   Undo as UndoIcon,
   CallSplit as CallSplitIcon,
   Delete as DeleteIcon,
+  ExpandMore as ExpandMoreIcon,
+  ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import axios, { isAxiosError } from 'axios';
@@ -167,6 +170,7 @@ export const BuildingManagement: React.FC = () => {
     built_month: '',
     total_floors: '',
   });
+  const [expandedPropertyId, setExpandedPropertyId] = useState<number | null>(null);
 
   // 建物一覧を取得
   const fetchBuildings = async () => {
@@ -982,79 +986,168 @@ export const BuildingManagement: React.FC = () => {
                         </TableHead>
                         <TableBody>
                           {selectedBuilding.properties.map((property) => (
-                            <TableRow key={property.id}>
-                              <TableCell>{property.id}</TableCell>
-                              <TableCell>{property.room_number || '-'}</TableCell>
-                              <TableCell align="right">
-                                {property.floor_number ? `${property.floor_number}階` : '-'}
-                              </TableCell>
-                              <TableCell align="right">
-                                {property.area ? `${property.area.toFixed(2)}㎡` : '-'}
-                              </TableCell>
-                              <TableCell>{property.layout || '-'}</TableCell>
-                              <TableCell>{property.direction || '-'}</TableCell>
-                              <TableCell>
-                                {property.display_building_name ? (
-                                  property.display_building_name !== selectedBuilding.normalized_name ? (
-                                    <Tooltip title="建物名とは異なる表示名が設定されています">
-                                      <Chip
-                                        label={property.display_building_name}
-                                        size="small"
-                                        color="warning"
-                                        variant="outlined"
-                                      />
-                                    </Tooltip>
-                                  ) : (
-                                    <Typography variant="body2" color="text.secondary">
-                                      {property.display_building_name}
-                                    </Typography>
-                                  )
-                                ) : (
-                                  '-'
-                                )}
-                              </TableCell>
-                              <TableCell align="center">
-                                {property.active_listing_count > 0 ? (
-                                  <Chip
-                                    label={property.active_listing_count}
-                                    color="primary"
-                                    size="small"
-                                  />
-                                ) : (
-                                  <Chip
-                                    label="0"
-                                    size="small"
-                                  />
-                                )}
-                              </TableCell>
-                              <TableCell>
-                                {property.min_price && property.max_price ? (
-                                  property.min_price === property.max_price ? (
-                                    formatPrice(property.min_price)
-                                  ) : (
-                                    `${formatPrice(property.min_price)} - ${formatPrice(property.max_price)}`
-                                  )
-                                ) : (
-                                  '-'
-                                )}
-                              </TableCell>
-                              <TableCell align="center">
-                                <Tooltip title="この物件を建物から分離">
-                                  <IconButton
-                                    size="small"
-                                    color="warning"
-                                    onClick={() => fetchDetachCandidates(property.id)}
-                                    disabled={detachingPropertyId === property.id}
-                                  >
-                                    {detachingPropertyId === property.id ? (
-                                      <CircularProgress size={20} />
+                            <React.Fragment key={property.id}>
+                              <TableRow>
+                                <TableCell>{property.id}</TableCell>
+                                <TableCell>{property.room_number || '-'}</TableCell>
+                                <TableCell align="right">
+                                  {property.floor_number ? `${property.floor_number}階` : '-'}
+                                </TableCell>
+                                <TableCell align="right">
+                                  {property.area ? `${property.area.toFixed(2)}㎡` : '-'}
+                                </TableCell>
+                                <TableCell>{property.layout || '-'}</TableCell>
+                                <TableCell>{property.direction || '-'}</TableCell>
+                                <TableCell>
+                                  {property.display_building_name ? (
+                                    property.display_building_name !== selectedBuilding.normalized_name ? (
+                                      <Tooltip title="建物名とは異なる表示名が設定されています">
+                                        <Chip
+                                          label={property.display_building_name}
+                                          size="small"
+                                          color="warning"
+                                          variant="outlined"
+                                        />
+                                      </Tooltip>
                                     ) : (
-                                      <CallSplitIcon />
+                                      <Typography variant="body2" color="text.secondary">
+                                        {property.display_building_name}
+                                      </Typography>
+                                    )
+                                  ) : (
+                                    '-'
+                                  )}
+                                </TableCell>
+                                <TableCell align="center">
+                                  <Box display="flex" alignItems="center" gap={1}>
+                                    {property.active_listing_count > 0 ? (
+                                      <Chip
+                                        label={property.active_listing_count}
+                                        color="primary"
+                                        size="small"
+                                      />
+                                    ) : (
+                                      <Chip
+                                        label="0"
+                                        size="small"
+                                      />
                                     )}
-                                  </IconButton>
-                                </Tooltip>
-                              </TableCell>
-                            </TableRow>
+                                    {property.listings && property.listings.length > 0 && (
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => setExpandedPropertyId(
+                                          expandedPropertyId === property.id ? null : property.id
+                                        )}
+                                      >
+                                        {expandedPropertyId === property.id ? 
+                                          <ExpandLessIcon /> : <ExpandMoreIcon />}
+                                      </IconButton>
+                                    )}
+                                  </Box>
+                                </TableCell>
+                                <TableCell>
+                                  {property.min_price && property.max_price ? (
+                                    property.min_price === property.max_price ? (
+                                      formatPrice(property.min_price)
+                                    ) : (
+                                      `${formatPrice(property.min_price)} - ${formatPrice(property.max_price)}`
+                                    )
+                                  ) : (
+                                    '-'
+                                  )}
+                                </TableCell>
+                                <TableCell align="center">
+                                  <Tooltip title="この物件を建物から分離">
+                                    <IconButton
+                                      size="small"
+                                      color="warning"
+                                      onClick={() => fetchDetachCandidates(property.id)}
+                                      disabled={detachingPropertyId === property.id}
+                                    >
+                                      {detachingPropertyId === property.id ? (
+                                        <CircularProgress size={20} />
+                                      ) : (
+                                        <CallSplitIcon />
+                                      )}
+                                    </IconButton>
+                                  </Tooltip>
+                                </TableCell>
+                              </TableRow>
+                              {/* 掲載情報の折り畳み行 */}
+                              {expandedPropertyId === property.id && property.listings && property.listings.length > 0 && (
+                                <TableRow>
+                                  <TableCell colSpan={10} sx={{ bgcolor: 'grey.50', py: 0 }}>
+                                    <Collapse in={expandedPropertyId === property.id}>
+                                      <Box sx={{ p: 2 }}>
+                                        <Typography variant="subtitle2" gutterBottom>
+                                          掲載情報 ({property.listings.length}件)
+                                        </Typography>
+                                        <Table size="small">
+                                          <TableHead>
+                                            <TableRow>
+                                              <TableCell>サイト</TableCell>
+                                              <TableCell>建物名</TableCell>
+                                              <TableCell align="right">価格</TableCell>
+                                              <TableCell>住所</TableCell>
+                                              <TableCell align="center">所在階</TableCell>
+                                              <TableCell align="center">総階数</TableCell>
+                                              <TableCell align="center">総戸数</TableCell>
+                                              <TableCell>初回掲載日</TableCell>
+                                              <TableCell>最終確認日</TableCell>
+                                            </TableRow>
+                                          </TableHead>
+                                          <TableBody>
+                                            {property.listings.map((listing: any) => (
+                                              <TableRow key={listing.id}>
+                                                <TableCell>
+                                                  <Chip
+                                                    label={listing.source_site}
+                                                    size="small"
+                                                    color={
+                                                      listing.source_site === 'SUUMO' ? 'primary' :
+                                                      listing.source_site === 'HOMES' ? 'secondary' :
+                                                      listing.source_site === 'REHOUSE' ? 'success' :
+                                                      listing.source_site === 'NOMU' ? 'warning' :
+                                                      'default'
+                                                    }
+                                                  />
+                                                </TableCell>
+                                                <TableCell>
+                                                  {listing.listing_building_name || '-'}
+                                                </TableCell>
+                                                <TableCell align="right">
+                                                  {formatPrice(listing.current_price)}
+                                                </TableCell>
+                                                <TableCell>
+                                                  {listing.listing_address || '-'}
+                                                </TableCell>
+                                                <TableCell align="center">
+                                                  {listing.listing_floor_number ? `${listing.listing_floor_number}階` : '-'}
+                                                </TableCell>
+                                                <TableCell align="center">
+                                                  {listing.listing_total_floors ? `${listing.listing_total_floors}階` : '-'}
+                                                </TableCell>
+                                                <TableCell align="center">
+                                                  {listing.listing_total_units ? `${listing.listing_total_units}戸` : '-'}
+                                                </TableCell>
+                                                <TableCell>
+                                                  {listing.first_seen_at ? 
+                                                    format(new Date(listing.first_seen_at), 'yyyy/MM/dd') : '-'}
+                                                </TableCell>
+                                                <TableCell>
+                                                  {listing.last_scraped_at ? 
+                                                    format(new Date(listing.last_scraped_at), 'yyyy/MM/dd') : '-'}
+                                                </TableCell>
+                                              </TableRow>
+                                            ))}
+                                          </TableBody>
+                                        </Table>
+                                      </Box>
+                                    </Collapse>
+                                  </TableCell>
+                                </TableRow>
+                              )}
+                            </React.Fragment>
                           ))}
                         </TableBody>
                       </Table>

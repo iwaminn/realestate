@@ -625,10 +625,10 @@ class RehouseParser(BaseHtmlParser):
         """
         # タイトルから建物名を取得
         title_selectors = [
+            "h1",  # 現在のリハウスは単純なh1タグを使用
             "h1.property-name",
             "h1.detail-title",
-            "div.property-header h1",
-            "h1"
+            "div.property-header h1"
         ]
         
         for selector in title_selectors:
@@ -639,10 +639,18 @@ class RehouseParser(BaseHtmlParser):
                     # タイトルフィールドにも設定（表示用）
                     property_data['title'] = building_name
                     
+                    # デバッグログ
+                    if self.logger:
+                        self.logger.debug(f"リハウス: タイトル取得成功 - selector={selector}, title={building_name}")
+                    
                     # 部屋番号部分を除去してbuilding_nameに設定
                     building_name = re.sub(r'\s*\d+号室.*$', '', building_name)
                     property_data['building_name'] = building_name
                     return
+        
+        # タイトルが取得できなかった場合の警告
+        if self.logger:
+            self.logger.warning("リハウス: タイトルが取得できませんでした")
     
     def _extract_property_images(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """

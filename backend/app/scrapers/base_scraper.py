@@ -352,6 +352,10 @@ class BaseScraper(ABC):
         self._selector_stats = {}  # {selector: {'success': 0, 'fail': 0}}
         self._page_structure_errors = 0  # ページ構造エラーカウント  # ページ構造エラーカウント
 
+        
+        # 非同期多数決更新を有効化（デッドロック回避）
+        self.async_majority_vote = True
+
     def _ensure_external_id_handler(self, session):
         """external_id_handlerを遅延初期化（必要な時だけ作成）"""
         if self.external_id_handler is None:
@@ -1071,7 +1075,11 @@ class BaseScraper(ABC):
                         self.logger.warning(f"[DEBUG] 詳細取得成功したが保存されていない: URL={prop_url}, update_type={prop_update_type}")
                     
                     # 詳細を取得した物件のみ内訳をカウント
-                    if prop_detail_fetched and prop_saved and prop_update_type is not None:
+                    # validation_failedの場合も含めてカウント
+                    if prop_detail_fetched and property_data.get('validation_failed'):
+                        # 検証エラーは既にvalidation_failedとしてカウント済み
+                        self.logger.debug(f"検証エラー（既にカウント済み）: URL={property_data.get('url', '不明')}")
+                    elif prop_detail_fetched and prop_saved and prop_update_type is not None:
                         update_type = property_data['update_type']
                         self.logger.info(f"統計更新（詳細取得済み）: URL={property_data.get('url', '不明')}, update_type={update_type}")
                         
@@ -3308,7 +3316,10 @@ class BaseScraper(ABC):
                 updates['station_info'] = station_info
             
             if updates:
-                building = building_repo.update(building, updates)
+                # 建物情報を直接更新
+                for key, value in updates.items():
+                    setattr(building, key, value)
+                session.flush()  # 変更を反映
             
             # 外部IDを追加（既存の建物でも、外部IDが未登録の場合は追加）
             if external_property_id:
@@ -4886,9 +4897,34 @@ class BaseScraper(ABC):
         
         デッドロックを避けるため、メインのトランザクションとは別のタイミングで実行
         """
-        # 実装例：更新対象をキューやタスクテーブルに保存
-        # 別のプロセスやバックグラウンドタスクで処理
-        self.logger.debug(f"多数決更新をスケジュール: property_id={property_id}, building_id={building_id}")
+        try:
+            from ..models import PropertyPriceChangeQueue
+            from ..database import get_db_for_scraping
+            
+            with get_db_for_scraping() as session:
+                # 既存のキューエントリがあるか確認
+                existing = session.query(PropertyPriceChangeQueue).filter(
+                    PropertyPriceChangeQueue.master_property_id == property_id,
+                    PropertyPriceChangeQueue.status == 'pending'
+                ).first()
+                
+                if not existing:
+                    # キューに追加
+                    queue_entry = PropertyPriceChangeQueue(
+                        master_property_id=property_id,
+                        reason='majority_vote_update',
+                        priority=10,  # 通常優先度
+                        status='pending'
+                    )
+                    session.add(queue_entry)
+                    session.commit()
+                    self.logger.debug(f"多数決更新をキューに追加: property_id={property_id}, building_id={building_id}")
+                else:
+                    self.logger.debug(f"多数決更新は既にキューに存在: property_id={property_id}")
+                    
+        except Exception as e:
+            self.logger.error(f"多数決更新のキュー追加に失敗: {e}")
+            # キューへの追加失敗はエラーとして記録するが、メイン処理は継続
 
     def _record_data_quality_issue(self, property_id: int, error_message: str):
         """
