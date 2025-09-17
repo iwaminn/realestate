@@ -78,6 +78,29 @@ class DataValidatorComponent:
                             f"(許容範囲: {rules['min']} - {rules['max']})"
                         )
         
+        # 間取りの妥当性チェック
+        if data.get('layout'):
+            layout = data['layout']
+            # 不正な間取りパターンをチェック
+            import re
+            # 間取りに数字のIDが含まれていないか（例: "2LDK133553383"）
+            if re.search(r'[A-Z]\d{5,}', layout):
+                errors.append(
+                    f"間取りに不正な値が含まれています: {layout}"
+                )
+            # 基本的な間取りパターンチェック（1-9の数字で始まり、R/K/DK/LDK/SLDKで終わる）
+            elif not re.match(r'^[1-9]\d*[RSLDK]+(?:\+[SLDK]+)?$|^STUDIO$|^1R$', layout):
+                errors.append(
+                    f"間取りの形式が不正です: {layout}"
+                )
+            # 部屋数が異常に多くないか
+            elif re.match(r'^\d+', layout):
+                room_count = int(re.match(r'^(\d+)', layout).group(1))
+                if room_count > 20:  # 20部屋以上は異常とみなす
+                    errors.append(
+                        f"間取りの部屋数が異常です: {layout}"
+                    )
+        
         # 論理チェック
         if data.get('floor_number') and data.get('total_floors'):
             if data['floor_number'] > data['total_floors']:
@@ -87,97 +110,7 @@ class DataValidatorComponent:
         
         return len(errors) == 0, errors
     
-    def normalize_layout(self, layout: Optional[str]) -> Optional[str]:
-        """
-        間取りを正規化
-        
-        Args:
-            layout: 間取りテキスト
-            
-        Returns:
-            正規化された間取り
-        """
-        if not layout:
-            return None
-        
-        # 全角を半角に変換
-        import unicodedata
-        layout = unicodedata.normalize('NFKC', layout)
-        
-        # 大文字に統一
-        layout = layout.upper()
-        
-        # よくあるパターンの正規化
-        patterns = {
-            r'(\d+)LDK\+S': r'\1SLDK',  # 1LDK+S → 1SLDK
-            r'(\d+)K\+L\+DK': r'\1LDK',  # 1K+L+DK → 1LDK
-            r'(\d+)DK\+L': r'\1LDK',     # 1DK+L → 1LDK
-            r'ワンルーム': '1R',
-            r'STUDIO': '1R',
-        }
-        
-        for pattern, replacement in patterns.items():
-            layout = re.sub(pattern, replacement, layout)
-        
-        # 余分な記号を削除
-        layout = re.sub(r'[^\dA-Z]', '', layout)
-        
-        return layout
-    
-    def normalize_direction(self, direction: Optional[str]) -> Optional[str]:
-        """
-        方角を正規化
-        
-        Args:
-            direction: 方角テキスト
-            
-        Returns:
-            正規化された方角
-        """
-        if not direction:
-            return None
-        
-        # 全角を半角に変換
-        import unicodedata
-        direction = unicodedata.normalize('NFKC', direction)
-        
-        # マッピング
-        direction_map = {
-            '北': 'N',
-            '南': 'S', 
-            '東': 'E',
-            '西': 'W',
-            '北東': 'NE',
-            '北西': 'NW',
-            '南東': 'SE',
-            '南西': 'SW',
-            'NORTH': 'N',
-            'SOUTH': 'S',
-            'EAST': 'E',
-            'WEST': 'W',
-        }
-        
-        # 完全一致
-        for key, value in direction_map.items():
-            if key in direction:
-                # 複合方角の処理
-                if '北' in direction and '東' in direction:
-                    return 'NE'
-                elif '北' in direction and '西' in direction:
-                    return 'NW'
-                elif '南' in direction and '東' in direction:
-                    return 'SE'
-                elif '南' in direction and '西' in direction:
-                    return 'SW'
-                else:
-                    return value
-        
-        # 英字の場合はそのまま大文字化
-        direction = direction.upper()
-        if direction in ['N', 'S', 'E', 'W', 'NE', 'NW', 'SE', 'SW']:
-            return direction
-        
-        return None
+
     
     def validate_url(self, url: Optional[str]) -> bool:
         """
@@ -267,69 +200,5 @@ class DataValidatorComponent:
         
         return True, None
     
-    def normalize_address(self, address: Optional[str]) -> Optional[str]:
-        """
-        住所を正規化
-        
-        Args:
-            address: 住所テキスト
-            
-        Returns:
-            正規化された住所
-        """
-        if not address:
-            return None
-        
-        # 全角数字を半角に変換
-        import unicodedata
-        address = unicodedata.normalize('NFKC', address)
-        
-        # 都道府県の正規化
-        address = re.sub(r'東京都', '東京都', address)
-        
-        # 番地の正規化（1-2-3 形式に統一）
-        address = re.sub(r'(\d+)丁目(\d+)番(\d+)号', r'\1-\2-\3', address)
-        address = re.sub(r'(\d+)番地?の?(\d+)', r'\1-\2', address)
-        
-        # 余分なスペースを削除
-        address = re.sub(r'\s+', '', address)
-        
-        return address
+
     
-    def calculate_property_hash(self, data: Dict[str, Any]) -> Optional[str]:
-        """
-        物件ハッシュを計算
-        
-        Args:
-            data: 物件データ
-            
-        Returns:
-            物件ハッシュ値
-        """
-        # ハッシュ計算に必要なフィールド
-        required_fields = [
-            'building_id',
-            'floor_number', 
-            'area',
-            'layout',
-            'direction'
-        ]
-        
-        # 必須フィールドチェック
-        for field in required_fields[:4]:  # directionは任意
-            if not data.get(field):
-                self.logger.warning(f"物件ハッシュ計算失敗: '{field}' が欠落")
-                return None
-        
-        # ハッシュ値を生成
-        import hashlib
-        
-        # 正規化
-        layout = self.normalize_layout(str(data['layout']))
-        direction = self.normalize_direction(data.get('direction', ''))
-        
-        # ハッシュ用文字列を作成（部屋番号は含めない）
-        hash_str = f"{data['building_id']}_{data['floor_number']}_{data['area']:.1f}_{layout}_{direction}"
-        
-        # SHA256でハッシュ化
-        return hashlib.sha256(hash_str.encode()).hexdigest()[:16]

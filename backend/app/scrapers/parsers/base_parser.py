@@ -97,6 +97,48 @@ class BaseHtmlParser(ABC):
             価格（万円単位）
         """
         return self.html_parser.parse_price(text)
+
+    def build_price_text_from_spans(self, price_elem: Tag) -> str:
+        """
+        複数のspan要素に分かれた価格テキストを構築
+        
+        多くの不動産サイトでは価格を複数のspan要素に分けて表示するため、
+        それらを適切に結合する共通処理
+        
+        Args:
+            price_elem: 価格要素（複数のspan要素を含む）
+            
+        Returns:
+            結合された価格文字列
+        """
+        import re
+        
+        # span要素から価格を組み立てる
+        spans = price_elem.find_all("span")
+        if not spans:
+            # span要素がない場合は通常のテキスト取得
+            return price_elem.get_text(strip=True)
+        
+        price_parts = []
+        
+        for span in spans:
+            span_text = span.get_text(strip=True)
+            if span_text:
+                class_list = span.get("class", [])
+                class_str = " ".join(class_list) if isinstance(class_list, list) else str(class_list)
+                
+                # numクラスまたは数字を含む場合
+                if "num" in class_str.lower() or re.search(r'\d', span_text):
+                    price_parts.append(span_text)
+                # unitクラスまたは単位を含む場合
+                elif any(x in class_str.lower() for x in ["unit", "yen", "price"]) or span_text in ["億", "万円", "万", "円"]:
+                    price_parts.append(span_text)
+        
+        if price_parts:
+            return "".join(price_parts)
+        else:
+            # span要素から組み立てられない場合は全体テキストを使用
+            return price_elem.get_text(strip=True)
     
     def parse_area(self, text: str) -> Optional[float]:
         """
@@ -125,7 +167,7 @@ class BaseHtmlParser(ABC):
     
     def normalize_layout(self, text: str) -> Optional[str]:
         """
-        間取りを正規化（コンポーネントに委譲）
+        間取りを正規化
         
         Args:
             text: 間取りテキスト
@@ -133,11 +175,12 @@ class BaseHtmlParser(ABC):
         Returns:
             正規化された間取り
         """
-        return self.data_validator.normalize_layout(text)
+        from ..data_normalizer import normalize_layout
+        return normalize_layout(text)
     
     def normalize_direction(self, text: str) -> Optional[str]:
         """
-        方角を正規化（コンポーネントに委譲）
+        方角を正規化
         
         Args:
             text: 方角テキスト
@@ -145,11 +188,12 @@ class BaseHtmlParser(ABC):
         Returns:
             正規化された方角
         """
-        return self.data_validator.normalize_direction(text)
+        from ..data_normalizer import normalize_direction
+        return normalize_direction(text)
     
     def normalize_address(self, text: str) -> Optional[str]:
         """
-        住所を正規化（コンポーネントに委譲）
+        住所を正規化
         
         Args:
             text: 住所テキスト
@@ -157,7 +201,12 @@ class BaseHtmlParser(ABC):
         Returns:
             正規化された住所
         """
-        return self.data_validator.normalize_address(text)
+        if not text:
+            return None
+        
+        from ...utils.address_normalizer import AddressNormalizer
+        normalizer = AddressNormalizer()
+        return normalizer.normalize(text)
     
     def parse_built_date(self, text: str) -> Dict[str, Optional[int]]:
         """
@@ -239,25 +288,31 @@ class BaseHtmlParser(ABC):
     def parse_station_info(self, text: str) -> Optional[str]:
         """
         駅情報をパース
+        data_normalizer.format_station_infoを使用して統一的にフォーマット
         
         Args:
             text: 駅情報テキスト
             
         Returns:
-            パースされた駅情報
+            フォーマット済みの駅情報（改行区切り）
         """
         if not text:
             return None
         
-        # 全角スペースを半角に、連続するスペースを1つに
+        # まず基本的なクリーンアップ
         text = self.html_parser.clean_text(text)
         
-        # 複数駅の場合は改行で区切る
-        if '/' in text:
-            stations = text.split('/')
-            return '\n'.join(s.strip() for s in stations if s.strip())
-        
-        return text
+        # format_station_infoで高度なフォーマット処理
+        try:
+            from ..data_normalizer import format_station_info
+            return format_station_info(text)
+        except ImportError:
+            # フォールバック: 基本的な処理のみ
+            # 複数駅の場合は改行で区切る（簡易版）
+            if '/' in text:
+                stations = text.split('/')
+                return '\n'.join(s.strip() for s in stations if s.strip())
+            return text
     
     def parse_management_info(self, text: str) -> Optional[int]:
         """

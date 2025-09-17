@@ -636,7 +636,10 @@ class RehouseParser(BaseHtmlParser):
             if title:
                 building_name = self.extract_text(title)
                 if building_name:
-                    # 部屋番号部分を除去
+                    # タイトルフィールドにも設定（表示用）
+                    property_data['title'] = building_name
+                    
+                    # 部屋番号部分を除去してbuilding_nameに設定
                     building_name = re.sub(r'\s*\d+号室.*$', '', building_name)
                     property_data['building_name'] = building_name
                     return

@@ -185,10 +185,21 @@ class SuumoScraper(BaseScraper):
             detail_data["url"] = url
             detail_data["_page_text"] = soup.get_text()  # 建物名一致確認用
             
-            # site_property_idの抽出と検証（必要に応じて）
+            # パーサーで取得できなかったデータを独自処理で補完
+            detail_info = {}
+            all_tables = soup.find_all('table')
+            if all_tables:
+                self._process_all_tables(all_tables, detail_data, detail_info)
+            
+            # detail_infoの内容をdetail_dataにマージ（total_floorsなど）
+            if 'total_floors' in detail_info and 'total_floors' not in detail_data:
+                detail_data['total_floors'] = detail_info['total_floors']
+            
+            # site_property_idの抽出と検証
             if "site_property_id" not in detail_data and url:
-                # URLからsite_property_idを抽出する処理（スクレイパー固有）
-                pass
+                site_id = self.extract_property_id(url)
+                if site_id:
+                    detail_data["site_property_id"] = site_id
         
         return detail_data
 
@@ -354,7 +365,8 @@ class SuumoScraper(BaseScraper):
         # td内に複数のp要素がある場合は最初のp要素のテキストを取得
         first_p = td_element.find('p')
         if first_p:
-            property_data['address'] = first_p.get_text(strip=True)
+            # extract_address_from_elementを使用してリンク等を除去
+            property_data['address'] = self.extract_address_from_element(first_p)
         else:
             property_data['address'] = value
         print(f"    住所: {property_data['address']}")
@@ -412,19 +424,18 @@ class SuumoScraper(BaseScraper):
     
     def _extract_layout(self, label: str, value: str, property_data: Dict[str, Any]):
         """間取りを抽出"""
-        
         layout = normalize_layout(value)
         if layout:
             property_data['layout'] = layout
+            print(f"    間取り: {property_data['layout']}")
 
     
     def _extract_area(self, label: str, value: str, property_data: Dict[str, Any]):
         """専有面積を抽出"""
-
-        
         area = extract_area(value)
         if area:
             property_data['area'] = area
+            print(f"    専有面積: {property_data['area']}㎡")
 
     
     def _extract_station_info(self, value: str, property_data: Dict[str, Any]):

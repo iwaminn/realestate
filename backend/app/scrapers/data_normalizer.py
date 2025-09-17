@@ -593,11 +593,15 @@ class DataNormalizer:
         
         # パターンにマッチしない場合、区市町村までを抽出
         # 例：「東京都港区南麻布」
-        basic_pattern = r'^(.*?(?:都|道|府|県).*?(?:区|市|町|村)[^地図\[【\(]*)'
+        # 「周辺」を除外対象に追加
+        basic_pattern = r'^(.*?(?:都|道|府|県).*?(?:区|市|町|村)[^地図\[【\(周辺]*)'
         match = re.search(basic_pattern, text)
         if match:
             # 末尾の不要な文字を削除
-            result = match.group(1).rstrip('、。・')
+            result = match.group(1).rstrip('、。・周辺')
+            # 「周辺」で終わる場合は削除
+            if result.endswith('周辺'):
+                result = result[:-2]
             return result.strip()
         
         # それでもマッチしない場合は、明らかに住所でない部分を削除
@@ -608,6 +612,8 @@ class DataNormalizer:
                 text = text.split(keyword)[0]
         
         return text.strip()
+
+
 
     def contains_address_pattern(self, text: str) -> bool:
         """テキストに住所パターンが含まれているかを判定

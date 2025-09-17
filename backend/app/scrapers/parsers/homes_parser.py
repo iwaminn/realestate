@@ -15,7 +15,7 @@ class HomesParser(BaseHtmlParser):
     """LIFULL HOME'S専用パーサー"""
     
     # LIFULL HOME'Sのデフォルト設定
-    DEFAULT_AGENCY_NAME = "LIFULL HOME'S"
+    DEFAULT_AGENCY_NAME = None  # LIFULL HOME'Sは不動産会社ではないため、デフォルト値は設定しない
     BASE_URL = "https://www.homes.co.jp"
     
     def __init__(self, logger: Optional[logging.Logger] = None):
@@ -27,7 +27,7 @@ class HomesParser(BaseHtmlParser):
         """
         super().__init__(logger)
         self.logger = logger or logging.getLogger(__name__)
-    
+
     def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
         """
         物件一覧をパース
@@ -232,7 +232,7 @@ class HomesParser(BaseHtmlParser):
         if agency_elem:
             property_data['agency_name'] = self.extract_text(agency_elem)
         else:
-            property_data['agency_name'] = self.DEFAULT_AGENCY_NAME
+            pass  # 不動産会社が取得できない場合は空のままにする
     
     def parse_property_detail(self, soup: BeautifulSoup) -> Dict[str, Any]:
         """
@@ -247,7 +247,7 @@ class HomesParser(BaseHtmlParser):
         property_data = {}
         
         # 物件情報テーブルを探す
-        detail_tables = self.safe_select(soup, "table.rentTbl, table.bukkenSpec")
+        detail_tables = self.safe_select(soup, "table.rentTbl, table.bukkenSpec, table.w-full, table.table-fixed, div.mod-buildingDetailSpec table, section.propertyDetail table")
         
         for table in detail_tables:
             rows = table.find_all("tr")
@@ -294,20 +294,29 @@ class HomesParser(BaseHtmlParser):
         
         # 間取り
         elif '間取' in key:
-            layout = self.normalize_layout(value)
-            if layout:
-                property_data['layout'] = layout
+            # 正規表現で間取りを抽出（例: "3LDK / 85.5㎡" -> "3LDK"）
+            layout_match = re.search(r'^([1-9]\d*[SLDK]+)', value)
+            if layout_match:
+                property_data['layout'] = layout_match.group(1)
+            else:
+                # フォールバック: normalize_layoutを使用
+                from ..data_normalizer import normalize_layout
+                layout = normalize_layout(value.split('/')[0].strip())
+                if layout:
+                    property_data['layout'] = layout
         
         # 専有面積
-        elif '専有面積' in key or ('面積' in key and 'バルコニー' not in key):
-            area = self.parse_area(value)
-            if area:
+        elif '専有面積' in key or ('面積' in key and 'バルコニー' not in key and '建築' not in key and '敷地' not in key):
+            from ..data_normalizer import extract_area, validate_area
+            area = extract_area(value)
+            if area and validate_area(area):
                 property_data['area'] = area
         
         # バルコニー面積
         elif 'バルコニー' in key:
-            balcony_area = self.parse_area(value)
-            if balcony_area:
+            from ..data_normalizer import extract_area, validate_area
+            balcony_area = extract_area(value)
+            if balcony_area and validate_area(balcony_area):
                 property_data['balcony_area'] = balcony_area
         
         # 階数情報
@@ -381,24 +390,125 @@ class HomesParser(BaseHtmlParser):
             soup: BeautifulSoupオブジェクト
             property_data: データ格納先
         """
-        # タイトルから建物名を取得
-        title_selectors = [
-            "h1.heading",
-            "h1.bukkenName",
-            "div.mod-buildingTitle h1",
-            "h1"
-        ]
+        building_name = None
+        room_number = None
         
-        for selector in title_selectors:
-            title = self.safe_select_one(soup, selector)
-            if title:
-                building_name = self.extract_text(title)
+        # 複数の方法で建物名を取得（優先順位順）
+        
+        # 方法1: h1タグから取得（複数パターン対応）
+        h1_elem = soup.find('h1', class_=lambda x: x and 'Header__logo' not in str(x))
+        if h1_elem:
+            # パターン1: bukkenNameクラス
+            bukken_name_elem = h1_elem.select_one('.bukkenName')
+            if bukken_name_elem:
+                building_name = self.extract_text(bukken_name_elem)
+                # bukkenRoomクラスから部屋番号も取得
+                bukken_room_elem = h1_elem.select_one('.bukkenRoom')
+                if bukken_room_elem:
+                    room_text = self.extract_text(bukken_room_elem)
+                    match = re.search(r'/(\d{3,4}[A-Z]?)(?:\s|$)', room_text)
+                    if match:
+                        room_number = match.group(1)
+            
+            # パターン2: break-wordsクラス
+            elif h1_elem.select_one('.break-words'):
+                break_words_elem = h1_elem.select_one('.break-words')
+                text = self.extract_text(break_words_elem)
+                # 階数部分を除去
+                if '階' in text:
+                    parts = text.rsplit(' ', 1)
+                    if len(parts) > 1 and '階' in parts[-1]:
+                        building_name = parts[0]
+                    else:
+                        building_name = text
+                else:
+                    building_name = text
+            
+            # パターン3: 通常のh1タグ
+            elif not building_name:
+                h1_text = self.extract_text(h1_elem)
+                if h1_text:
+                    building_name = h1_text
+        
+        # 方法2: パンくずリストから取得
+        if not building_name:
+            # breadcrumb-listタグを探す
+            breadcrumb_tag = soup.find('breadcrumb-list')
+            if breadcrumb_tag:
+                breadcrumb_list = breadcrumb_tag.select('ol > li')
+            else:
+                # その他のパンくずパターン
+                breadcrumb_tag = soup.select_one('p.mod-breadcrumbs, [class*="breadcrumb"]')
+                if breadcrumb_tag:
+                    breadcrumb_list = breadcrumb_tag.select('li')
+                else:
+                    breadcrumb_list = soup.select('ol.hide-scrollbar > li')
+            
+            if breadcrumb_list and len(breadcrumb_list) > 0:
+                # 最後のli要素を取得
+                last_li = breadcrumb_list[-1]
+                last_elem = last_li.select_one('a')
+                if last_elem:
+                    last_text = self.extract_text(last_elem)
+                else:
+                    last_text = self.extract_text(last_li)
+                
+                # 建物名として妥当かチェック
+                if last_text and len(last_text) > 2 and '一覧' not in last_text and 'エリア' not in last_text:
+                    building_name = re.sub(r'^(中古マンション|マンション)', '', last_text).strip()
+                    # 階数情報を除去
+                    building_name = re.sub(r'\s+\d+階(?:/\d+[A-Z]?)?$', '', building_name)
+        
+        # 方法3: 物件概要テーブルから取得
+        if not building_name:
+            detail_tables = soup.select('table.detailTable, table.mod-detailTable, table[class*="detail"], table.rentTbl, table.bukkenSpec')
+            for table in detail_tables:
+                rows = table.select('tr')
+                for row in rows:
+                    th = row.select_one('th')
+                    td = row.select_one('td')
+                    if th and td:
+                        header = self.extract_text(th)
+                        if '物件名' in header or 'マンション名' in header or '建物名' in header:
+                            building_name = self.extract_text(td)
+                            building_name = re.sub(r'^(中古マンション|マンション)', '', building_name).strip()
+                            break
                 if building_name:
-                    # 部屋番号部分を除去
-                    building_name = re.sub(r'\s*\d+号室.*$', '', building_name)
-                    building_name = re.sub(r'\s*\d+階.*$', '', building_name)
-                    property_data['building_name'] = building_name
-                    return
+                    break
+        
+        # 方法4: その他のセレクタ
+        if not building_name:
+            other_selectors = [
+                "h1.heading",
+                "h1.bukkenName", 
+                "div.mod-buildingTitle h1",
+                "h2.buildingName",
+                ".propertyName"
+            ]
+            
+            for selector in other_selectors:
+                elem = self.safe_select_one(soup, selector)
+                if elem:
+                    building_name = self.extract_text(elem)
+                    if building_name:
+                        break
+        
+        # 結果を保存
+        if building_name:
+            # タイトルフィールドにも設定（表示用）
+            property_data['title'] = building_name
+            
+            # 部屋番号部分を除去してbuilding_nameに設定
+            cleaned_name = re.sub(r'\s*\d+号室.*$', '', building_name)
+            cleaned_name = re.sub(r'\s*\d+階.*$', '', cleaned_name)
+            property_data['building_name'] = cleaned_name
+            
+            # 部屋番号も保存
+            if room_number:
+                property_data['room_number'] = room_number
+            
+            # 建物名候補リストも作成（MULTI_SOURCEモード用）
+            property_data['_building_names_candidates'] = [cleaned_name]
     
     def _extract_property_images(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """
@@ -478,7 +588,7 @@ class HomesParser(BaseHtmlParser):
         
         # デフォルト値
         if 'agency_name' not in property_data:
-            property_data['agency_name'] = self.DEFAULT_AGENCY_NAME
+            pass  # 不動産会社が取得できない場合は空のままにする
     
     def get_next_page_url(self, soup: BeautifulSoup, current_url: str) -> Optional[str]:
         """

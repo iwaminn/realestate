@@ -201,7 +201,8 @@ class LivableParser(BaseHtmlParser):
         # 価格要素を検索（元のスクレイパーと同じセレクタ）
         price_elem = item.select_one('.o-product-list__info-body--price')
         if price_elem:
-            price_text = self.extract_text(price_elem)
+            # span要素に分かれている可能性があるため、共通メソッドを使用
+            price_text = self.build_price_text_from_spans(price_elem)
             price = self.parse_price(price_text)
             if price:
                 property_data['price'] = price
@@ -554,6 +555,8 @@ class LivableParser(BaseHtmlParser):
             if title:
                 building_name = self.extract_text(title)
                 if building_name:
+                    # タイトルフィールドにも設定（表示用）
+                    property_data['title'] = building_name
                     property_data['building_name'] = building_name
                     return
     

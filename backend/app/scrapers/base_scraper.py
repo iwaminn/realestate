@@ -301,6 +301,8 @@ class BaseScraper(ABC):
         self.cache_manager = CacheManagerComponent(logger=self.logger)
         self.building_normalizer = BuildingNormalizerComponent(logger=self.logger)
         self.property_matcher = PropertyMatcherComponent(logger=self.logger)
+        # fuzzy_matcherはproperty_matcher内のmatcherを参照
+        self.fuzzy_matcher = self.property_matcher.matcher
         
         # リポジトリの初期化（リファクタリング - Phase 2）
         # セッションはメソッド実行時に取得するため、ここでは初期化しない
@@ -418,15 +420,7 @@ class BaseScraper(ABC):
         
         return logger
 
-    def _ensure_repositories(self, session):
-        """リポジトリを初期化（遅延初期化）"""
-        if self._building_repository is None:
-            self._building_repository = BuildingRepository(session, self.logger)
-        if self._property_repository is None:
-            self._property_repository = PropertyRepository(session, self.logger)
-        if self._listing_repository is None:
-            self._listing_repository = ListingRepository(session, self.logger)
-        return self._building_repository, self._property_repository, self._listing_repository
+
 
     def _create_progress_manager(self, task_id: str, total_items: Optional[int] = None) -> 'ProgressManager':
         """
@@ -1076,8 +1070,20 @@ class BaseScraper(ABC):
                         raise Exception(error_msg)
                     
                     # 保存結果と更新タイプに基づく統計更新
+                    # デバッグ: 統計カウント前の状態を確認
+                    prop_detail_fetched = property_data.get('detail_fetched', False)
+                    prop_saved = property_data.get('property_saved', False)
+                    prop_update_type = property_data.get('update_type', None)
+                    prop_url = property_data.get('url', '不明')
+                    
+                    self.logger.info(f"[DEBUG] 統計カウント判定: detail_fetched={prop_detail_fetched}, property_saved={prop_saved}, update_type={prop_update_type}, URL={prop_url}")
+                    
+                    # デバッグ: property_savedがFalseの場合の原因を調査
+                    if prop_detail_fetched and not prop_saved:
+                        self.logger.warning(f"[DEBUG] 詳細取得成功したが保存されていない: URL={prop_url}, update_type={prop_update_type}")
+                    
                     # 詳細を取得した物件のみ内訳をカウント
-                    if property_data.get('detail_fetched', False) and property_data.get('property_saved', False) and 'update_type' in property_data:
+                    if prop_detail_fetched and prop_saved and prop_update_type is not None:
                         update_type = property_data['update_type']
                         self.logger.info(f"統計更新（詳細取得済み）: URL={property_data.get('url', '不明')}, update_type={update_type}")
                         
@@ -1090,10 +1096,11 @@ class BaseScraper(ABC):
                             self._increment_stat('refetched_unchanged')
                             self.logger.info(f"再取得（変更なし）カウント: refetched_unchanged={self._scraping_stats['refetched_unchanged']}")
                         elif update_type == 'skipped':
-                            # 詳細を取得したのにskippedは異常なケース
-                            self.logger.warning(f"詳細取得済みなのにupdate_type=skipped: URL={property_data.get('url', '不明')}")
+                            # 想定外: detail_fetched=Trueでupdate_type='skipped'は通常発生しない
+                            self.logger.warning(f"想定外のケース: 詳細取得済みなのにupdate_type='skipped': URL={property_data.get('url', '不明')}")
                         elif update_type == 'other_updates':
                             self._increment_stat('other_updates')
+                            self.logger.debug(f"その他更新カウント: other_updates={self._scraping_stats['other_updates']}, URL={property_data.get('url', '不明')}")
                         elif update_type == 'existing':
                             # 既存レコードの更新（IntegrityError回避のケース）
                             self._increment_stat('other_updates')
@@ -1101,8 +1108,12 @@ class BaseScraper(ABC):
                         else:
                             # 未知のupdate_type
                             self._increment_stat('other_updates')
-                            self.logger.warning(f"未知のupdate_type: {update_type}, URL={property_data.get('url', '不明')}")
-                    elif property_data.get('property_saved') is False:
+                            self.logger.warning(f"未知のupdate_type '{update_type}' をother_updatesとしてカウント: URL={property_data.get('url', '不明')}")
+                    elif prop_detail_fetched and not prop_saved and prop_update_type:
+                        # 詳細取得したが保存失敗、でもupdate_typeは設定されている
+                        self.logger.warning(f"[DEBUG] 詳細取得したが保存失敗でupdate_typeあり: URL={prop_url}, update_type={prop_update_type}")
+                        # この場合も統計に含めるべきかもしれない
+                    elif prop_saved is False:
                         # 保存失敗の場合（Noneはキャンセルなので除外）
                         if property_data.get('detail_fetched', False):
                             # 詳細を取得したが保存に失敗した場合
@@ -1114,12 +1125,18 @@ class BaseScraper(ABC):
                     elif property_data.get('property_saved') is None:
                         # キャンセルされた場合（統計に含めない）
                         self.logger.info(f"物件処理がキャンセルされました: URL={property_data.get('url', '不明')}")
+                    elif not property_data.get('detail_fetched', False) and property_data.get('update_type') == 'skipped':
+                        # 詳細取得をスキップした場合（スマートスクレイピング）
+                        # detail_skippedは既にprocess_property_with_detail_checkでカウント済み
+                        self.logger.debug(f"詳細スキップ（統計カウント済み）: URL={property_data.get('url', '不明')}")
                     else:
                         # property_savedフラグが設定されていない、またはupdate_typeが設定されていない場合
-                        self.logger.warning(f"統計更新されず: URL={property_data.get('url', '不明')}, "
-                                          f"property_saved={property_data.get('property_saved')}, "
-                                          f"update_type={property_data.get('update_type', 'なし')}, "
-                                          f"detail_fetched={property_data.get('detail_fetched', False)}")
+                        # 詳細スキップ（update_type='skipped'）の場合は警告を出さない
+                        if property_data.get('update_type') != 'skipped':
+                            self.logger.warning(f"統計更新されず: URL={property_data.get('url', '不明')}, "
+                                              f"property_saved={property_data.get('property_saved')}, "
+                                              f"update_type={property_data.get('update_type', 'なし')}, "
+                                              f"detail_fetched={property_data.get('detail_fetched', False)}")
                         if property_data.get('detail_fetched', False):
                             # 詳細を取得したが、統計が更新されていない
                             self.logger.warning(
@@ -1302,13 +1319,14 @@ class BaseScraper(ABC):
         # 詳細取得の内訳を表示
         if detail_fetched > 0:
             save_failed = self._get_stat('save_failed', 0)
+            validation_failed = self._get_stat('validation_failed', 0)
             new_listings = self._get_stat('new_listings', 0)
             price_updated = self._get_stat('price_updated', 0) 
             other_updates = self._get_stat('other_updates', 0)
             refetched_unchanged = self._get_stat('refetched_unchanged', 0)
             
             # 合計を計算
-            accounted_for = new_listings + price_updated + other_updates + refetched_unchanged + save_failed
+            accounted_for = new_listings + price_updated + other_updates + refetched_unchanged + save_failed + validation_failed
             unaccounted = detail_fetched - accounted_for
             
             breakdown = (
@@ -1320,6 +1338,8 @@ class BaseScraper(ABC):
             )
             if save_failed > 0:
                 breakdown += f", 保存失敗={save_failed}件"
+            if validation_failed > 0:
+                breakdown += f", 検証エラー={validation_failed}件"
             if unaccounted > 0:
                 breakdown += f", 不明={unaccounted}件"
             self.logger.info(breakdown)
@@ -1373,6 +1393,7 @@ class BaseScraper(ABC):
             'refetched_unchanged': 0,  # 再取得したが変更なし
             'other_updates': 0,  # 価格以外の項目が更新された物件
             'detail_fetch_failed': 0,
+            'validation_failed': 0,  # 詳細取得成功したが検証エラー（価格不一致、建物名不一致等）
             'save_failed': 0,  # 詳細取得は成功したが保存に失敗した件数
             'price_missing': 0,
             'building_info_missing': 0,
@@ -1845,6 +1866,7 @@ class BaseScraper(ABC):
                 property_data['detail_fetch_attempted'] = False
                 property_data['update_type'] = 'skipped'
                 property_data['property_saved'] = True
+                self._increment_stat('detail_skipped')  # 価格不一致によるスキップをカウント
                 return True
             
             # 404エラーでスキップすべきかチェック（強制詳細取得モードでない、かつエラー履歴無視モードでない場合のみ）
@@ -1873,6 +1895,7 @@ class BaseScraper(ABC):
                 # スキップとして処理を継続
                 property_data['update_type'] = 'skipped'
                 property_data['property_saved'] = True  # エラーではなく正常なスキップとして扱う
+                self._increment_stat('detail_skipped')  # 404エラーによるスキップをカウント
                 return True  # Falseではなく True を返す
             
             # 検証エラーでスキップすべきかチェック（強制詳細取得モードでない、かつエラー履歴無視モードでない場合のみ）
@@ -1988,9 +2011,10 @@ class BaseScraper(ABC):
                     
                     # 更新をスキップ
                     print(f"  → 価格不一致のため更新をスキップ (一覧: {list_price}万円, 詳細: {detail_price}万円)")
-                    property_data['detail_fetched'] = False
-                    self._last_detail_fetched = False
-                    self._increment_stat('detail_fetch_failed')
+                    property_data['detail_fetched'] = True  # 詳細取得自体は成功
+                    property_data['validation_failed'] = True  # 検証エラーフラグ
+                    self._last_detail_fetched = True  # 詳細取得は成功した
+                    self._increment_stat('validation_failed')  # 検証エラーとしてカウント
                     property_data['detail_fetch_attempted'] = True
                     property_data['property_saved'] = False
                     return False
@@ -1999,9 +2023,10 @@ class BaseScraper(ABC):
                 if not self.validate_building_name_from_detail(property_data, detail_data):
                     # 検証失敗の場合は更新をスキップ
                     print(f"  → 建物名検証失敗のため更新をスキップ")
-                    property_data['detail_fetched'] = False
-                    self._last_detail_fetched = False
-                    self._increment_stat('detail_fetch_failed')
+                    property_data['detail_fetched'] = True  # 詳細取得自体は成功
+                    property_data['validation_failed'] = True  # 検証エラーフラグ
+                    self._last_detail_fetched = True  # 詳細取得は成功した
+                    self._increment_stat('validation_failed')  # 検証エラーとしてカウント
                     property_data['detail_fetch_attempted'] = True
                     property_data['property_saved'] = False
                     return False
@@ -2126,6 +2151,9 @@ class BaseScraper(ABC):
     ):
         """物件保存の共通例外処理"""
         try:
+            # デバッグ: 保存関数呼び出し前
+            self.logger.info(f"[DEBUG] _save_property_with_error_handling開始: URL={property_data.get('url', '不明')}")
+            
             # 保存関数を呼び出し
             if hasattr(save_property_func, '__self__') and save_property_func.__self__ == self:
                 # インスタンスメソッドの場合
@@ -2134,7 +2162,13 @@ class BaseScraper(ABC):
                 # ラムダや関数の場合
                 saved = save_property_func(property_data, existing_listing)
             
+            # デバッグ: property_saved設定前
+            self.logger.info(f"[DEBUG] _save_property_with_error_handling: saved={saved}, property_savedを設定します, URL={property_data.get('url', '不明')}")
             property_data['property_saved'] = saved
+            
+            # デバッグ: property_saved設定後
+            self.logger.info(f"[DEBUG] _save_property_with_error_handling完了: property_saved={property_data.get('property_saved')}, update_type={property_data.get('update_type', 'None')}, URL={property_data.get('url', '不明')}")
+            
             return saved
             
         except (TaskPausedException, TaskCancelledException):
@@ -2144,6 +2178,8 @@ class BaseScraper(ABC):
             print(f"  → エラー: {e}")
             import traceback
             traceback.print_exc()
+            self.logger.error(f"[DEBUG] _save_property_with_error_handling エラー: {e}, URL={property_data.get('url', '不明')}")
+            self.logger.error(f"[DEBUG] スタックトレース: {traceback.format_exc()}")
             property_data['property_saved'] = False
             return False
     
@@ -3050,7 +3086,7 @@ class BaseScraper(ABC):
         # BuildingListingNameから該当する建物を検索（複数候補の最適化）
         listing_matches = session.query(BuildingListingName).filter(
             or_(
-                BuildingListingName.listing_name == search_key,
+                BuildingListingName.normalized_name == search_key,
                 BuildingListingName.canonical_name == canonical_search
             )
         ).all()
@@ -3096,7 +3132,7 @@ class BaseScraper(ABC):
                 
                 # 建物名の一致度を計算
                 name_score = 0
-                if listing_match.listing_name == search_key:
+                if listing_match.normalized_name == search_key:
                     name_score = 100  # 元の名前と完全一致
                 elif listing_match.canonical_name == canonical_search:
                     name_score = 90   # 正規化名と完全一致
@@ -3115,7 +3151,7 @@ class BaseScraper(ABC):
                         'attribute_score': attribute_score,
                         'name_score': name_score,
                         'total_score': total_score,
-                        'listing_name': listing_match.listing_name
+                        'listing_name': listing_match.normalized_name
                     }
             
             # 最適な候補が見つかった場合
@@ -3172,8 +3208,8 @@ class BaseScraper(ABC):
                                total_floors: int = None, basement_floors: int = None, total_units: int = None, 
                                structure: str = None, land_rights: str = None, station_info: str = None) -> Tuple[Optional[Building], Optional[str]]:
         """建物を取得または作成（セッションを受け取るバージョン）"""
-        # リポジトリを初期化
-        building_repo, _, _ = self._ensure_repositories(session)
+        # DbRepositoryComponentを直接作成
+        db_repo = DbRepositoryComponent(session, self.logger)
         
         # 元の建物名を保持
         original_building_name = building_name
@@ -3238,7 +3274,9 @@ class BaseScraper(ABC):
                         updates['station_info'] = station_info
                     
                     if updates:
-                        building = building_repo.update(building, updates)
+                        for key, value in updates.items():
+                            setattr(building, key, value)
+                        self.logger.info(f"建物情報を更新: {updates}")
                     
                     return building, extracted_room_number
                 else:
@@ -3312,7 +3350,8 @@ class BaseScraper(ABC):
             addr_normalizer = AddressNormalizer()
             normalized_addr = addr_normalizer.normalize_for_comparison(address)
         
-        building = building_repo.create(
+        # 新規建物を作成
+        building = Building(
             normalized_name=normalized_name,
             canonical_name=search_key,
             address=address,
@@ -3326,6 +3365,8 @@ class BaseScraper(ABC):
             station_info=station_info,
             is_valid_name=not is_ad_text_only
         )
+        session.add(building)
+        session.flush()  # IDを生成
         
         # デバッグ: 新規作成された建物のIDを確認
         self.logger.info(f"[DEBUG] 新規建物作成後のID: {building.id}, 名前: {building.normalized_name}")
@@ -3885,13 +3926,20 @@ class BaseScraper(ABC):
             
             # その他の情報を更新（変更を追跡）
             if listing.title != title:
+                self.logger.info(f"[DEBUG] タイトル変更検出: '{listing.title}' != '{title}'")
                 other_changed = True
-                changed_fields.append('タイトル')
+                old_title = listing.title or "未設定"
+                # タイトルが長い場合は省略
+                old_title_display = old_title[:30] + "..." if len(old_title) > 30 else old_title
+                title_display = title[:30] + "..." if len(title) > 30 else title
+                changed_fields.append(f'タイトル({old_title_display}→{title_display})')
             listing.title = title
             
             if agency_name and listing.agency_name != agency_name:
+                self.logger.info(f"[DEBUG] 不動産会社変更検出: '{listing.agency_name}' != '{agency_name}'")
                 other_changed = True
-                changed_fields.append('不動産会社')
+                old_agency = listing.agency_name or "未設定"
+                changed_fields.append(f'不動産会社({old_agency}→{agency_name})')
             listing.agency_name = agency_name or listing.agency_name
             
             if site_property_id and listing.site_property_id != site_property_id:
@@ -3907,12 +3955,20 @@ class BaseScraper(ABC):
             
             if description and listing.description != description:
                 other_changed = True
-                changed_fields.append('説明文')
+                old_desc = listing.description or "未設定"
+                # 説明文が長い場合は省略
+                old_desc_display = old_desc[:20] + "..." if len(old_desc) > 20 else old_desc
+                desc_display = description[:20] + "..." if len(description) > 20 else description
+                changed_fields.append(f'説明文({old_desc_display}→{desc_display})')
             listing.description = description or listing.description
             
             if station_info and listing.station_info != station_info:
                 other_changed = True
-                changed_fields.append('駅情報')
+                old_station = listing.station_info or "未設定"
+                # 駅情報が長い場合は省略
+                old_station_display = old_station[:25] + "..." if len(old_station) > 25 else old_station
+                station_display = station_info[:25] + "..." if len(station_info) > 25 else station_info
+                changed_fields.append(f'駅情報({old_station_display}→{station_display})')
             listing.station_info = station_info or listing.station_info
             
             
@@ -3955,6 +4011,91 @@ class BaseScraper(ABC):
                 master_property.final_price = None
                 master_property.final_price_updated_at = None
                 self.safe_flush(session)
+            
+            # 追加の属性を更新（変更を事前に追跡）
+            for key, value in kwargs.items():
+                if hasattr(listing, key) and value is not None:
+                    old_value = getattr(listing, key)
+                    if old_value != value:
+                        # 特定のフィールドについて変更を記録
+                        if key == 'listing_floor_number' and old_value is not None:
+                            other_changed = True
+                            changed_fields.append(f'所在階({old_value}階→{value}階)')
+                        elif key == 'listing_area' and old_value is not None:
+                            other_changed = True
+                            changed_fields.append(f'面積({old_value}㎡→{value}㎡)')
+                        elif key == 'listing_layout' and old_value is not None:
+                            other_changed = True
+                            changed_fields.append(f'間取り({old_value}→{value})')
+                        elif key == 'listing_direction' and old_value is not None:
+                            other_changed = True
+                            changed_fields.append(f'方角({old_value}→{value})')
+                        elif key == 'listing_total_floors' and old_value is not None:
+                            other_changed = True
+                            changed_fields.append(f'総階数({old_value}階→{value}階)')
+                        elif key == 'listing_total_units' and old_value is not None:
+                            other_changed = True
+                            changed_fields.append(f'総戸数({old_value}戸→{value}戸)')
+                        elif key == 'listing_balcony_area' and old_value is not None:
+                            other_changed = True
+                            changed_fields.append(f'バルコニー面積({old_value}㎡→{value}㎡)')
+                        elif key == 'listing_built_year' and old_value != value:
+                            # 築年月の変更は重要
+                            other_changed = True
+                            if old_value is not None:
+                                changed_fields.append(f'築年({old_value}年→{value}年)')
+                            else:
+                                changed_fields.append(f'築年(新規設定: {value}年)')
+                            self.logger.info(f"築年月を更新: {old_value} → {value}, URL: {url}")
+                        elif key == 'listing_built_month' and old_value != value:
+                            other_changed = True
+                            if old_value is not None:
+                                changed_fields.append(f'築月({old_value}月→{value}月)')
+                                self.logger.info(f"築月を更新: {old_value}月 → {value}月, URL: {url}")
+                            else:
+                                changed_fields.append(f'築月(新規設定: {value}月)')
+                        else:
+                            # その他のフィールドも変更を記録
+                            # 除外するフィールド（これらは更新として扱わない）
+                            excluded_fields = {
+                                'remarks', 'detail_fetched_at', 'last_confirmed_at',
+                                'is_active', 'price_updated_at', 'scraped_from_area'
+                            }
+                            
+                            if not key.startswith('_') and key not in excluded_fields:
+                                # フィールド名を日本語に変換
+                                field_name_map = {
+                                    'listing_address': '住所',
+                                    'listing_building_name': '建物名',
+                                    'agency_name': '不動産会社',
+                                    'agency_tel': '不動産会社電話番号'
+                                }
+                                field_display_name = field_name_map.get(key, key)
+                                
+                                if key not in {'listing_building_name'}:  # 建物名は上で処理済み
+                                    if old_value is not None:
+                                        # 既存値がある場合の変更
+                                        other_changed = True
+                                        changed_fields.append(f'{field_display_name}({old_value}→{value})')
+                                        self.logger.debug(f"フィールド変更検出: {key} ({old_value} → {value})")
+                                    else:
+                                        # NULLから新規設定の場合（重要なフィールドのみ）
+                                        important_fields = {'listing_address', 'agency_name', 'agency_tel'}
+                                        if key in important_fields:
+                                            other_changed = True
+                                            changed_fields.append(f'{field_display_name}(新規設定: {value})')
+                                            self.logger.debug(f"フィールド新規設定: {key} = {value}")
+                    # varchar(20)制限があるフィールドの値を切り詰める
+                    if key in ['listing_layout', 'listing_direction'] and isinstance(value, str) and len(value) > 20:
+                        self.logger.warning(f"{key}の値が20文字を超えているため切り詰めます: '{value[:20]}...'")
+                        value = value[:20]
+                    setattr(listing, key, value)
+            
+            # デバッグ: other_changedの状態を確認
+            self.logger.info(f"[DEBUG] other_changed={other_changed} before update_type check: {url}, changed_fields={changed_fields}")
+            
+            # 更新タイプを事前判定（kwargsでの変更も含める）
+            # update_typeがまだ設定されていない場合は後で判定する
             
             # 更新タイプを判定
             update_details = None
@@ -4032,89 +4173,6 @@ class BaseScraper(ABC):
             # published_atの更新（より新しい日付があれば）
             if published_at and (not listing.published_at or published_at > listing.published_at):
                 listing.published_at = published_at
-            
-            # 追加の属性を更新（変更を追跡）
-            for key, value in kwargs.items():
-                if hasattr(listing, key) and value is not None:
-                    old_value = getattr(listing, key)
-                    if old_value != value:
-                        # 特定のフィールドについて変更を記録
-                        if key == 'listing_floor_number' and old_value is not None:
-                            other_changed = True
-                            changed_fields.append(f'所在階({old_value}階→{value}階)')
-                        elif key == 'listing_area' and old_value is not None:
-                            other_changed = True
-                            changed_fields.append(f'面積({old_value}㎡→{value}㎡)')
-                        elif key == 'listing_layout' and old_value is not None:
-                            other_changed = True
-                            changed_fields.append(f'間取り({old_value}→{value})')
-                        elif key == 'listing_direction' and old_value is not None:
-                            other_changed = True
-                            changed_fields.append(f'方角({old_value}→{value})')
-                        elif key == 'listing_total_floors' and old_value is not None:
-                            other_changed = True
-                            changed_fields.append(f'総階数({old_value}階→{value}階)')
-                        elif key == 'listing_total_units' and old_value is not None:
-                            other_changed = True
-                            changed_fields.append(f'総戸数({old_value}戸→{value}戸)')
-                        elif key == 'listing_balcony_area' and old_value is not None:
-                            other_changed = True
-                            changed_fields.append(f'バルコニー面積({old_value}㎡→{value}㎡)')
-                        elif key == 'listing_built_year' and old_value != value:
-                            # 築年月の変更は重要
-                            other_changed = True
-                            if old_value is not None:
-                                changed_fields.append(f'築年({old_value}年→{value}年)')
-                            else:
-                                changed_fields.append(f'築年(新規設定: {value}年)')
-                            self.logger.info(f"築年月を更新: {old_value} → {value}, URL: {url}")
-                        elif key == 'listing_built_month' and old_value != value:
-                            other_changed = True
-                            if old_value is not None:
-                                changed_fields.append(f'築月({old_value}月→{value}月)')
-                                self.logger.info(f"築月を更新: {old_value}月 → {value}月, URL: {url}")
-                            else:
-                                changed_fields.append(f'築月(新規設定: {value}月)')
-                        else:
-                            # その他のフィールドも変更を記録
-                            # 除外するフィールド（これらは更新として扱わない）
-                            excluded_fields = {
-                                'remarks', 'agency_tel', 'detail_fetched_at', 'last_confirmed_at',
-                                'is_active', 'price_updated_at', 'scraped_from_area'
-                            }
-                            
-                            if not key.startswith('_') and key not in excluded_fields:
-                                # フィールド名を日本語に変換
-                                field_name_map = {
-                                    'listing_address': '住所',
-                                    'listing_building_name': '建物名',
-                                    'agency_name': '不動産会社'
-                                }
-                                field_display_name = field_name_map.get(key, key)
-                                
-                                if old_value is not None:
-                                    # 既存値がある場合の変更
-                                    other_changed = True
-                                    changed_fields.append(f'{field_display_name}({old_value}→{value})')
-                                    self.logger.debug(f"フィールド変更検出: {key} ({old_value} → {value})")
-                                elif key not in {'listing_building_name'}:  # 建物名は上で処理済み
-                                    # NULLから新規設定の場合（重要なフィールドのみ）
-                                    important_fields = {'listing_address', 'agency_name'}
-                                    if key in important_fields:
-                                        other_changed = True
-                                        changed_fields.append(f'{field_display_name}(新規設定: {value})')
-                                        self.logger.debug(f"フィールド新規設定: {key} = {value}")
-                    # varchar(20)制限があるフィールドの値を切り詰める
-                    if key in ['listing_layout', 'listing_direction'] and isinstance(value, str) and len(value) > 20:
-                        self.logger.warning(f"{key}の値が20文字を超えているため切り詰めます: '{value[:20]}...'")
-                        value = value[:20]
-                    setattr(listing, key, value)
-            
-            # 更新タイプを再判定（kwargsでの変更も含める）
-            if other_changed and update_type == 'refetched_unchanged':
-                update_type = 'other_updates'
-                update_details = ', '.join(changed_fields)
-                self.logger.info(f"その他更新（追加フィールド）: {url} - 詳細: {update_details}")
         else:
             # 新規作成
             update_type = None  # update_type変数を初期化
@@ -4776,6 +4834,7 @@ class BaseScraper(ABC):
                         majority_updater.update_property_building_name_by_majority(target_id)
                     
                     self.logger.debug(f"多数決更新成功: {update_type} (id={target_id})")
+
                     
                 except Exception as e:
                     # エラーの種類を判別
@@ -4936,6 +4995,7 @@ class BaseScraper(ABC):
         トランザクション管理をコンテキストマネージャーで簡潔に実装
         注: existing_listingパラメータは後方互換性のため残しているが、使用しない
         """
+        self.logger.info(f"[DEBUG] save_property_common開始: URL={property_data.get('url', '不明')}, detail_fetched={property_data.get('detail_fetched', False)}")
         try:
             with self.transaction_scope() as session:
                 # 詳細取得をスキップした場合の処理
@@ -5104,18 +5164,17 @@ class BaseScraper(ABC):
                         **listing_kwargs
                     )
                     
-                    # 戻り値を展開
-                    if len(result) == 2:
-                        listing, update_type = result
-                        update_details = None
-                    else:
-                        listing, update_type, update_details = result
+                    # 戻り値を展開（常に3つの値が返される）
+                    listing, update_type, update_details = result
+                    self.logger.info(f"[DEBUG] create_or_update_listing結果: update_type={update_type}, update_details={update_details}, URL={property_data.get('url', '不明')}")
                 except Exception as e:
+                    self.logger.error(f"[DEBUG] create_or_update_listing例外: {e}, URL={property_data.get('url', '不明')}")
                     raise
                 
                 # 更新タイプを設定
                 property_data['update_type'] = update_type
                 property_data['update_details'] = update_details
+                self.logger.info(f"[DEBUG] property_dataに更新タイプを設定: update_type={update_type}, URL={property_data.get('url', '不明')}")
                 
                 # サブクラス固有の処理
                 if hasattr(self, '_post_listing_creation_hook'):
@@ -5143,6 +5202,7 @@ class BaseScraper(ABC):
                         # データ整合性エラー（致命的）
                         elif 'integrity' in error_str or 'constraint' in error_str or 'foreign key' in error_str:
                             self.logger.error(f"多数決更新でデータ整合性エラー: {e}")
+                            self.logger.error(f"[DEBUG] 多数決更新エラーで例外を再スロー（データ整合性）: URL={property_data.get('url', '不明')}")
                             # トランザクション全体をロールバックすべき重大なエラー
                             raise
                         
@@ -5157,11 +5217,16 @@ class BaseScraper(ABC):
                             self.logger.error(f"多数決更新で予期しないエラー: {e}")
                             import traceback
                             self.logger.error(f"スタックトレース: {traceback.format_exc()}")
+                            self.logger.error(f"[DEBUG] 多数決更新エラーで例外を再スロー（予期しない）: URL={property_data.get('url', '不明')}")
                             # 原因不明なので安全のため再スロー
                             raise
                 
                 # コミットはwith文を抜ける時に自動実行
                 property_data['property_saved'] = True
+                
+                # デバッグ: property_savedとupdate_typeを確認
+                self.logger.info(f"[DEBUG] save_property_common完了: property_saved=True, update_type={property_data.get('update_type', 'None')}, URL={property_data.get('url', '不明')}")
+                
                 return True
                 
         except (TaskPausedException, TaskCancelledException):
@@ -5169,8 +5234,9 @@ class BaseScraper(ABC):
             raise
         except Exception as e:
             import traceback
+            self.logger.error(f"[DEBUG] save_property_common エラー詳細: exception_type={type(e).__name__}, message={e}, URL={property_data.get('url', '不明')}")
             self.logger.error(f"物件保存エラー: {e}")
-            self.logger.error(f"詳細なトレースバック:\n{traceback.format_exc()}")
+            self.logger.error(f"詳細なトレースバック: {traceback.format_exc()}")
             property_data['property_saved'] = False
             return False
     

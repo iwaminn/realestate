@@ -50,7 +50,7 @@ AREA_CODE_TO_NAME = {code: name for name, code in AREA_CODES.items()}
 
 def convert_area_codes_to_names(area_codes):
     """エリアコードを日本語名に変換"""
-    from backend.app.scrapers.area_config import TOKYO_AREA_CODES
+    from ...scrapers.area_config import TOKYO_AREA_CODES
     
     if not area_codes:
         return []
@@ -131,7 +131,7 @@ def validate_area_codes(area_codes: List[str]) -> None:
     Raises:
         ValueError: 無効なエリアコードが含まれる場合
     """
-    from backend.app.scrapers.area_config import TOKYO_AREA_CODES
+    from ...scrapers.area_config import TOKYO_AREA_CODES
     
     if not area_codes:
         raise ValueError("エリアコードが指定されていません")
@@ -635,14 +635,17 @@ def setup_logging_handlers(scraper, task_id: str, scraper_name: str, area_name: 
                 should_log = True
             elif update_type == 'other_updates':
                 # 建物名と詳細情報を含むメッセージ
+                # update_detailsがある場合は詳細を含める
+                details_suffix = f" - {update_details}" if update_details else ""
+                
                 if building_info and detail_str:
-                    log_entry["message"] = f"その他の更新: {building_info} {detail_str} ({price}万円)"
+                    log_entry["message"] = f"その他の更新: {building_info} {detail_str} ({price}万円){details_suffix}"
                 elif building_info:
-                    log_entry["message"] = f"その他の更新: {building_info} ({price}万円)"
+                    log_entry["message"] = f"その他の更新: {building_info} ({price}万円){details_suffix}"
                 elif detail_str:
-                    log_entry["message"] = f"その他の更新: {detail_str} ({price}万円)"
+                    log_entry["message"] = f"その他の更新: {detail_str} ({price}万円){details_suffix}"
                 else:
-                    log_entry["message"] = f"その他の更新: {title} ({price}万円)"
+                    log_entry["message"] = f"その他の更新: {title} ({price}万円){details_suffix}"
                 if update_details:
                     log_entry["update_details"] = update_details
                 should_log = True
@@ -814,6 +817,7 @@ def create_stats_update_thread(scraper, task_id: str, progress_key: str) -> Tupl
                             "price_updated": current_stats.get('price_updated', 0),
                             "other_updates": current_stats.get('other_updates', 0),
                             "refetched_unchanged": current_stats.get('refetched_unchanged', 0),
+                            "validation_failed": current_stats.get('validation_failed', 0),
                             "skipped_listings": current_stats.get('detail_skipped', 0),
                             "detail_fetch_failed": current_stats.get('detail_fetch_failed', 0),
                             "save_failed": current_stats.get('save_failed', 0),
@@ -1005,6 +1009,11 @@ def run_single_scraper_for_areas(
             final_stats = {}
             if hasattr(scraper, 'get_scraping_stats'):
                 final_stats = scraper.get_scraping_stats()
+                print(f"[{task_id}] Final stats retrieved: detail_fetched={final_stats.get('detail_fetched', 0)}, "
+                      f"new_listings={final_stats.get('new_listings', 0)}, "
+                      f"price_updated={final_stats.get('price_updated', 0)}, "
+                      f"other_updates={final_stats.get('other_updates', 0)}, "
+                      f"refetched_unchanged={final_stats.get('refetched_unchanged', 0)}")
             
             # 結果を記録
             final_progress = {
@@ -1022,6 +1031,8 @@ def run_single_scraper_for_areas(
                 "new_listings": final_stats.get('new_listings', 0),
                 "price_updated": final_stats.get('price_updated', 0),
                 "other_updates": final_stats.get('other_updates', 0),
+                "refetched_unchanged": final_stats.get('refetched_unchanged', 0),
+                "validation_failed": final_stats.get('validation_failed', 0),
                 "skipped_listings": final_stats.get('detail_skipped', 0),
                 "price_missing": final_stats.get('price_missing', 0),
                 "building_info_missing": final_stats.get('building_info_missing', 0),

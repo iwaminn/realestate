@@ -14,11 +14,10 @@ from .constants import SourceSite
 from .base_scraper import BaseScraper
 from ..models import PropertyListing
 from .area_config import get_area_code
-from .parsers import NomuParser
 from . import (
     normalize_integer, extract_price, extract_area, extract_floor_number,
     normalize_layout, normalize_direction, extract_monthly_fee,
-    format_station_info, extract_built_year, parse_date, clean_address,
+    format_station_info, extract_built_year, parse_date,
     extract_total_floors
 )
 
@@ -34,7 +33,6 @@ class NomuScraper(BaseScraper):
     
     def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False, task_id=None):
         super().__init__(SourceSite.NOMU, force_detail_fetch, max_properties, ignore_error_history, task_id)
-        self.parser = NomuParser(logger=self.logger)
     
     def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
         """ノムコムのsite_property_idの妥当性を検証
@@ -73,8 +71,27 @@ class NomuScraper(BaseScraper):
     
     
     def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
-        """物件一覧を解析 - パーサーに委譲"""
-        return self.parser.parse_property_list(soup)
+        """物件一覧を解析"""
+        properties = []
+        
+        # 物件カードを取得（2025年1月時点のセレクタ）
+        cards = soup.find_all("div", class_="item_resultsmall")
+        if not cards:
+            # フォールバック：旧セレクタ
+            cards = soup.find_all("div", class_="item_card")
+        if not cards:
+            cards = soup.find_all("div", class_="property-card")
+        
+        for card in cards:
+            try:
+                property_data = self.parse_property_card(card)
+                if property_data:
+                    properties.append(property_data)
+            except Exception as e:
+                self.logger.error(f"物件カード解析エラー: {str(e)}")
+                continue
+        
+        return properties
     
     def parse_property_card(self, card: BeautifulSoup) -> Optional[Dict[str, Any]]:
         """物件カードから情報を抽出"""
@@ -180,15 +197,19 @@ class NomuScraper(BaseScraper):
             # span要素から組み立てられない場合は全体テキストを使用
             price_text = price_elem.get_text(strip=True)
         
-        # 万円を追加（必要な場合）
-        if price_text and not price_text.endswith("円") and "万" not in price_text:
-            if not price_text.endswith("億"):
-                price_text += "万円"
+        # 億で終わる場合は円を追加
+        if price_text and price_text.endswith("億"):
+            price_text += "円"
+        # 万で終わる場合は円を追加
+        elif price_text and price_text.endswith("万"):
+            price_text += "円"
         
         return price_text
     
     def _extract_card_details(self, table: Tag, property_data: Dict[str, Any]):
         """カードから面積・間取り・方角を抽出"""
+        from . import extract_area, normalize_layout, normalize_direction
+        
         detail_cell = table.find("td", class_="item_td item_4")
         if detail_cell:
             p_tags = detail_cell.find_all("p")
@@ -277,13 +298,17 @@ class NomuScraper(BaseScraper):
         return self.save_property_common(property_data, existing_listing)
     
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
-        """物件詳細ページを解析 - パーサーに委譲"""
+        """物件詳細ページを解析"""
         soup = self.fetch_page(url)
         if not soup:
             return None
             
-        # パーサーで基本的な解析を実行
-        detail_data = self.parser.parse_property_detail(soup)
+        # 詳細情報を抽出
+        detail_data = self._extract_detail_from_soup(soup, url)
+        
+        # 必須フィールドが不足している場合のログ
+        if not detail_data or not self._has_required_fields(detail_data):
+            self.logger.warning(f"[NOMU] 一部の必須フィールドを取得できませんでした: {url}")
         
         # URLから物件IDを抽出（スクレイパー固有の処理）
         id_match = re.search(r'/mansion/id/([^/]+)/', url)
@@ -307,6 +332,65 @@ class NomuScraper(BaseScraper):
             return self.log_validation_error_and_return_none(detail_data, url)
         
         return detail_data
+
+    def _has_required_fields(self, data: Dict[str, Any]) -> bool:
+        """必須フィールドが存在するかチェック"""
+        required_fields = ['price', 'address', 'area', 'built_year', 'layout']
+        return all(data.get(field) for field in required_fields)
+    
+    def _extract_detail_from_soup(self, soup: BeautifulSoup, url: str) -> Dict[str, Any]:
+        """
+        soupから直接詳細情報を抽出（フォールバック処理）
+        パーサーが失敗した場合のバックアップとして使用
+        """
+        data = {}
+        
+        # 建物名を抽出
+        self._extract_building_name(soup, data)
+        
+        # 価格を抽出
+        self._extract_detail_price(soup, data)
+        
+        # 住所と駅情報を抽出
+        self._extract_address_and_station(soup, data, url)
+        
+        # マンション詳細テーブルから情報を抽出
+        self._extract_mansion_table_info(soup, data)
+        
+        # リスト形式の情報を抽出（価格が未取得の場合のみ）
+        if not data.get('price'):
+            self._extract_list_format_info(soup, data)
+        
+        # 追加の詳細情報を抽出
+        self._extract_additional_details(soup, data)
+        
+        # 手数料情報を抽出
+        self._extract_fees(soup, data)
+        
+        # バルコニー面積を抽出
+        self._extract_balcony_area(soup, data)
+        
+        # 築年を別の方法で抽出
+        if not data.get('built_year'):
+            self._extract_built_year_alt(soup, data)
+        
+        # 総階数を別の方法で抽出
+        if not data.get('total_floors'):
+            self._extract_total_floors_alt(soup, data)
+        
+        # 構造を抽出
+        self._extract_structure(soup, data)
+        
+        # 備考を抽出
+        self._extract_description_and_remarks(soup, data)
+        
+        # 面積と間取りを現在のフォーマットから抽出
+        self._extract_area_and_layout_current_format(soup, data)
+        
+        # 不動産会社の電話番号を抽出
+        self._extract_agency_tel(soup, data)
+        
+        return data
     
     def _extract_building_name(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
         """建物名を抽出"""
@@ -379,21 +463,36 @@ class NomuScraper(BaseScraper):
                 for i in range(len(cells) - 1):
                     if cells[i].get_text(strip=True) == "所在地":
                         next_cell = cells[i + 1]
-                        # p要素を探す
-                        p_elem = next_cell.find("p")
-                        if p_elem:
-                            address_text = p_elem.get_text(strip=True)
-                            address_text = clean_address(address_text, p_elem)
+                        
+                        # セル内のテキストを収集（リンクテキストも含む）
+                        address_parts = []
+                        
+                        # リンク内のテキストを取得
+                        for a_tag in next_cell.find_all("a"):
+                            link_text = a_tag.get_text(strip=True)
+                            # 「周辺地図を見る」などのUIリンクは除外
+                            if link_text and "地図" not in link_text and "周辺" not in link_text:
+                                address_parts.append(link_text)
+                        
+                        # リンクを削除してから残りのテキストを取得
+                        import copy
+                        cell_copy = copy.copy(next_cell)
+                        for tag in cell_copy.find_all(['a']):
+                            tag.decompose()
+                        remaining_text = cell_copy.get_text(strip=True)
+                        
+                        if remaining_text:
+                            address_parts.append(remaining_text)
+                        
+                        # 住所パーツを結合
+                        if address_parts:
+                            address_text = "".join(address_parts)
+                            # clean_addressメソッドで住所をクリーニング
+                            address_text = self.clean_address(address_text)
+                            
                             # 説明文でないことを確認
                             if address_text and "区" in address_text:
                                 detail_data['address'] = address_text
-                                return True
-                        else:
-                            # p要素がない場合は直接テキストを確認
-                            cell_text = next_cell.get_text(strip=True)
-                            cell_text = clean_address(cell_text)
-                            if cell_text and "区" in cell_text:
-                                detail_data['address'] = cell_text
                                 return True
         return False
     
@@ -401,25 +500,32 @@ class NomuScraper(BaseScraper):
         """p.addressタグから住所を抽出"""
         address_elem = soup.find("p", {"class": "address"})
         if address_elem:
+            # 「｜」で住所と駅情報を分離する前に、要素全体をコピー
             full_text = address_elem.get_text(strip=True)
-            # 「｜」で住所と駅情報を分離
+            
             if "｜" in full_text:
+                # 「｜」がある場合は、住所部分のみを抽出
+                # まず要素から適切に住所を抽出
+                address_text = self.extract_address_from_element(address_elem)
+                
+                # 駅情報は元のテキストから取得
                 parts = full_text.split("｜")
-                address_text = parts[0].strip()
-                address_text = clean_address(address_text)
+                if len(parts) >= 2:
+                    station_text = parts[1].strip()
+                    if station_text:
+                        detail_data['station_info'] = format_station_info(station_text)
+                
                 if address_text:
+                    # 「｜」以降を除去（extract_address_from_elementが処理しきれない場合のため）
+                    if "｜" in address_text:
+                        address_text = address_text.split("｜")[0].strip()
                     detail_data['address'] = address_text
-                    # 駅情報もフォーマットして保存
-                    if len(parts) >= 2:
-                        station_text = parts[1].strip()
-                        if station_text:
-                            detail_data['station_info'] = format_station_info(station_text)
                     return True
             else:
                 # 「｜」がない場合は全体を住所として扱う
-                if full_text:
-                    full_text = clean_address(full_text)
-                    detail_data['address'] = full_text
+                address_text = self.extract_address_from_element(address_elem)
+                if address_text:
+                    detail_data['address'] = address_text
                     return True
         return False
     
@@ -448,7 +554,7 @@ class NomuScraper(BaseScraper):
     def _extract_built_year_from_various_sources(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
         """築年月を様々な場所から探す（新築物件などで特殊な配置の場合がある）"""
         import re
-        from .data_normalizer import extract_built_year
+        from . import extract_built_year
         
         # すでに築年が取得済みの場合はスキップ
         if detail_data.get('built_year'):
@@ -544,9 +650,9 @@ class NomuScraper(BaseScraper):
                     else:
                         self.logger.warning(f"[NOMU] p.item_priceから価格を抽出できませんでした: {price_text}")
                 
-                # p.item_priceがない場合のみリスト形式を試行
-                if not detail_data.get('price'):
-                    self._extract_list_format_info(soup, detail_data)
+                # p.item_priceがない場合のみリスト形式を試行（削除 - フォールバック処理で実行される）
+                # if not detail_data.get('price'):
+                #     self._extract_list_format_info(soup, detail_data)
                 
                 if not detail_data.get('price'):
                     self.logger.warning(f"[NOMU] 詳細ページで物件情報テーブルが見つかりません")

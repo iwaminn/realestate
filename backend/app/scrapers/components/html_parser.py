@@ -144,7 +144,7 @@ class HtmlParserComponent:
         価格テキストをパース（万円単位）
         
         Args:
-            text: 価格テキスト（例: "3,500万円"）
+            text: 価格テキスト（例: "3,500万円", "3億3,000万円"）
             
         Returns:
             価格（万円単位の整数）
@@ -155,9 +155,14 @@ class HtmlParserComponent:
         # 全角数字を半角に変換
         text = unicodedata.normalize('NFKC', text)
         
+        # カンマを除去（数値処理を簡単にするため）
+        text = text.replace(',', '')
+        
         # 億円の処理
         if '億' in text:
             # 例: "1億5000万円" -> 15000
+            # 例: "3億3000万円" -> 33000
+            # 例: "3億円" -> 30000
             pattern = r'(\d+)億\s*(\d+)?万?'
             match = re.search(pattern, text)
             if match:
@@ -167,13 +172,12 @@ class HtmlParserComponent:
         
         # 万円の処理
         if '万' in text:
-            # 例: "3,500万円" -> 3500
-            pattern = r'([\d,]+)万'
+            # 例: "3500万円" -> 3500
+            pattern = r'(\d+)万'
             match = re.search(pattern, text)
             if match:
-                price_str = match.group(1).replace(',', '')
                 try:
-                    return int(price_str)
+                    return int(match.group(1))
                 except ValueError:
                     pass
         

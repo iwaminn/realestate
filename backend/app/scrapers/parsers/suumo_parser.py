@@ -15,7 +15,7 @@ class SuumoParser(BaseHtmlParser):
     """SUUMO専用パーサー"""
     
     # SUUMOのデフォルト設定
-    DEFAULT_AGENCY_NAME = "SUUMO"
+    DEFAULT_AGENCY_NAME = None  # SUUMOは不動産会社ではないため、デフォルト値は設定しない
     BASE_URL = "https://suumo.jp"
     
     def __init__(self, logger: Optional[logging.Logger] = None):
@@ -53,6 +53,11 @@ class SuumoParser(BaseHtmlParser):
             # 物件詳細へのリンク（タイトルリンクを取得）
             title_link = unit.select_one('.property_unit-title a')
             if title_link:
+                # タイトルテキストを取得
+                title_text = self.extract_text(title_link)
+                if title_text:
+                    property_data['title'] = title_text
+                    
                 url = title_link.get('href')
                 if url:
                     from urllib.parse import urljoin
@@ -284,8 +289,7 @@ class SuumoParser(BaseHtmlParser):
         agency_elem = room_elem.select_one("span.cassetteitem_agency, div.agency")
         if agency_elem:
             property_data['agency_name'] = self.extract_text(agency_elem)
-        else:
-            property_data['agency_name'] = self.DEFAULT_AGENCY_NAME
+        # 不動産会社が取得できない場合は空のままにする
     
     def _extract_single_property_info(self, card: Tag, property_data: Dict[str, Any]) -> None:
         """
@@ -409,7 +413,10 @@ class SuumoParser(BaseHtmlParser):
             if title:
                 building_name = self.extract_text(title)
                 if building_name:
-                    # 部屋番号部分を除去
+                    # タイトルフィールドにも設定（表示用）
+                    property_data['title'] = building_name
+                    
+                    # 部屋番号部分を除去してbuilding_nameに設定
                     building_name = re.sub(r'\s*\d+号室.*$', '', building_name)
                     building_name = re.sub(r'\s*\d+階.*$', '', building_name)
                     property_data['building_name'] = building_name
@@ -630,9 +637,9 @@ class SuumoParser(BaseHtmlParser):
                 if tel_match:
                     property_data['agency_tel'] = tel_match.group()
         
-        # デフォルト値
-        if 'agency_name' not in property_data:
-            property_data['agency_name'] = self.DEFAULT_AGENCY_NAME
+        # 不動産会社が取得できない場合は空のままにする（SUUMOは不動産会社ではない）
+        # if 'agency_name' not in property_data:
+        #     property_data['agency_name'] = self.DEFAULT_AGENCY_NAME
     
     def get_next_page_url(self, soup: BeautifulSoup, current_url: str) -> Optional[str]:
         """

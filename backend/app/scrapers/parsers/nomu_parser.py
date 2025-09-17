@@ -115,7 +115,7 @@ class NomuParser(BaseHtmlParser):
         if price_cell:
             price_elem = price_cell.find("p", class_="item_price")
             if price_elem:
-                price_text = price_elem.get_text(strip=True)
+                price_text = self._build_price_text(price_elem)
                 price = self.parse_price(price_text)
                 if price:
                     property_data['price'] = price
@@ -192,6 +192,38 @@ class NomuParser(BaseHtmlParser):
             if station_parts:
                 station_info = ' / '.join(station_parts)
                 property_data['station_info'] = station_info
+
+    def _build_price_text(self, price_elem: Tag) -> str:
+        """
+        価格要素から価格文字列を構築
+        
+        ノムコムの価格表示は複数のspan要素に分かれているため、
+        基底クラスの共通メソッドを使用して結合
+        
+        Args:
+            price_elem: 価格要素
+            
+        Returns:
+            価格文字列
+        """
+        # デバッグ: span要素の内容を確認
+        spans = price_elem.find_all("span")
+        if spans:
+            span_texts = []
+            for span in spans:
+                text = span.get_text(strip=True)
+                classes = span.get("class", [])
+                span_texts.append(f"{text}(class={classes})")
+            self.logger.debug(f"価格span要素: {span_texts}")
+        
+        # 基底クラスのメソッドを使用
+        built_text = self.build_price_text_from_spans(price_elem)
+        raw_text = price_elem.get_text(strip=True)
+        
+        if built_text != raw_text:
+            self.logger.info(f"価格テキスト差異: raw='{raw_text}', built='{built_text}'")
+        
+        return built_text
     
     def parse_property_detail(self, soup: BeautifulSoup) -> Dict[str, Any]:
         """
@@ -249,16 +281,19 @@ class NomuParser(BaseHtmlParser):
             building_name = h1_copy.get_text(strip=True)
             if building_name:
                 detail_data['building_name'] = building_name
+                detail_data['title'] = building_name  # タイトルも設定
     
     def _extract_detail_price(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
         """詳細ページから価格を取得"""
-        # item_newクラスから価格を取得
-        price_elem = soup.find(class_='item_new')
+        # p.item_priceから価格を取得（正しいセレクタ）
+        price_elem = soup.select_one('p.item_price')
         if price_elem:
-            price_text = price_elem.get_text(strip=True)
+            # span要素を組み合わせて価格テキストを構築
+            price_text = self._build_price_text(price_elem)
             price = self.parse_price(price_text)
             if price:
                 detail_data['price'] = price
+                self.logger.debug(f"価格取得成功: {price}万円 (raw: {price_text})")
     
     def _extract_address_and_station(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
         """住所と駅情報を取得"""

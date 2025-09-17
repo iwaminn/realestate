@@ -105,7 +105,7 @@ class HomesScraper(BaseScraper):
     
     def _setup_headers(self):
         """HTTPヘッダーの設定"""
-        self.http_session.headers.update({
+        self.http_client.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ja,en-US;q=0.9,en;q=0.8',
@@ -129,20 +129,20 @@ class HomesScraper(BaseScraper):
             
             # リファラーを設定
             if '/list/' in url:
-                self.http_session.headers['Referer'] = 'https://www.homes.co.jp/'
+                self.http_client.session.headers['Referer'] = 'https://www.homes.co.jp/'
             else:
-                self.http_session.headers['Referer'] = 'https://www.homes.co.jp/mansion/chuko/tokyo/list/'
+                self.http_client.session.headers['Referer'] = 'https://www.homes.co.jp/mansion/chuko/tokyo/list/'
             
-            response = self.http_session.get(url, timeout=30, allow_redirects=True)
+            response = self.http_client.session.get(url, timeout=30, allow_redirects=True)
             
             # 405エラーの特別処理
             if response.status_code == 405:
                 self.logger.error(f"405 Method Not Allowed for {url}")
                 self.logger.info("Trying with modified headers...")
-                self.http_session.headers['Sec-Fetch-Site'] = 'same-origin'
-                self.http_session.headers['Sec-Fetch-Mode'] = 'cors'
+                self.http_client.session.headers['Sec-Fetch-Site'] = 'same-origin'
+                self.http_client.session.headers['Sec-Fetch-Mode'] = 'cors'
                 time.sleep(5)
-                response = self.http_session.get(url, timeout=30)
+                response = self.http_client.session.get(url, timeout=30)
             
             response.raise_for_status()
             
@@ -787,12 +787,73 @@ class HomesScraper(BaseScraper):
             detail_data["url"] = url
             detail_data["_page_text"] = soup.get_text()  # 建物名一致確認用
             
-            # site_property_idの抽出と検証（必要に応じて）
+            # パーサーで取得できなかったデータを独自処理で補完
+            # HOMESパーサーが取得できない場合の補完処理
+            if 'area' not in detail_data or 'layout' not in detail_data:
+                self._extract_detail_from_soup(soup, detail_data)
+            
+            # site_property_idの抽出と検証
             if "site_property_id" not in detail_data and url:
-                # URLからsite_property_idを抽出する処理（スクレイパー固有）
-                pass
+                import re
+                site_id_match = re.search(r'/mansion/b-(\d+)/', url)
+                if site_id_match:
+                    detail_data["site_property_id"] = site_id_match.group(1)
         
         return detail_data
+
+    def _extract_detail_from_soup(self, soup: BeautifulSoup, detail_data: Dict[str, Any]) -> None:
+        """
+        パーサーで取得できなかったデータを独自処理で補完
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+            detail_data: 物件データ辞書
+        """
+        # テーブルから情報を抽出
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                th = row.find('th')
+                td = row.find('td')
+                if th and td:
+                    label = th.get_text(strip=True)
+                    value = td.get_text(strip=True)
+                    
+                    # 間取り
+                    if '間取り' in label and 'layout' not in detail_data:
+                        layout = normalize_layout(value)
+                        if layout:
+                            detail_data['layout'] = layout
+                            print(f"    間取り: {detail_data['layout']}")
+                    
+                    # 専有面積
+                    elif '専有面積' in label and 'area' not in detail_data:
+                        area = extract_area(value)
+                        if area:
+                            detail_data['area'] = area
+                            print(f"    専有面積: {detail_data['area']}㎡")
+                    
+                    # 所在階
+                    elif '所在階' in label and 'floor_number' not in detail_data:
+                        floor_number = extract_floor_number(value)
+                        if floor_number is not None:
+                            detail_data['floor_number'] = floor_number
+                            print(f"    所在階: {detail_data['floor_number']}階")
+                    
+                    # 向き
+                    elif '向き' in label and 'direction' not in detail_data:
+                        direction = normalize_direction(value)
+                        if direction:
+                            detail_data['direction'] = direction
+                            print(f"    向き: {detail_data['direction']}")
+                    
+                    # 築年月
+                    elif '築年月' in label:
+                        built_year = extract_built_year(value)
+                        if built_year and 'built_year' not in detail_data:
+                            detail_data['built_year'] = built_year
+                            print(f"    築年月: {detail_data['built_year']}年")
 
     def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
         """物件一覧を解析 - パーサーに委譲"""

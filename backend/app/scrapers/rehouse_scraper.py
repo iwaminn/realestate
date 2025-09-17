@@ -48,8 +48,8 @@ class RehouseScraper(BaseScraper):
     def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False, task_id=None):
         super().__init__(self.SOURCE_SITE, force_detail_fetch, max_properties, ignore_error_history, task_id)
         self.parser = RehouseParser(logger=self.logger)
-        self.http_session = requests.Session()
-        self.http_session.headers.update({
+        # http_sessionは削除済み（基底クラスのhttp_clientを使用）
+        self.http_client.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ja-JP,ja;q=0.9,en;q=0.8',
@@ -245,6 +245,16 @@ class RehouseScraper(BaseScraper):
             save_property_func=self.save_property
         )
     
+    def extract_property_id(self, url: str) -> Optional[str]:
+        """URLから物件IDを抽出"""
+        import re
+        # REHOUSEのURLパターンから物件IDを抽出
+        # 例: https://www.rehouse.co.jp/buy/mansion/bkdetail/FK7ARA05/
+        match = re.search(r'/([A-Z0-9]+)/$', url)
+        if match:
+            return match.group(1)
+        return None
+
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
         """物件詳細ページを解析 - パーサーに委譲"""
         soup = self.fetch_page(url)
@@ -259,12 +269,66 @@ class RehouseScraper(BaseScraper):
             detail_data["url"] = url
             detail_data["_page_text"] = soup.get_text()  # 建物名一致確認用
             
-            # site_property_idの抽出と検証（必要に応じて）
+            # パーサーで取得できなかったデータを独自処理で補完
+            if 'area' not in detail_data or 'layout' not in detail_data:
+                self._extract_detail_from_soup(soup, detail_data)
+            
+            # site_property_idの抽出と検証
             if "site_property_id" not in detail_data and url:
-                # URLからsite_property_idを抽出する処理（スクレイパー固有）
-                pass
+                site_id = self.extract_property_id(url)
+                if site_id:
+                    detail_data["site_property_id"] = site_id
         
         return detail_data
+
+    def _extract_detail_from_soup(self, soup: BeautifulSoup, detail_data: Dict[str, Any]) -> None:
+        """
+        パーサーで取得できなかったデータを独自処理で補完
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+            detail_data: 物件データ辞書
+        """
+        from . import normalize_layout, extract_area, extract_floor_number, normalize_direction, extract_built_year
+        
+        # テーブルから情報を抽出
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                th = row.find('th')
+                td = row.find('td')
+                if th and td:
+                    label = th.get_text(strip=True)
+                    value = td.get_text(strip=True)
+                    
+                    # 間取り
+                    if '間取り' in label and 'layout' not in detail_data:
+                        layout = normalize_layout(value)
+                        if layout:
+                            detail_data['layout'] = layout
+                            print(f"    間取り: {detail_data['layout']}")
+                    
+                    # 専有面積
+                    elif '専有面積' in label and 'area' not in detail_data:
+                        area = extract_area(value)
+                        if area:
+                            detail_data['area'] = area
+                            print(f"    専有面積: {detail_data['area']}㎡")
+                    
+                    # 所在階
+                    elif '所在階' in label and 'floor_number' not in detail_data:
+                        floor_number = extract_floor_number(value)
+                        if floor_number is not None:
+                            detail_data['floor_number'] = floor_number
+                            print(f"    所在階: {detail_data['floor_number']}階")
+                    
+                    # 向き
+                    elif '向き' in label and 'direction' not in detail_data:
+                        direction = normalize_direction(value)
+                        if direction:
+                            detail_data['direction'] = direction
+                            print(f"    向き: {detail_data['direction']}")
 
     def get_property_detail(self, url: str) -> Optional[Dict]:
         """詳細ページから物件情報を取得"""

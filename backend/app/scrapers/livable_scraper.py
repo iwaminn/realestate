@@ -339,12 +339,67 @@ class LivableScraper(BaseScraper):
             detail_data["url"] = url
             detail_data["_page_text"] = soup.get_text()  # 建物名一致確認用
             
-            # site_property_idの抽出と検証（必要に応じて）
+            # パーサーで取得できなかったデータを独自処理で補完
+            if 'area' not in detail_data or 'layout' not in detail_data:
+                self._extract_detail_from_soup(soup, detail_data)
+            
+            # site_property_idの抽出と検証
             if "site_property_id" not in detail_data and url:
-                # URLからsite_property_idを抽出する処理（スクレイパー固有）
-                pass
+                import re
+                site_id_match = re.search(r'/mediation/([A-Z0-9]+)/', url)
+                if site_id_match:
+                    detail_data["site_property_id"] = site_id_match.group(1)
         
         return detail_data
+
+    def _extract_detail_from_soup(self, soup: BeautifulSoup, detail_data: Dict[str, Any]) -> None:
+        """
+        パーサーで取得できなかったデータを独自処理で補完
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+            detail_data: 物件データ辞書
+        """
+        from . import normalize_layout, extract_area, extract_floor_number, normalize_direction, extract_built_year
+        
+        # テーブルから情報を抽出
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                th = row.find('th')
+                td = row.find('td')
+                if th and td:
+                    label = th.get_text(strip=True)
+                    value = td.get_text(strip=True)
+                    
+                    # 間取り
+                    if '間取り' in label and 'layout' not in detail_data:
+                        layout = normalize_layout(value)
+                        if layout:
+                            detail_data['layout'] = layout
+                            print(f"    間取り: {detail_data['layout']}")
+                    
+                    # 専有面積
+                    elif '専有面積' in label and 'area' not in detail_data:
+                        area = extract_area(value)
+                        if area:
+                            detail_data['area'] = area
+                            print(f"    専有面積: {detail_data['area']}㎡")
+                    
+                    # 所在階
+                    elif '所在階' in label and 'floor_number' not in detail_data:
+                        floor_number = extract_floor_number(value)
+                        if floor_number is not None:
+                            detail_data['floor_number'] = floor_number
+                            print(f"    所在階: {detail_data['floor_number']}階")
+                    
+                    # 向き
+                    elif '向き' in label and 'direction' not in detail_data:
+                        direction = normalize_direction(value)
+                        if direction:
+                            detail_data['direction'] = direction
+                            print(f"    向き: {detail_data['direction']}")
 
     def _validate_html_structure(self, soup: BeautifulSoup, is_grantact: bool, url: str) -> bool:
         """HTML構造を検証"""
@@ -453,31 +508,13 @@ class LivableScraper(BaseScraper):
             for dt, dd in zip(dt_elements, dd_elements):
                 dt_text = dt.get_text(strip=True)
                 if '所在地' in dt_text or '住所' in dt_text:
-                    # 住所を抽出（一時的な回避策）
-                    import copy
-                    dd_copy = copy.copy(dd)
-                    # リンクなどのUI要素を削除
-                    for tag in dd_copy.find_all(['a', 'button', 'img', 'input', 'svg', 'iframe']):
-                        tag.decompose()
-                    address_text = dd_copy.get_text(strip=True)
+                    # extract_address_from_elementを使用してリンク等を除去
+                    address_text = self.extract_address_from_element(dd)
                     
                     # 住所をクリーニング
                     if address_text and address_text != '-':
-                        # 不要なUI要素のテキストを除去
-                        ui_patterns = [
-                            r'地図を見る',
-                            r'マップを見る',
-                            r'地図で確認',
-                            r'周辺地図',
-                            r'Google\s*Map',
-                            r'詳細を見る',
-                            r'詳しく見る',
-                        ]
-                        for pattern in ui_patterns:
-                            address_text = re.sub(pattern, '', address_text, flags=re.IGNORECASE)
-                        
-                        # 余分な空白を正規化
-                        address_text = re.sub(r'\s+', ' ', address_text).strip()
+                        # clean_addressメソッドで追加のクリーニング
+                        address_text = self.clean_address(address_text)
                         
                         if address_text:
                             address_from_html = address_text
