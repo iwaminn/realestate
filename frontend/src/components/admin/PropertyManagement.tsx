@@ -34,6 +34,7 @@ import {
   Tab,
   FormControlLabel,
   Alert,
+  Collapse,
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -45,6 +46,8 @@ import {
   OpenInNew as OpenInNewIcon,
   CallSplit as CallSplitIcon,
   Delete as DeleteIcon,
+  ExpandMore as ExpandMoreIcon,
+  ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
 import { format } from 'date-fns';
 import axios, { isAxiosError } from 'axios';
@@ -241,6 +244,7 @@ export const PropertyManagement: React.FC = () => {
     direction: '',
     display_building_name: '',
   });
+  const [expandedListingId, setExpandedListingId] = useState<number | null>(null);
 
   // 物件一覧を取得
   const fetchProperties = async () => {
@@ -862,46 +866,188 @@ export const PropertyManagement: React.FC = () => {
                     <Table size="small">
                       <TableHead>
                         <TableRow>
+                          <TableCell>ID</TableCell>
                           <TableCell>サイト</TableCell>
                           <TableCell align="right">価格</TableCell>
                           <TableCell>建物名</TableCell>
                           <TableCell>住所</TableCell>
                           <TableCell>最終確認</TableCell>
+                          <TableCell align="center">詳細</TableCell>
                           <TableCell align="center">リンク</TableCell>
                           <TableCell align="center">操作</TableCell>
                         </TableRow>
                       </TableHead>
                       <TableBody>
                         {selectedProperty.active_listings.map((listing) => (
-                          <TableRow key={listing.id}>
-                            <TableCell>{listing.source_site}</TableCell>
-                            <TableCell align="right">{formatPrice(listing.current_price)}</TableCell>
-                            <TableCell>{listing.listing_building_name || '-'}</TableCell>
-                            <TableCell>{listing.listing_address || '-'}</TableCell>
-                            <TableCell>{formatDate(listing.last_confirmed_at)}</TableCell>
-                            <TableCell align="center">
-                              <IconButton
-                                size="small"
-                                href={listing.url}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                              >
-                                <OpenInNewIcon fontSize="small" />
-                              </IconButton>
-                            </TableCell>
-                            <TableCell align="center">
-                              <Tooltip title="この掲載情報を別物件として分離">
+                          <React.Fragment key={listing.id}>
+                            <TableRow>
+                              <TableCell>{listing.id}</TableCell>
+                              <TableCell>{listing.source_site}</TableCell>
+                              <TableCell align="right">{formatPrice(listing.current_price)}</TableCell>
+                              <TableCell>{listing.listing_building_name || '-'}</TableCell>
+                              <TableCell>{listing.listing_address || '-'}</TableCell>
+                              <TableCell>{formatDate(listing.last_confirmed_at)}</TableCell>
+                              <TableCell align="center">
                                 <IconButton
                                   size="small"
-                                  color="warning"
-                                  onClick={() => fetchDetachCandidates(listing.id)}
+                                  onClick={() => setExpandedListingId(
+                                    expandedListingId === listing.id ? null : listing.id
+                                  )}
                                 >
-                                  <CallSplitIcon fontSize="small" />
+                                  {expandedListingId === listing.id ? 
+                                    <ExpandLessIcon fontSize="small" /> : 
+                                    <ExpandMoreIcon fontSize="small" />}
                                 </IconButton>
-                              </Tooltip>
-
-                            </TableCell>
-                          </TableRow>
+                              </TableCell>
+                              <TableCell align="center">
+                                <IconButton
+                                  size="small"
+                                  href={listing.url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  <OpenInNewIcon fontSize="small" />
+                                </IconButton>
+                              </TableCell>
+                              <TableCell align="center">
+                                <Tooltip title="この掲載情報を別物件として分離">
+                                  <IconButton
+                                    size="small"
+                                    color="warning"
+                                    onClick={() => fetchDetachCandidates(listing.id)}
+                                  >
+                                    <CallSplitIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              </TableCell>
+                            </TableRow>
+                            {/* 詳細情報の折り畳み行 */}
+                            {expandedListingId === listing.id && (
+                              <TableRow>
+                                <TableCell colSpan={9} sx={{ bgcolor: 'grey.50', py: 0 }}>
+                                  <Collapse in={expandedListingId === listing.id}>
+                                    <Box sx={{ p: 2 }}>
+                                      <Typography variant="subtitle2" gutterBottom>
+                                        掲載情報詳細
+                                      </Typography>
+                                      <Grid container spacing={2}>
+                                        <Grid item xs={12} md={6}>
+                                          <Typography variant="caption" color="text.secondary">
+                                            総階数
+                                          </Typography>
+                                          <Typography variant="body2">
+                                            {listing.listing_total_floors ? `${listing.listing_total_floors}階` : '-'}
+                                          </Typography>
+                                        </Grid>
+                                        <Grid item xs={12} md={6}>
+                                          <Typography variant="caption" color="text.secondary">
+                                            総戸数
+                                          </Typography>
+                                          <Typography variant="body2">
+                                            {listing.listing_total_units ? `${listing.listing_total_units}戸` : '-'}
+                                          </Typography>
+                                        </Grid>
+                                        <Grid item xs={12} md={6}>
+                                          <Typography variant="caption" color="text.secondary">
+                                            所在階
+                                          </Typography>
+                                          <Typography variant="body2">
+                                            {listing.listing_floor_number ? `${listing.listing_floor_number}階` : '-'}
+                                          </Typography>
+                                        </Grid>
+                                        <Grid item xs={12} md={6}>
+                                          <Typography variant="caption" color="text.secondary">
+                                            専有面積
+                                          </Typography>
+                                          <Typography variant="body2">
+                                            {listing.listing_area ? `${listing.listing_area}㎡` : '-'}
+                                          </Typography>
+                                        </Grid>
+                                        <Grid item xs={12} md={6}>
+                                          <Typography variant="caption" color="text.secondary">
+                                            間取り
+                                          </Typography>
+                                          <Typography variant="body2">
+                                            {listing.listing_layout || '-'}
+                                          </Typography>
+                                        </Grid>
+                                        <Grid item xs={12} md={6}>
+                                          <Typography variant="caption" color="text.secondary">
+                                            方角
+                                          </Typography>
+                                          <Typography variant="body2">
+                                            {listing.listing_direction || '-'}
+                                          </Typography>
+                                        </Grid>
+                                        <Grid item xs={12} md={6}>
+                                          <Typography variant="caption" color="text.secondary">
+                                            築年月
+                                          </Typography>
+                                          <Typography variant="body2">
+                                            {listing.listing_built_year ? 
+                                              `${listing.listing_built_year}年${listing.listing_built_month ? listing.listing_built_month + '月' : ''}` 
+                                              : '-'}
+                                          </Typography>
+                                        </Grid>
+                                        <Grid item xs={12} md={6}>
+                                          <Typography variant="caption" color="text.secondary">
+                                            管理費
+                                          </Typography>
+                                          <Typography variant="body2">
+                                            {listing.management_fee ? `${listing.management_fee.toLocaleString()}円/月` : '-'}
+                                          </Typography>
+                                        </Grid>
+                                        <Grid item xs={12} md={6}>
+                                          <Typography variant="caption" color="text.secondary">
+                                            修繕積立金
+                                          </Typography>
+                                          <Typography variant="body2">
+                                            {listing.repair_fund ? `${listing.repair_fund.toLocaleString()}円/月` : '-'}
+                                          </Typography>
+                                        </Grid>
+                                        <Grid item xs={12} md={6}>
+                                          <Typography variant="caption" color="text.secondary">
+                                            不動産会社
+                                          </Typography>
+                                          <Typography variant="body2">
+                                            {listing.agency_name || '-'}
+                                          </Typography>
+                                        </Grid>
+                                        {listing.agency_tel && (
+                                          <Grid item xs={12} md={6}>
+                                            <Typography variant="caption" color="text.secondary">
+                                              電話番号
+                                            </Typography>
+                                            <Typography variant="body2">
+                                              {listing.agency_tel}
+                                            </Typography>
+                                          </Grid>
+                                        )}
+                                        <Grid item xs={12}>
+                                          <Typography variant="caption" color="text.secondary">
+                                            初回掲載日
+                                          </Typography>
+                                          <Typography variant="body2">
+                                            {formatDate(listing.first_seen_at)}
+                                          </Typography>
+                                        </Grid>
+                                        {listing.detail_fetched_at && (
+                                          <Grid item xs={12}>
+                                            <Typography variant="caption" color="text.secondary">
+                                              詳細取得日時
+                                            </Typography>
+                                            <Typography variant="body2">
+                                              {formatDate(listing.detail_fetched_at)}
+                                            </Typography>
+                                          </Grid>
+                                        )}
+                                      </Grid>
+                                    </Box>
+                                  </Collapse>
+                                </TableCell>
+                              </TableRow>
+                            )}
+                          </React.Fragment>
                         ))}
                       </TableBody>
                     </Table>

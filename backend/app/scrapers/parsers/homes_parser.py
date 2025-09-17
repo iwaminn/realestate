@@ -376,6 +376,13 @@ class HomesParser(BaseHtmlParser):
             if fund:
                 property_data['repair_fund'] = fund
         
+        # 総戸数
+        elif '総戸数' in key or '総区画数' in key:
+            # 「250戸」などから数値を抽出
+            units_match = re.search(r'(\d+)戸', value)
+            if units_match:
+                property_data['total_units'] = int(units_match.group(1))
+
         # 部屋番号
         elif '部屋番号' in key or '号室' in key:
             room = self.extract_text(value)

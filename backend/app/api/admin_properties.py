@@ -205,6 +205,21 @@ async def get_property_detail(
             'station_info': listing.station_info,
             'listing_building_name': listing.listing_building_name,
             'listing_address': listing.listing_address,
+            # 詳細フィールドを追加
+            'listing_floor_number': listing.listing_floor_number,
+            'listing_area': listing.listing_area,
+            'listing_layout': listing.listing_layout,
+            'listing_direction': listing.listing_direction,
+            'listing_total_floors': listing.listing_total_floors,
+            'listing_total_units': listing.listing_total_units,
+            'listing_built_year': listing.listing_built_year,
+            'listing_built_month': listing.listing_built_month,
+            'management_fee': listing.management_fee,
+            'repair_fund': listing.repair_fund,
+            'agency_name': listing.agency_name,
+            'agency_tel': listing.agency_tel,
+            'first_seen_at': listing.first_seen_at.isoformat() if listing.first_seen_at else None,
+            'detail_fetched_at': listing.detail_fetched_at.isoformat() if listing.detail_fetched_at else None,
         }
         
         if listing.is_active:

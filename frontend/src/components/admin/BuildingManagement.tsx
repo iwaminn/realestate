@@ -943,6 +943,7 @@ export const BuildingManagement: React.FC = () => {
                                         <Table size="small">
                                           <TableHead>
                                             <TableRow>
+                                              <TableCell>ID</TableCell>
                                               <TableCell>サイト</TableCell>
                                               <TableCell>建物名</TableCell>
                                               <TableCell align="right">価格</TableCell>
@@ -957,6 +958,7 @@ export const BuildingManagement: React.FC = () => {
                                           <TableBody>
                                             {property.listings.map((listing: any) => (
                                               <TableRow key={listing.id}>
+                                                <TableCell>{listing.id}</TableCell>
                                                 <TableCell>
                                                   <Chip
                                                     label={listing.source_site}

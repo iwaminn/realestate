@@ -430,17 +430,48 @@ class SuumoParser(BaseHtmlParser):
             soup: BeautifulSoupオブジェクト
             property_data: データ格納先
         """
-        # 基本情報テーブル
-        info_table = self.safe_select_one(soup, "table.data_table, table.bgc-wht")
-        if info_table:
+        # 基本情報テーブル（複数のクラス名パターンに対応）
+        info_tables = soup.select("table.data_table, table.bgc-wht, table.bgWhite")
+        
+        # それでも見つからない場合は、すべてのテーブルから探す
+        if not info_tables:
+            # bgWhiteクラスを含むテーブルをすべて取得
+            all_tables = soup.find_all("table", class_=lambda x: x and "bgWhite" in " ".join(x) if isinstance(x, list) else False)
+            info_tables = all_tables if all_tables else []
+        
+        # 各テーブルを処理
+        for info_table in info_tables:
             rows = info_table.find_all("tr")
             for row in rows:
                 th = row.find("th")
                 td = row.find("td")
                 if th and td:
-                    key = self.extract_text(th)
+                    # キーからリンクなどの子要素を除外して、テキストのみを取得
+                    # まずdiv.flがあればそのテキストを取得、なければthの直接テキストを取得
+                    key_div = th.find('div', class_='fl')
+                    if key_div:
+                        # div.fl内のテキストを取得
+                        key = self.extract_text(key_div)
+                    else:
+                        # thの直接のテキストノードのみを取得（子要素のテキストは除外）
+                        key_parts = []
+                        for content in th.contents:
+                            if isinstance(content, str):
+                                key_parts.append(content.strip())
+                        key = ''.join(key_parts).strip()
+                        
+                        # それでも取得できない場合は全体のテキストから「ヒント」を除去
+                        if not key:
+                            key = self.extract_text(th)
+                            # 「ヒント」という文字列を除去
+                            key = key.replace('ヒント', '').strip()
+                    
+                    # 値は通常通り全体のテキストを取得
                     value = self.extract_text(td)
-                    self._process_detail_item(key, value, property_data)
+                    
+                    # キーが空でない場合のみ処理
+                    if key:
+                        self._process_detail_item(key, value, property_data)
     
     def _extract_detail_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """
@@ -518,10 +549,19 @@ class SuumoParser(BaseHtmlParser):
         
         # 総戸数
         elif '総戸数' in key or '総区画数' in key:
-            # 「250戸」などから数値を抽出
-            units_match = re.search(r'(\d+)戸', value)
+            # 「1,095戸」「250戸」などから数値を抽出（カンマも考慮）
+            # カンマ、スペース、改行を除去
+            cleaned_value = value.replace(',', '').replace('，', '').replace(' ', '').replace('\n', '').replace('\t', '')
+            
+            # 「戸」を含む数値を抽出
+            units_match = re.search(r'(\d+)戸', cleaned_value)
             if units_match:
                 property_data['total_units'] = int(units_match.group(1))
+            else:
+                # 「戸」がない場合も試す（数値のみ）
+                units_match = re.search(r'(\d+)', cleaned_value)
+                if units_match:
+                    property_data['total_units'] = int(units_match.group(1))
         
         # 方角
         elif '向き' in key or '主要採光面' in key:
