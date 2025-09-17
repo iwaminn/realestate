@@ -31,6 +31,37 @@ class LivableParser(BaseHtmlParser):
         """
         super().__init__(logger)
         self.logger = logger or logging.getLogger(__name__)
+
+    def parse_floor(self, text: str) -> Optional[int]:
+        """
+        階数をパース（東急リバブル特有のフォーマットに対応）
+        
+        東急リバブルでは「地下1階付　地上17階建」のような形式があるため、
+        地上階数を優先的に抽出する
+        
+        Args:
+            text: 階数テキスト
+            
+        Returns:
+            階数
+        """
+        if not text:
+            return None
+        
+        import re
+        
+        # まず「地上○階」パターンを探す
+        match = re.search(r'地上(\d+)階', text)
+        if match:
+            return int(match.group(1))
+        
+        # 次に「○階建」パターンを探す
+        match = re.search(r'(\d+)階建', text)
+        if match:
+            return int(match.group(1))
+        
+        # 最後に基底クラスのメソッドを使用（通常の数値抽出）
+        return super().parse_floor(text)
     
     def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
         """
@@ -353,11 +384,45 @@ class LivableParser(BaseHtmlParser):
         
         # フォールバック: 通常のセレクタ
         if 'layout' not in property_data:
+            # パターン1: o-product-list__layoutクラス
             layout_elem = item.select_one('.o-product-list__layout, .layout')
             if layout_elem:
                 layout = self.normalize_layout(self.extract_text(layout_elem))
                 if layout:
                     property_data['layout'] = layout
+            
+            # パターン2: spanタグで「間取」を検索し、次のp要素を取得
+            if 'layout' not in property_data:
+                for elem in item.find_all('span'):
+                    if '間取' in self.extract_text(elem):
+                        # 次の要素を探す
+                        next_elem = elem.find_next_sibling('p')
+                        if next_elem:
+                            layout = self.normalize_layout(self.extract_text(next_elem))
+                            if layout:
+                                property_data['layout'] = layout
+                                break
+                        # 親要素内で探す
+                        parent = elem.parent
+                        if parent:
+                            p_elem = parent.find('p')
+                            if p_elem:
+                                layout = self.normalize_layout(self.extract_text(p_elem))
+                                if layout:
+                                    property_data['layout'] = layout
+                                    break
+            
+            # パターン3: translate クラスを持つ要素で間取りパターンに一致するもの
+            if 'layout' not in property_data:
+                translate_elems = item.select('.translate')
+                for elem in translate_elems:
+                    text = self.extract_text(elem)
+                    # 間取りパターンに一致するか確認（1LDK, 2DK, 3LDK等）
+                    if re.match(r'^\d+[A-Z]+', text):
+                        layout = self.normalize_layout(text)
+                        if layout:
+                            property_data['layout'] = layout
+                            break
         
         if 'area' not in property_data:
             area_elem = item.select_one('.o-product-list__area, .area')
@@ -388,11 +453,19 @@ class LivableParser(BaseHtmlParser):
         property_data = {}
         
         # 物件情報テーブルを探す
-        detail_tables = self.safe_select(soup, "table.bukken-table, table.property-detail")
+        detail_tables = self.safe_select(soup, "table.bukken-table, table.property-detail, table")
         
         for table in detail_tables:
-            table_data = self.extract_table_data(table)
-            self._process_detail_table_data(table_data, property_data)
+            # テーブル内のすべてのtr要素を処理
+            rows = table.find_all('tr')
+            for row in rows:
+                th = row.find('th')
+                td = row.find('td')
+                if th and td:
+                    key = self.extract_text(th)
+                    value = self.extract_text(td)
+                    if key and value:
+                        self._process_detail_item(key, value, property_data)
         
         # dl要素から情報を抽出
         data_lists = self.safe_select(soup, "div.p-property-data-list dl, dl")
@@ -403,6 +476,68 @@ class LivableParser(BaseHtmlParser):
                 key = self.extract_text(dt)
                 value = self.extract_text(dd)
                 self._process_detail_item(key, value, property_data)
+        
+        # spanタグで「間取」を検索し、次のp要素から間取り情報を取得
+        if 'layout' not in property_data:
+            for elem in soup.find_all('span'):
+                text = self.extract_text(elem)
+                if '間取' in text and '間取り' not in text:  # 「間取り」ではなく「間取」
+                    # 次の要素を探す
+                    next_elem = elem.find_next_sibling('p')
+                    if next_elem:
+                        layout_text = self.extract_text(next_elem)
+                        layout = self.normalize_layout(layout_text)
+                        if layout:
+                            property_data['layout'] = layout
+                            break
+                    # 親要素内で探す
+                    parent = elem.parent
+                    if parent:
+                        p_elem = parent.find('p')
+                        if p_elem:
+                            layout_text = self.extract_text(p_elem)
+                            layout = self.normalize_layout(layout_text)
+                            if layout:
+                                property_data['layout'] = layout
+                                break
+        
+        # translateクラスを持つ要素から間取りパターンを探す
+        if 'layout' not in property_data:
+            translate_elems = soup.select('.translate')
+            for elem in translate_elems:
+                text = self.extract_text(elem)
+                # 間取りパターンに一致するか確認
+                if re.match(r'^\d+[A-Z]+', text):
+                    layout = self.normalize_layout(text)
+                    if layout:
+                        property_data['layout'] = layout
+                        break
+        
+        # 価格情報を取得（span要素から）
+        if 'price' not in property_data:
+            for elem in soup.find_all('span'):
+                text = self.extract_text(elem)
+                if '価格' in text:
+                    next_elem = elem.find_next_sibling()
+                    if next_elem:
+                        price_text = self.extract_text(next_elem)
+                        price = self.parse_price(price_text)
+                        if price:
+                            property_data['price'] = price
+                            break
+        
+        # 専有面積を取得（span要素から）
+        if 'area' not in property_data:
+            for elem in soup.find_all('span'):
+                text = self.extract_text(elem)
+                if '専有面積' in text:
+                    next_elem = elem.find_next_sibling()
+                    if next_elem:
+                        area_text = self.extract_text(next_elem)
+                        area = self.parse_area(area_text)
+                        if area:
+                            property_data['area'] = area
+                            break
         
         # 建物名を取得
         self._extract_building_name_from_detail(soup, property_data)
