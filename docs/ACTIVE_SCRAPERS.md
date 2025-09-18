@@ -1,6 +1,6 @@
 # 有効なスクレイパー一覧
 
-最終更新日: 2025-07-24
+最終更新日: 2025-11-18
 
 ## 現在有効なスクレイパー
 
@@ -36,7 +36,7 @@
   ```
 
 ### バックエンド
-- **APIエンドポイント**: `/backend/app/api/admin.py`
+- **APIエンドポイント**: `/backend/app/api/admin/scraping.py`
 - **スクレイパー実行スクリプト**: `/backend/scripts/run_scrapers.py`
 - **一括実行スクリプト**: `/backend/scripts/scrape_all.py`
 

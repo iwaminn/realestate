@@ -321,25 +321,36 @@ class HomesParser(BaseHtmlParser):
         
         # 階数情報
         elif '階' in key:
-            # "3階/10階建"のような形式を処理
-            match = re.search(r'(\d+)階/(\d+)階建', value)
+            # "10階 / 14階建 (地下1階)" のような形式を処理（スペースあり）
+            match = re.search(r'(\d+)階\s*/\s*(\d+)階建', value)
             if match:
                 property_data['floor_number'] = int(match.group(1))
                 property_data['total_floors'] = int(match.group(2))
             else:
-                # 所在階のみ
-                if '所在階' in key:
-                    floor = self.parse_floor(value)
-                    if floor:
-                        property_data['floor_number'] = floor
-                # 総階数のみ
-                elif '階建' in key or '総階数' in key:
-                    total_floors = self.parse_floor(value)
-                    if total_floors:
-                        property_data['total_floors'] = total_floors
+                # "3階/10階建"のような形式を処理（スペースなし）
+                match = re.search(r'(\d+)階/(\d+)階建', value)
+                if match:
+                    property_data['floor_number'] = int(match.group(1))
+                    property_data['total_floors'] = int(match.group(2))
+                else:
+                    # 所在階のみ
+                    if '所在階' in key:
+                        floor = self.parse_floor(value)
+                        if floor:
+                            property_data['floor_number'] = floor
+                    # 総階数のみ
+                    elif '階建' in value:
+                        # "14階建 (地下1階)" のような形式から総階数を取得
+                        total_match = re.search(r'(\d+)階建', value)
+                        if total_match:
+                            property_data['total_floors'] = int(total_match.group(1))
+                        else:
+                            total_floors = self.parse_floor(value)
+                            if total_floors:
+                                property_data['total_floors'] = total_floors
         
-        # 方角
-        elif '向き' in key or '方位' in key or '方角' in key:
+        # 方角（主要採光面も含む）
+        elif '向き' in key or '方位' in key or '方角' in key or '採光' in key:
             direction = self.normalize_direction(value)
             if direction:
                 property_data['direction'] = direction

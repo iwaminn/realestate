@@ -1960,6 +1960,7 @@ def resume_scraping(task_id: str, db: Session = Depends(get_db)):
 def cancel_scraping(task_id: str, db: Session = Depends(get_db)):
     """スクレイピングタスクをキャンセル"""
     from ...models_scraping_task import ScrapingTask
+    from sqlalchemy.orm.attributes import flag_modified
     
     # データベースでタスクを確認
     db_task = db.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
@@ -1974,6 +1975,20 @@ def cancel_scraping(task_id: str, db: Session = Depends(get_db)):
     db_task.cancel_requested_at = datetime.now()
     db_task.status = "cancelled"
     db_task.completed_at = datetime.now()
+    
+    # 個別のスクレイパータスクのステータスも更新
+    if db_task.progress_detail:
+        for scraper_key in db_task.progress_detail.keys():
+            if isinstance(db_task.progress_detail[scraper_key], dict):
+                # 実行中、一時停止中、待機中の個別タスクをキャンセル済みに設定
+                current_status = db_task.progress_detail[scraper_key].get('status')
+                if current_status in ['running', 'paused', 'pending']:
+                    db_task.progress_detail[scraper_key]['status'] = 'cancelled'
+                    db_task.progress_detail[scraper_key]['completed_at'] = datetime.now().isoformat()
+        
+        # JSONフィールドの変更を明示的に通知
+        flag_modified(db_task, 'progress_detail')
+    
     db.commit()
     
     return {"message": "Task cancelled successfully"}
