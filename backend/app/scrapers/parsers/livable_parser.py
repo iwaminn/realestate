@@ -36,8 +36,9 @@ class LivableParser(BaseHtmlParser):
         """
         階数をパース（東急リバブル特有のフォーマットに対応）
         
-        東急リバブルでは「地下1階付　地上17階建」のような形式があるため、
-        地上階数を優先的に抽出する
+        東急リバブルでは以下のような形式がある：
+        - 「10階／地上47階 地下1階」→ 10階（所在階）
+        - 「地下1階付　地上17階建」→ 17階（総階数）
         
         Args:
             text: 階数テキスト
@@ -50,13 +51,19 @@ class LivableParser(BaseHtmlParser):
         
         import re
         
-        # まず「地上○階」パターンを探す
-        match = re.search(r'地上(\d+)階', text)
+        # 「○階／」または「○階 /」パターン（所在階／総階数の形式）
+        # この場合、最初の数字が所在階
+        match = re.search(r'^(\d+)階\s*[／/]', text)
         if match:
             return int(match.group(1))
         
-        # 次に「○階建」パターンを探す
-        match = re.search(r'(\d+)階建', text)
+        # 「地上○階建」パターン（総階数のみの形式）
+        match = re.search(r'地上(\d+)階建', text)
+        if match:
+            return int(match.group(1))
+        
+        # 「○階建」パターン（総階数のみの形式）
+        match = re.search(r'^(\d+)階建', text)
         if match:
             return int(match.group(1))
         
@@ -652,6 +659,7 @@ class LivableParser(BaseHtmlParser):
         
         # 所在地
         elif '所在地' in key:
+            # normalize_addressがUI要素（「地図を見る」など）を自動的に削除
             address = self.normalize_address(value)
             if address:
                 property_data['address'] = address

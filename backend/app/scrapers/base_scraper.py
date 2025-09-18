@@ -5986,25 +5986,42 @@ class BaseScraper(ABC):
         # HTTP接続のクリーンアップはHttpClientComponentが管理
         # （旧http_sessionは削除済み）
 
-    def clean_address(self, address: str) -> str:
+    def clean_address(self, address: str, soup_element=None) -> str:
         """
         住所文字列をクリーニングする共通メソッド
-        DataNormalizerのclean_addressメソッドを使用
+        AddressNormalizerのremove_ui_elementsメソッドを使用
         
         Args:
             address: クリーニング前の住所文字列
+            soup_element: BeautifulSoupの要素（リンクを削除する場合）
             
         Returns:
-            クリーニング済みの住所文字列
+            クリーニング後の住所文字列
         """
-        from .data_normalizer import DataNormalizer
-        normalizer = DataNormalizer()
-        return normalizer.clean_address(address)
+        import re
+        
+        # soup_elementが指定されている場合は、まずaタグを削除
+        if soup_element is not None:
+            # BeautifulSoupの要素からaタグを削除
+            for link in soup_element.find_all('a'):
+                link.extract()
+            address = soup_element.get_text(strip=True)
+        
+        if not address:
+            return ""
+        
+        # HTMLタグを削除（念のため）
+        address = re.sub(r'<[^>]+>', '', address)
+        
+        # AddressNormalizerを使用してUI要素を削除
+        from ..utils.address_normalizer import AddressNormalizer
+        normalizer = AddressNormalizer()
+        return normalizer.remove_ui_elements(address)
     
     def contains_address_pattern(self, text: str) -> bool:
         """
         テキストに住所パターンが含まれているかを判定
-        DataNormalizerのcontains_address_patternメソッドを使用
+        AddressNormalizerのcontains_address_patternメソッドを使用
         
         Args:
             text: 検証するテキスト
@@ -6012,8 +6029,8 @@ class BaseScraper(ABC):
         Returns:
             bool: 住所パターンが含まれている場合True
         """
-        from .data_normalizer import DataNormalizer
-        normalizer = DataNormalizer()
+        from ..utils.address_normalizer import AddressNormalizer
+        normalizer = AddressNormalizer()
         return normalizer.contains_address_pattern(text)
 
     def validate_address(self, address: str) -> bool:

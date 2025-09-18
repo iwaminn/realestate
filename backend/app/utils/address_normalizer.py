@@ -201,10 +201,140 @@ class AddressNormalizer:
         
         return components
     
+    def find_address_end_position(self, address: str) -> Optional[int]:
+        """
+        住所の有効な終端位置を検出する共通メソッド
+        
+        Args:
+            address: 住所文字列
+            
+        Returns:
+            住所の終端位置（インデックス）、見つからない場合はNone
+        """
+        # パターン1: ○丁目○番地○号 / ○丁目○番○号 / ○丁目○-○-○
+        pattern1 = re.compile(
+            r'[０-９0-9一二三四五六七八九十百千万〇○]+'  # 数字1
+            r'丁目'  # 丁目
+            r'[\s]*'  # 空白（あってもなくても）
+            r'[０-９0-9一二三四五六七八九十百千万〇○]+'  # 数字2
+            r'(?:番地?|[-－−])'  # 番地/番/ハイフン
+            r'[\s]*'  # 空白
+            r'(?:[０-９0-9一二三四五六七八九十百千万〇○]+)?'  # 数字3（オプション）
+            r'(?:号|[-－−])?'  # 号/ハイフン（オプション）
+        )
+        match = pattern1.search(address)
+        if match:
+            return match.end()
+        
+        # パターン2: ○丁目○ （丁目の後に数字のみ）
+        pattern2 = re.compile(
+            r'[０-９0-9一二三四五六七八九十百千万〇○]+'  # 数字1
+            r'丁目'  # 丁目
+            r'[\s]*'  # 空白
+            r'[０-９0-9一二三四五六七八九十百千万〇○]+'  # 数字2
+            r'(?![番号丁])'  # 番・号・丁が続かない
+        )
+        match = pattern2.search(address)
+        if match:
+            return match.end()
+        
+        # パターン3: 単独の○丁目
+        pattern3 = re.compile(
+            r'[０-９0-9一二三四五六七八九十百千万〇○]+'  # 数字
+            r'丁目'  # 丁目
+            r'(?![\s]*[０-９0-9一二三四五六七八九十百千万〇○])'  # 後に数字が続かない
+        )
+        match = pattern3.search(address)
+        if match:
+            return match.end()
+        
+        # パターン4: ハイフン区切りの番地（丁目なし）
+        # 例：「千駄ヶ谷4-20-3」「日本橋3-5-1」「三番町26-1」
+        pattern4 = re.compile(
+            r'(?<=[ぁ-んァ-ヶー一-龯])'  # 前に日本語文字
+            r'[０-９0-9]+'  # 数字1
+            r'[-－−]'  # ハイフン
+            r'[０-９0-9]+'  # 数字2
+            r'(?:[-－−][０-９0-9]+)?'  # 数字3（オプション）
+        )
+        match = pattern4.search(address)
+        if match:
+            return match.end()
+        
+        return None
+
+    def remove_ui_elements(self, address: str) -> str:
+        """
+        住所文字列からUI要素（地図リンクなど）を削除
+        
+        住所として有効な終端パターンの後にUI関連のキーワードが来た場合、
+        それ以降を削除する
+        """
+        if not address:
+            return ""
+        
+        # HTMLタグを削除（念のため）
+        address = re.sub(r'<[^>]+>', '', address)
+        
+        # 共通メソッドを使用して住所の終端位置を検出
+        end_pos = self.find_address_end_position(address)
+        if end_pos is not None:
+            return address[:end_pos].strip()
+        
+        # パターンにマッチしない場合、区市町村までを抽出
+        # 「周辺」を除外対象に追加
+        basic_pattern = r'^(.*?(?:都|道|府|県).*?(?:区|市|町|村)[^地図\[【\(周辺]*)'
+        match = re.search(basic_pattern, address)
+        if match:
+            # 末尾の不要な文字を削除
+            result = match.group(1).rstrip('、。・周辺')
+            # 「周辺」で終わる場合は削除
+            if result.endswith('周辺'):
+                result = result[:-2]
+            return result.strip()
+        
+        # それでもマッチしない場合は、明らかに住所でない部分を削除
+        # 「地図」「MAP」などのキーワード以降を削除
+        unwanted_keywords = ['地図', 'MAP', 'Map', 'map', 'マップ', '周辺', '詳細', 'もっと見る', 'アクセス', '※', '＊', '[', '【', '(', '→']
+        for keyword in unwanted_keywords:
+            if keyword in address:
+                address = address.split(keyword)[0]
+        
+        return address.strip()
+
+    def contains_address_pattern(self, text: str) -> bool:
+        """
+        テキストに住所パターンが含まれているかを判定
+        
+        Args:
+            text: 検証するテキスト
+            
+        Returns:
+            bool: 住所パターンが含まれている場合True
+        """
+        if not text:
+            return False
+            
+        # 都道府県パターン
+        prefecture_pattern = r'(?:東京都|北海道|(?:京都|大阪)府|(?:青森|岩手|宮城|秋田|山形|福島|茨城|栃木|群馬|埼玉|千葉|神奈川|新潟|富山|石川|福井|山梨|長野|岐阜|静岡|愛知|三重|滋賀|兵庫|奈良|和歌山|鳥取|島根|岡山|広島|山口|徳島|香川|愛媛|高知|福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|沖縄)県)'
+        
+        # 市区町村パターン
+        city_pattern = r'[市区町村]'
+        
+        # 番地パターン
+        address_number_pattern = r'\d+丁目|\d+番|\d+号|\d+-\d+'
+        
+        # いずれかのパターンが含まれているかチェック
+        patterns = [prefecture_pattern, city_pattern, address_number_pattern]
+        return any(re.search(pattern, text) for pattern in patterns)
+
     def normalize(self, address: str) -> str:
         """住所を正規化"""
         if not address:
             return ""
+        
+        # UI要素を削除
+        address = self.remove_ui_elements(address)
         
         # Unicode正規化
         normalized = unicodedata.normalize('NFKC', address)
@@ -218,37 +348,108 @@ class AddressNormalizer:
         # カッコ内の情報を削除（建物名など）
         normalized = re.sub(r'[（(][^）)]*[）)]', '', normalized).strip()
         
-        # 丁目・番地・号の部分のみ数字を正規化
-        # まず、丁目・番地・号のパターンを特定
-        def normalize_chome_numbers(match):
-            """丁目・番地・号の数字のみを正規化"""
-            text = match.group(0)
-            num_part = match.group(1)
-            suffix = match.group(2) if len(match.groups()) > 1 else ''
-            
-            # 漢数字の「十」を含む場合の特別処理
-            if '十' in num_part:
-                num_part = self.normalize_numbers(num_part)
+        # 番地の数字を正規化する関数
+        def normalize_number(num_str):
+            """数字文字列を半角数字に変換"""
+            # 漢数字の「十」「百」「千」を含む場合
+            if any(char in num_str for char in ['十', '百', '千', '万']):
+                return self.normalize_numbers(num_str)
             else:
-                # 単純な数字変換
+                # 全角数字・簡単な漢数字を変換
+                result = num_str
                 for old, new in self.number_map.items():
-                    if old != '十':  # 十は特別処理
-                        num_part = num_part.replace(old, new)
-            
-            return num_part + suffix
+                    if old not in ['十', '百', '千', '万']:
+                        result = result.replace(old, new)
+                return result
         
-        # 丁目・番地・号のパターンにマッチする部分のみ数字を変換
-        patterns = [
-            r'([０-９0-9一二三四五六七八九千百十〇○]+)(丁目)',
-            r'([０-９0-9一二三四五六七八九千百十〇○]+)(番地?)',
-            r'([０-９0-9一二三四五六七八九千百十〇○]+)(号)',
-        ]
+        # 住所番地の厳密なパターン
+        # パターン1: ○丁目○番地○号 / ○丁目○番○号 / ○丁目○-○-○
+        pattern1 = re.compile(
+            r'([０-９0-9一二三四五六七八九十百千万〇○]+)'  # 数字1
+            r'(丁目)'  # 丁目
+            r'[\s]*'  # 空白（あってもなくても）
+            r'([０-９0-9一二三四五六七八九十百千万〇○]+)'  # 数字2
+            r'(番地?|[-－−])'  # 番地/番/ハイフン
+            r'[\s]*'  # 空白
+            r'([０-９0-9一二三四五六七八九十百千万〇○]+)?'  # 数字3（オプション）
+            r'(号|[-－−])?'  # 号/ハイフン（オプション）
+        )
         
-        for pattern in patterns:
-            normalized = re.sub(pattern, normalize_chome_numbers, normalized)
+        def replace_pattern1(match):
+            """○丁目○番○号パターンを正規化"""
+            groups = match.groups()
+            result = normalize_number(groups[0])  # 丁目の数字
+            result += '-'
+            result += normalize_number(groups[2])  # 番/番地の数字
+            if groups[4]:  # 号の数字があれば
+                result += '-' + normalize_number(groups[4])
+            return result
         
-        # 丁目・番地・号を正規化（統一形式に変換）
-        normalized = self.normalize_block_number(normalized)
+        # パターン2: ○丁目○ （丁目の後に数字のみ）
+        pattern2 = re.compile(
+            r'([０-９0-9一二三四五六七八九十百千万〇○]+)'  # 数字1
+            r'(丁目)'  # 丁目
+            r'[\s]*'  # 空白
+            r'([０-９0-9一二三四五六七八九十百千万〇○]+)'  # 数字2
+            r'(?![番号丁])'  # 番・号・丁が続かない
+        )
+        
+        def replace_pattern2(match):
+            """○丁目○パターンを正規化"""
+            groups = match.groups()
+            result = normalize_number(groups[0])  # 丁目の数字
+            result += '-'
+            result += normalize_number(groups[2])  # 番地の数字
+            return result
+        
+        # パターン3: 単独の○丁目
+        pattern3 = re.compile(
+            r'([０-９0-9一二三四五六七八九十百千万〇○]+)'  # 数字
+            r'(丁目)'  # 丁目
+            r'(?![\s]*[０-９0-9一二三四五六七八九十百千万〇○])'  # 後に数字が続かない
+        )
+        
+        def replace_pattern3(match):
+            """単独の○丁目を正規化"""
+            return normalize_number(match.group(1))
+        
+        # パターン4: ハイフン区切りの番地（丁目なし）
+        # 例：「千駄ヶ谷4-20-3」「日本橋3-5-1」
+        # ただし、前に地名（漢字・ひらがな・カタカナ）があることが条件
+        pattern4 = re.compile(
+            r'(?<=[ぁ-んァ-ヶー一-龯])'  # 前に日本語文字
+            r'([０-９0-9]+)'  # 数字1
+            r'[-－−]'  # ハイフン
+            r'([０-９0-9]+)'  # 数字2
+            r'(?:[-－−]([０-９0-9]+))?'  # 数字3（オプション）
+        )
+        
+        def replace_pattern4(match):
+            """ハイフン区切り番地を正規化"""
+            groups = match.groups()
+            result = groups[0].translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+            result += '-'
+            result += groups[1].translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+            if groups[2]:
+                result += '-' + groups[2].translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+            return result
+        
+        # パターンを順番に適用（より具体的なパターンから）
+        normalized = pattern1.sub(replace_pattern1, normalized)
+        normalized = pattern2.sub(replace_pattern2, normalized)
+        normalized = pattern3.sub(replace_pattern3, normalized)
+        normalized = pattern4.sub(replace_pattern4, normalized)
+        
+        # 全角数字の単純な変換（番地以外の部分）
+        # 町名の後の単独の数字（番地の可能性）
+        normalized = re.sub(
+            r'(?<=[町村通り条])([０-９]+)(?=[-－−]|$)',
+            lambda m: m.group(1).translate(str.maketrans('０１２３４５６７８９', '0123456789')),
+            normalized
+        )
+        
+        # ハイフンの統一
+        normalized = re.sub(r'[－−]', '-', normalized)
         
         return normalized
     

@@ -521,124 +521,11 @@ class DataNormalizer:
 
     # ========== 住所関連 ==========
     
-    def clean_address(self, text: str, soup_element=None) -> str:
-        """
-        住所文字列から不要な部分を除去し、住所の本質的な部分のみを抽出
-        
-        Args:
-            text: 住所文字列
-            soup_element: BeautifulSoupの要素（リンクを削除する場合）
-            
-        Returns:
-            クリーンな住所文字列
-            
-        Examples:
-            >>> normalizer.clean_address("東京都港区南麻布5丁目周辺地図を見る")
-            "東京都港区南麻布5丁目"
-            >>> normalizer.clean_address("東京都港区芝浦4丁目地図を見る")
-            "東京都港区芝浦4丁目"
-        """
-        if soup_element is not None:
-            # BeautifulSoupの要素からaタグを削除
-            for link in soup_element.find_all('a'):
-                link.extract()
-            text = soup_element.get_text(strip=True)
-        
-        if not text:
-            return ""
-        
-        # HTMLタグを削除（念のため）
-        text = re.sub(r'<[^>]+>', '', text)
-        
-        # 住所の終端パターンを定義（ホワイトリスト方式）
-        # 住所は通常、以下のパターンで終わる：
-        # - ●丁目●番●号
-        # - ●丁目●-●-●
-        # - ●丁目●-●
-        # - ●丁目●番地
-        # - ●丁目●番
-        # - ●丁目
-        # - ●番地
-        # - ●番●号
-        # - （町名のみ）
-        
-        # 最も詳細な住所パターンから順に検索
-        address_patterns = [
-            # 丁目-番-号形式（例：5丁目1-2-3、５丁目１－２－３）
-            r'(.*?[0-9０-９]+丁目[0-9０-９]+[-－][0-9０-９]+[-－][0-9０-９]+)',
-            # 丁目-番形式（例：5丁目1-2）
-            r'(.*?[0-9０-９]+丁目[0-9０-９]+[-－][0-9０-９]+)',
-            # 丁目番号形式（例：5丁目1番2号）
-            r'(.*?[0-9０-９]+丁目[0-9０-９]+番[0-9０-９]+号)',
-            # 丁目番地形式（例：5丁目123番地）
-            r'(.*?[0-9０-９]+丁目[0-9０-９]+番地)',
-            # 丁目番形式（例：5丁目1番）
-            r'(.*?[0-9０-９]+丁目[0-9０-９]+番)',
-            # 丁目のみ（例：5丁目、南麻布5丁目）
-            r'(.*?[0-9０-９]+丁目)',
-            # 番地形式（例：123番地）
-            r'(.*?[0-9０-９]+番地)',
-            # 番号形式（例：1番2号）
-            r'(.*?[0-9０-９]+番[0-9０-９]+号)',
-            # ハイフン区切り（丁目なし）（例：港区芝浦4-16-1）
-            r'(.*?(?:区|市|町|村)[^0-9０-９]*[0-9０-９]+[-－][0-9０-９]+[-－][0-9０-９]+)',
-            r'(.*?(?:区|市|町|村)[^0-9０-９]*[0-9０-９]+[-－][0-9０-９]+)',
-        ]
-        
-        # パターンにマッチする最初のものを使用
-        for pattern in address_patterns:
-            match = re.search(pattern, text)
-            if match:
-                return match.group(1).strip()
-        
-        # パターンにマッチしない場合、区市町村までを抽出
-        # 例：「東京都港区南麻布」
-        # 「周辺」を除外対象に追加
-        basic_pattern = r'^(.*?(?:都|道|府|県).*?(?:区|市|町|村)[^地図\[【\(周辺]*)'
-        match = re.search(basic_pattern, text)
-        if match:
-            # 末尾の不要な文字を削除
-            result = match.group(1).rstrip('、。・周辺')
-            # 「周辺」で終わる場合は削除
-            if result.endswith('周辺'):
-                result = result[:-2]
-            return result.strip()
-        
-        # それでもマッチしない場合は、明らかに住所でない部分を削除
-        # 「地図」「MAP」などのキーワード以降を削除
-        unwanted_keywords = ['地図', 'MAP', 'マップ', '周辺', '詳細', '※', '＊', '[', '【', '(']
-        for keyword in unwanted_keywords:
-            if keyword in text:
-                text = text.split(keyword)[0]
-        
-        return text.strip()
 
 
 
-    def contains_address_pattern(self, text: str) -> bool:
-        """テキストに住所パターンが含まれているかを判定
-        
-        Args:
-            text: 検証するテキスト
-            
-        Returns:
-            bool: 住所パターンが含まれている場合True
-        """
-        if not text:
-            return False
-            
-        # 都道府県パターン
-        prefecture_pattern = r'(?:東京都|北海道|(?:京都|大阪)府|(?:青森|岩手|宮城|秋田|山形|福島|茨城|栃木|群馬|埼玉|千葉|神奈川|新潟|富山|石川|福井|山梨|長野|岐阜|静岡|愛知|三重|滋賀|兵庫|奈良|和歌山|鳥取|島根|岡山|広島|山口|徳島|香川|愛媛|高知|福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|沖縄)県)'
-        
-        # 市区町村パターン
-        city_pattern = r'[市区町村]'
-        
-        # 番地パターン
-        address_number_pattern = r'\d+丁目|\d+番|\d+号|\d+-\d+'
-        
-        # いずれかのパターンが含まれているかチェック
-        patterns = [prefecture_pattern, city_pattern, address_number_pattern]
-        return any(re.search(pattern, text) for pattern in patterns)
+
+
 
     # ========== 駅情報関連 ==========
     
@@ -1003,8 +890,33 @@ def format_station_info(text: str) -> str:
 
 
 def clean_address(text: str, soup_element=None) -> str:
-    """住所文字列から不要なリンクテキストを除去"""
-    return _normalizer.clean_address(text, soup_element)
+    """
+    住所文字列から不要なリンクテキストを除去
+    
+    Args:
+        text: 住所文字列
+        soup_element: BeautifulSoupの要素（リンクを削除する場合）
+        
+    Returns:
+        クリーンな住所文字列
+    """
+    if soup_element is not None:
+        # BeautifulSoupの要素からaタグを削除
+        for link in soup_element.find_all('a'):
+            link.extract()
+        text = soup_element.get_text(strip=True)
+    
+    if not text:
+        return ""
+    
+    # HTMLタグを削除（念のため）
+    import re
+    text = re.sub(r'<[^>]+>', '', text)
+    
+    # AddressNormalizerを直接使用
+    from ..utils.address_normalizer import AddressNormalizer
+    address_normalizer = AddressNormalizer()
+    return address_normalizer.remove_ui_elements(text)
 
 
 def normalize_property_data(raw_data: Dict[str, Any]) -> Dict[str, Any]:
