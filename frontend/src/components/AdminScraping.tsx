@@ -841,6 +841,15 @@ const TaskProgress = React.memo(({ task }: any) => {
 const TaskLogs = React.memo(({ task, logPage, setLogPage }: any) => {
   const itemsPerPage = 30;
   const reversedLogs = task.logs.slice().reverse();
+  
+  // ページ数が範囲外の場合は最初のページにリセット
+  const totalPages = Math.ceil(task.logs.length / itemsPerPage);
+  React.useEffect(() => {
+    if (logPage > totalPages && totalPages > 0) {
+      setLogPage(1);  // 最新のログを表示するため1ページ目に戻す
+    }
+  }, [task.logs.length, logPage, totalPages, setLogPage]);
+  
   const startIndex = (logPage - 1) * itemsPerPage;
   const endIndex = startIndex + itemsPerPage;
   const paginatedLogs = reversedLogs.slice(startIndex, endIndex);
@@ -1062,6 +1071,16 @@ const TaskErrorLogs = React.memo(({ task }: any) => {
 const TaskWarningLogs = React.memo(({ task }: any) => {
   const [warningLogPage, setWarningLogPage] = React.useState(1);
   const itemsPerPage = 30;
+  
+  // Reset page when log count changes and current page is out of range
+  React.useEffect(() => {
+    if (task.warning_logs && task.warning_logs.length > 0) {
+      const totalPages = Math.ceil(task.warning_logs.length / itemsPerPage);
+      if (warningLogPage > totalPages && totalPages > 0) {
+        setWarningLogPage(1);  // Reset to first page to show latest logs
+      }
+    }
+  }, [task.warning_logs?.length, warningLogPage]);
   
   if (!task.warning_logs || task.warning_logs.length === 0) {
     return (
@@ -1343,11 +1362,19 @@ const AdminScraping: React.FC = () => {
             if (activeTask) {
               const logDiff = logDiffs.find(ld => ld && ld.taskId === existingTask.task_id);
               if (logDiff && logDiff.diff) {
-                // 既存のログに差分を追加
+                // activeTaskのデータを使用し、ログは差分があれば既存のログに追加
                 const updatedTask = { ...activeTask };
-                updatedTask.logs = [...(existingTask.logs || []), ...(logDiff.diff.logs || [])];
-                updatedTask.error_logs = [...(existingTask.error_logs || []), ...(logDiff.diff.error_logs || [])];
-                updatedTask.warning_logs = [...(existingTask.warning_logs || []), ...(logDiff.diff.warning_logs || [])];
+                // activeTaskにログが含まれていない場合のみ、既存のログに差分を追加
+                if (!activeTask.logs || activeTask.logs.length === 0) {
+                  updatedTask.logs = [...(existingTask.logs || []), ...(logDiff.diff.logs || [])];
+                  updatedTask.error_logs = [...(existingTask.error_logs || []), ...(logDiff.diff.error_logs || [])];
+                  updatedTask.warning_logs = [...(existingTask.warning_logs || []), ...(logDiff.diff.warning_logs || [])];
+                } else {
+                  // activeTaskに既にログがある場合はそれを使用
+                  updatedTask.logs = activeTask.logs;
+                  updatedTask.error_logs = activeTask.error_logs;
+                  updatedTask.warning_logs = activeTask.warning_logs;
+                }
                 
                 // 最後のタイムスタンプを更新
                 if (updatedTask.logs.length > 0) {

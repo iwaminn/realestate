@@ -37,8 +37,8 @@ class DataValidatorComponent:
         'floor_number': {'min': -5, 'max': 100},  # 地下5階〜100階
         'total_floors': {'min': 1, 'max': 100},   # 1階建〜100階建
         'built_year': {'min': 1900, 'max': datetime.now().year + 5},
-        'management_fee': {'min': 0, 'max': 200000},  # 0円〜20万円
-        'repair_fund': {'min': 0, 'max': 100000},     # 0円〜10万円
+        'management_fee': {'min': 0, 'max': 300000},  # 0円〜30万円
+        'repair_fund': {'min': 0, 'max': 150000},     # 0円〜15万円
     }
     
     # フィールド名の日本語表記マッピング

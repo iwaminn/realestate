@@ -49,7 +49,7 @@ async def refresh_all_price_changes(
 @router.post("/refresh-immediate", response_model=Dict[str, Any])
 async def refresh_price_changes_immediate(
     days: int = Query(90, description="更新対象期間（日数）"),
-    limit: int = Query(100, description="処理する最大件数"),
+    limit: int = Query(1000, description="処理する最大件数"),
     db: Session = Depends(get_db)
 ):
     """
@@ -134,7 +134,7 @@ async def get_queue_status(db: Session = Depends(get_db)):
 
 @router.post("/process-queue", response_model=Dict[str, Any])
 async def process_queue(
-    limit: int = Query(100, description="処理する最大件数"),
+    limit: int = Query(1000, description="処理する最大件数"),
     db: Session = Depends(get_db)
 ):
     """

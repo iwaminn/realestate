@@ -216,7 +216,7 @@ export const DataUpdateManagement: React.FC = () => {
     
     try {
       const response = await axios.post('/api/admin/price-changes/process-queue', null, {
-        params: { limit: 100 }
+        params: { limit: 1000 }
       });
       
       const stats = response.data.stats;
