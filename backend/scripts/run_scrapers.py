@@ -260,12 +260,24 @@ def update_task_progress(task_id: str, scraper_name: str, area_code: str, stats:
             ).first()
             
             if task:
+                # タスク全体がキャンセルされている場合は更新しない
+                if task.status == 'cancelled' or task.is_cancelled:
+                    logger.info(f"Skipping progress update for cancelled task: {task_id}")
+                    return
+                
                 # progress_detailがNoneの場合は初期化
                 if task.progress_detail is None:
                     task.progress_detail = {}
                 
                 # スクレイパー名とエリアコードをキーとして進捗を保存
                 progress_key = f"{scraper_name.lower()}_{area_code}"
+                
+                # 既にキャンセルされている個別タスクは更新しない
+                if progress_key in task.progress_detail:
+                    current_status = task.progress_detail[progress_key].get('status')
+                    if current_status == 'cancelled':
+                        logger.info(f"Skipping progress update for cancelled subtask: {progress_key}")
+                        return
                 
                 # 進捗情報を更新
                 task.progress_detail[progress_key] = {
@@ -286,7 +298,7 @@ def update_task_progress(task_id: str, scraper_name: str, area_code: str, stats:
                     'errors': stats.get('errors', 0),
                     'price_missing': stats.get('price_missing', 0),
                     'building_info_missing': stats.get('building_info_missing', 0),
-                    'started_at': datetime.now().isoformat()
+                    'started_at': task.progress_detail.get(progress_key, {}).get('started_at', datetime.now().isoformat())
                 }
                 
                 # フラグを立てて強制的に更新
@@ -313,17 +325,29 @@ def update_task_progress_status(task_id: str, scraper_name: str, area_code: str,
                 ScrapingTask.task_id == task_id
             ).first()
             
-            if task and task.progress_detail:
-                progress_key = f"{scraper_name.lower()}_{area_code}"
-                if progress_key in task.progress_detail:
-                    task.progress_detail[progress_key]['status'] = status
-                    task.progress_detail[progress_key]['completed_at'] = datetime.now().isoformat()
-                    
-                    # フラグを立てて強制的に更新
-                    from sqlalchemy.orm.attributes import flag_modified
-                    flag_modified(task, 'progress_detail')
-                    
-                    session.commit()
+            if task:
+                # タスク全体がキャンセルされている場合は更新しない
+                if task.status == 'cancelled' or task.is_cancelled:
+                    logger.info(f"Skipping progress update for cancelled task: {task_id}")
+                    return
+                
+                if task.progress_detail:
+                    progress_key = f"{scraper_name.lower()}_{area_code}"
+                    if progress_key in task.progress_detail:
+                        # 個別タスクがキャンセルされている場合も上書きしない
+                        current_status = task.progress_detail[progress_key].get('status')
+                        if current_status == 'cancelled':
+                            logger.info(f"Skipping status update for cancelled subtask: {progress_key}")
+                            return
+                        
+                        task.progress_detail[progress_key]['status'] = status
+                        task.progress_detail[progress_key]['completed_at'] = datetime.now().isoformat()
+                        
+                        # フラグを立てて強制的に更新
+                        from sqlalchemy.orm.attributes import flag_modified
+                        flag_modified(task, 'progress_detail')
+                        
+                        session.commit()
                 
         finally:
             session.close()

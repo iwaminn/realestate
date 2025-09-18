@@ -237,18 +237,18 @@ class HomesParser(BaseHtmlParser):
     def parse_property_detail(self, soup: BeautifulSoup) -> Dict[str, Any]:
         """
         物件詳細をパース
-        
+
         Args:
             soup: BeautifulSoupオブジェクト
-            
+
         Returns:
             物件詳細情報
         """
         property_data = {}
-        
+
         # 物件情報テーブルを探す
         detail_tables = self.safe_select(soup, "table.rentTbl, table.bukkenSpec, table.w-full, table.table-fixed, div.mod-buildingDetailSpec table, section.propertyDetail table")
-        
+
         for table in detail_tables:
             rows = table.find_all("tr")
             for row in rows:
@@ -259,19 +259,30 @@ class HomesParser(BaseHtmlParser):
                     value = self.extract_text(td)
                     if key and value:
                         self._process_detail_item(key, value, property_data)
-        
+
+        # dl/dt/ddパターンも処理（バルコニー面積などが含まれる場合がある）
+        dl_elements = self.safe_select(soup, "dl")
+        for dl in dl_elements:
+            dt = dl.find("dt")
+            dd = dl.find("dd")
+            if dt and dd:
+                key = self.extract_text(dt)
+                value = self.extract_text(dd)
+                if key and value:
+                    self._process_detail_item(key, value, property_data)
+
         # 建物名を取得
         self._extract_building_name_from_detail(soup, property_data)
-        
+
         # 物件画像
         self._extract_property_images(soup, property_data)
-        
+
         # 物件備考
         self._extract_remarks(soup, property_data)
-        
+
         # 不動産会社情報
         self._extract_agency_info(soup, property_data)
-        
+
         return property_data
     
     def _process_detail_item(self, key: str, value: str, property_data: Dict[str, Any]) -> None:
@@ -314,9 +325,10 @@ class HomesParser(BaseHtmlParser):
         
         # バルコニー面積
         elif 'バルコニー' in key:
-            from ..data_normalizer import extract_area, validate_area
+            from ..data_normalizer import extract_area
             balcony_area = extract_area(value)
-            if balcony_area and validate_area(balcony_area):
+            # バルコニー面積は0㎡以上、100㎡以下であれば有効
+            if balcony_area is not None and 0 <= balcony_area <= 100:
                 property_data['balcony_area'] = balcony_area
         
         # 階数情報

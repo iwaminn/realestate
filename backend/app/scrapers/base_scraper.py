@@ -4081,11 +4081,12 @@ class BaseScraper(ABC):
                                             other_changed = True
                                             changed_fields.append(f'{field_display_name}(新規設定: {value})')
                                             self.logger.debug(f"フィールド新規設定: {key} = {value}")
-                    # varchar(20)制限があるフィールドの値を切り詰める
-                    if key in ['listing_layout', 'listing_direction'] and isinstance(value, str) and len(value) > 20:
-                        self.logger.warning(f"{key}の値が20文字を超えているため切り詰めます: '{value[:20]}...'")
-                        value = value[:20]
-                    setattr(listing, key, value)
+                # varchar(20)制限があるフィールドの値を切り詰める
+                if key in ['listing_layout', 'listing_direction'] and isinstance(value, str) and len(value) > 20:
+                    self.logger.warning(f"{key}の値が20文字を超えているため切り詰めます: '{value[:20]}...'")
+                    value = value[:20]
+                # 値を更新（old_value != valueの条件外に移動）
+                setattr(listing, key, value)
             
             # デバッグ: other_changedの状態を確認
             self.logger.info(f"[DEBUG] other_changed={other_changed} before update_type check: {url}, changed_fields={changed_fields}")

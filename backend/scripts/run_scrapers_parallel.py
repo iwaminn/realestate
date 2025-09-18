@@ -125,9 +125,17 @@ class ParallelScrapingManagerDB:
             logger.warning(f"[DEBUG] エラーステータスに更新: task_id={task_id}, scraper={scraper_key}, area={area}, data={data}")
             import traceback
             traceback.print_stack()
-        
+
         db = SessionLocal()
         try:
+            # タスク全体がキャンセルされているか確認
+            task = db.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
+            if task and (task.status == 'cancelled' or task.is_cancelled):
+                # cancelledステータスへの更新のみ許可
+                if data.get('status') != 'cancelled':
+                    logger.info(f"キャンセル済みタスクの進捗更新をスキップ: {task_id}/{scraper_key}/{area}")
+                    return
+
             # 進捗レコードを取得
             progress = db.query(ScrapingTaskProgress).filter(
                 and_(
@@ -136,8 +144,13 @@ class ParallelScrapingManagerDB:
                     ScrapingTaskProgress.area == area
                 )
             ).first()
-            
+
             if progress:
+                # 既にキャンセル済みの進捗は更新しない（cancelled への更新は許可）
+                if progress.status == 'cancelled' and data.get('status') != 'cancelled':
+                    logger.info(f"キャンセル済み進捗の更新をスキップ: {task_id}/{scraper_key}/{area}")
+                    return
+
                 # 進捗データを更新
                 for key, value in data.items():
                     if hasattr(progress, key):
