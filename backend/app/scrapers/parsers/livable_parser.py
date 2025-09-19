@@ -480,11 +480,37 @@ class LivableParser(BaseHtmlParser):
                               detail_info: Dict[str, Any]) -> Dict[str, Any]:
         """grantactパターンの詳細ページを解析"""
         try:
-            # テーブルから情報を抽出
-            # grantactページ用の特定のテーブルクラスを探す
-            tables = soup.find_all('table', class_=['grantact-table', 'property-table', 'detail-table'])
+            # 価格エリアから専有面積と間取りを取得
+            price_area = soup.find('section', class_='price_area')
+            if price_area:
+                # flex infoブロックから情報を取得
+                info_div = price_area.find('div', class_='info')
+                if info_div:
+                    for item_div in info_div.find_all('div'):
+                        span = item_div.find('span')
+                        p = item_div.find('p')
+                        if span and p:
+                            label = span.get_text(strip=True)
+                            value = p.get_text(strip=True)
+                            
+                            if '専有面積' in label:
+                                area = self.parse_area(value)
+                                if area:
+                                    property_data['area'] = area
+                                    self.logger.info(f"[Livable] Grantact専有面積を取得: {area}㎡")
+                            elif '間取' in label:
+                                layout = self.normalize_layout(value)
+                                if layout:
+                                    property_data['layout'] = layout
+                                    self.logger.info(f"[Livable] Grantact間取りを取得: {layout}")
+                            elif '販売価格' in label or '価格' in label:
+                                price = self.parse_price(value)
+                                if price:
+                                    property_data['price'] = price
+                                    self.logger.info(f"[Livable] Grantact価格を取得: {price}万円")
             
-            # 各テーブルを解析
+            # テーブルから追加情報を取得
+            tables = soup.find_all('table')
             for table in tables:
                 for row in table.find_all('tr'):
                     cells = row.find_all(['th', 'td'])
@@ -496,7 +522,7 @@ class LivableParser(BaseHtmlParser):
             # タイトルから建物名を取得
             self._extract_grantact_building_name(soup, property_data)
             
-            # JavaScriptから住所を取得
+            # JavaScript変数から住所を取得
             self._extract_grantact_address(soup, property_data)
             
             # 必須フィールドの確認とフォールバック
@@ -579,17 +605,109 @@ class LivableParser(BaseHtmlParser):
                 property_data['repair_fund'] = fund
     
     def _extract_grantact_building_name(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
-        """grantactページから建物名を抽出"""
-        # タイトルタグから取得
+        """grantactページから建物名を抽出（複数箇所から取得して検証）"""
+        building_names = []
+        
+        # 1. タイトルタグから取得
         title_tag = soup.find('title')
         if title_tag:
             title_text = title_tag.get_text(strip=True)
-            # タイトルから建物名部分を抽出
-            match = re.search(r'^([^｜|\(]+)', title_text)
-            if match:
-                building_name = match.group(1).strip()
-                if building_name:
-                    property_data['building_name'] = building_name
+            # 【GRANTACT】の後の建物名を取得
+            if '【GRANTACT】' in title_text:
+                match = re.search(r'【GRANTACT】([^｜|\|]+)', title_text)
+                if match:
+                    building_name = match.group(1).strip()
+                    if building_name:
+                        building_names.append(('title', building_name))
+                        self.logger.info(f"[Livable] タイトルから建物名を取得: {building_name}")
+            else:
+                # 通常のタイトルパターン
+                match = re.search(r'^([^｜|\|\\(]+)', title_text)
+                if match:
+                    building_name = match.group(1).strip()
+                    if building_name:
+                        building_names.append(('title', building_name))
+                        self.logger.info(f"[Livable] タイトルから建物名を取得: {building_name}")
+        
+        # 2. h1タグから取得
+        h1_tag = soup.find('h1')
+        if h1_tag:
+            h1_text = h1_tag.get_text(strip=True)
+            # 【GRANTACT】が含まれる場合はその後の部分を取得
+            if '【GRANTACT】' in h1_text:
+                match = re.search(r'【GRANTACT】([^｜|\|]+)', h1_text)
+                if match:
+                    building_name = match.group(1).strip()
+                    if building_name:
+                        building_names.append(('h1', building_name))
+                        self.logger.info(f"[Livable] h1から建物名を取得: {building_name}")
+            else:
+                # 通常のパターン
+                building_name = h1_text.strip()
+                if building_name and not building_name.startswith('東急リバブル'):
+                    building_names.append(('h1', building_name))
+                    self.logger.info(f"[Livable] h1から建物名を取得: {building_name}")
+        
+        # 3. og:titleメタタグから取得（補助的な情報源）
+        og_title = soup.find('meta', property='og:title')
+        if og_title and og_title.get('content'):
+            content = og_title['content']
+            if '【GRANTACT】' in content:
+                match = re.search(r'【GRANTACT】([^｜|\|]+)', content)
+                if match:
+                    building_name = match.group(1).strip()
+                    if building_name:
+                        building_names.append(('og:title', building_name))
+                        self.logger.info(f"[Livable] og:titleから建物名を取得: {building_name}")
+        
+        # 建物名のクロスバリデーション
+        if len(building_names) >= 2:
+            # 複数箇所から取得できた場合、一致確認
+            primary_name = building_names[0][1]
+            secondary_name = building_names[1][1]
+            
+            # 正規化して比較
+            # 簡易的な正規化（全角半角統一、スペース削除）
+            import unicodedata
+            def simple_normalize(text):
+                # 全角を半角に変換
+                text = unicodedata.normalize('NFKC', text)
+                # 大文字小文字を統一
+                text = text.upper()
+                # スペースを削除
+                text = text.replace(' ', '').replace('　', '')
+                return text
+            
+            normalized_primary = simple_normalize(primary_name)
+            normalized_secondary = simple_normalize(secondary_name)
+            
+            if normalized_primary == normalized_secondary:
+                self.logger.info(f"[Livable] 建物名が一致（{building_names[0][0]}と{building_names[1][0]}）: {primary_name}")
+                property_data['building_name'] = primary_name
+                property_data['_building_name_validated'] = True
+            else:
+                # 部分一致をチェック（片方が他方を含む場合）
+                if normalized_primary in normalized_secondary or normalized_secondary in normalized_primary:
+                    # より長い方を採用
+                    longer_name = primary_name if len(primary_name) >= len(secondary_name) else secondary_name
+                    self.logger.info(f"[Livable] 建物名が部分一致、より詳細な名前を採用: {longer_name}")
+                    property_data['building_name'] = longer_name
+                    property_data['_building_name_validated'] = True
+                else:
+                    self.logger.warning(
+                        f"[Livable] 建物名が不一致: {building_names[0][0]}='{primary_name}' vs "
+                        f"{building_names[1][0]}='{secondary_name}'"
+                    )
+                    # 最初に見つかった建物名を採用
+                    property_data['building_name'] = primary_name
+                    property_data['_building_name_validated'] = False
+        elif len(building_names) == 1:
+            # 1箇所からしか取得できなかった場合
+            property_data['building_name'] = building_names[0][1]
+            property_data['_building_name_validated'] = False
+            self.logger.warning(f"[Livable] 建物名を1箇所からのみ取得: {building_names[0][0]}='{building_names[0][1]}'")
+        else:
+            self.logger.error("[Livable] 建物名を取得できませんでした")
     
     def _extract_grantact_address(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
         """grantactページから住所を抽出"""

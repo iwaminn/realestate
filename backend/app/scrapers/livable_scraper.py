@@ -72,40 +72,22 @@ class LivableScraper(BaseScraper):
                                    allow_partial_match: bool = False, threshold: float = 0.8) -> Tuple[bool, Optional[str]]:
         """東急リバブル特有の建物名マッチングロジック
         
-        東急リバブルでは詳細ページの建物名が一覧ページよりも詳細な場合が多い
-        例：
-        - 一覧「ＴＨＥ　ＲＯＰＰＯＮＧＩ　ＴＯＫＹＯ」 → 詳細「ＴＨＥ ＲＯＰＰＯＮＧＩ ＴＯＫＹＯ ＣＬＵＢ ＲＥＳＩＤＥＮＣＥ」
-        - 一覧「三田ガーデンヒルズ」 → 詳細「三田ガーデンヒルズノースヒル」
+        Grantact物件の場合は詳細ページ内でのクロスバリデーションを優先する
         """
-        # 基底クラスのメソッドを呼び出す
-        is_verified, verified_name = super().verify_building_names_match(
+        # 詳細ページのデータに_building_name_validatedフラグがある場合は
+        # 詳細ページ内でのクロスバリデーションが行われたことを意味する
+        # この場合、一覧との比較は行わず、詳細ページの建物名を信頼する
+        if hasattr(self, '_current_property_data') and self._current_property_data:
+            if self._current_property_data.get('_building_name_validated'):
+                self.logger.info(
+                    f"[Livable] 詳細ページ内でクロスバリデーション済み: 建物名「{detail_building_name}」を採用"
+                )
+                return True, detail_building_name
+        
+        # 基底クラスのメソッドを呼び出す（通常物件の場合）
+        return super().verify_building_names_match(
             detail_building_name, building_name_from_list, allow_partial_match, threshold
         )
-        
-        # 基底クラスで一致しなかった場合、追加のチェックを行う
-        if not is_verified and allow_partial_match:
-            # 正規化
-            normalized_list = self.normalize_building_name(building_name_from_list)
-            normalized_detail = self.normalize_building_name(detail_building_name)
-            
-            # 一覧の建物名が詳細の建物名の先頭部分と一致するかチェック
-            if normalized_detail.startswith(normalized_list):
-                self.logger.info(
-                    f"建物名が一致（前方一致）: 一覧「{building_name_from_list}」は詳細「{detail_building_name}」の先頭部分"
-                )
-                return True, detail_building_name
-            
-            # スペースを除去してもう一度チェック
-            list_no_space = normalized_list.replace(' ', '').replace('　', '')
-            detail_no_space = normalized_detail.replace(' ', '').replace('　', '')
-            
-            if detail_no_space.startswith(list_no_space):
-                self.logger.info(
-                    f"建物名が一致（前方一致・スペース除去後）: 一覧「{building_name_from_list}」は詳細「{detail_building_name}」の先頭部分"
-                )
-                return True, detail_building_name
-        
-        return is_verified, verified_name
     
     def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
         """東急リバブルのsite_property_idの妥当性を検証
@@ -151,6 +133,10 @@ class LivableScraper(BaseScraper):
             save_property_func=self.save_property_common
         )
         
+        # 処理後、一時的なプロパティデータをクリア
+        if hasattr(self, '_current_property_data'):
+            self._current_property_data = None
+        
         return result
     
     
@@ -187,5 +173,9 @@ class LivableScraper(BaseScraper):
             
         # パーサーで基本的な解析を実行
         detail_data = self.parser.parse_property_detail(soup)
+        
+        # Grantact物件の場合のフラグを一時的に保存（verify_building_names_matchで使用）
+        if detail_data:
+            self._current_property_data = detail_data
         
         return detail_data
