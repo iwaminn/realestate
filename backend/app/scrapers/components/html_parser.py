@@ -3,20 +3,29 @@ HTMLパーサーコンポーネント
 
 HTML解析に関する共通処理を担当
 - テキスト抽出
-- 数値抽出
-- 日付パース
 - テーブルデータ抽出
+- CSS選択
+- URL正規化
 """
 import re
 import logging
 from typing import Optional, List, Dict, Any, Union
 from bs4 import BeautifulSoup, Tag
 from datetime import datetime
-import unicodedata
 
 
 class HtmlParserComponent:
-    """HTML解析を担当するコンポーネント"""
+    """
+    HTML解析コンポーネント
+    
+    責務: HTMLの解析と要素からの基本的なテキスト抽出
+    - BeautifulSoupを使ったHTML解析
+    - HTML要素からのテキスト抽出
+    - CSS選択と要素の安全な取得
+    - URLの正規化
+    
+    データの意味解釈や正規化はDataNormalizerに委譲
+    """
     
     def __init__(self, logger: Optional[logging.Logger] = None):
         """
@@ -27,252 +36,117 @@ class HtmlParserComponent:
         """
         self.logger = logger or logging.getLogger(__name__)
     
-    def parse_html(self, content: str, parser: str = 'html.parser') -> Optional[BeautifulSoup]:
+    def parse_html(self, html_content: str, parser: str = 'html.parser') -> Optional[BeautifulSoup]:
         """
         HTML文字列をBeautifulSoupオブジェクトに変換
         
         Args:
-            content: HTML文字列
-            parser: パーサーの種類（デフォルト: html.parser）
+            html_content: HTML文字列
+            parser: パーサーの種類
             
         Returns:
             BeautifulSoupオブジェクト
         """
-        if not content:
+        if not html_content:
             return None
-        
+            
         try:
-            soup = BeautifulSoup(content, parser)
-            return soup
+            return BeautifulSoup(html_content, parser)
         except Exception as e:
             self.logger.error(f"HTML解析エラー: {e}")
             return None
-
-    def extract_text(self, element: Optional[Union[Tag, str]]) -> str:
+    
+    def extract_text(self, element: Union[Tag, BeautifulSoup, str, None]) -> Optional[str]:
         """
-        要素からテキストを安全に抽出
+        HTML要素からテキストを抽出
         
         Args:
-            element: BeautifulSoup要素またはテキスト
+            element: BeautifulSoupの要素、文字列、またはNone
             
         Returns:
-            抽出・整形されたテキスト（空文字列を返す）
+            抽出されたテキスト（前後の空白を除去）
         """
         if element is None:
-            return ""
-        
+            return None
+            
         if isinstance(element, str):
-            text = element
-        else:
+            return self.clean_text(element)
+            
+        try:
             text = element.get_text(strip=True)
-        
-        return self.clean_text(text)
+            return self.clean_text(text) if text else None
+        except Exception as e:
+            self.logger.warning(f"テキスト抽出エラー: {e}")
+            return None
     
-    def clean_text(self, text: str) -> str:
+    def clean_text(self, text: str) -> Optional[str]:
         """
-        テキストをクリーンアップ
+        テキストをクリーニング
         
         Args:
-            text: 生のテキスト
+            text: クリーニング対象のテキスト
             
         Returns:
-            クリーンアップされたテキスト
+            クリーニングされたテキスト
         """
         if not text:
-            return ""
+            return None
         
-        # 全角スペースを半角に変換
-        text = text.replace('　', ' ')
-        
-        # 連続するスペースを1つに
+        # 改行・タブ・連続する空白を単一の空白に置換
         text = re.sub(r'\s+', ' ', text)
         
         # 前後の空白を削除
         text = text.strip()
         
-        return text
-    
-    def extract_number(self, text: str) -> Optional[float]:
-        """
-        テキストから数値を抽出
-        
-        Args:
-            text: 数値を含むテキスト
-            
-        Returns:
-            抽出された数値（float）
-        """
-        if not text:
-            return None
-        
-        # 全角数字を半角に変換
-        text = unicodedata.normalize('NFKC', text)
-        
-        # カンマを除去
-        text = text.replace(',', '')
-        
-        # 数値パターンを抽出
-        pattern = r'[-+]?\d*\.?\d+'
-        match = re.search(pattern, text)
-        
-        if match:
-            try:
-                return float(match.group())
-            except ValueError:
-                self.logger.warning(f"数値変換失敗: {match.group()}")
-                return None
-        
-        return None
-    
-    def extract_integer(self, text: str) -> Optional[int]:
-        """
-        テキストから整数を抽出
-        
-        Args:
-            text: 整数を含むテキスト
-            
-        Returns:
-            抽出された整数
-        """
-        number = self.extract_number(text)
-        if number is not None:
-            return int(number)
-        return None
-    
-    def parse_price(self, text: str) -> Optional[int]:
-        """
-        価格テキストをパース（万円単位）
-        
-        Args:
-            text: 価格テキスト（例: "3,500万円", "3億3,000万円"）
-            
-        Returns:
-            価格（万円単位の整数）
-        """
-        if not text:
-            return None
-        
-        # 全角数字を半角に変換
-        text = unicodedata.normalize('NFKC', text)
-        
-        # カンマを除去（数値処理を簡単にするため）
-        text = text.replace(',', '')
-        
-        # 億円の処理
-        if '億' in text:
-            # 例: "1億5000万円" -> 15000
-            # 例: "3億3000万円" -> 33000
-            # 例: "3億円" -> 30000
-            pattern = r'(\d+)億\s*(\d+)?万?'
-            match = re.search(pattern, text)
-            if match:
-                oku = int(match.group(1))
-                man = int(match.group(2)) if match.group(2) else 0
-                return oku * 10000 + man
-        
-        # 万円の処理
-        if '万' in text:
-            # 例: "3500万円" -> 3500
-            pattern = r'(\d+)万'
-            match = re.search(pattern, text)
-            if match:
-                try:
-                    return int(match.group(1))
-                except ValueError:
-                    pass
-        
-        # 数値のみの場合（万円単位と仮定）
-        number = self.extract_integer(text)
-        if number and number > 100:  # 100万円以上なら妥当な価格
-            return number
-        
-        return None
-    
-    def parse_date(self, text: str, base_year: Optional[int] = None) -> Optional[datetime]:
-        """
-        日付テキストをパース
-        
-        Args:
-            text: 日付テキスト
-            base_year: 基準年（年が省略されている場合用）
-            
-        Returns:
-            datetime オブジェクト
-        """
-        if not text:
-            return None
-        
-        # 全角数字を半角に変換
-        text = unicodedata.normalize('NFKC', text)
-        
-        patterns = [
-            # 2024年1月15日
-            (r'(\d{4})年(\d{1,2})月(\d{1,2})日', '%Y-%m-%d'),
-            # 2024/01/15
-            (r'(\d{4})/(\d{1,2})/(\d{1,2})', '%Y/%m/%d'),
-            # 2024-01-15
-            (r'(\d{4})-(\d{1,2})-(\d{1,2})', '%Y-%m-%d'),
-            # 1月15日（年なし）
-            (r'(\d{1,2})月(\d{1,2})日', '%m-%d'),
-        ]
-        
-        for pattern, format_str in patterns:
-            match = re.search(pattern, text)
-            if match:
-                try:
-                    if '%Y' not in format_str:
-                        # 年が含まれない場合
-                        year = base_year or datetime.now().year
-                        date_str = f"{year}-{match.group(1)}-{match.group(2)}"
-                        return datetime.strptime(date_str, '%Y-%m-%d')
-                    else:
-                        date_str = '-'.join(match.groups())
-                        return datetime.strptime(date_str, format_str.replace('/', '-'))
-                except ValueError:
-                    continue
-        
-        return None
-    
+        # 空文字列の場合はNoneを返す
+        return text if text else None
+
     def extract_table_data(self, table: Tag) -> Dict[str, str]:
         """
-        テーブルからキー・バリューデータを抽出
+        HTMLテーブルからデータを抽出
         
         Args:
-            table: テーブル要素
+            table: tableタグ要素
             
         Returns:
-            {キー: 値} の辞書
+            キーと値のペアの辞書
         """
         data = {}
         
         if not table:
             return data
         
-        # th-td形式
-        for row in table.find_all('tr'):
+        # trタグを取得
+        rows = table.find_all('tr')
+        
+        for row in rows:
+            # th/tdの組み合わせを処理
             th = row.find('th')
             td = row.find('td')
+            
             if th and td:
                 key = self.extract_text(th)
                 value = self.extract_text(td)
-                if key:
+                
+                if key and value:
                     data[key] = value
-        
-        # dt-dd形式（dl要素）
-        if table.name == 'dl':
-            dts = table.find_all('dt')
-            dds = table.find_all('dd')
-            for dt, dd in zip(dts, dds):
+            
+            # dt/ddの組み合わせも処理（一部のサイトで使用）
+            dt = row.find('dt')
+            dd = row.find('dd')
+            
+            if dt and dd:
                 key = self.extract_text(dt)
                 value = self.extract_text(dd)
-                if key:
+                
+                if key and value:
                     data[key] = value
         
         return data
     
-    def safe_select(self, soup: Optional[BeautifulSoup], selector: str) -> List[Tag]:
+    def safe_select(self, soup: BeautifulSoup, selector: str) -> List[Tag]:
         """
-        セレクタで安全に要素を取得
+        安全なCSS選択（エラーハンドリング付き）
         
         Args:
             soup: BeautifulSoupオブジェクト
@@ -281,35 +155,35 @@ class HtmlParserComponent:
         Returns:
             マッチした要素のリスト
         """
-        if not soup:
+        if not soup or not selector:
             return []
-        
+            
         try:
             return soup.select(selector)
         except Exception as e:
-            self.logger.warning(f"セレクタエラー: {selector} - {e}")
+            self.logger.warning(f"CSS選択エラー ({selector}): {e}")
             return []
     
-    def safe_select_one(self, soup: Optional[BeautifulSoup], selector: str) -> Optional[Tag]:
+    def safe_select_one(self, soup: BeautifulSoup, selector: str) -> Optional[Tag]:
         """
-        セレクタで安全に単一要素を取得
+        安全な単一要素のCSS選択
         
         Args:
             soup: BeautifulSoupオブジェクト
             selector: CSSセレクタ
             
         Returns:
-            マッチした最初の要素
+            最初にマッチした要素またはNone
         """
         elements = self.safe_select(soup, selector)
         return elements[0] if elements else None
     
-    def normalize_url(self, url: Optional[str], base_url: str) -> Optional[str]:
+    def normalize_url(self, url: str, base_url: str = '') -> Optional[str]:
         """
         URLを正規化（相対URLを絶対URLに変換）
         
         Args:
-            url: URL（相対または絶対）
+            url: 正規化するURL
             base_url: ベースURL
             
         Returns:
@@ -318,64 +192,19 @@ class HtmlParserComponent:
         if not url:
             return None
         
-        url = url.strip()
-        
+        # 既に絶対URLの場合はそのまま返す
         if url.startswith('http://') or url.startswith('https://'):
             return url
         
-        if url.startswith('//'):
-            return 'https:' + url
+        # base_urlが指定されていない場合は相対URLをそのまま返す
+        if not base_url:
+            return url
         
-        if url.startswith('/'):
-            # ベースURLからドメインを取得
-            from urllib.parse import urlparse
-            parsed = urlparse(base_url)
-            return f"{parsed.scheme}://{parsed.netloc}{url}"
-        
-        # 相対パスの場合
+        # urllib.parseを使用してURLを結合
         from urllib.parse import urljoin
-        return urljoin(base_url, url)
-    
-    def parse_built_date(self, text: str) -> Dict[str, Optional[int]]:
-        """
-        築年月をパース
         
-        Args:
-            text: 築年月テキスト（例: "平成25年3月"）
-            
-        Returns:
-            {'built_year': 年, 'built_month': 月} の辞書
-        """
-        result = {'built_year': None, 'built_month': None}
-        
-        if not text:
-            return result
-        
-        # 全角数字を半角に変換
-        text = unicodedata.normalize('NFKC', text)
-        
-        # 西暦の年月を抽出
-        year_match = re.search(r'(\d{4})年', text)
-        month_match = re.search(r'(\d{1,2})月', text)
-        
-        if year_match:
-            result['built_year'] = int(year_match.group(1))
-        if month_match:
-            result['built_month'] = int(month_match.group(1))
-        
-        # 和暦対応
-        if not result['built_year']:
-            if '令和' in text:
-                match = re.search(r'令和(\d+)年', text)
-                if match:
-                    result['built_year'] = 2018 + int(match.group(1))
-            elif '平成' in text:
-                match = re.search(r'平成(\d+)年', text)
-                if match:
-                    result['built_year'] = 1988 + int(match.group(1))
-            elif '昭和' in text:
-                match = re.search(r'昭和(\d+)年', text)
-                if match:
-                    result['built_year'] = 1925 + int(match.group(1))
-        
-        return result
+        try:
+            return urljoin(base_url, url)
+        except Exception as e:
+            self.logger.warning(f"URL正規化エラー: {e}")
+            return None

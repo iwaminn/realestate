@@ -61,6 +61,7 @@ __all__ = [
     'extract_monthly_fee',
     'extract_built_year',
     'parse_date',
+    'extract_built_year_month',
     'get_scraper_class',
     'SuumoScraper',
     'HomesScraper',

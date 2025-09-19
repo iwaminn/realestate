@@ -197,16 +197,25 @@ class DataNormalizer:
             4
             >>> normalizer.extract_floor_number("4階/SRC9階建")
             4
+            >>> normalizer.extract_floor_number("地上42階建")  # 総階数なのでNone
+            None
         """
         if not text:
             return None
+        
+        # 「○階建」「○階建て」は総階数を表すので除外
+        # ただし「3階/地上15階」のようなパターンは除外しない
+        if '/' not in text and re.search(r'^\d+階建|地上\d+階建|地下.*階建', text):
+            return None
             
-        # 複合パターン（例: "4階/SRC9階建"）
+        # 複合パターン（例: "4階/SRC9階建", "10階/地上47階", "3階/地上15階 地下1階建"）
+        # スラッシュ前の数字が所在階
         compound_match = re.search(r'^(\d+)階/', text)
         if compound_match:
             return int(compound_match.group(1))
         
         # 単純なパターン（例: "4階", "12階部分"）
+        # 「地上○階」も所在階として扱う（「地上○階建」は除外済み）
         simple_match = re.search(r'(\d+)階', text)
         if simple_match:
             return int(simple_match.group(1))
@@ -271,6 +280,50 @@ class DataNormalizer:
         
         return total_floors, basement_floors
 
+    def extract_total_units(self, text: str) -> Optional[int]:
+        """
+        文字列から総戸数を抽出
+        
+        Args:
+            text: 総戸数情報を含む文字列（例: "1,095戸", "200戸以上", "総戸数250"）
+            
+        Returns:
+            総戸数の整数値、取得できない場合はNone
+            
+        Examples:
+            >>> normalizer.extract_total_units("1,095戸")
+            1095
+            >>> normalizer.extract_total_units("200戸以上")
+            200
+            >>> normalizer.extract_total_units("総戸数: 350")
+            350
+            >>> normalizer.extract_total_units("250")
+            250
+        """
+        if not text:
+            return None
+        
+        # カンマ、全角カンマ、スペース、改行、タブを除去
+        cleaned = text.replace(',', '').replace('，', '').replace(' ', '').replace('\n', '').replace('\t', '')
+        
+        # 「戸」を含む数値を抽出
+        match = re.search(r'(\d+)戸', cleaned)
+        if match:
+            units = int(match.group(1))
+            # 妥当性チェック（1戸以上、10000戸以下）
+            if 1 <= units <= 10000:
+                return units
+        
+        # 「戸」がない場合も数値のみを試す
+        match = re.search(r'(\d+)', cleaned)
+        if match:
+            units = int(match.group(1))
+            # 妥当性チェック（1戸以上、10000戸以下）
+            if 1 <= units <= 10000:
+                return units
+        
+        return None
+
     # ========== 築年関連 ==========
     
     def extract_built_year(self, text: str) -> Optional[int]:
@@ -290,10 +343,17 @@ class DataNormalizer:
             2015
             >>> normalizer.extract_built_year("1971/04")
             1971
+            >>> normalizer.extract_built_year("平成27年築")
+            2015
+            >>> normalizer.extract_built_year("令和2年築")
+            2020
         """
         if not text:
             return None
-            
+        
+        # 全角数字を半角に変換
+        text = text.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+        
         # 西暦年パターン（「2020年」形式）
         year_match = re.search(r'(19\d{2}|20\d{2})年', text)
         if year_match:
@@ -309,10 +369,68 @@ class DataNormalizer:
         if year_only_match:
             return int(year_only_match.group(1))
         
-        # 和暦変換（必要に応じて実装）
-        # TODO: 和暦対応
+        # 和暦変換
+        if '令和' in text:
+            match = re.search(r'令和(\d+)年', text)
+            if match:
+                return 2018 + int(match.group(1))
+        elif '平成' in text:
+            match = re.search(r'平成(\d+)年', text)
+            if match:
+                return 1988 + int(match.group(1))
+        elif '昭和' in text:
+            match = re.search(r'昭和(\d+)年', text)
+            if match:
+                return 1925 + int(match.group(1))
         
         return None
+
+    def extract_built_year_month(self, text: str) -> Dict[str, Optional[int]]:
+        """
+        築年月を抽出（年と月を別々に返す）
+        
+        Args:
+            text: 築年月テキスト（例: "平成25年3月", "2020年12月築"）
+            
+        Returns:
+            {'built_year': 年, 'built_month': 月} の辞書
+            
+        Examples:
+            >>> normalizer.parse_built_date("平成25年3月")
+            {'built_year': 2013, 'built_month': 3}
+            >>> normalizer.parse_built_date("2020年12月築")
+            {'built_year': 2020, 'built_month': 12}
+            >>> normalizer.parse_built_date("1971/04")
+            {'built_year': 1971, 'built_month': 4}
+        """
+        result = {'built_year': None, 'built_month': None}
+        
+        if not text:
+            return result
+        
+        # 全角数字を半角に変換
+        text = text.translate(str.maketrans('０１２３４５６７８９', '0123456789'))
+        
+        # まず年を抽出（既存のメソッドを使用）
+        result['built_year'] = self.extract_built_year(text)
+        
+        # 月を抽出
+        # パターン1: "3月", "12月"
+        month_match = re.search(r'(\d{1,2})月', text)
+        if month_match:
+            month = int(month_match.group(1))
+            if 1 <= month <= 12:
+                result['built_month'] = month
+        
+        # パターン2: スラッシュ形式 "1971/04"
+        if not result['built_month']:
+            slash_match = re.search(r'\d{4}/(\d{1,2})', text)
+            if slash_match:
+                month = int(slash_match.group(1))
+                if 1 <= month <= 12:
+                    result['built_month'] = month
+        
+        return result
 
     def calculate_age_from_built_year(self, built_year: int) -> int:
         """築年から築年数を計算"""
@@ -859,6 +977,10 @@ def extract_total_floors(text: str) -> Tuple[Optional[int], Optional[int]]:
     """文字列から総階数と地下階数を抽出"""
     return _normalizer.extract_total_floors(text)
 
+def extract_total_units(text: str) -> Optional[int]:
+    """文字列から総戸数を抽出"""
+    return _normalizer.extract_total_units(text)
+
 
 # normalize_building_name関数は
 # backend.app.utils.building_name_normalizer.normalize_building_nameに移動しました
@@ -942,6 +1064,11 @@ def extract_monthly_fee(text: str) -> Optional[int]:
 def extract_built_year(text: str) -> Optional[int]:
     """文字列から築年を抽出"""
     return _normalizer.extract_built_year(text)
+
+
+def extract_built_year_month(text: str) -> Dict[str, Optional[int]]:
+    """築年月を抽出（年と月を別々に返す）"""
+    return _normalizer.extract_built_year_month(text)
 
 
 def parse_date(text: str) -> Optional[datetime]:

@@ -9,6 +9,7 @@ from typing import Optional, List, Dict, Any
 from bs4 import BeautifulSoup, Tag
 
 from .base_parser import BaseHtmlParser
+from ..data_normalizer import extract_monthly_fee
 
 
 class HomesParser(BaseHtmlParser):
@@ -247,7 +248,19 @@ class HomesParser(BaseHtmlParser):
         property_data = {}
 
         # 物件情報テーブルを探す
-        detail_tables = self.safe_select(soup, "table.rentTbl, table.bukkenSpec, table.w-full, table.table-fixed, div.mod-buildingDetailSpec table, section.propertyDetail table")
+        # 優先順位: 1. メイン物件詳細テーブル (w-full table-fixed)を優先
+        #          2. その他の詳細テーブル
+        # 注意: 複数の物件が表示される場合があるため、メインテーブルを正確に特定する
+        
+        # まず、メインの物件詳細テーブル (class="w-full table-fixed") を探す
+        main_property_table = soup.find('table', class_='w-full table-fixed')
+        
+        if main_property_table:
+            # メインテーブルのみを使用
+            detail_tables = [main_property_table]
+        else:
+            # フォールバック: 従来のセレクタを使用（より限定的に）
+            detail_tables = self.safe_select(soup, "table.bukkenSpec, div.mod-buildingDetailSpec table, section.propertyDetail table")
 
         for table in detail_tables:
             rows = table.find_all("tr")
@@ -260,25 +273,11 @@ class HomesParser(BaseHtmlParser):
                     if key and value:
                         self._process_detail_item(key, value, property_data)
 
-        # dl/dt/ddパターンも処理（バルコニー面積などが含まれる場合がある）
-        dl_elements = self.safe_select(soup, "dl")
-        for dl in dl_elements:
-            dt = dl.find("dt")
-            dd = dl.find("dd")
-            if dt and dd:
-                key = self.extract_text(dt)
-                value = self.extract_text(dd)
-                if key and value:
-                    self._process_detail_item(key, value, property_data)
-
+        # dl/dt/ddパターンの処理は削除
+        # 理由：一般的なタグ名だけでの取得は危険なため
+        # メインテーブル（class="w-full table-fixed"）から必要な情報は取得できる
         # 建物名を取得
         self._extract_building_name_from_detail(soup, property_data)
-
-        # 物件画像
-        self._extract_property_images(soup, property_data)
-
-        # 物件備考
-        self._extract_remarks(soup, property_data)
 
         # 不動産会社情報
         self._extract_agency_info(soup, property_data)
@@ -333,33 +332,20 @@ class HomesParser(BaseHtmlParser):
         
         # 階数情報
         elif '階' in key:
-            # "10階 / 14階建 (地下1階)" のような形式を処理（スペースあり）
-            match = re.search(r'(\d+)階\s*/\s*(\d+)階建', value)
-            if match:
-                property_data['floor_number'] = int(match.group(1))
-                property_data['total_floors'] = int(match.group(2))
-            else:
-                # "3階/10階建"のような形式を処理（スペースなし）
-                match = re.search(r'(\d+)階/(\d+)階建', value)
-                if match:
-                    property_data['floor_number'] = int(match.group(1))
-                    property_data['total_floors'] = int(match.group(2))
-                else:
-                    # 所在階のみ
-                    if '所在階' in key:
-                        floor = self.parse_floor(value)
-                        if floor:
-                            property_data['floor_number'] = floor
-                    # 総階数のみ
-                    elif '階建' in value:
-                        # "14階建 (地下1階)" のような形式から総階数を取得
-                        total_match = re.search(r'(\d+)階建', value)
-                        if total_match:
-                            property_data['total_floors'] = int(total_match.group(1))
-                        else:
-                            total_floors = self.parse_floor(value)
-                            if total_floors:
-                                property_data['total_floors'] = total_floors
+            # 所在階の抽出
+            floor = self.parse_floor(value)
+            if floor:
+                property_data['floor_number'] = floor
+
+            # 総階数の抽出
+            total_floors = self.parse_total_floors(value)
+            if total_floors:
+                property_data['total_floors'] = total_floors
+
+            # 地下階数の抽出
+            basement_floors = self.parse_basement_floors(value)
+            if basement_floors:
+                property_data['basement_floors'] = basement_floors
         
         # 方角（主要採光面も含む）
         elif '向き' in key or '方位' in key or '方角' in key or '採光' in key:
@@ -389,22 +375,21 @@ class HomesParser(BaseHtmlParser):
         
         # 管理費
         elif '管理費' in key:
-            fee = self.parse_management_info(value)
+            fee = extract_monthly_fee(value)
             if fee:
                 property_data['management_fee'] = fee
         
         # 修繕積立金
         elif '修繕積立' in key:
-            fund = self.parse_management_info(value)
+            fund = extract_monthly_fee(value)
             if fund:
                 property_data['repair_fund'] = fund
         
         # 総戸数
         elif '総戸数' in key or '総区画数' in key:
-            # 「250戸」などから数値を抽出
-            units_match = re.search(r'(\d+)戸', value)
-            if units_match:
-                property_data['total_units'] = int(units_match.group(1))
+            units = self.parse_total_units(value)
+            if units:
+                property_data['total_units'] = units
 
         # 部屋番号
         elif '部屋番号' in key or '号室' in key:
@@ -539,60 +524,7 @@ class HomesParser(BaseHtmlParser):
             
             # 建物名候補リストも作成（MULTI_SOURCEモード用）
             property_data['_building_names_candidates'] = [cleaned_name]
-    
-    def _extract_property_images(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
-        """
-        物件画像URLを抽出
-        
-        Args:
-            soup: BeautifulSoupオブジェクト
-            property_data: データ格納先
-        """
-        images = []
-        
-        # メイン画像
-        main_img = self.safe_select_one(soup, "img#mainImage, img.mainPhoto")
-        if main_img and main_img.get('src'):
-            img_url = self.normalize_url(main_img['src'], self.BASE_URL)
-            if img_url:
-                images.append(img_url)
-        
-        # サムネイル画像
-        thumb_imgs = self.safe_select(soup, "div.thumbnail img, ul.imageList img")
-        for img in thumb_imgs[:10]:  # 最大10枚
-            if img.get('src'):
-                img_url = self.normalize_url(img['src'], self.BASE_URL)
-                if img_url and img_url not in images:
-                    images.append(img_url)
-        
-        if images:
-            property_data['image_urls'] = images
-    
-    def _extract_remarks(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
-        """
-        物件備考を抽出
-        
-        Args:
-            soup: BeautifulSoupオブジェクト
-            property_data: データ格納先
-        """
-        remarks_selectors = [
-            "div.prComment",
-            "div.bukkenPr",
-            "div.comment",
-            "section.remarks"
-        ]
-        
-        for selector in remarks_selectors:
-            remarks_elem = self.safe_select_one(soup, selector)
-            if remarks_elem:
-                remarks = self.extract_text(remarks_elem)
-                if remarks:
-                    property_data['remarks'] = remarks
-                    # 最初の100文字を要約として使用
-                    property_data['summary_remarks'] = remarks[:100] + ('...' if len(remarks) > 100 else '')
-                    return
-    
+
     def _extract_agency_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """
         不動産会社情報を抽出
@@ -620,6 +552,53 @@ class HomesParser(BaseHtmlParser):
         if 'agency_name' not in property_data:
             pass  # 不動産会社が取得できない場合は空のままにする
     
+    def is_last_page(self, soup: BeautifulSoup) -> bool:
+        """
+        現在のページが最終ページかどうかを判定
+        
+        Returns:
+            最終ページの場合True
+        """
+        try:
+            # LIFULL HOME'Sの最終ページ判定（2025年8月改訂）
+            # 最終ページの特徴：
+            # 1. li.nextPage要素が存在しない
+            # 2. または、li.nextPage要素はあるがその中にaタグがない
+            
+            # 方法1: li.nextPage要素の存在と状態を確認（最も確実な方法）
+            next_page_li = soup.select_one('li.nextPage')
+            if not next_page_li:
+                # li.nextPage要素が存在しない = 最終ページ
+                self.logger.info("[HOMES] li.nextPage要素が存在しないため最終ページと判定")
+                return True
+            
+            # li.nextPageは存在するが、その中のaタグを確認
+            next_link = next_page_li.select_one('a')
+            if not next_link:
+                # li.nextPageはあるがaタグがない = 最終ページ
+                self.logger.info("[HOMES] li.nextPageはあるがaタグがないため最終ページと判定")
+                return True
+            
+            # 方法2: 物件数が0の場合も最終ページと判定（念のため）
+            building_blocks = soup.select('.mod-mergeBuilding--sale')
+            if len(building_blocks) == 0:
+                self.logger.info("[HOMES] 物件リストが空のため最終ページと判定")
+                return True
+            
+            # 方法3: 物件数が30件未満の場合も最終ページの可能性が高い
+            # （通常は1ページ30件表示）
+            if 0 < len(building_blocks) < 30:
+                self.logger.info(f"[HOMES] 物件数が{len(building_blocks)}件（30件未満）のため最終ページの可能性")
+                # この場合もli.nextPageの状態を優先的に判定
+                return not next_page_li or not next_link
+            
+            # すべての条件に該当しない場合は最終ページではない
+            return False
+            
+        except Exception as e:
+            self.logger.warning(f"[HOMES] ページ終端判定でエラー: {e}")
+            return False
+
     def get_next_page_url(self, soup: BeautifulSoup, current_url: str) -> Optional[str]:
         """
         次ページのURLを取得

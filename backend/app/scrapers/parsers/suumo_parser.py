@@ -9,6 +9,7 @@ from typing import Optional, List, Dict, Any
 from bs4 import BeautifulSoup, Tag
 
 from .base_parser import BaseHtmlParser
+from ..data_normalizer import extract_monthly_fee
 
 
 class SuumoParser(BaseHtmlParser):
@@ -338,7 +339,7 @@ class SuumoParser(BaseHtmlParser):
                 property_data['price'] = price
         
         # 間取り
-        elif '間取' in key:
+        elif '間取' in key and 'layout' not in property_data:
             layout = self.normalize_layout(value)
             if layout:
                 property_data['layout'] = layout
@@ -425,53 +426,78 @@ class SuumoParser(BaseHtmlParser):
     def _extract_basic_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """
         基本情報を抽出
-        
+
         Args:
             soup: BeautifulSoupオブジェクト
             property_data: データ格納先
         """
-        # 基本情報テーブル（複数のクラス名パターンに対応）
-        info_tables = soup.select("table.data_table, table.bgc-wht, table.bgWhite")
+        # 「物件詳細情報」という見出しを探す
+        property_detail_table = None
         
-        # それでも見つからない場合は、すべてのテーブルから探す
-        if not info_tables:
-            # bgWhiteクラスを含むテーブルをすべて取得
-            all_tables = soup.find_all("table", class_=lambda x: x and "bgWhite" in " ".join(x) if isinstance(x, list) else False)
-            info_tables = all_tables if all_tables else []
-        
-        # 各テーブルを処理
-        for info_table in info_tables:
-            rows = info_table.find_all("tr")
-            for row in rows:
-                th = row.find("th")
-                td = row.find("td")
-                if th and td:
-                    # キーからリンクなどの子要素を除外して、テキストのみを取得
-                    # まずdiv.flがあればそのテキストを取得、なければthの直接テキストを取得
-                    key_div = th.find('div', class_='fl')
-                    if key_div:
-                        # div.fl内のテキストを取得
-                        key = self.extract_text(key_div)
+        # h3タグから「物件詳細情報」を探す
+        for h3 in soup.find_all('h3'):
+            if '物件詳細情報' in self.extract_text(h3):
+                # 見出しの次に出現するテーブルを探す
+                property_detail_table = h3.find_next('table')
+                if property_detail_table:
+                    # クラス名を確認して物件詳細テーブルであることを確認
+                    table_classes = property_detail_table.get('class', [])
+                    if 'bgWhite' in table_classes:
+                        # 正しいテーブルを発見
+                        break
                     else:
-                        # thの直接のテキストノードのみを取得（子要素のテキストは除外）
-                        key_parts = []
-                        for content in th.contents:
-                            if isinstance(content, str):
-                                key_parts.append(content.strip())
-                        key = ''.join(key_parts).strip()
-                        
-                        # それでも取得できない場合は全体のテキストから「ヒント」を除去
-                        if not key:
-                            key = self.extract_text(th)
-                            # 「ヒント」という文字列を除去
-                            key = key.replace('ヒント', '').strip()
+                        property_detail_table = None
+                break
+        
+        # 物件詳細情報のテーブルが見つかった場合のみ処理
+        if property_detail_table:
+            self._process_table(property_detail_table, property_data)
+        else:
+            # 物件詳細情報テーブルが見つからない場合はログ出力
+            self.logger.warning("[SUUMO] 物件詳細情報テーブルが見つかりませんでした")
+    
+    def _process_table(self, table, property_data: Dict[str, Any]) -> None:
+        """
+        テーブルを処理して情報を抽出
+        
+        Args:
+            table: BeautifulSoupのtable要素
+            property_data: データ格納先
+        """
+        rows = table.find_all("tr")
+        for row in rows:
+            # 1行に複数のth/tdペアがある場合に対応
+            ths = row.find_all("th")
+            tds = row.find_all("td")
+            
+            # th/tdをペアで処理
+            for th, td in zip(ths, tds):
+                # キーからリンクなどの子要素を除外して、テキストのみを取得
+                # まずdiv.flがあればそのテキストを取得、なければthの直接テキストを取得
+                key_div = th.find('div', class_='fl')
+                if key_div:
+                    # div.fl内のテキストを取得
+                    key = self.extract_text(key_div)
+                else:
+                    # thの直接のテキストノードのみを取得（子要素のテキストは除外）
+                    key_parts = []
+                    for content in th.contents:
+                        if isinstance(content, str):
+                            key_parts.append(content.strip())
+                    key = ''.join(key_parts).strip()
                     
-                    # 値は通常通り全体のテキストを取得
-                    value = self.extract_text(td)
-                    
-                    # キーが空でない場合のみ処理
-                    if key:
-                        self._process_detail_item(key, value, property_data)
+                    # それでも取得できない場合は全体のテキストから「ヒント」を除去
+                    if not key:
+                        key = self.extract_text(th)
+                        # 「ヒント」という文字列を除去
+                        key = key.replace('ヒント', '').strip()
+                
+                # 値は通常通り全体のテキストを取得
+                value = self.extract_text(td)
+                
+                # キーが空でない場合のみ処理
+                if key:
+                    self._process_detail_item(key, value, property_data)
     
     def _extract_detail_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """
@@ -481,7 +507,37 @@ class SuumoParser(BaseHtmlParser):
             soup: BeautifulSoupオブジェクト
             property_data: データ格納先
         """
-        # 詳細情報のdl要素
+        # 「物件詳細情報」のh3見出しを探す
+        h3_detail = None
+        for h3 in soup.find_all('h3'):
+            if '物件詳細情報' in self.extract_text(h3):
+                h3_detail = h3
+                break
+        
+        if h3_detail:
+            # h3の次のテーブルを探す
+            current = h3_detail
+            for _ in range(10):  # 最大10要素まで探索
+                current = current.find_next()
+                if not current:
+                    break
+                
+                if current.name == 'table':
+                    # 物件詳細情報のテーブルを発見
+                    rows = current.find_all('tr')
+                    for row in rows:
+                        th = row.find('th')
+                        td = row.find('td')
+                        if th and td:
+                            # thのテキストを取得（ヒントを除去）
+                            key = self.extract_text(th).replace('ヒント', '').strip()
+                            value = self.extract_text(td)
+                            
+                            if key and value:
+                                self._process_detail_item(key, value, property_data)
+                    break
+        
+        # 従来のdl要素からの抽出も維持（フォールバック）
         dl_elements = self.safe_select(soup, "dl.data-body")
         for dl in dl_elements:
             dt_elements = dl.find_all("dt")
@@ -506,19 +562,19 @@ class SuumoParser(BaseHtmlParser):
             return
         
         # 価格
-        if '価格' in key or '販売価格' in key:
+        if ('価格' in key or '販売価格' in key) and 'price' not in property_data:
             price = self.parse_price(value)
             if price:
                 property_data['price'] = price
-        
+
         # 間取り
-        elif '間取' in key:
+        elif '間取' in key and 'layout' not in property_data:
             layout = self.normalize_layout(value)
             if layout:
                 property_data['layout'] = layout
-        
+
         # 専有面積
-        elif '専有面積' in key:
+        elif '専有面積' in key and 'area' not in property_data:
             area = self.parse_area(value)
             if area:
                 property_data['area'] = area
@@ -531,35 +587,40 @@ class SuumoParser(BaseHtmlParser):
         
         # 階数（所在階/階建）
         elif '所在階' in key:
-            # "5階/10階建"のような形式を処理
-            match = re.search(r'(\d+)階/(\d+)階建', value)
-            if match:
-                property_data['floor_number'] = int(match.group(1))
-                property_data['total_floors'] = int(match.group(2))
-            else:
-                floor = self.parse_floor(value)
-                if floor:
-                    property_data['floor_number'] = floor
+            # 所在階の抽出
+            floor = self.parse_floor(value)
+            if floor:
+                property_data['floor_number'] = floor
+
+            # 総階数の抽出（"10階建"の部分から）
+            total_floors = self.parse_total_floors(value)
+            if total_floors:
+                property_data['total_floors'] = total_floors
+
+            # 地下階数の抽出
+            basement_floors = self.parse_basement_floors(value)
+            if basement_floors:
+                property_data['basement_floors'] = basement_floors
         
         # 総階数
         elif '階建' in key or '総階数' in key:
-            total_floors = self.parse_floor(value)
+            total_floors = self.parse_total_floors(value)
             if total_floors:
                 property_data['total_floors'] = total_floors
+            
+            # 地下階数の抽出
+            basement_floors = self.parse_basement_floors(value)
+            if basement_floors:
+                property_data['basement_floors'] = basement_floors
         
         # 総戸数
         elif '総戸数' in key or '総区画数' in key:
-            # 「1,095戸」「250戸」などから数値を抽出（カンマも考慮）
-            # カンマ、スペース、改行を除去
-            cleaned_value = value.replace(',', '').replace('，', '').replace(' ', '').replace('\n', '').replace('\t', '')
-            
-            # 「戸」を含む数値を抽出
-            units_match = re.search(r'(\d+)戸', cleaned_value)
-            if units_match:
-                property_data['total_units'] = int(units_match.group(1))
+            units = self.parse_total_units(value)
+            if units:
+                property_data['total_units'] = units
             else:
                 # 「戸」がない場合も試す（数値のみ）
-                units_match = re.search(r'(\d+)', cleaned_value)
+                units_match = re.search(r'(\d+)', value)
                 if units_match:
                     property_data['total_units'] = int(units_match.group(1))
         
@@ -577,8 +638,8 @@ class SuumoParser(BaseHtmlParser):
             if built_info['built_month']:
                 property_data['built_month'] = built_info['built_month']
         
-        # 所在地
-        elif '所在地' in key:
+        # 所在地・住所
+        elif '所在地' in key or '住所' in key:
             address = self.normalize_address(value)
             if address:
                 property_data['address'] = address
@@ -591,13 +652,13 @@ class SuumoParser(BaseHtmlParser):
         
         # 管理費
         elif '管理費' in key:
-            fee = self.parse_management_info(value)
+            fee = extract_monthly_fee(value)
             if fee:
                 property_data['management_fee'] = fee
         
         # 修繕積立金
         elif '修繕積立' in key:
-            fund = self.parse_management_info(value)
+            fund = extract_monthly_fee(value)
             if fund:
                 property_data['repair_fund'] = fund
         
@@ -688,6 +749,43 @@ class SuumoParser(BaseHtmlParser):
         # if 'agency_name' not in property_data:
         #     property_data['agency_name'] = self.DEFAULT_AGENCY_NAME
     
+    def is_last_page(self, soup: BeautifulSoup) -> bool:
+        """
+        現在のページが最終ページかどうかを判定
+        
+        Returns:
+            最終ページの場合True
+        """
+        try:
+            # 「次へ」リンクの有無で判定
+            next_link = soup.select_one('.pagination a[rel="next"], .pagination-parts a:contains("次へ")')
+            if next_link is None:
+                return True
+            
+            # ページ番号から判定
+            pagination = soup.select_one('.pagination, .pagination-parts')
+            if pagination:
+                current = pagination.select_one('.active, .current, strong')
+                if current:
+                    page_links = pagination.select('a')
+                    if page_links:
+                        last_page_text = page_links[-1].get_text(strip=True)
+                        if last_page_text == '次へ' and len(page_links) > 1:
+                            last_page_text = page_links[-2].get_text(strip=True)
+                        
+                        try:
+                            current_page = int(current.get_text(strip=True))
+                            last_page = int(last_page_text)
+                            return current_page >= last_page
+                        except (ValueError, AttributeError):
+                            pass
+            
+            return False
+            
+        except Exception as e:
+            self.logger.warning(f"[SUUMO] ページ終端判定でエラー: {e}")
+            return False
+
     def get_next_page_url(self, soup: BeautifulSoup, current_url: str) -> Optional[str]:
         """
         次ページのURLを取得

@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup, Tag
 from datetime import datetime
 
 from .base_parser import BaseHtmlParser
+from ..data_normalizer import extract_monthly_fee
 
 
 class NomuParser(BaseHtmlParser):
@@ -164,10 +165,17 @@ class NomuParser(BaseHtmlParser):
                 floor_match = re.search(r'(\d+)階', floor_text)
                 if floor_match:
                     property_data['floor_number'] = int(floor_match.group(1))
-                # 総階数を抽出
-                total_match = re.search(r'(\d+)階建', floor_text)
-                if total_match:
-                    property_data['total_floors'] = int(total_match.group(1))
+                # 総階数を抽出（地下階も含む）
+                basement_match = re.search(r'地下(\d+)階・?地上(\d+)階', floor_text)
+                if basement_match:
+                    # 地下X階・地上Y階の形式
+                    property_data['basement_floors'] = int(basement_match.group(1))
+                    property_data['total_floors'] = int(basement_match.group(2))
+                else:
+                    # 通常の階数表記
+                    total_match = re.search(r'(\d+)階建', floor_text)
+                    if total_match:
+                        property_data['total_floors'] = int(total_match.group(1))
         
         # 住所と駅情報を抽出 (item_2)
         location_cell = table.find("td", class_="item_td item_2")
@@ -197,7 +205,7 @@ class NomuParser(BaseHtmlParser):
         価格要素から価格文字列を構築
         
         ノムコムの価格表示は複数のspan要素に分かれているため、
-        基底クラスの共通メソッドを使用して結合
+        それらを結合して価格文字列を作成
         
         Args:
             price_elem: 価格要素
@@ -205,59 +213,130 @@ class NomuParser(BaseHtmlParser):
         Returns:
             価格文字列
         """
-        # デバッグ: span要素の内容を確認
+        # span要素から価格を組み立てる
         spans = price_elem.find_all("span")
-        if spans:
-            span_texts = []
-            for span in spans:
-                text = span.get_text(strip=True)
-                classes = span.get("class", [])
-                span_texts.append(f"{text}(class={classes})")
-            self.logger.debug(f"価格span要素: {span_texts}")
+        price_parts = []
         
-        # 基底クラスのメソッドを使用
-        built_text = self.build_price_text_from_spans(price_elem)
-        raw_text = price_elem.get_text(strip=True)
+        for span in spans:
+            span_text = span.get_text(strip=True)
+            if span_text:
+                class_list = span.get("class", [])
+                class_str = " ".join(class_list) if isinstance(class_list, list) else str(class_list)
+                
+                # numクラスまたは数字を含む場合
+                if "num" in class_str or re.search(r'\d', span_text):
+                    price_parts.append(span_text)
+                # unitクラスまたは単位を含む場合
+                elif "unit" in class_str or "yen" in class_str or span_text in ["億", "万円", "万"]:
+                    price_parts.append(span_text)
         
-        if built_text != raw_text:
-            self.logger.info(f"価格テキスト差異: raw='{raw_text}', built='{built_text}'")
+        if price_parts:
+            price_text = "".join(price_parts)
+        else:
+            # span要素から組み立てられない場合は全体テキストを使用
+            price_text = price_elem.get_text(strip=True)
         
-        return built_text
+        # 億で終わる場合は円を追加
+        if price_text and price_text.endswith("億"):
+            price_text += "円"
+        # 万で終わる場合は円を追加
+        elif price_text and price_text.endswith("万"):
+            price_text += "円"
+        
+        return price_text
     
-    def parse_property_detail(self, soup: BeautifulSoup) -> Dict[str, Any]:
+    def parse_property_detail(self, soup: BeautifulSoup) -> Optional[Dict[str, Any]]:
         """
-        物件詳細をパース
+        詳細ページを解析
         
         Args:
             soup: BeautifulSoupオブジェクト
             
         Returns:
-            物件詳細情報
+            物件詳細情報の辞書、失敗時はNone
         """
+        if not soup:
+            return None
+            
         property_data = {}
         
-        # 建物名を取得
-        self._extract_building_name(soup, property_data)
-        
-        # 価格を取得
-        self._extract_detail_price(soup, property_data)
-        
-        # 住所と駅情報を取得
-        self._extract_address_and_station(soup, property_data)
-        
-        # 物件詳細情報を取得（mansionテーブル）
-        self._extract_mansion_table_info(soup, property_data)
-        
-        # 管理費と修繕積立金を取得
-        self._extract_fees(soup, property_data)
-        
-        # 面積と間取りを優先的に取得（現在のページ構造対応）
-        self._extract_area_and_layout_current_format(soup, property_data)
-        
-        # その他の詳細情報を取得
-        self._extract_additional_details(soup, property_data)
-        
-        return property_data
+        try:
+            # ノムコムの詳細ページの主要セクションを特定
+            # 1. メインコンテンツエリア
+            main_content = soup.find("div", {"id": "main"}) or soup.find("div", class_="main-content") or soup
+            
+            # 2. 物件概要セクション（価格・建物名など）
+            property_header = main_content.find("div", class_=re.compile("property[-_]?header|summary")) or \
+                            main_content.find("section", class_="summary") or \
+                            main_content
+            
+            # 3. マンション詳細テーブル（mansion_table）
+            mansion_table_section = main_content.find("div", class_=re.compile("mansion[-_]?table")) or \
+                                   main_content.find("table", class_="mansion_table") or \
+                                   main_content.find("div", {"id": "mansion_detail"})
+            
+            # 4. 物件詳細テーブル（detail_table、spec_table など）
+            detail_table_section = main_content.find("div", class_=re.compile("detail[-_]?table|spec[-_]?table")) or \
+                                 main_content.find("table", class_=re.compile("detail|spec")) or \
+                                 main_content.find("div", {"id": re.compile("detail|spec")})
+            
+            # 5. 基本情報セクション（住所、駅情報など）
+            basic_info_section = main_content.find("div", class_=re.compile("basic[-_]?info|location")) or \
+                               main_content.find("section", class_="location") or \
+                               property_header
+            
+            # 6. 費用情報セクション（管理費、修繕積立金など）
+            cost_section = main_content.find("div", class_=re.compile("cost|fee|expense")) or \
+                          detail_table_section or \
+                          main_content
+            
+            # 各セクションから情報を抽出（範囲を限定して渡す）
+            
+            # 建物名を取得（ヘッダーセクションから）
+            if property_header:
+                self._extract_building_name(property_header, property_data)
+            
+            # 価格を取得（ヘッダーセクションから）
+            if property_header:
+                self._extract_detail_price(property_header, property_data)
+            
+            # 住所と駅情報を取得（基本情報セクションから）
+            if basic_info_section:
+                self._extract_address_and_station(basic_info_section, property_data)
+            
+            # マンション詳細テーブルから情報を取得
+            if mansion_table_section:
+                self._extract_mansion_table_info(mansion_table_section, property_data)
+            
+            # 管理費・修繕積立金を取得（費用セクションから）
+            if cost_section:
+                self._extract_fees(cost_section, property_data)
+            
+            # 面積と間取りを取得（詳細セクションから）
+            if detail_table_section:
+                self._extract_area_and_layout_current_format(detail_table_section, property_data)
+                # 追加の詳細情報を取得（バルコニー面積など）
+                self._extract_additional_details(detail_table_section, property_data)
+                # 詳細テーブルデータを処理
+                self._process_detail_table_data(detail_table_section, property_data)
+            
+            # 築年月の代替抽出（メインコンテンツ全体から、他で取得できなかった場合）
+            if 'built_year' not in property_data and main_content:
+                self._extract_built_year_from_various_sources(main_content, property_data)
+            
+            # リスト形式の情報を抽出（メインコンテンツから、追加のフォールバック）
+            if main_content:
+                self._extract_list_format_info(main_content, property_data)
+            
+            # デフォルトの不動産会社名
+            if 'agency_name' not in property_data:
+                property_data['agency_name'] = self.DEFAULT_AGENCY_NAME
+            
+            return property_data
+            
+        except Exception as e:
+            self.logger.error(f"[NomuParser] 詳細ページ解析エラー: {e}", exc_info=True)
+            return None
 
     def _extract_building_name(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
         """建物名を抽出"""
@@ -332,10 +411,21 @@ class NomuParser(BaseHtmlParser):
                     floor_match = re.search(r'(\d+)階', value)
                     if floor_match:
                         detail_data['floor_number'] = int(floor_match.group(1))
-                    # 総階数
-                    total_match = re.search(r'(\d+)階建', value)
+                    # 総階数（地下階も含む）
+                    total_match = re.search(r'地下(\d+)階・?地上(\d+)階', value)
                     if total_match:
-                        detail_data['total_floors'] = int(total_match.group(1))
+                        # 地下X階・地上Y階の形式
+                        detail_data['basement_floors'] = int(total_match.group(1))
+                        detail_data['total_floors'] = int(total_match.group(2))
+                    else:
+                        # 地下階がない場合
+                        total_match = re.search(r'(\d+)階建', value)
+                        if total_match:
+                            detail_data['total_floors'] = int(total_match.group(1))
+                        # または基底クラスのメソッドを使用
+                        basement = self.parse_basement_floors(value)
+                        if basement:
+                            detail_data['basement_floors'] = basement
                 
                 # 築年月
                 elif "築年月" in header:
@@ -371,60 +461,62 @@ class NomuParser(BaseHtmlParser):
                 
                 i += 2
     
-    def _extract_fees(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
-        """管理費と修繕積立金を取得"""
-        # mansionテーブルから取得
-        mansion_table = soup.find("table", class_="mansion")
-        if mansion_table:
-            rows = mansion_table.find_all("tr")
-            for row in rows:
-                cells = row.find_all(["th", "td"])
-                i = 0
-                while i < len(cells) - 1:
-                    header = cells[i].get_text(strip=True)
-                    value = cells[i + 1].get_text(strip=True)
-                    
-                    # 管理費
-                    if "管理費" in header:
-                        mgmt_fee = self.parse_monthly_fee(value)
-                        if mgmt_fee:
-                            detail_data['management_fee'] = mgmt_fee
-                    
-                    # 修繕積立金
-                    elif "修繕" in header:
-                        repair_fee = self.parse_monthly_fee(value)
-                        if repair_fee:
-                            detail_data['repair_fund'] = repair_fee
-                    
-                    i += 2
-    
-    def _extract_area_and_layout_current_format(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
-        """現在のページ構造から面積と間取りを取得（優先処理）"""
-        # すでに取得済みの場合はスキップ
-        if 'area' in detail_data and 'layout' in detail_data:
-            return
+    def _extract_fees(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
+        """
+        管理費と修繕積立金を抽出
         
-        # メインの物件情報セクションを探す
-        info_section = soup.find("div", class_="object_detail_info")
-        if info_section:
-            # dl要素から情報を取得
-            dl_elements = info_section.find_all("dl")
-            for dl in dl_elements:
-                dt = dl.find("dt")
-                dd = dl.find("dd")
-                if dt and dd:
-                    label = dt.get_text(strip=True)
-                    value = dd.get_text(strip=True)
-                    
-                    if "専有面積" in label and 'area' not in detail_data:
-                        area = self.parse_area(value)
-                        if area:
-                            detail_data['area'] = area
-                    
-                    elif "間取り" in label and 'layout' not in detail_data:
-                        layout = self.normalize_layout(value)
-                        if layout:
-                            detail_data['layout'] = layout
+        Args:
+            soup: BeautifulSoupオブジェクト
+            property_data: データ格納先
+        """
+        for th in soup.find_all('th'):
+            th_text = self.extract_text(th)
+            
+            # 管理費
+            if th_text and '管理費' in th_text and 'management_fee' not in property_data:
+                td = th.find_next_sibling('td')
+                if td:
+                    # parse_priceメソッドで月額費用も抽出可能
+                    fee = self.parse_price(self.extract_text(td))
+                    if fee:
+                        property_data['management_fee'] = fee
+            
+            # 修繕積立金
+            elif th_text and '修繕積立金' in th_text and 'repair_reserve_fund' not in property_data:
+                td = th.find_next_sibling('td')
+                if td:
+                    # parse_priceメソッドで月額費用も抽出可能
+                    fee = self.parse_price(self.extract_text(td))
+                    if fee:
+                        property_data['repair_reserve_fund'] = fee
+    
+    def _extract_area_and_layout_current_format(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
+        """
+        面積と間取りを現在のフォーマットから抽出
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+            property_data: データ格納先
+        """
+        # 専有面積
+        for th in soup.find_all('th'):
+            if '専有面積' in self.extract_text(th):
+                td = th.find_next_sibling('td')
+                if td:
+                    area = self.parse_area(self.extract_text(td))
+                    if area:
+                        property_data['area'] = area
+                break
+        
+        # 間取り
+        for th in soup.find_all('th'):
+            if '間取り' in self.extract_text(th):
+                td = th.find_next_sibling('td')
+                if td:
+                    layout = self.normalize_layout(self.extract_text(td))
+                    if layout:
+                        property_data['layout'] = layout
+                break
     
     def _extract_additional_details(self, soup: BeautifulSoup, detail_data: Dict[str, Any]):
         """その他の詳細情報を取得"""
@@ -434,17 +526,142 @@ class NomuParser(BaseHtmlParser):
             remarks_text = remarks_elem.get_text(' ', strip=True)
             if remarks_text:
                 detail_data['remarks'] = remarks_text[:500]  # 最大500文字
+
+    
+    def _extract_built_year_from_various_sources(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
+        """
+        様々なソースから築年を抽出
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+            property_data: データ格納先
+        """
+        # パターン1: 「築年月」を含むテキスト
+        for elem in soup.find_all(text=re.compile(r'築年月')):
+            parent = elem.parent
+            if parent and parent.name == 'th':
+                td = parent.find_next_sibling('td')
+                if td:
+                    # 基底クラスのparse_built_dateメソッドを使用
+                    built_info = self.parse_built_date(self.extract_text(td))
+                    if built_info['built_year']:
+                        property_data['built_year'] = built_info['built_year']
+                        if built_info['built_month']:
+                            property_data['built_month'] = built_info['built_month']
+                        return
+        
+        # パターン2: 「築」を含むテキストを広く探索
+        for elem in soup.find_all(text=re.compile(r'\d{4}年.*築')):
+            # 基底クラスのparse_built_dateメソッドを使用
+            built_info = self.parse_built_date(str(elem))
+            if built_info['built_year']:
+                property_data['built_year'] = built_info['built_year']
+                return
+    
+    def _extract_list_format_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
+        """
+        リスト形式（dl/dt/dd）の情報を抽出
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+            property_data: データ格納先
+        """
+        # dl要素を探す
+        for dl in soup.find_all('dl', class_=re.compile('detail|info|property')):
+            dts = dl.find_all('dt')
+            dds = dl.find_all('dd')
+            
+            for dt, dd in zip(dts, dds):
+                if not dt or not dd:
+                    continue
+                    
+                label = self.extract_text(dt)
+                value = self.extract_text(dd)
+                
+                if not label or not value:
+                    continue
+                
+                # 各項目を処理
+                if '間取り' in label and 'layout' not in property_data:
+                    layout = self.normalize_layout(value)
+                    if layout:
+                        property_data['layout'] = layout
+                
+                elif '専有面積' in label and 'area' not in property_data:
+                    area = self.parse_area(value)
+                    if area:
+                        property_data['area'] = area
+                
+                elif 'バルコニー' in label and 'balcony_area' not in property_data:
+                    # parse_areaメソッドを使用
+                    balcony = self.parse_area(value)
+                    if balcony:
+                        property_data['balcony_area'] = balcony
+                
+                elif '階' in label and '階建' not in label:
+                    if 'floor_number' not in property_data:
+                        floor = self.parse_floor(value)
+                        if floor:
+                            property_data['floor_number'] = floor
+                
+                elif ('階建' in label or '総階数' in label) and 'total_floors' not in property_data:
+                    # parse_floorメソッドを使用
+                    total = self.parse_floor(value)
+                    if total:
+                        property_data['total_floors'] = total
+                
+                elif '築年' in label and 'built_year' not in property_data:
+                    # parse_built_dateメソッドを使用
+                    built_info = self.parse_built_date(value)
+                    if built_info['built_year']:
+                        property_data['built_year'] = built_info['built_year']
+                
+                elif '構造' in label and 'structure' not in property_data:
+                    # 構造はそのまま保存
+                    structure = value.strip()
+                    if structure:
+                        property_data['structure'] = structure
+                
+                elif '向き' in label and 'direction' not in property_data:
+                    direction = self.normalize_direction(value)
+                    if direction:
+                        property_data['direction'] = direction
+                
+                elif '管理費' in label and 'management_fee' not in property_data:
+                    fee = self.parse_price(value)
+                    if fee:
+                        property_data['management_fee'] = fee
+                
+                elif '修繕' in label and 'repair_reserve_fee' not in property_data:
+                    fee = self.parse_price(value)
+                    if fee:
+                        property_data['repair_reserve_fee'] = fee
+                
+                elif '総戸数' in label and 'total_units' not in property_data:
+                    units = self.parse_total_units(value)
+                    if units:
+                        property_data['total_units'] = units
         
         # 不動産会社情報はデフォルト値を設定しない（ページから取得）
     
-    def _process_detail_table_data(self, table_data: Dict[str, str], property_data: Dict[str, Any]) -> None:
+    def _process_detail_table_data(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """
-        詳細テーブルデータを処理
+        詳細ページのテーブルデータを処理
         
         Args:
-            table_data: テーブルから抽出したデータ
+            soup: BeautifulSoupオブジェクト
             property_data: データ格納先
         """
+        # テーブルからデータを抽出（最初のテーブルを探す）
+        table = soup.find("table")
+        if table:
+            table_data = self.extract_table_data(table)
+        else:
+            table_data = None
+        
+        if not table_data:
+            return
+            
         for key, value in table_data.items():
             if not value:
                 continue
@@ -474,10 +691,22 @@ class NomuParser(BaseHtmlParser):
                     property_data['balcony_area'] = balcony_area
             
             # 建物階数（総階数を先に判定）
-            elif '階建' in key or '総階数' in key:
-                total_floors = self.parse_floor(value)
-                if total_floors:
-                    property_data['total_floors'] = total_floors
+            elif '階建' in key or '総階数' in key or '建物階数' in key:
+                # 地下階があるかチェック
+                basement_match = re.search(r'地下(\d+)階・?地上(\d+)階', value)
+                if basement_match:
+                    # 地下X階・地上Y階の形式
+                    property_data['basement_floors'] = int(basement_match.group(1))
+                    property_data['total_floors'] = int(basement_match.group(2))
+                else:
+                    # 地下階がない場合
+                    total_floors = self.parse_floor(value)
+                    if total_floors:
+                        property_data['total_floors'] = total_floors
+                    # 地下階を別途チェック
+                    basement = self.parse_basement_floors(value)
+                    if basement:
+                        property_data['basement_floors'] = basement
             
             # 所在階
             elif '所在階' in key or '階' in key:
@@ -513,19 +742,21 @@ class NomuParser(BaseHtmlParser):
             
             # 管理費
             elif '管理費' in key:
-                fee = self.parse_management_info(value)
+                from ..data_normalizer import extract_monthly_fee
+                fee = extract_monthly_fee(value)
                 if fee:
                     property_data['management_fee'] = fee
             
             # 修繕積立金
             elif '修繕積立' in key:
-                fund = self.parse_management_info(value)
+                from ..data_normalizer import extract_monthly_fee
+                fund = extract_monthly_fee(value)
                 if fund:
                     property_data['repair_fund'] = fund
             
             # 部屋番号
             elif '部屋番号' in key or '号室' in key:
-                room = self.extract_text(value)
+                room = value.strip()
                 if room and room != '-':
                     property_data['room_number'] = room
     
@@ -544,69 +775,22 @@ class NomuParser(BaseHtmlParser):
             if building_name:
                 property_data['building_name'] = building_name
     
-    def _extract_property_images(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
-        """
-        物件画像URLを抽出
-        
-        Args:
-            soup: BeautifulSoupオブジェクト
-            property_data: データ格納先
-        """
-        images = []
-        
-        # メイン画像
-        main_img = self.safe_select_one(soup, "img.mainPhoto, img.main_image")
-        if main_img and main_img.get('src'):
-            img_url = self.normalize_url(main_img['src'], self.BASE_URL)
-            if img_url:
-                images.append(img_url)
-        
-        # サムネイル画像
-        thumb_imgs = self.safe_select(soup, "div.thumbnails img, div.sub_images img")
-        for img in thumb_imgs[:10]:  # 最大10枚
-            if img.get('src'):
-                img_url = self.normalize_url(img['src'], self.BASE_URL)
-                if img_url and img_url not in images:
-                    images.append(img_url)
-        
-        if images:
-            property_data['image_urls'] = images
+
     
-    def _extract_remarks(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
-        """
-        物件備考を抽出
-        
-        Args:
-            soup: BeautifulSoupオブジェクト
-            property_data: データ格納先
-        """
-        remarks_elem = self.safe_select_one(soup, "div.remarks, div.comment, div.pr_comment")
-        if remarks_elem:
-            remarks = self.extract_text(remarks_elem)
-            if remarks:
-                property_data['remarks'] = remarks
-                # 最初の100文字を要約として使用
-                property_data['summary_remarks'] = remarks[:100] + ('...' if len(remarks) > 100 else '')
+
     
-    def _extract_agency_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
-        """
-        不動産会社情報を抽出
-        
-        Args:
-            soup: BeautifulSoupオブジェクト
-            property_data: データ格納先
-        """
-        # デフォルト値を設定しない（ページから取得）
-        
-        # 電話番号を探す
-        tel_elem = self.safe_select_one(soup, "span.tel, div.contact_tel")
-        if tel_elem:
-            tel = self.extract_text(tel_elem)
-            # 数字とハイフンのみ抽出
-            tel_match = re.search(r'[\d\-]+', tel)
-            if tel_match:
-                property_data['agency_tel'] = tel_match.group()
+
     
+
+    
+
+    
+
+    
+
+    
+
+
     def get_next_page_url(self, soup: BeautifulSoup, current_url: str) -> Optional[str]:
         """
         次ページのURLを取得
