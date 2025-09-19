@@ -78,6 +78,11 @@ class BaseHtmlParser:
         from ..data_normalizer import extract_built_year_month
         return extract_built_year_month(text)
     
+    def parse_date(self, text: str) -> Optional['datetime']:
+        """日付文字列をdatetimeオブジェクトに変換"""
+        from ..data_normalizer import parse_date
+        return parse_date(text)
+    
     def normalize_layout(self, text: str) -> Optional[str]:
         """間取りを正規化"""
         from ..data_normalizer import normalize_layout

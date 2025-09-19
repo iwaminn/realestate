@@ -187,8 +187,7 @@ class RehouseScraper(BaseScraper):
             listing.agency_tel = property_data['agency_tel']
         if property_data.get('remarks'):
             listing.remarks = property_data['remarks']
-        if property_data.get('summary_remarks'):
-            listing.summary_remarks = property_data['summary_remarks']
+
     
     def _build_detail_info(self, property_data: Dict[str, Any]) -> Dict[str, Any]:
         """詳細情報を構築"""

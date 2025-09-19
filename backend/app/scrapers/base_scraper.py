@@ -5142,9 +5142,7 @@ class BaseScraper(ABC):
                     property_data['property_saved'] = False
                     return False
                 
-                # summary_remarksをMasterPropertyに保存
-                if property_data.get('summary_remarks') and not master_property.summary_remarks:
-                    master_property.summary_remarks = property_data['summary_remarks']
+
                 
                 # 掲載情報を作成または更新（同一トランザクション内で実行）
                 try:

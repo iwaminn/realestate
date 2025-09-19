@@ -26,7 +26,7 @@ def add_missing_columns():
     # 追加するカラムのリスト
     columns_to_add = [
         ("management_company", "VARCHAR(200)"),
-        ("summary_remarks", "TEXT"),
+
         ("published_at", "TIMESTAMP"),
         ("first_published_at", "TIMESTAMP"),
         ("price_updated_at", "TIMESTAMP"),

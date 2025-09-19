@@ -10,6 +10,7 @@ import {
   TableHead,
   TableRow,
   TablePagination,
+  TableSortLabel,
   TextField,
   Select,
   MenuItem,
@@ -82,7 +83,7 @@ interface ListingDetail extends Listing {
   agency_name?: string;
   agency_tel?: string;
   remarks?: string;
-  summary_remarks?: string;
+
   first_published_at?: string;
   published_at?: string;
   detail_info?: any;
@@ -113,13 +114,17 @@ export const ListingManagement: React.FC = () => {
     is_active: '',
     ward: '',
   });
+
+  // ソート設定
+  const [orderBy, setOrderBy] = useState<string>('id');
+  const [order, setOrder] = useState<'asc' | 'desc'>('desc');
   
   // 統計情報
   const [stats, setStats] = useState<any>(null);
 
   useEffect(() => {
     fetchListings();
-  }, [page, rowsPerPage]);
+  }, [page, rowsPerPage, orderBy, order]);
 
   const fetchListings = async () => {
     setLoading(true);
@@ -128,8 +133,10 @@ export const ListingManagement: React.FC = () => {
       const params: any = {
         page: page + 1,
         per_page: rowsPerPage,
+        sort_by: orderBy,
+        sort_order: order,
       };
-      
+
       if (filters.source_site) params.source_site = filters.source_site;
       if (filters.listingQuery) {
         // 数値のみの場合は掲載IDとして検索、そうでなければ建物名として検索
@@ -171,6 +178,13 @@ export const ListingManagement: React.FC = () => {
 
   const handlePageChange = (event: unknown, newPage: number) => {
     setPage(newPage);
+  };
+
+  const handleSort = (property: string) => {
+    const isAsc = orderBy === property && order === 'asc';
+    setOrder(isAsc ? 'desc' : 'asc');
+    setOrderBy(property);
+    setPage(0);
   };
 
   const handleRowsPerPageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -556,15 +570,79 @@ export const ListingManagement: React.FC = () => {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>ID</TableCell>
-              <TableCell>サイト</TableCell>
-              <TableCell>建物名</TableCell>
-              <TableCell>階数</TableCell>
-              <TableCell>面積</TableCell>
+              <TableCell>
+                <TableSortLabel
+                  active={orderBy === 'id'}
+                  direction={orderBy === 'id' ? order : 'asc'}
+                  onClick={() => handleSort('id')}
+                >
+                  ID
+                </TableSortLabel>
+              </TableCell>
+              <TableCell>
+                <TableSortLabel
+                  active={orderBy === 'source_site'}
+                  direction={orderBy === 'source_site' ? order : 'asc'}
+                  onClick={() => handleSort('source_site')}
+                >
+                  サイト
+                </TableSortLabel>
+              </TableCell>
+              <TableCell>
+                <TableSortLabel
+                  active={orderBy === 'building_name'}
+                  direction={orderBy === 'building_name' ? order : 'asc'}
+                  onClick={() => handleSort('building_name')}
+                >
+                  建物名
+                </TableSortLabel>
+              </TableCell>
+              <TableCell>
+                <TableSortLabel
+                  active={orderBy === 'floor_number'}
+                  direction={orderBy === 'floor_number' ? order : 'asc'}
+                  onClick={() => handleSort('floor_number')}
+                >
+                  階数
+                </TableSortLabel>
+              </TableCell>
+              <TableCell>
+                <TableSortLabel
+                  active={orderBy === 'area'}
+                  direction={orderBy === 'area' ? order : 'asc'}
+                  onClick={() => handleSort('area')}
+                >
+                  面積
+                </TableSortLabel>
+              </TableCell>
               <TableCell>間取り</TableCell>
-              <TableCell align="right">価格</TableCell>
-              <TableCell>状態</TableCell>
-              <TableCell>最終確認</TableCell>
+              <TableCell align="right">
+                <TableSortLabel
+                  active={orderBy === 'current_price'}
+                  direction={orderBy === 'current_price' ? order : 'asc'}
+                  onClick={() => handleSort('current_price')}
+                >
+                  価格
+                </TableSortLabel>
+              </TableCell>
+              <TableCell>
+                <TableSortLabel
+                  active={orderBy === 'is_active'}
+                  direction={orderBy === 'is_active' ? order : 'asc'}
+                  onClick={() => handleSort('is_active')}
+                >
+                  状態
+                </TableSortLabel>
+              </TableCell>
+              <TableCell>
+                <TableSortLabel
+                  active={orderBy === 'last_confirmed_at'}
+                  direction={orderBy === 'last_confirmed_at' ? order : 'asc'}
+                  onClick={() => handleSort('last_confirmed_at')}
+                >
+                  最終確認
+                </TableSortLabel>
+              </TableCell>
               <TableCell align="center">操作</TableCell>
             </TableRow>
           </TableHead>
@@ -933,12 +1011,7 @@ export const ListingManagement: React.FC = () => {
                                 {selectedListing.remarks}
                               </Typography>
                             </Paper>
-                            {selectedListing.summary_remarks && (
-                              <Box sx={{ mt: 2 }}>
-                                <Typography variant="caption" color="text.secondary">要約:</Typography>
-                                <Typography variant="body2">{selectedListing.summary_remarks}</Typography>
-                              </Box>
-                            )}
+
                           </Box>
                         ) : (
                           <Typography color="text.secondary">備考なし</Typography>

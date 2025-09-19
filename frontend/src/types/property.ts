@@ -30,7 +30,7 @@ export interface Property {
   balcony_area?: number;
   layout?: string;
   direction?: string;
-  summary_remarks?: string;
+
   is_resale?: boolean;
   resale_property_id?: number;
   min_price?: number;

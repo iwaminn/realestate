@@ -739,7 +739,7 @@ class SuumoParser(BaseHtmlParser):
                 if remarks:
                     property_data['remarks'] = remarks
                     # 最初の100文字を要約として使用
-                    property_data['summary_remarks'] = remarks[:100] + ('...' if len(remarks) > 100 else '')
+
                     return
     
     def _extract_agency_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:

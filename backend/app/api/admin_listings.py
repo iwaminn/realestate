@@ -23,7 +23,7 @@ async def get_listings(
     building_name: Optional[str] = None,
     is_active: Optional[bool] = None,
     ward: Optional[str] = None,
-    sort_by: str = Query("id", regex="^(id|created_at|updated_at|current_price)$"),
+    sort_by: str = Query("id", regex="^(id|source_site|building_name|floor_number|area|current_price|is_active|last_confirmed_at|created_at|updated_at)$"),
     sort_order: str = Query("desc", regex="^(asc|desc)$"),
     db: Session = Depends(get_db)
 ):
@@ -70,6 +70,27 @@ async def get_listings(
     # ソート
     if sort_by == "current_price":
         order_column = PropertyListing.current_price
+    elif sort_by == "source_site":
+        order_column = PropertyListing.source_site
+    elif sort_by == "building_name":
+        # 建物名でソートする場合はJOINが必要
+        if not (building_name or ward):
+            query = query.join(MasterProperty).join(Building)
+        order_column = Building.normalized_name
+    elif sort_by == "floor_number":
+        # 階数でソートする場合はJOINが必要
+        if not (building_name or ward):
+            query = query.join(MasterProperty)
+        order_column = MasterProperty.floor_number
+    elif sort_by == "area":
+        # 面積でソートする場合はJOINが必要
+        if not (building_name or ward):
+            query = query.join(MasterProperty)
+        order_column = MasterProperty.area
+    elif sort_by == "is_active":
+        order_column = PropertyListing.is_active
+    elif sort_by == "last_confirmed_at":
+        order_column = PropertyListing.last_confirmed_at
     elif sort_by == "created_at":
         order_column = PropertyListing.created_at
     elif sort_by == "updated_at":
@@ -226,7 +247,7 @@ async def get_listing_detail(
         'agency_tel': listing.agency_tel,
         'station_info': listing.station_info,
         'remarks': listing.remarks,
-        'summary_remarks': listing.summary_remarks,
+
         'first_seen_at': listing.first_seen_at.isoformat() if listing.first_seen_at else None,
         'first_published_at': listing.first_published_at.isoformat() if listing.first_published_at else None,
         'published_at': listing.published_at.isoformat() if listing.published_at else None,

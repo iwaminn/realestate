@@ -137,7 +137,7 @@ class PropertyListing(Base):
     agency_name = Column(String(200))                         # 取扱不動産会社
     agency_tel = Column(String(50))                           # 不動産会社電話番号
     remarks = Column(Text)                                    # 備考・その他情報
-    summary_remarks = Column(Text)                            # 備考要約（LLMで生成）
+
     
     # 物件掲載上の詳細（実際の値と異なる可能性）
     listing_building_name = Column(String(200))               # 掲載上の建物名（サイト表記）

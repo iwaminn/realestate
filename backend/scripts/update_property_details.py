@@ -84,7 +84,7 @@ def update_property_details(limit=5):
             if remarks_list:
                 # 要約を作成
                 summary = RemarksSummarizer.summarize_remarks(remarks_list)
-                prop.summary_remarks = summary
+
                 print(f"  要約: {summary[:100]}..." if len(summary) > 100 else f"  要約: {summary}")
                 session.commit()
         

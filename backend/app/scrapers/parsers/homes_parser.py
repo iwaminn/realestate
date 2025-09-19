@@ -244,43 +244,60 @@ class HomesParser(BaseHtmlParser):
 
         Returns:
             物件詳細情報
+            
+        Raises:
+            ValueError: HTML構造が期待と異なる場合
         """
         property_data = {}
 
-        # 物件情報テーブルを探す
-        # 優先順位: 1. メイン物件詳細テーブル (w-full table-fixed)を優先
-        #          2. その他の詳細テーブル
-        # 注意: 複数の物件が表示される場合があるため、メインテーブルを正確に特定する
-        
-        # まず、メインの物件詳細テーブル (class="w-full table-fixed") を探す
-        main_property_table = soup.find('table', class_='w-full table-fixed')
-        
-        if main_property_table:
-            # メインテーブルのみを使用
-            detail_tables = [main_property_table]
-        else:
-            # フォールバック: 従来のセレクタを使用（より限定的に）
-            detail_tables = self.safe_select(soup, "table.bukkenSpec, div.mod-buildingDetailSpec table, section.propertyDetail table")
+        try:
+            # id="about"の中の物件概要から情報を取得
+            about_section = soup.find(id='about')
+            if about_section:
+                # 物件概要テーブルを探す
+                tables = about_section.find_all('table')
+                for table in tables:
+                    rows = table.find_all('tr')
+                    for row in rows:
+                        th = row.find('th')
+                        td = row.find('td')
+                        if th and td:
+                            key = self.extract_text(th)
+                            value = self.extract_text(td)
+                            if key and value:
+                                self._process_detail_item(key, value, property_data)
+                
+                # テーブルの後の情報公開日等を取得
+                # 「情報公開日：2025/06/15」のような形式で表示されている
+                for p_tag in about_section.find_all('p'):
+                    text = self.extract_text(p_tag)
+                    if text and '情報公開日' in text:
+                        # 「情報公開日：2025/06/15」から日付部分を抽出
+                        import re
+                        date_match = re.search(r'情報公開日[：:]\s*(\d{4}/\d{2}/\d{2})', text)
+                        if date_match:
+                            date_str = date_match.group(1)
+                            published_at = self.parse_date(date_str)
+                            if published_at:
+                                property_data['published_at'] = published_at
+            else:
+                # about sectionが見つからない場合は警告
+                self.logger.warning("[HOMES] id='about'セクションが見つかりません")
 
-        for table in detail_tables:
-            rows = table.find_all("tr")
-            for row in rows:
-                th = row.find("th")
-                td = row.find("td")
-                if th and td:
-                    key = self.extract_text(th)
-                    value = self.extract_text(td)
-                    if key and value:
-                        self._process_detail_item(key, value, property_data)
-
-        # dl/dt/ddパターンの処理は削除
-        # 理由：一般的なタグ名だけでの取得は危険なため
-        # メインテーブル（class="w-full table-fixed"）から必要な情報は取得できる
-        # 建物名を取得
-        self._extract_building_name_from_detail(soup, property_data)
-
-        # 不動産会社情報
-        self._extract_agency_info(soup, property_data)
+            # 建物名を取得
+            try:
+                self._extract_building_name_from_detail(soup, property_data)
+            except ValueError as e:
+                # 建物名の取得でHTML構造エラーが発生した場合
+                self.logger.error(f"[HOMES] 建物名の抽出でエラー: {e}")
+                # 建物名が取得できない場合は、パース全体を失敗とする
+                raise ValueError(f"必須フィールド（建物名）の取得に失敗: {e}")
+                
+        except Exception as e:
+            # 予期しないエラーをキャッチしてログに記録
+            self.logger.error(f"[HOMES] 詳細ページのパースでエラー: {e}", exc_info=True)
+            # エラーでも部分的なデータを返す（スクレイパー側で判断）
+            property_data['_parse_error'] = str(e)
 
         return property_data
     
@@ -396,134 +413,130 @@ class HomesParser(BaseHtmlParser):
             room = self.extract_text(value)
             if room and room != '-':
                 property_data['room_number'] = room
+                # first_published_atはbase_scraperで自動的に設定される
     
     def _extract_building_name_from_detail(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """
         詳細ページから建物名を抽出
         
+        HOMES詳細ページの期待される構造:
+        h1タグ: 3つのspan要素
+          - 1番目: "中古マンション"
+          - 2番目: 建物名（階数情報を含む場合がある）
+          - 3番目: 間取りと価格
+        
         Args:
             soup: BeautifulSoupオブジェクト
             property_data: データ格納先
+            
+        Raises:
+            ValueError: HTML構造が期待と異なる場合
         """
-        building_name = None
+        h1_building_name = None
         room_number = None
         
-        # 複数の方法で建物名を取得（優先順位順）
+        # h1タグから建物名を取得（必須）
+        h1_tags = soup.find_all('h1')
+        h1_found = False
         
-        # 方法1: h1タグから取得（複数パターン対応）
-        h1_elem = soup.find('h1', class_=lambda x: x and 'Header__logo' not in str(x))
-        if h1_elem:
-            # パターン1: bukkenNameクラス
-            bukken_name_elem = h1_elem.select_one('.bukkenName')
-            if bukken_name_elem:
-                building_name = self.extract_text(bukken_name_elem)
-                # bukkenRoomクラスから部屋番号も取得
-                bukken_room_elem = h1_elem.select_one('.bukkenRoom')
-                if bukken_room_elem:
-                    room_text = self.extract_text(bukken_room_elem)
-                    match = re.search(r'/(\d{3,4}[A-Z]?)(?:\s|$)', room_text)
-                    if match:
-                        room_number = match.group(1)
+        for h1_elem in h1_tags:
+            # ヘッダーのロゴh1をスキップ
+            if h1_elem.get('class') and 'Header__logo' in ' '.join(h1_elem.get('class', [])):
+                continue
             
-            # パターン2: break-wordsクラス
-            elif h1_elem.select_one('.break-words'):
-                break_words_elem = h1_elem.select_one('.break-words')
-                text = self.extract_text(break_words_elem)
-                # 階数部分を除去
-                if '階' in text:
-                    parts = text.rsplit(' ', 1)
-                    if len(parts) > 1 and '階' in parts[-1]:
-                        building_name = parts[0]
-                    else:
-                        building_name = text
-                else:
-                    building_name = text
+            h1_found = True
             
-            # パターン3: 通常のh1タグ
-            elif not building_name:
-                h1_text = self.extract_text(h1_elem)
-                if h1_text:
-                    building_name = h1_text
-        
-        # 方法2: パンくずリストから取得
-        if not building_name:
-            # breadcrumb-listタグを探す
-            breadcrumb_tag = soup.find('breadcrumb-list')
-            if breadcrumb_tag:
-                breadcrumb_list = breadcrumb_tag.select('ol > li')
-            else:
-                # その他のパンくずパターン
-                breadcrumb_tag = soup.select_one('p.mod-breadcrumbs, [class*="breadcrumb"]')
-                if breadcrumb_tag:
-                    breadcrumb_list = breadcrumb_tag.select('li')
-                else:
-                    breadcrumb_list = soup.select('ol.hide-scrollbar > li')
+            # h1内のspan要素を取得（直下の子要素のみ）
+            span_elements = h1_elem.find_all('span', recursive=False)
             
-            if breadcrumb_list and len(breadcrumb_list) > 0:
-                # 最後のli要素を取得
-                last_li = breadcrumb_list[-1]
-                last_elem = last_li.select_one('a')
-                if last_elem:
-                    last_text = self.extract_text(last_elem)
-                else:
-                    last_text = self.extract_text(last_li)
+            # 新しいHTML構造に対応
+            # 3つのspan要素を期待しているが、最初のspanが入れ子構造の場合もある
+            if len(span_elements) != 3:
+                error_msg = f"h1タグ内のspan要素数が期待値(3)と異なります: {len(span_elements)}個"
+                self.logger.error(f"[HOMES] {error_msg}")
                 
-                # 建物名として妥当かチェック
-                if last_text and len(last_text) > 2 and '一覧' not in last_text and 'エリア' not in last_text:
-                    building_name = re.sub(r'^(中古マンション|マンション)', '', last_text).strip()
-                    # 階数情報を除去
-                    building_name = re.sub(r'\s+\d+階(?:/\d+[A-Z]?)?$', '', building_name)
-        
-        # 方法3: 物件概要テーブルから取得
-        if not building_name:
-            detail_tables = soup.select('table.detailTable, table.mod-detailTable, table[class*="detail"], table.rentTbl, table.bukkenSpec')
-            for table in detail_tables:
-                rows = table.select('tr')
-                for row in rows:
-                    th = row.select_one('th')
-                    td = row.select_one('td')
-                    if th and td:
-                        header = self.extract_text(th)
-                        if '物件名' in header or 'マンション名' in header or '建物名' in header:
-                            building_name = self.extract_text(td)
-                            building_name = re.sub(r'^(中古マンション|マンション)', '', building_name).strip()
-                            break
-                if building_name:
-                    break
-        
-        # 方法4: その他のセレクタ
-        if not building_name:
-            other_selectors = [
-                "h1.heading",
-                "h1.bukkenName", 
-                "div.mod-buildingTitle h1",
-                "h2.buildingName",
-                ".propertyName"
-            ]
+                # デバッグ情報
+                for i, span in enumerate(span_elements):
+                    self.logger.debug(f"  span[{i}]: {self.extract_text(span)[:50]}")
+                
+                raise ValueError(error_msg)
             
-            for selector in other_selectors:
-                elem = self.safe_select_one(soup, selector)
-                if elem:
-                    building_name = self.extract_text(elem)
-                    if building_name:
-                        break
+            # 1番目のspan: "中古マンション"であることを確認
+            # 新しい構造では最初のspanが入れ子になっている場合がある
+            first_span_text = self.extract_text(span_elements[0])
+            if "中古マンション" not in first_span_text:
+                error_msg = f"h1の1番目のspan要素が期待値と異なります: '{first_span_text}' (期待値: '中古マンション'を含む)"
+                self.logger.error(f"[HOMES] {error_msg}")
+                raise ValueError(error_msg)
+            
+            # 2番目のspan: 建物名（階数情報を含む場合がある）
+            second_span_text = self.extract_text(span_elements[1])
+            if not second_span_text:
+                error_msg = "h1の2番目のspan要素（建物名）が空です"
+                self.logger.error(f"[HOMES] {error_msg}")
+                raise ValueError(error_msg)
+            
+            # 3番目のspan: 間取りと価格（検証）
+            third_span_text = self.extract_text(span_elements[2])
+            if not third_span_text or ('万円' not in third_span_text):
+                error_msg = f"h1の3番目のspan要素が期待される形式（間取り/価格）ではありません: '{third_span_text}'"
+                self.logger.error(f"[HOMES] {error_msg}")
+                raise ValueError(error_msg)
+            
+            # 2番目のspanから建物名を抽出（階数情報を除去）
+            h1_building_name = second_span_text
+            
+            # 階数情報を除去（例: "麻布プレイス 5階" → "麻布プレイス"）
+            if '階' in h1_building_name:
+                # スペースで分割して階数部分を除去
+                parts = h1_building_name.rsplit(' ', 1)
+                if len(parts) > 1 and '階' in parts[-1]:
+                    h1_building_name = parts[0]
+                else:
+                    # 階数が含まれているが分割できない場合
+                    h1_building_name = re.sub(r'\s*\d+[-〜～]?\d*階.*$', '', h1_building_name)
+            
+            self.logger.info(f"[HOMES] h1タグから建物名を取得: {h1_building_name}")
+            break
+        
+        if not h1_found:
+            error_msg = "物件詳細のh1タグが見つかりません"
+            self.logger.error(f"[HOMES] {error_msg}")
+            raise ValueError(error_msg)
+        
+        if not h1_building_name:
+            error_msg = "h1タグから建物名を取得できませんでした"
+            self.logger.error(f"[HOMES] {error_msg}")
+            raise ValueError(error_msg)
         
         # 結果を保存
-        if building_name:
-            # タイトルフィールドにも設定（表示用）
-            property_data['title'] = building_name
-            
-            # 部屋番号部分を除去してbuilding_nameに設定
-            cleaned_name = re.sub(r'\s*\d+号室.*$', '', building_name)
-            cleaned_name = re.sub(r'\s*\d+階.*$', '', cleaned_name)
+        # タイトルフィールドにも設定（表示用）
+        property_data['title'] = h1_building_name
+        
+        # 部屋番号と階数を除去してbuilding_nameに設定
+        cleaned_name = re.sub(r'\s*\d+号室.*$', '', h1_building_name)
+        cleaned_name = re.sub(r'\s*\d+[-〜～]?\d*階.*$', '', cleaned_name)
+        cleaned_name = cleaned_name.strip()
+        
+        # 建物名が空でないことを確認
+        if cleaned_name:
             property_data['building_name'] = cleaned_name
             
-            # 部屋番号も保存
+            # 部屋番号も保存（取得できている場合）
             if room_number:
                 property_data['room_number'] = room_number
             
-            # 建物名候補リストも作成（MULTI_SOURCEモード用）
+            # 建物名候補リストも作成（MULTI_SOURCE用）
             property_data['_building_names_candidates'] = [cleaned_name]
+        else:
+            # クリーニング後の建物名が無効
+            raise ValueError(f"建物名のクリーニング後に無効な値になりました: '{cleaned_name}'")
+    
+    
+    
+    
+
+
 
     def _extract_agency_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """
