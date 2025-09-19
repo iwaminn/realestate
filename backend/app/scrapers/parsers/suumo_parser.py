@@ -189,7 +189,18 @@ class SuumoParser(BaseHtmlParser):
             if elem:
                 building_name = self.extract_text(elem)
                 if building_name:
-                    return building_name
+                    # 価格や間取り情報が含まれている場合は除去
+                    # 例: "中銀高輪マンシオン 3480万円（1LDK）" → "中銀高輪マンシオン"
+                    import re
+                    # 価格パターン（○○万円、○○億円）を削除
+                    building_name = re.sub(r'\s*\d+(?:\.\d+)?(?:万|億)円.*$', '', building_name)
+                    # 間取りパターン（括弧内の間取り情報）を削除
+                    building_name = re.sub(r'\s*[（\(][^）\)]*[）\)].*$', '', building_name)
+                    # 余分な空白を削除
+                    building_name = building_name.strip()
+                    
+                    if building_name:
+                        return building_name
         
         return None
     
@@ -414,13 +425,23 @@ class SuumoParser(BaseHtmlParser):
             if title:
                 building_name = self.extract_text(title)
                 if building_name:
-                    # タイトルフィールドにも設定（表示用）
+                    # タイトルフィールドには元のテキストを設定（表示用）
                     property_data['title'] = building_name
                     
-                    # 部屋番号部分を除去してbuilding_nameに設定
+                    # 価格や間取り情報を削除してクリーンな建物名を取得
+                    import re
+                    # 価格パターン（○○万円、○○億円）を削除
+                    building_name = re.sub(r'\s*\d+(?:\.\d+)?(?:万|億)円.*$', '', building_name)
+                    # 間取りパターン（括弧内の間取り情報）を削除
+                    building_name = re.sub(r'\s*[（\(][^）\)]*[）\)].*$', '', building_name)
+                    # 部屋番号部分を除去
                     building_name = re.sub(r'\s*\d+号室.*$', '', building_name)
                     building_name = re.sub(r'\s*\d+階.*$', '', building_name)
-                    property_data['building_name'] = building_name
+                    # 余分な空白を削除
+                    building_name = building_name.strip()
+                    
+                    if building_name:
+                        property_data['building_name'] = building_name
                     return
     
     def _extract_basic_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
