@@ -5056,39 +5056,7 @@ class BaseScraper(ABC):
             # 予期しないエラーも記録はするが処理は継続
             self.logger.error(f"多数決更新で予期しないエラー（処理は継続）: {e}")
     
-    def _handle_majority_vote_error(self, error: Exception, context: str):
-        """
-        多数決更新のエラーを適切に処理
-        
-        Args:
-            error: 発生したエラー
-            context: エラーが発生した文脈
-        """
-        error_str = str(error).lower()
-        
-        # データが見つからない（正常なケース）
-        if 'no data' in error_str or 'empty' in error_str or 'not found' in error_str:
-            self.logger.debug(f"{context}: 更新対象データなし（正常）")
-            return
-        
-        # ロック関連のエラー（一時的）
-        if 'lock' in error_str or 'deadlock' in error_str or 'timeout' in error_str:
-            self.logger.warning(f"{context}: ロックエラー（一時的）: {error}")
-            return
-        
-        # データ整合性エラー（重大）
-        if 'integrity' in error_str or 'constraint' in error_str or 'foreign key' in error_str:
-            self.logger.error(f"{context}: データ整合性エラー（重大）: {error}")
-            raise
-        
-        # データ型やNULL値エラー（データ品質）
-        if 'null' in error_str or 'type' in error_str or 'value' in error_str:
-            self.logger.warning(f"{context}: データ品質の問題: {error}")
-            return
-        
-        # その他のエラー（詳細ログを記録して再スロー）
-        self.logger.error(f"{context}: 予期しないエラー: {error}")
-        raise
+    
 
     def _schedule_majority_vote_update(self, property_id: int, building_id: int = None):
         """
@@ -5256,6 +5224,8 @@ class BaseScraper(ABC):
                     # 詳細取得していない新規物件は保存しない
                     property_data['property_saved'] = False
                     return False
+                
+
                 
                 # データの妥当性チェック
                 if not self.validate_property_data(property_data):
@@ -5474,22 +5444,6 @@ class BaseScraper(ABC):
             return hours_since_error < 24
         return False
     
-    def _record_field_error(self, field_name: str, url: str):
-        """フィールド別のエラーを記録"""
-        # CacheManagerComponentを使用してエラーを記録
-        cache_key = self.cache_manager.get_data_cache_key(
-            'field_error',
-            field_name=field_name,
-            url=url
-        )
-        
-        # 24時間のTTLでキャッシュに保存
-        self.cache_manager.set(cache_key, datetime.now(), ttl=86400)  # 24時間
-        
-        # 定期的に期限切れエントリをクリーンアップ
-        if len(self.cache_manager.cache) > 450:  # しきい値に近づいたらクリーンアップ
-            self.cache_manager.cleanup_expired()
-    
     def has_critical_field_errors(self, url: str, critical_fields: Optional[List[str]] = None) -> bool:
         """重要項目でエラーが発生している物件かチェック
         
@@ -5614,106 +5568,6 @@ class BaseScraper(ABC):
         except Exception as e:
             self.logger.error(f"アラート記録エラー: {e}")
             # トランザクションはwith文を抜ける際に自動的にロールバック
-    
-    def track_selector_usage(self, soup: BeautifulSoup, selector: str, field_name: str, required: bool = True) -> Optional[any]:
-        """セレクタの使用を追跡し、要素を返す
-        
-        Args:
-            soup: BeautifulSoupオブジェクト
-            selector: CSSセレクタ
-            field_name: フィールド名（ログ用）
-            required: 必須要素かどうか
-            
-        Returns:
-            見つかった要素（なければNone）
-        """
-        # セレクタ統計を初期化
-        if selector not in self._selector_stats:
-            self._selector_stats[selector] = {'success': 0, 'fail': 0, 'field': field_name}
-        
-        # 要素を検索
-        element = soup.select_one(selector)
-        
-        if element:
-            self._selector_stats[selector]['success'] += 1
-            return element
-        else:
-            self._selector_stats[selector]['fail'] += 1
-            
-            # 必須要素が見つからない場合
-            if required:
-                fail_rate = self._selector_stats[selector]['fail'] / (
-                    self._selector_stats[selector]['success'] + self._selector_stats[selector]['fail']
-                )
-                
-                # エラー率が高い場合は警告
-                if fail_rate > 0.5 and self._selector_stats[selector]['fail'] >= 5:
-                    self.logger.warning(
-                        f"セレクタ '{selector}' ({field_name}) の失敗率が{fail_rate:.0%}に達しました。"
-                        f"HTML構造が変更された可能性があります。"
-                    )
-                    
-                    # ページ構造エラーをカウント
-                    self._page_structure_errors += 1
-                    
-                    # 連続でページ構造エラーが発生した場合
-                    if self._page_structure_errors >= 3:
-                        self._record_structure_change_alert(selector, field_name, fail_rate)
-                        raise Exception(
-                            f"HTML構造の変更を検出しました。"
-                            f"セレクタ '{selector}' ({field_name}) が連続して見つかりません。"
-                        )
-            
-            return None
-    
-    def track_selector_all(self, soup: BeautifulSoup, selector: str, field_name: str, min_expected: int = 1) -> List[any]:
-        """複数要素のセレクタ使用を追跡
-        
-        Args:
-            soup: BeautifulSoupオブジェクト
-            selector: CSSセレクタ
-            field_name: フィールド名（ログ用）
-            min_expected: 期待される最小要素数
-            
-        Returns:
-            見つかった要素のリスト
-        """
-        # セレクタ統計を初期化
-        if selector not in self._selector_stats:
-            self._selector_stats[selector] = {'success': 0, 'fail': 0, 'field': field_name}
-        
-        # 要素を検索
-        elements = soup.select(selector)
-        
-        if len(elements) >= min_expected:
-            self._selector_stats[selector]['success'] += 1
-            return elements
-        else:
-            self._selector_stats[selector]['fail'] += 1
-            
-            fail_rate = self._selector_stats[selector]['fail'] / (
-                self._selector_stats[selector]['success'] + self._selector_stats[selector]['fail']
-            )
-            
-            # エラー率が高い場合は警告
-            if fail_rate > 0.5 and self._selector_stats[selector]['fail'] >= 5:
-                self.logger.warning(
-                    f"セレクタ '{selector}' ({field_name}) で期待される要素数が不足。"
-                    f"期待: {min_expected}個以上、実際: {len(elements)}個"
-                )
-                
-                # ページ構造エラーをカウント
-                self._page_structure_errors += 1
-                
-                # 連続でページ構造エラーが発生した場合
-                if self._page_structure_errors >= 3:
-                    self._record_structure_change_alert(selector, field_name, fail_rate)
-                    raise Exception(
-                        f"HTML構造の変更を検出しました。"
-                        f"セレクタ '{selector}' ({field_name}) で十分な要素が見つかりません。"
-                    )
-            
-            return elements
     
     def _record_structure_change_alert(self, selector: str, field_name: str, fail_rate: float):
         """HTML構造変更アラートを記録"""
@@ -5858,176 +5712,11 @@ class BaseScraper(ABC):
             
         return True
     
-    def validate_list_page_fields(self, property_data: Dict[str, Any]) -> bool:
-        """一覧ページで取得した物件データの必須フィールドを検証
-        
-        一覧ページでは以下のフィールドが必須：
-        - url: 詳細ページのURL
-        - site_property_id: サイト内物件ID
-        - price: 価格
-        - building_name: 建物名
-        
-        Args:
-            property_data: 物件データ
-            
-        Returns:
-            bool: 必須フィールドがすべて存在する場合True
-        """
-        required_fields = ['url', 'site_property_id', 'price', 'building_name']
-        missing_fields = []
-        
-        for field in required_fields:
-            if field not in property_data or property_data.get(field) is None:
-                missing_fields.append(field)
-        
-        if missing_fields:
-            self.logger.warning(f"一覧ページで必須フィールドが取得できませんでした: {', '.join(missing_fields)}")
-            return False
-        
-        return True
-    
-    def log_validation_error_and_return_none(self, property_data: Dict[str, Any], url: str, error_type: str = "詳細ページ検証エラー") -> None:
-        """検証エラーの詳細を記録して None を返すヘルパーメソッド
-        
-        Args:
-            property_data: 検証対象の物件データ
-            url: 物件URL
-            error_type: エラータイプ（デフォルト: "詳細ページ検証エラー"）
-            
-        Returns:
-            None（常にNoneを返すため、return文で直接使用可能）
-        """
-        # フィールド名の日本語マッピング
-        field_names_jp = {
-            'site_property_id': '物件ID',
-            'price': '価格',
-            'building_name': '建物名',
-            'address': '住所',
-            'area': '面積',
-            'layout': '間取り',
-            'built_year': '築年'
-        }
-        
-        missing_fields = []
-        missing_fields_jp = []
-        required_fields = self.get_required_detail_fields()
-        
-        for field in required_fields:
-            if field not in property_data or property_data.get(field) is None:
-                missing_fields.append(field)
-                missing_fields_jp.append(field_names_jp.get(field, field))
-        
-        # エラー情報を保存（process_property_with_detail_checkで使用）
-        # missing_fields_jpが空の場合のチェックを追加
-        if missing_fields_jp:
-            reason_detail = f"必須フィールド（{', '.join(missing_fields_jp)}）が取得できませんでした"
-        else:
-            # すべてのフィールドが存在する場合（このメソッドが呼ばれるべきではないが念のため）
-            reason_detail = "検証エラーが発生しました"
-        
-        self._last_detail_error = {
-            'type': 'validation',
-            'reason': f"{error_type}: {reason_detail}",
-            'building_name': property_data.get('building_name', ''),
-            'price': property_data.get('price', ''),
-            'site_property_id': property_data.get('site_property_id', ''),
-        }
-        
-        # ログにも出力（開発者向けは英語フィールド名も含める）
-        if missing_fields:
-            self.logger.error(f"{error_type}: {url} - 必須フィールドが取得できませんでした: {', '.join(missing_fields)} ({', '.join(missing_fields_jp)})")
-        else:
-            self.logger.error(f"{error_type}: {url} - 検証エラーが発生しました")
-        
-        return None
-    
-    def validate_address(self, address: str) -> bool:
-        """住所が都道府県から始まる完全な形式であることを検証
-        
-        Args:
-            address: 検証する住所文字列
-            
-        Returns:
-            bool: 都道府県から始まる完全な住所の場合True
-        """
-        if not address:
-            return False
-        
-        # 日本の都道府県のリスト
-        prefectures = [
-            '北海道', '青森県', '岩手県', '宮城県', '秋田県', '山形県', '福島県',
-            '茨城県', '栃木県', '群馬県', '埼玉県', '千葉県', '東京都', '神奈川県',
-            '新潟県', '富山県', '石川県', '福井県', '山梨県', '長野県', '岐阜県',
-            '静岡県', '愛知県', '三重県', '滋賀県', '京都府', '大阪府', '兵庫県',
-            '奈良県', '和歌山県', '鳥取県', '島根県', '岡山県', '広島県', '山口県',
-            '徳島県', '香川県', '愛媛県', '高知県', '福岡県', '佐賀県', '長崎県',
-            '熊本県', '大分県', '宮崎県', '鹿児島県', '沖縄県'
-        ]
-        
-        # 住所が都道府県で始まるかチェック
-        for prefecture in prefectures:
-            if address.startswith(prefecture):
-                # 都道府県だけでなく、それ以降の住所情報があることを確認
-                if len(address) > len(prefecture):
-                    return True
-        
-        return False
 
-    def validate_detail_page_fields(self, property_data: Dict[str, Any], url: str = None) -> bool:
-        """詳細ページで取得した物件データの必須フィールドを検証
-        
-        詳細ページでは以下のフィールドが必須：
-        - site_property_id: サイト内物件ID（URLから抽出）
-        - price: 価格
-        - building_name: 建物名
-        - address: 住所
-        - area: 専有面積
-        - layout: 間取り
-        - built_year: 築年
-        
-        Args:
-            property_data: 物件データ
-            url: 物件URL（エラーログ用）
-            
-        Returns:
-            bool: 必須フィールドがすべて存在する場合True
-        """
-        required_fields = self.get_required_detail_fields()
-        missing_fields = []
-        
-        for field in required_fields:
-            if field not in property_data or property_data.get(field) is None:
-                missing_fields.append(field)
-        
-        if missing_fields:
-            url = url or property_data.get('url', '不明')
-            for field in missing_fields:
-                self.record_field_extraction_error(field, url)
-            
-            self.logger.error(f"詳細ページで必須フィールドが取得できませんでした: {', '.join(missing_fields)} - URL: {url}")
-            return False
-        
-        # 築年の値の妥当性をチェック
-        built_year = property_data.get('built_year')
-        if built_year is not None:
-            from .data_normalizer import validate_built_year
-            if not validate_built_year(built_year):
-                url = url or property_data.get('url', '不明')
-                self.record_field_extraction_error('built_year', url)
-                self.logger.error(f"築年が不正な値です: {built_year}年 (許容範囲: 1900年～現在年+5年) - URL: {url}")
-                return False
-        
-        # 住所の検証（都道府県から始まる完全な住所かチェック）
-        address = property_data.get('address')
-        if address and not self.validate_address(address):
-            url = url or property_data.get('url', '不明')
-            self.record_field_extraction_error('address', url)
-            self.logger.error(f"住所が都道府県から始まっていません: {address} - URL: {url}")
-            return False
-        
-        return True
-    
-    
+
+
+
+
     def record_field_extraction_error(self, field_name: str, url: str, log_error: bool = True):
         """フィールド抽出エラーを記録し、統計を更新（リファクタリング版）
         
@@ -6230,43 +5919,7 @@ class BaseScraper(ABC):
         normalizer = AddressNormalizer()
         return normalizer.contains_address_pattern(text)
 
-    def validate_address(self, address: str) -> bool:
-        """
-        住所が有効かどうかを検証する
-        
-        Args:
-            address: 検証する住所文字列
-            
-        Returns:
-            有効な住所の場合True
-        """
-        if not address:
-            return False
-            
-        # クリーニング後の住所で検証
-        cleaned = self.clean_address(address)
-        
-        # 最小文字数チェック（都道府県名だけでも最低3文字）
-        if len(cleaned) < 3:
-            return False
-            
-        # 住所に含まれるべきパターン（都道府県、市区町村など）
-        address_patterns = [
-            r'[都道府県]',
-            r'[市区町村]',
-            r'[0-9０-９]+[丁目番地号\-－−]',
-        ]
-        
-        # いずれかのパターンにマッチすれば有効な住所と判定
-        for pattern in address_patterns:
-            if re.search(pattern, cleaned):
-                return True
-                
-        # 東京23区の特別パターン
-        if re.search(r'東京都.+区', cleaned):
-            return True
-            
-        return False
+
     
     def extract_address_from_element(self, element) -> str:
         """

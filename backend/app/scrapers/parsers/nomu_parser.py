@@ -178,7 +178,7 @@ class NomuParser(BaseHtmlParser):
                         total_text = floor_text
                     
                     # 総階数を基底クラスのメソッドで取得
-                    total_floors = self.parse_floor(total_text)
+                    total_floors = self.parse_total_floors(total_text)
                     if total_floors:
                         property_data['total_floors'] = total_floors
                 
@@ -267,6 +267,32 @@ class NomuParser(BaseHtmlParser):
                 self.logger.info("[NomuParser] propertyDetails要素が見つからないため、メインコンテンツ全体を使用")
                 property_details = soup.find(id="main") or soup
             
+            # 新しいHTML構造（item_table）の処理
+            # 複数のitem_tableがある場合、それぞれを処理
+            item_tables = soup.find_all("table", class_="item_table")
+            if item_tables:
+                self.logger.debug(f"[NomuParser] {len(item_tables)}個のitem_tableを検出")
+                for table in item_tables:
+                    self._process_item_table(table, property_data)
+            
+            # item_status形式の要素も処理（階数情報などが含まれる）
+            # item_tableの後に処理することで、より正確な値で上書きする
+            self._extract_item_status_info(soup, property_data)
+            
+            # item_tableが存在する場合はここでreturn
+            if item_tables:
+                
+                # 建物名と価格を取得（ページ全体のヘッダーから - propertyDetails外の可能性がある）
+                self._extract_building_name(soup, property_data)
+                self._extract_detail_price(soup, property_data)
+                
+                # デフォルトの不動産会社名
+                if 'agency_name' not in property_data:
+                    property_data['agency_name'] = self.DEFAULT_AGENCY_NAME
+                
+                return property_data
+            
+            # 従来のHTML構造の処理（tableBoxを使用）
             # ノムコムの詳細ページの主要セクションを特定（propertyDetails内で検索）
             
             # 1. 価格・建物名などの基本情報セクション
@@ -285,7 +311,8 @@ class NomuParser(BaseHtmlParser):
                 main_detail_table = table_box.find("table")
             
             if not main_detail_table:
-                self.logger.error("[NomuParser] tableBoxテーブルが見つかりません - HTML構造が変更された可能性があります")
+                # 新しいHTML構造（item_table）では別の場所で処理されるため、デバッグログに変更
+                self.logger.debug("[NomuParser] tableBoxテーブルが見つかりません - 新しいHTML構造の可能性があります")
             
             # 3. 住所・交通情報テーブル
             # objectAddressクラスまたは所在地を含むテーブル
@@ -343,6 +370,116 @@ class NomuParser(BaseHtmlParser):
             self.logger.error(f"[NomuParser] 詳細ページ解析エラー: {e}", exc_info=True)
             return None
 
+
+    def _extract_item_status_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
+        """
+        item_status形式の要素から情報を抽出
+        新しいHTML構造で使用される形式
+        
+        Args:
+            soup: ページ全体のBeautifulSoupオブジェクト
+            property_data: データ格納先
+        """
+        # item_status形式の要素を取得
+        status_items = soup.find_all('li', class_='item_status')
+        
+        for item in status_items:
+            title_elem = item.find('span', class_='item_status_title')
+            content_elem = item.find('span', class_='item_status_content')
+            
+            if not title_elem or not content_elem:
+                continue
+            
+            title = self.extract_text(title_elem)
+            content = self.extract_text(content_elem)
+            
+            if not title or not content:
+                continue
+            
+            # 各項目を処理
+            if '所在階' in title:
+                # 「22階 / 42階建」のような形式から階数を抽出
+                floor = self.parse_floor(content)
+                if floor:
+                    # デバッグログ
+                    if 'floor_number' in property_data:
+                        self.logger.debug(f"[NomuParser] floor_numberを更新: {property_data['floor_number']}階 → {floor}階")
+                    property_data['floor_number'] = floor
+                
+                # 総階数も抽出
+                if '階建' in content:
+                    total_floors = self.parse_total_floors(content)
+                    if total_floors:
+                        if 'total_floors' in property_data:
+                            self.logger.debug(f"[NomuParser] total_floorsを更新: {property_data['total_floors']}階 → {total_floors}階")
+                        property_data['total_floors'] = total_floors
+            
+            elif '間取' in title and 'layout' not in property_data:
+                layout = self.normalize_layout(content)
+                if layout:
+                    property_data['layout'] = layout
+            
+            elif '専有面積' in title and 'area' not in property_data:
+                area = self.parse_area(content)
+                if area:
+                    property_data['area'] = area
+            
+            elif '所在地' in title and 'address' not in property_data:
+                # リンクがある場合は特別な処理
+                link = content_elem.find('a')
+                if link:
+                    # リンクテキスト（東京都港区など）を取得
+                    address_parts = []
+                    link_text = link.get_text(strip=True)
+                    if link_text:
+                        address_parts.append(link_text)
+                    # リンクを削除して残りのテキストを取得
+                    link.extract()
+                    remaining_text = content_elem.get_text(strip=True)
+                    if remaining_text:
+                        address_parts.append(remaining_text)
+                    if address_parts:
+                        full_address = ''.join(address_parts)
+                        property_data['address'] = self.normalize_address(full_address)
+                else:
+                    address = self.normalize_address(content)
+                    if address:
+                        property_data['address'] = address
+            
+            elif '交通' in title and 'station_info' not in property_data:
+                property_data['station_info'] = content
+            
+            elif '築年月' in title and 'built_year' not in property_data:
+                built_info = self.parse_built_date(content)
+                if built_info['built_year']:
+                    property_data['built_year'] = built_info['built_year']
+                if built_info['built_month'] and 'built_month' not in property_data:
+                    property_data['built_month'] = built_info['built_month']
+            
+            elif 'バルコニー' in title and 'balcony_area' not in property_data:
+                balcony_area = self.parse_area(content)
+                if balcony_area:
+                    property_data['balcony_area'] = balcony_area
+            
+            elif '向き' in title and 'direction' not in property_data:
+                direction = self.normalize_direction(content)
+                if direction:
+                    property_data['direction'] = direction
+            
+            elif '管理費' in title and 'management_fee' not in property_data:
+                fee = self.parse_price(content)
+                if fee:
+                    property_data['management_fee'] = fee
+            
+            elif '修繕積立' in title and 'repair_fund' not in property_data:
+                fund = self.parse_price(content)
+                if fund:
+                    property_data['repair_fund'] = fund
+            
+            elif '総戸数' in title and 'total_units' not in property_data:
+                units = self.parse_total_units(content)
+                if units:
+                    property_data['total_units'] = units
 
     def _extract_building_name(self, element: BeautifulSoup, detail_data: Dict[str, Any]):
         """建物名を抽出"""
@@ -412,8 +549,8 @@ class NomuParser(BaseHtmlParser):
                 detail_data['price'] = price
                 self.logger.debug(f"価格取得成功: {price}万円 (raw: {price_text})")
         else:
-            # 価格が取得できない場合はエラーログを出力
-            self.logger.error("[NomuParser] 価格を取得できませんでした - HTML構造が変更された可能性があります")
+            # 価格が取得できない場合はデバッグログを出力（一覧ページから既に取得済みの可能性）
+            self.logger.debug("[NomuParser] 詳細ページから価格を取得できませんでした - 一覧ページの価格を使用")
     
     def _extract_address_and_station(self, element: BeautifulSoup, detail_data: Dict[str, Any]):
         """住所と駅情報を取得"""
@@ -434,11 +571,37 @@ class NomuParser(BaseHtmlParser):
                 td = row.find("td")
                 if th and td:
                     header = th.get_text(strip=True)
-                    value = td.get_text(' ', strip=True)
                     
                     if "所在地" in header or "住所" in header:
-                        detail_data['address'] = self.normalize_address(value)
+                        # Nomuの場合、住所がリンクと通常テキストに分かれている
+                        # 例: <a>東京都港区</a> 高輪2丁目
+                        address_parts = []
+                        
+                        # リンク部分を取得（都道府県＋市区町村）
+                        link = td.find('a')
+                        if link:
+                            # リンクのテキストを取得（東京都港区など）
+                            prefecture_city = link.get_text(strip=True)
+                            if prefecture_city:
+                                address_parts.append(prefecture_city)
+                            # リンクを削除して残りのテキストを取得
+                            link.extract()
+                        
+                        # 残りのテキスト（町名・番地など）を取得
+                        remaining_text = td.get_text(strip=True)
+                        if remaining_text:
+                            # 「周辺地図を見る」などの不要なテキストを除去
+                            remaining_text = remaining_text.replace('周辺地図を見る', '').strip()
+                            if remaining_text:
+                                address_parts.append(remaining_text)
+                        
+                        # 住所を結合
+                        if address_parts:
+                            full_address = ''.join(address_parts)
+                            detail_data['address'] = self.normalize_address(full_address)
+                    
                     elif "交通" in header or "最寄" in header:
+                        value = td.get_text(' ', strip=True)
                         detail_data['station_info'] = value
     
     def _extract_mansion_table_info(self, element: BeautifulSoup, detail_data: Dict[str, Any]):
@@ -674,8 +837,8 @@ class NomuParser(BaseHtmlParser):
                             property_data['floor_number'] = floor
                 
                 elif ('階建' in label or '総階数' in label) and 'total_floors' not in property_data:
-                    # parse_floorメソッドを使用
-                    total = self.parse_floor(value)
+                    # parse_total_floorsメソッドを使用
+                    total = self.parse_total_floors(value)
                     if total:
                         property_data['total_floors'] = total
                 
@@ -744,7 +907,7 @@ class NomuParser(BaseHtmlParser):
     
     def _process_detail_table_data(self, element: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """
-        詳細ページのテーブルデータを処理（フォールバック用、既存値がない項目のみ処理）
+        詳細ページのテーブルデータを処理
         
         Args:
             element: BeautifulSoupオブジェクト（テーブル要素またはコンテナ要素）
@@ -752,35 +915,35 @@ class NomuParser(BaseHtmlParser):
         """
         # elementが直接tableの場合
         if element.name == 'table':
-            # col4クラスを持つテーブルの場合は特別な処理
-            if 'col4' in element.get('class', []):
-                self._process_col4_table(element, property_data)
+            # テーブルのクラスに応じて処理を分岐
+            classes = element.get('class', [])
+            if 'item_table' in classes:
+                # 新しいHTML構造のテーブル
+                self._process_item_table(element, property_data)
             else:
-                # その他のテーブルは通常の処理
-                self._process_regular_table(element, property_data)
+                # tableBox内のテーブル（従来の構造）
+                self._process_property_detail_table(element, property_data)
         else:
-            # elementがコンテナの場合、内部のテーブルを探す
-            # col4クラスのテーブルを優先的に処理
-            col4_tables = element.find_all("table", class_="col4")
+            # elementがコンテナの場合、テーブルの種類を判定
             
-            # col4テーブルがある場合はそれを優先
-            tables_to_process = col4_tables if col4_tables else element.find_all("table")
-            
-            if not tables_to_process:
+            # 1. tableBox内のテーブルを探す（従来の構造）
+            table_box = element.find("div", class_="tableBox")
+            if table_box:
+                tables = table_box.find_all("table")
+                for table in tables:
+                    self._process_property_detail_table(table, property_data)
                 return
             
-            # すべてのテーブルを処理
-            for table in tables_to_process:
-                # col4テーブルの場合は特別な処理
-                if 'col4' in table.get('class', []):
-                    self._process_col4_table(table, property_data)
-                else:
-                    # その他のテーブルは通常の処理
-                    self._process_regular_table(table, property_data)
+            # 2. item_tableクラスのテーブルを探す（新しい構造）
+            item_tables = element.find_all("table", class_="item_table")
+            if item_tables:
+                for table in item_tables:
+                    self._process_item_table(table, property_data)
+                return
     
-    def _process_col4_table(self, table: BeautifulSoup, property_data: Dict[str, Any]) -> None:
+    def _process_property_detail_table(self, table: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """
-        col4クラスのテーブルを処理（実際のデータが含まれる）
+        物件詳細テーブル（.tableBox内のテーブル）を処理
         
         Args:
             table: テーブル要素
@@ -827,16 +990,18 @@ class NomuParser(BaseHtmlParser):
                         property_data['balcony_area'] = balcony_area
                 
                 # 構造（総階数）
-                elif '構造' in key and 'total_floors' not in property_data:
-                    # RC造14階地下2階建て のような形式
-                    total_floors = self.parse_floor(value)
-                    if total_floors:
-                        property_data['total_floors'] = total_floors
-                    # 地下階を別途チェック
-                    if 'basement_floors' not in property_data:
-                        basement = self.parse_basement_floors(value)
-                        if basement:
-                            property_data['basement_floors'] = basement
+                # 注：構造フィールドからの総階数抽出は無効化
+                # 「RC造20階」のような表記は構造部分の階数であり、建物全体の総階数ではない可能性があるため
+                # elif '構造' in key and 'total_floors' not in property_data:
+                #     # RC造14階地下2階建て のような形式
+                #     total_floors = self.parse_total_floors(value)
+                #     if total_floors:
+                #         property_data['total_floors'] = total_floors
+                # 地下階も構造フィールドからは取得しない
+                # if 'basement_floors' not in property_data:
+                #     basement = self.parse_basement_floors(value)
+                #     if basement:
+                #         property_data['basement_floors'] = basement
                 
                 # 所在階
                 elif '所在階' in key and 'floor_number' not in property_data:
@@ -889,39 +1054,117 @@ class NomuParser(BaseHtmlParser):
                     units = self.parse_total_units(value)
                     if units:
                         property_data['total_units'] = units
-    
-    def _process_regular_table(self, table: BeautifulSoup, property_data: Dict[str, Any]) -> None:
+
+    def _process_item_table(self, table: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """
-        通常のテーブルを処理（col4以外）
+        新しいHTML構造のitem_tableクラスのテーブルを処理
         
         Args:
-            table: テーブル要素
+            table: テーブル要素（class="item_table"）
             property_data: データ格納先
         """
-        table_data = self.extract_table_data(table)
-        
-        if not table_data:
-            return
-        
-        for key, value in table_data.items():
-            if not value:
+        # item_tableは通常の2カラムテーブル（th/td）構造
+        for row in table.find_all('tr'):
+            th = row.find('th')
+            td = row.find('td')
+            
+            if not th or not td:
+                continue
+                
+            key = self.extract_text(th)
+            value = self.extract_text(td)
+            
+            if not key or not value:
                 continue
             
-            # 価格はextract_detail_priceメソッドで処理するため、ここでは扱わない
+            # 各項目を処理
+            if '価格' in key and 'price' not in property_data:
+                price = self.parse_price(value)
+                if price:
+                    property_data['price'] = price
             
-            # 間取り（既存値がない場合のみ）
-            # keyの最初の部分だけを見て判定（長い説明文に対応）
-            if ('間取' in key[:10] if len(key) > 10 else '間取' in key) and 'layout' not in property_data:
+            elif '間取' in key and 'layout' not in property_data:
                 layout = self.normalize_layout(value)
                 if layout:
                     property_data['layout'] = layout
             
-            # 専有面積（既存値がない場合のみ）
-            elif ('専有面積' in key[:20] if len(key) > 20 else '専有面積' in key) and 'area' not in property_data:
+            elif '専有面積' in key and 'area' not in property_data:
                 area = self.parse_area(value)
                 if area:
                     property_data['area'] = area
             
+            elif 'バルコニー' in key and 'balcony_area' not in property_data:
+                balcony_area = self.parse_area(value)
+                if balcony_area:
+                    property_data['balcony_area'] = balcony_area
+            
+            elif ('位置' in key or '所在階' in key) and 'floor_number' not in property_data:
+                # 「22階 / 47階建」のような形式から所在階を抽出
+                floor = self.parse_floor(value)
+                if floor:
+                    property_data['floor_number'] = floor
+                # 総階数も抽出
+                if '階建' in value and 'total_floors' not in property_data:
+                    total_floors = self.parse_total_floors(value)
+                    if total_floors:
+                        property_data['total_floors'] = total_floors
+            
+            elif '構造' in key:
+                # 構造情報は保存するが、総階数は抽出しない（誤った値の可能性があるため）
+                if 'structure' not in property_data:
+                    property_data['structure'] = value
+            
+            elif '向き' in key and 'direction' not in property_data:
+                direction = self.normalize_direction(value)
+                if direction:
+                    property_data['direction'] = direction
+            
+            elif '築年月' in key and 'built_year' not in property_data:
+                built_info = self.parse_built_date(value)
+                if built_info['built_year']:
+                    property_data['built_year'] = built_info['built_year']
+                if built_info['built_month'] and 'built_month' not in property_data:
+                    property_data['built_month'] = built_info['built_month']
+            
+            elif '所在地' in key and 'address' not in property_data:
+                address = self.normalize_address(value)
+                if address:
+                    property_data['address'] = address
+            
+            elif '交通' in key and 'station_info' not in property_data:
+                station = self.parse_station_info(value)
+                if station:
+                    property_data['station_info'] = station
+            
+            elif '管理費' in key and 'management_fee' not in property_data:
+                from ..data_normalizer import extract_monthly_fee
+                fee = extract_monthly_fee(value)
+                if fee:
+                    property_data['management_fee'] = fee
+            
+            elif '修繕積立' in key and 'repair_fund' not in property_data:
+                from ..data_normalizer import extract_monthly_fee
+                fund = extract_monthly_fee(value)
+                if fund:
+                    property_data['repair_fund'] = fund
+            
+            elif '総戸数' in key and 'total_units' not in property_data:
+                units = self.parse_total_units(value)
+                if units:
+                    property_data['total_units'] = units
+            
+            elif '建物階数' in key and 'total_floors' not in property_data:
+                # 「47階建」のような形式から総階数を抽出
+                total_floors = self.parse_total_floors(value)
+                if total_floors:
+                    property_data['total_floors'] = total_floors
+                # 地下階もチェック
+                if 'basement_floors' not in property_data:
+                    basement = self.parse_basement_floors(value)
+                    if basement:
+                        property_data['basement_floors'] = basement
+    
+        
             # その他のフィールドも同様に処理...
 
     def _extract_building_name_from_detail(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:

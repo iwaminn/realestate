@@ -43,6 +43,9 @@ class NomuScraper(BaseScraper):
         
         # 階数: 完全一致を要求
         self.add_required_field_validator('floor_number', exact_match=True)
+        
+        # 総階数: 完全一致を要求（新規追加）
+        self.add_required_field_validator('total_floors', exact_match=True)
 
     def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
         """ノムコムのsite_property_idの妥当性を検証

@@ -227,8 +227,8 @@ class SuumoParser(BaseHtmlParser):
                     # 価格や間取り情報が含まれている場合は除去
                     # 例: "中銀高輪マンシオン 3480万円（1LDK）" → "中銀高輪マンシオン"
                     import re
-                    # 価格パターン（○○万円、○○億円）を削除
-                    building_name = re.sub(r'\s*\d+(?:\.\d+)?(?:万|億)円.*$', '', building_name)
+                    # 価格パターン（○○万円、○○億円、○○億のみ）を削除
+                    building_name = re.sub(r'\s*\d+(?:\.\d+)?(?:万|億)(?:円)?.*$', '', building_name)
                     # 間取りパターン（括弧内の間取り情報）を削除
                     building_name = re.sub(r'\s*[（\(][^）\)]*[）\)].*$', '', building_name)
                     # 余分な空白を削除
@@ -459,8 +459,8 @@ class SuumoParser(BaseHtmlParser):
                     
                     # 価格や間取り情報を削除してクリーンな建物名を取得
                     import re
-                    # 価格パターン（○○万円、○○億円）を削除
-                    building_name = re.sub(r'\s*\d+(?:\.\d+)?(?:万|億)円.*$', '', building_name)
+                    # 価格パターン（○○万円、○○億円、○○億のみ）を削除
+                    building_name = re.sub(r'\s*\d+(?:\.\d+)?(?:万|億)(?:円)?.*$', '', building_name)
                     # 間取りパターン（括弧内の間取り情報）を削除
                     building_name = re.sub(r'\s*[（\(][^）\)]*[）\)].*$', '', building_name)
                     # 部屋番号部分を除去
@@ -486,15 +486,20 @@ class SuumoParser(BaseHtmlParser):
         
         # h3タグから「物件詳細情報」を探す
         for h3 in soup.find_all('h3'):
-            if '物件詳細情報' in self.extract_text(h3):
+            h3_text = self.extract_text(h3)
+            if h3_text and '物件詳細情報' in h3_text:
                 # 見出しの次に出現するテーブルを探す
                 property_detail_table = h3.find_next('table')
                 if property_detail_table:
                     # クラス名を確認して物件詳細テーブルであることを確認
-                    table_classes = property_detail_table.get('class', [])
-                    if 'bgWhite' in table_classes:
-                        # 正しいテーブルを発見
-                        break
+                    # NavigableStringなどの場合を考慮
+                    if hasattr(property_detail_table, 'get'):
+                        table_classes = property_detail_table.get('class', [])
+                        if table_classes and 'bgWhite' in table_classes:
+                            # 正しいテーブルを発見
+                            break
+                        else:
+                            property_detail_table = None
                     else:
                         property_detail_table = None
                 break
@@ -560,7 +565,8 @@ class SuumoParser(BaseHtmlParser):
         # 「物件詳細情報」のh3見出しを探す
         h3_detail = None
         for h3 in soup.find_all('h3'):
-            if '物件詳細情報' in self.extract_text(h3):
+            h3_text = self.extract_text(h3)
+            if h3_text and '物件詳細情報' in h3_text:
                 h3_detail = h3
                 break
         
