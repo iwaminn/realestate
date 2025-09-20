@@ -154,7 +154,6 @@ class SuumoScraper(BaseScraper):
             save_property_func=self.save_property_common
         )
     
-    
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
         """物件詳細ページを解析 - パーサーに委譲"""
         soup = self.fetch_page(url)
@@ -177,27 +176,6 @@ class SuumoScraper(BaseScraper):
         
         return detail_data
 
-    
-    
-    
-    
-    
-    
-    
-
-    
-
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    
     def verify_building_names_match(self, detail_building_name: str, building_name_from_list: str,
                                     allow_partial_match: bool = False, threshold: float = 0.8) -> Tuple[bool, Optional[str]]:
         """建物名の一致確認（SUUMOの省略表示に対応）
@@ -293,8 +271,6 @@ class SuumoScraper(BaseScraper):
                 allow_partial_match=self.allow_partial_building_name_match,
                 threshold=threshold
             )
-    
-    
     
     def _update_building_name_statistics(self, property_data: Dict[str, Any]):
         """建物名取得元の統計を更新"""

@@ -40,7 +40,26 @@ class LivableScraper(BaseScraper):
         self.parser = LivableParser(logger=self.logger)
         # 東急リバブルも一覧ページと詳細ページで建物名の表記が異なることがあるため、部分一致を許可
         self.allow_partial_building_name_match = True
-        self.building_name_match_threshold = 0.6  # 東急リバブルは詳細ページの建物名が長い傾向があるため閾値を下げる  # 東急リバブルは詳細ページの建物名が長い傾向があるため閾値を下げる
+        self.building_name_match_threshold = 0.6  # 東急リバブルは詳細ページの建物名が長い傾向があるため閾値を下げる
+        # カスタムバリデーターを登録
+        self.register_custom_validators()
+
+    def register_custom_validators(self):
+        """カスタムバリデーターを登録"""
+        super().register_custom_validators()
+        
+        # 所在階のバリデーション
+        self.add_required_field_validator('floor_number', exact_match=True)
+        
+        # 専有面積のバリデーション
+        self.add_required_field_validator('area', exact_match=True)
+        
+        # 間取りのバリデーション
+        self.add_required_field_validator('layout', exact_match=True)
+        
+        # 築年月のバリデーション（年と月を別々にバリデーション）
+        self.add_required_field_validator('built_year', exact_match=True)
+        self.add_required_field_validator('built_month', exact_match=True)
     
     def get_optional_required_fields(self) -> List[str]:
         """Livableではlayoutは必須ではない（稀に取得できないため）
@@ -50,7 +69,6 @@ class LivableScraper(BaseScraper):
         """
         return []  # layoutを必須から除外
 
-    
     def get_partial_required_fields(self) -> Dict[str, Dict[str, Any]]:
         """Livableの部分的必須フィールドの設定
         
@@ -122,7 +140,6 @@ class LivableScraper(BaseScraper):
             
         return True
     
-    
     def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:
         """個別の物件を処理"""
         # 共通の詳細チェック処理を使用
@@ -138,7 +155,6 @@ class LivableScraper(BaseScraper):
             self._current_property_data = None
         
         return result
-    
     
     def get_search_url(self, area: str, page: int = 1) -> str:
         """東急リバブルの検索URLを生成"""
@@ -159,11 +175,9 @@ class LivableScraper(BaseScraper):
         """物件一覧を解析 - パーサーに委譲"""
         return self.parser.parse_property_list(soup)
 
-    
     def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
         """物件情報を保存（共通ロジックを使用）"""
         return self.save_property_common(property_data, existing_listing)
-    
     
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
         """物件詳細ページを解析 - パーサーに委譲"""

@@ -54,6 +54,24 @@ class RehouseScraper(BaseScraper):
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': 'ja-JP,ja;q=0.9,en;q=0.8',
         })
+
+        # カスタムバリデーターを登録
+        self.register_custom_validators()
+    
+    def register_custom_validators(self):
+        """REHOUSE用のカスタムバリデーターを登録"""
+        super().register_custom_validators()
+
+        # 必須フィールドのバリデーターを登録
+        # 専有面積: 完全一致を要求
+        self.add_required_field_validator('area', exact_match=True)
+
+        # 間取り: 完全一致を要求
+        self.add_required_field_validator('layout', exact_match=True)
+
+        # 所在階: 完全一致を要求
+        self.add_required_field_validator('floor_number', exact_match=True)
+    
     
     def get_list_url(self, prefecture: str = "13", city: str = "13103", page: int = 1) -> str:
         """一覧ページのURLを生成"""

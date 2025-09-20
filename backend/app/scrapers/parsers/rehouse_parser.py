@@ -164,14 +164,14 @@ class RehouseParser(BaseHtmlParser):
     def _extract_description_info(self, desc_section: Tag, property_data: Dict[str, Any]):
         """description-sectionから情報を抽出（一覧ページ用）"""
         desc_text = desc_section.get_text(' ', strip=True)
-        
+
         # 住所のみ抽出（詳細ページでも取得するが、一覧での識別用）
         # 都道府県が含まれている完全な住所、または区・市から始まる住所を探す
         address_patterns = [
             r'((?:東京都|北海道|(?:京都|大阪)府|[^\s]{2,3}県)[^\s]+)',  # 都道府県を含む
             r'([^\s]*[市区町村][^\s/]+)'  # 市区町村から始まる
         ]
-        
+
         for pattern in address_patterns:
             addr_match = re.search(pattern, desc_text)
             if addr_match:
@@ -180,8 +180,27 @@ class RehouseParser(BaseHtmlParser):
                 if address:
                     property_data['address'] = address
                     break
-        
-        # 駅情報、間取り、面積、階数は詳細ページで取得するため、ここでは取得しない
+
+        # 間取りを抽出（例: "3LDK"）
+        layout_match = re.search(r'\b([1-9]\d*(?:K|DK|LDK|SDK|R|SLDK))\b', desc_text)
+        if layout_match:
+            layout = self.normalize_layout(layout_match.group(1))
+            if layout:
+                property_data['layout'] = layout
+
+        # 専有面積を抽出（例: "85.07㎡"）
+        area_match = re.search(r'([\d.]+)(?:㎡|m2)', desc_text)
+        if area_match:
+            area = self.parse_area(area_match.group(0))
+            if area:
+                property_data['area'] = area
+
+        # 所在階を抽出（例: "7階"）
+        floor_match = re.search(r'(\d+)階', desc_text)
+        if floor_match:
+            floor_number = self.parse_floor(floor_match.group(0))
+            if floor_number:
+                property_data['floor_number'] = floor_number
     
     def _extract_card_info(self, card: Tag, property_data: Dict[str, Any]) -> None:
         """

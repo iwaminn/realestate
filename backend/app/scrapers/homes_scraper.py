@@ -37,7 +37,23 @@ class HomesScraper(BaseScraper):
         from ..scrapers.base_scraper import BuildingNameVerificationMode
         self.building_name_verification_mode = BuildingNameVerificationMode.MULTI_SOURCE
         self._setup_headers()
-    
+
+        # カスタムバリデーターを登録
+        self.register_custom_validators()
+
+    def register_custom_validators(self):
+        """HOMES用のカスタムバリデーターを登録"""
+        super().register_custom_validators()
+
+        # 必須フィールドのバリデーターを登録
+        # 専有面積: 完全一致を要求
+        self.add_required_field_validator('area', exact_match=True)
+
+        # 間取り: 完全一致を要求
+        self.add_required_field_validator('layout', exact_match=True)
+
+        # 注: HOMESの一覧ページには所在階情報がないため、バリデーション対象外
+
     def get_optional_required_fields(self) -> List[str]:
         """HOMESではlayoutは必須ではない（稀に取得できないため）
         
@@ -175,6 +191,10 @@ class HomesScraper(BaseScraper):
     def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
         """物件一覧を解析 - パーサーに委譲"""
         return self.parser.parse_property_list(soup)
+
+    def is_last_page(self, soup: BeautifulSoup) -> bool:
+        """現在のページが最終ページかどうかを判定（パーサーに委譲）"""
+        return self.parser.is_last_page(soup)
     
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
         """物件詳細ページを解析 - パーサーに委譲"""
@@ -199,16 +219,6 @@ class HomesScraper(BaseScraper):
         
         return detail_data
     
-
-    
-
-    
-    
-    
-    
-    
-
-    
     def _extract_site_property_id(self, href: str, property_data: Dict[str, Any]) -> bool:
         """URLから物件IDを抽出
         
@@ -232,7 +242,6 @@ class HomesScraper(BaseScraper):
         else:
             self.logger.error(f"[HOMES] サイト物件IDを抽出できません: URL={href}")
             return False
-    
     
     def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None):
         """物件情報を保存"""

@@ -294,13 +294,70 @@ class LivableParser(BaseHtmlParser):
     def _extract_basic_info_from_item(self, item: Tag, property_data: Dict[str, Any]) -> None:
         """
         物件アイテムから基本情報を抽出
-        
+
         Args:
             item: 物件アイテム要素
-            property_data: データ格納先
+            property_data: データ格納内
         """
-        # dl要素から情報を抽出
-        info_items = item.select('dl.c-article-item_info_data')
+        # まず、m-contact-property__infoクラスのdl要素から情報を抽出（新しい構造）
+        info_items = item.select('dl.m-contact-property__info')
+        for dl in info_items:
+            dt = dl.find('dt')
+            dd = dl.find('dd')
+
+            if not dd:
+                continue
+
+            value = self.extract_text(dd)
+
+            if not dt:
+                continue
+
+            key = self.extract_text(dt)
+
+            # 間取り
+            if '間取り' in key:
+                layout = self.normalize_layout(value)
+                if layout:
+                    property_data['layout'] = layout
+
+            # 専有面積
+            elif '専有面積' in key:
+                area = self.parse_area(value)
+                if area:
+                    property_data['area'] = area
+
+            # 築年月
+            elif '築年月' in key:
+                built_info = self.parse_built_date(value)
+                if built_info['built_year']:
+                    property_data['built_year'] = built_info['built_year']
+                if built_info['built_month']:
+                    property_data['built_month'] = built_info['built_month']
+
+            # 所在階数
+            elif '所在階' in key or '階数' in key:
+                # 例: "4階／地上9階" から 4 を抽出
+                import re
+                floor_match = re.match(r'(\d+)階', value)
+                if floor_match:
+                    property_data['floor_number'] = int(floor_match.group(1))
+
+            # 向き
+            elif '向き' in key:
+                direction = self.normalize_direction(value)
+                if direction:
+                    property_data['direction'] = direction
+
+            # 所在地
+            elif '所在地' in key:
+                address = self.normalize_address(value)
+                if address:
+                    property_data['address'] = address
+
+        # 既存のc-article-item_info_dataからも情報を抽出（旧構造のフォールバック）
+        if not property_data.get('layout') or not property_data.get('area'):
+            info_items = item.select('dl.c-article-item_info_data')
         for dl in info_items:
             dt = dl.find('dt')
             dd = dl.find('dd')
