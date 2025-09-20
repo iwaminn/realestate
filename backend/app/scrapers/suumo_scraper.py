@@ -36,7 +36,28 @@ class SuumoScraper(BaseScraper):
     def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False, task_id=None):
         super().__init__(SourceSite.SUUMO, force_detail_fetch, max_properties, ignore_error_history, task_id)
         self.parser = SuumoParser(logger=self.logger)
-        # 建物名取得エラーの履歴（メモリ内管理）
+        
+        # カスタムバリデーターを登録
+        self.register_custom_validators()
+
+    def register_custom_validators(self):
+        """SUUMO用のカスタムバリデーターを登録"""
+        super().register_custom_validators()
+
+        # 必須フィールドのバリデーターを登録
+        # 専有面積: 完全一致を要求
+        self.add_required_field_validator('area', exact_match=True)
+
+        # 間取り: 完全一致を要求
+        self.add_required_field_validator('layout', exact_match=True)
+
+        # 築年: 完全一致を要求（整数値なのでそのまま比較）
+        self.add_required_field_validator('built_year', exact_match=True)
+
+        # 築月: 完全一致を要求（整数値なのでそのまま比較）
+        self.add_required_field_validator('built_month', exact_match=True)
+
+        # 注: 所在階は一覧ページで取得できないため、バリデーション対象外
     
     
     def process_property_data(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing]) -> bool:

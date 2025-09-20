@@ -26,6 +26,23 @@ class NomuScraper(BaseScraper):
     def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False, task_id=None):
         super().__init__(SourceSite.NOMU, force_detail_fetch, max_properties, ignore_error_history, task_id)
         self.parser = NomuParser(logger=self.logger)
+        
+        # カスタムバリデーターを登録
+        self.register_custom_validators()
+    
+    def register_custom_validators(self):
+        """ノムコム用のカスタムバリデーターを登録"""
+        super().register_custom_validators()
+        
+        # 必須フィールドのバリデーターを登録
+        # 面積: 完全一致を要求
+        self.add_required_field_validator('area', exact_match=True)
+        
+        # 間取りは除外（サイト側でデータ不整合があるため）
+        # self.add_required_field_validator('layout', exact_match=True)
+        
+        # 階数: 完全一致を要求
+        self.add_required_field_validator('floor_number', exact_match=True)
 
     def validate_site_property_id(self, site_property_id: str, url: str) -> bool:
         """ノムコムのsite_property_idの妥当性を検証
@@ -91,12 +108,27 @@ class NomuScraper(BaseScraper):
             save_property_func=self.save_property
         )
 
-    def _parse_property_detail_from_url(self, url: str) -> Optional[Dict[str, Any]]:
-        """URLから詳細ページを取得して解析"""
+    def _parse_property_detail_from_url(self, url: str, list_data: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """
+        URLから詳細ページを取得して解析
+        
+        Args:
+            url: 詳細ページのURL
+            list_data: 一覧ページで取得したデータ（クロスバリデーション用）
+        
+        Returns:
+            詳細データまたはNone
+        """
         detail_data = self.parse_property_detail(url)
         if detail_data:
             detail_data['url'] = url
+            
+            # クロスバリデーションは基底クラスで実施されるため、ここでは不要
+            # （基底クラスのvalidate_detail_against_listメソッドとカスタムバリデーターで実行）
+            
         return detail_data
+    
+
 
     def save_property(self, property_data: Dict[str, Any], existing_listing: Optional[PropertyListing] = None) -> bool:
         """物件情報を保存"""

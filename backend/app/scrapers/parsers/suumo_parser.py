@@ -31,7 +31,7 @@ class SuumoParser(BaseHtmlParser):
     
     def parse_property_list(self, soup: BeautifulSoup) -> List[Dict[str, Any]]:
         """
-        物件一覧をパース - URLと最小限の情報のみを抽出
+        物件一覧をパース - URL、価格、建物名、面積、階数を取得
         
         Args:
             soup: BeautifulSoupオブジェクト
@@ -79,8 +79,7 @@ class SuumoParser(BaseHtmlParser):
                 price_text = self.extract_text(price_elem)
                 property_data['price'] = self.parse_price(price_text)
             
-            # 建物名を取得（一覧ページから）
-            # SUUMOでは物件名はproperty_unit-info内のdlタグに含まれる
+            # 建物名、所在階、専有面積を取得（property_unit-info内から）
             property_info = unit.select_one('.property_unit-info')
             if property_info:
                 dl_elements = property_info.select('dl')
@@ -89,11 +88,47 @@ class SuumoParser(BaseHtmlParser):
                     dd_elements = dl.select('dd')
                     
                     for dt, dd in zip(dt_elements, dd_elements):
-                        if '物件名' in dt.get_text():
-                            building_name = dd.get_text(strip=True)
-                            if building_name:
-                                property_data['building_name'] = building_name
-                            break
+                        dt_text = dt.get_text(strip=True)
+                        dd_text = dd.get_text(strip=True)
+                        
+                        if '物件名' in dt_text:
+                            if dd_text:
+                                property_data['building_name'] = dd_text
+                        elif '専有面積' in dt_text:
+                            # 専有面積を取得（基底クラスのメソッドを使用）
+                            area = self.parse_area(dd_text)
+                            if area:
+                                property_data['area'] = area
+                        elif '間取り' in dt_text:
+                            # 間取りを取得（基底クラスのメソッドを使用）
+                            layout = self.normalize_layout(dd_text)
+                            if layout:
+                                property_data['layout'] = layout
+                        elif '築年月' in dt_text:
+                            # 築年月を取得（基底クラスのメソッドで年月を分離）
+                            built_info = self.parse_built_date(dd_text)
+                            if built_info['built_year']:
+                                property_data['built_year'] = built_info['built_year']
+                            if built_info['built_month']:
+                                property_data['built_month'] = built_info['built_month']
+            
+            # 物件情報テーブルからも情報を取得（cassette-contentから）
+            # 注: SUUMOの一覧ページには所在階情報はない
+            content_section = unit.select_one('.cassette-content')
+            if content_section:
+                table = content_section.select_one('table')
+                if table:
+                    for row in table.select('tr'):
+                        cells = row.select('td')
+                        if len(cells) >= 2:
+                            # 面積情報を探す（バックアップとして）
+                            for cell in cells:
+                                cell_text = cell.get_text(strip=True)
+                                if 'm²' in cell_text or '㎡' in cell_text:
+                                    if 'area' not in property_data:
+                                        area = self.parse_area(cell_text)
+                                        if area:
+                                            property_data['area'] = area
             
             # URLとsite_property_idがある場合のみ追加
             if property_data.get('url') and property_data.get('site_property_id'):
@@ -393,13 +428,7 @@ class SuumoParser(BaseHtmlParser):
         
         # 詳細情報テーブル
         self._extract_detail_info(soup, property_data)
-        
-        # 物件画像
-        self._extract_property_images(soup, property_data)
-        
-        # 物件備考
-        self._extract_remarks(soup, property_data)
-        
+
         # 不動産会社情報
         self._extract_agency_info(soup, property_data)
         
@@ -653,6 +682,7 @@ class SuumoParser(BaseHtmlParser):
         
         # 築年月
         elif '築年月' in key or '竣工時期' in key:
+            # 基底クラスのメソッドで年月を分離して保存
             built_info = self.parse_built_date(value)
             if built_info['built_year']:
                 property_data['built_year'] = built_info['built_year']
@@ -688,59 +718,6 @@ class SuumoParser(BaseHtmlParser):
             room = self.extract_text(value)
             if room and room != '-':
                 property_data['room_number'] = room
-    
-    def _extract_property_images(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
-        """
-        物件画像URLを抽出
-        
-        Args:
-            soup: BeautifulSoupオブジェクト
-            property_data: データ格納先
-        """
-        images = []
-        
-        # メイン画像
-        main_img = self.safe_select_one(soup, "img.slide_photo, img#mainImage")
-        if main_img and main_img.get('src'):
-            img_url = self.normalize_url(main_img['src'], self.BASE_URL)
-            if img_url:
-                images.append(img_url)
-        
-        # サムネイル画像
-        thumb_imgs = self.safe_select(soup, "ul.thumb_list img, div.thumbnail img")
-        for img in thumb_imgs[:10]:  # 最大10枚
-            if img.get('src'):
-                img_url = self.normalize_url(img['src'], self.BASE_URL)
-                if img_url and img_url not in images:
-                    images.append(img_url)
-        
-        if images:
-            property_data['image_urls'] = images
-    
-    def _extract_remarks(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
-        """
-        物件備考を抽出
-        
-        Args:
-            soup: BeautifulSoupオブジェクト
-            property_data: データ格納先
-        """
-        remarks_selectors = [
-            "div.section-comment",
-            "div.property-pr",
-            "section.comment",
-            "div.pr_comment"
-        ]
-        
-        for selector in remarks_selectors:
-            remarks_elem = self.safe_select_one(soup, selector)
-            if remarks_elem:
-                remarks = self.extract_text(remarks_elem)
-                if remarks:
-                    property_data['remarks'] = remarks
-                    # 最初の100文字を要約として使用
-
-                    return
     
     def _extract_agency_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """

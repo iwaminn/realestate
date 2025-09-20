@@ -356,6 +356,206 @@ class BaseScraper(ABC):
         # 非同期多数決更新を有効化（デッドロック回避）
         self.async_majority_vote = True
 
+    def register_custom_validators(self):
+        """
+        カスタムバリデーターを登録するためのメソッド
+        派生クラスでオーバーライドして使用する
+        
+        例:
+        def register_custom_validators(self):
+            super().register_custom_validators()
+            self.add_required_field_validator('area', exact_match=True)
+            self.add_required_field_validator('layout', exact_match=True)
+            self.add_required_field_validator('floor_number', exact_match=True)
+        """
+        # バリデーター格納用の辞書を初期化
+        if not hasattr(self, '_custom_validators'):
+            self._custom_validators = {}
+    
+    def add_field_validator(self, field_name: str, validator_func: callable):
+        """
+        フィールド別のカスタムバリデーターを追加
+        
+        Args:
+            field_name: 検証するフィールド名
+            validator_func: 検証関数 (list_value, detail_value) -> bool
+        """
+        if not hasattr(self, '_custom_validators'):
+            self._custom_validators = {}
+        
+        if field_name not in self._custom_validators:
+            self._custom_validators[field_name] = []
+        
+        self._custom_validators[field_name].append(validator_func)
+        self.logger.info(f"カスタムバリデーター追加: {field_name} - {validator_func.__name__}")
+    
+    def add_required_field_validator(self, field_name: str, exact_match: bool = True, 
+                                    normalize_func: callable = None, tolerance: float = None):
+        """
+        必須フィールドのバリデーターを追加する統一メソッド
+        
+        Args:
+            field_name: 検証するフィールド名
+            exact_match: 完全一致を要求するか（デフォルト: True）
+            normalize_func: 正規化関数（比較前に値を正規化する場合）
+            tolerance: 許容誤差（数値フィールド用、例: 0.5）
+        """
+        def validator(list_value, detail_value):
+            """生成されたバリデーター関数"""
+            # 両方の値が必須
+            if list_value is None:
+                self.logger.error(f"{field_name}が一覧ページから取得できていません")
+                return False
+            if detail_value is None:
+                self.logger.error(f"{field_name}が詳細ページから取得できていません")
+                return False
+            
+            # 正規化が指定されている場合
+            if normalize_func:
+                list_value = normalize_func(list_value)
+                detail_value = normalize_func(detail_value)
+            
+            # 数値の許容誤差が指定されている場合
+            if tolerance is not None:
+                try:
+                    list_num = float(list_value)
+                    detail_num = float(detail_value)
+                    if abs(list_num - detail_num) <= tolerance:
+                        return True
+                    else:
+                        self.logger.error(
+                            f"{field_name}の不一致: 一覧={list_value}, 詳細={detail_value} "
+                            f"(差: {abs(list_num - detail_num)}, 許容誤差: {tolerance})"
+                        )
+                        return False
+                except (ValueError, TypeError):
+                    # 数値変換できない場合は文字列として比較
+                    pass
+            
+            # 完全一致チェック
+            if exact_match:
+                if list_value != detail_value:
+                    # フィールドに応じた単位を付与
+                    unit = ""
+                    if field_name == "area":
+                        unit = "㎡"
+                    elif field_name == "floor_number":
+                        unit = "階"
+                    elif field_name == "price":
+                        unit = "万円"
+                    
+                    self.logger.error(
+                        f"{field_name}の不一致: 一覧={list_value}{unit}, 詳細={detail_value}{unit}"
+                    )
+                    return False
+                return True
+            else:
+                # exact_match=Falseの場合（将来の拡張用）
+                return True
+        
+        # バリデーターに名前を設定
+        validator.__name__ = f"validate_{field_name}_required"
+        
+        # バリデーターを追加
+        self.add_field_validator(field_name, validator)
+    
+    def validate_detail_against_list(self, list_data: Dict[str, Any], detail_data: Dict[str, Any]) -> Dict[str, bool]:
+        """
+        一覧ページと詳細ページのデータを検証
+        
+        Args:
+            list_data: 一覧ページから取得したデータ
+            detail_data: 詳細ページから取得したデータ
+        
+        Returns:
+            各フィールドの検証結果を含む辞書
+        """
+        validation_results = {}
+        
+        # 共通フィールドの検証（価格と建物名）
+        # 価格の検証
+        if 'price' in list_data and 'price' in detail_data:
+            list_price = list_data['price']
+            detail_price = detail_data['price']
+            
+            if list_price and detail_price:
+                # 価格は完全一致を要求
+                validation_results['price'] = (list_price == detail_price)
+                
+                if not validation_results['price']:
+                    self.logger.warning(
+                        f"価格不一致: 一覧 {list_price}万円 vs 詳細 {detail_price}万円"
+                    )
+        
+        # 建物名の検証（既存のメソッドを使用）
+        if 'building_name' in detail_data:
+            validation_results['building_name'] = self.validate_building_name_from_detail(list_data, detail_data)
+        
+        # カスタムバリデーターの実行
+        if hasattr(self, '_custom_validators'):
+            for field_name, validators in self._custom_validators.items():
+                if field_name in list_data and field_name in detail_data:
+                    list_value = list_data[field_name]
+                    detail_value = detail_data[field_name]
+                    
+                    # 全てのバリデーターを実行
+                    field_valid = True
+                    for validator_func in validators:
+                        try:
+                            if not validator_func(list_value, detail_value):
+                                field_valid = False
+                                self.logger.warning(
+                                    f"カスタム検証失敗 ({validator_func.__name__}): "
+                                    f"{field_name} - 一覧: {list_value}, 詳細: {detail_value}"
+                                )
+                                break
+                        except Exception as e:
+                            self.logger.error(
+                                f"カスタムバリデーターエラー ({validator_func.__name__}): "
+                                f"{field_name} - {e}"
+                            )
+                            field_valid = False
+                            break
+                    
+                    validation_results[field_name] = field_valid
+        
+        # 検証結果のサマリーをログ出力
+        if validation_results:
+            failed_fields = [field for field, valid in validation_results.items() if not valid]
+            
+            if failed_fields:
+                self.logger.warning(
+                    f"詳細ページ検証失敗: {', '.join(failed_fields)} - "
+                    f"URL: {list_data.get('url', '不明')}"
+                )
+            else:
+                self.logger.info(
+                    f"詳細ページ検証成功: 全{len(validation_results)}項目一致 - "
+                    f"URL: {list_data.get('url', '不明')}"
+                )
+        
+        return validation_results
+    
+    def should_skip_due_to_validation_failure(self, validation_results: Dict[str, bool]) -> bool:
+        """
+        検証結果に基づいて物件をスキップすべきか判断
+        
+        Args:
+            validation_results: 各フィールドの検証結果
+        
+        Returns:
+            スキップすべき場合True
+        """
+        # デフォルトでは価格不一致の場合のみスキップ
+        # 派生クラスでオーバーライドして挙動を変更可能
+        if 'price' in validation_results and not validation_results['price']:
+            return True
+        
+        # その他の重要なフィールドの検証失敗もチェック可能
+        # 例: 建物名、面積、階数などが大きく異なる場合
+        
+        return False
+
     def _ensure_external_id_handler(self, session):
         """external_id_handlerを遅延初期化（必要な時だけ作成）"""
         if self.external_id_handler is None:
@@ -1976,48 +2176,46 @@ class BaseScraper(ABC):
                 list_price = property_data.get('price')
                 detail_price = detail_data.get('price')
                 
-                if list_price and detail_price and list_price != detail_price:
-                    # 価格不一致を検出
-                    price_diff = abs(list_price - detail_price)
-                    price_diff_rate = price_diff / list_price if list_price > 0 else 0
-                    
-                    # 価格不一致として記録
-                    self._record_price_mismatch(
-                        property_data.get('site_property_id', ''),
-                        property_data['url'],
-                        list_price,
-                        detail_price
-                    )
-                    
-                    # 価格不一致の統計を更新
-                    if 'price_mismatch' not in self._scraping_stats:
-                        self._scraping_stats['price_mismatch'] = 0
-                    self._scraping_stats['price_mismatch'] += 1
-                    
-                    # エラーログを記録（価格不一致は重要なエラーとして扱う）
-                    self.log_error(
-                        f'価格不一致を検出: 一覧 {list_price}万円, 詳細 {detail_price}万円 (差額: {price_diff}万円, {price_diff_rate:.1%})',
-                        url=property_data.get('url', '不明'),
-                        building_name=building_name,
-                        price=f'{list_price} → {detail_price}',
-                        site_property_id=property_data.get('site_property_id', ''),
-                        source_site=self.source_site.value
-                    )
-                    
-                    # 更新をスキップ
-                    print(f"  → 価格不一致のため更新をスキップ (一覧: {list_price}万円, 詳細: {detail_price}万円)")
-                    property_data['detail_fetched'] = True  # 詳細取得自体は成功
-                    property_data['validation_failed'] = True  # 検証エラーフラグ
-                    self._last_detail_fetched = True  # 詳細取得は成功した
-                    self._increment_stat('validation_failed')  # 検証エラーとしてカウント
-                    property_data['detail_fetch_attempted'] = True
-                    property_data['property_saved'] = False
-                    return False
+                # カスタムバリデーションシステムを使用
+                validation_results = self.validate_detail_against_list(property_data, detail_data)
                 
-                # 建物名検証処理
-                if not self.validate_building_name_from_detail(property_data, detail_data):
-                    # 検証失敗の場合は更新をスキップ
-                    print(f"  → 建物名検証失敗のため更新をスキップ")
+                # 価格不一致のチェック（既存のロジックとの互換性維持）
+                if 'price' in validation_results and not validation_results['price']:
+                    list_price = property_data.get('price')
+                    detail_price = detail_data.get('price')
+                    
+                    if list_price and detail_price:
+                        price_diff = abs(list_price - detail_price)
+                        price_diff_rate = price_diff / list_price if list_price > 0 else 0
+                        
+                        # 価格不一致として記録
+                        self._record_price_mismatch(
+                            property_data.get('site_property_id', ''),
+                            property_data['url'],
+                            list_price,
+                            detail_price
+                        )
+                        
+                        # 価格不一致の統計を更新
+                        if 'price_mismatch' not in self._scraping_stats:
+                            self._scraping_stats['price_mismatch'] = 0
+                        self._scraping_stats['price_mismatch'] += 1
+                        
+                        # エラーログを記録（価格不一致は重要なエラーとして扱う）
+                        self.log_error(
+                            f'価格不一致を検出: 一覧 {list_price}万円, 詳細 {detail_price}万円 (差額: {price_diff}万円, {price_diff_rate:.1%})',
+                            url=property_data.get('url', '不明'),
+                            building_name=building_name,
+                            price=f'{list_price} → {detail_price}',
+                            site_property_id=property_data.get('site_property_id', ''),
+                            source_site=self.source_site.value
+                        )
+                
+                # 検証失敗によるスキップ判定
+                if self.should_skip_due_to_validation_failure(validation_results):
+                    # 失敗したフィールドのリスト
+                    failed_fields = [field for field, valid in validation_results.items() if not valid]
+                    print(f"  → 検証失敗のため更新をスキップ ({', '.join(failed_fields)})")
                     property_data['detail_fetched'] = True  # 詳細取得自体は成功
                     property_data['validation_failed'] = True  # 検証エラーフラグ
                     self._last_detail_fetched = True  # 詳細取得は成功した

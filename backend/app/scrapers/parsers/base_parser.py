@@ -62,6 +62,11 @@ class BaseHtmlParser:
         """価格をパース（万円単位）"""
         from ..data_normalizer import extract_price
         return extract_price(text)
+
+    def parse_monthly_fee(self, text: str) -> Optional[int]:
+        """月額費用をパース（円単位）"""
+        from ..data_normalizer import extract_monthly_fee
+        return extract_monthly_fee(text)
     
     def parse_area(self, text: str) -> Optional[float]:
         """面積をパース（㎡単位）"""
