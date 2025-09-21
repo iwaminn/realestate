@@ -251,45 +251,27 @@ class LivableParser(BaseHtmlParser):
         Returns:
             建物名
         """
-        building_name = None
+        # h2タグから建物名を取得（現在のHTML構造で確実に取得可能）
+        title_elem = item.select_one('h2.o-product-list__headline span.o-product-list__headline-text')
+        if title_elem:
+            return self.extract_text(title_elem)
         
-        # 方法1: タイトル要素から抽出
-        title_selectors = [
+        # フォールバック: 古いHTML構造に対応
+        fallback_selectors = [
             'h3.c-article-item_info_title span.c-article-item_info_title_text',
             'h3 span.c-article-item_info_title_text',
             'h3.o-product-list__title',
             '.property-title'
         ]
         
-        for selector in title_selectors:
-            title_elem = item.select_one(selector)
-            if title_elem:
-                building_name = self.extract_text(title_elem)
+        for selector in fallback_selectors:
+            elem = item.select_one(selector)
+            if elem:
+                building_name = self.extract_text(elem)
                 if building_name:
                     return building_name
         
-        # 方法2: リンクのテキストから抽出
-        link = self._extract_property_link(item)
-        if link:
-            link_text = link.get_text(' ', strip=True)
-            # パターン: 数字/数字の後、物件タイプの前
-            match = re.search(r'\d+/\d+<?>?\s*(.*?)(?:\s*（間取り）)??\s*(?:中古マンション|新築マンション)', link_text)
-            if match:
-                building_name = match.group(1).strip()
-        
-        # 方法3: 画像のalt属性から取得
-        if not building_name:
-            img = item.select_one('img[alt]')
-            if img:
-                alt = img.get('alt', '').strip()
-                # alt属性から建物名を抽出（「(外観)」「（間取り）」などを除去）
-                if alt and '外観' not in alt and '間取り' not in alt:
-                    building_name = alt
-                elif alt:
-                    # （外観）、（間取り）などのカッコ付きテキストを除去
-                    building_name = re.sub(r'[（(][^）)]*[）)]', '', alt).strip()
-        
-        return building_name
+        return None
     
     def _extract_basic_info_from_item(self, item: Tag, property_data: Dict[str, Any]) -> None:
         """
@@ -573,7 +555,8 @@ class LivableParser(BaseHtmlParser):
                     cells = row.find_all(['th', 'td'])
                     if len(cells) >= 2:
                         label = cells[0].get_text(strip=True)
-                        value = cells[1].get_text(strip=True)
+                        # 駅情報など複数行の情報を保持するため、separatorを使用
+                        value = cells[1].get_text(separator='\n', strip=True)
                         self._extract_grantact_info(label, value, property_data, detail_info)
             
             # タイトルから建物名を取得
@@ -660,6 +643,18 @@ class LivableParser(BaseHtmlParser):
             fund = extract_monthly_fee(value)
             if fund:
                 property_data['repair_fund'] = fund
+        
+        # 土地権利
+        elif '土地権利' in label or '敷地権' in label or '所有権' in label:
+            land_rights = self.extract_text(value)
+            if land_rights and land_rights != '-':
+                property_data['land_rights'] = land_rights
+        
+        # 駅情報・交通
+        elif '交通' in label or '駅徒歩' in label or '最寄' in label:
+            station = self.parse_station_info(value)
+            if station:
+                property_data['station_info'] = station
     
     def _extract_grantact_building_name(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
         """grantactページから建物名を抽出（複数箇所から取得して検証）"""
@@ -741,6 +736,7 @@ class LivableParser(BaseHtmlParser):
             if normalized_primary == normalized_secondary:
                 self.logger.info(f"[Livable] 建物名が一致（{building_names[0][0]}と{building_names[1][0]}）: {primary_name}")
                 property_data['building_name'] = primary_name
+                property_data['title'] = primary_name  # titleフィールドも設定
                 property_data['_building_name_validated'] = True
             else:
                 # 部分一致をチェック（片方が他方を含む場合）
@@ -749,6 +745,7 @@ class LivableParser(BaseHtmlParser):
                     longer_name = primary_name if len(primary_name) >= len(secondary_name) else secondary_name
                     self.logger.info(f"[Livable] 建物名が部分一致、より詳細な名前を採用: {longer_name}")
                     property_data['building_name'] = longer_name
+                    property_data['title'] = longer_name  # titleフィールドも設定
                     property_data['_building_name_validated'] = True
                 else:
                     self.logger.warning(
@@ -757,10 +754,12 @@ class LivableParser(BaseHtmlParser):
                     )
                     # 最初に見つかった建物名を採用
                     property_data['building_name'] = primary_name
+                    property_data['title'] = primary_name  # titleフィールドも設定
                     property_data['_building_name_validated'] = False
         elif len(building_names) == 1:
             # 1箇所からしか取得できなかった場合
             property_data['building_name'] = building_names[0][1]
+            property_data['title'] = building_names[0][1]  # titleフィールドも設定
             property_data['_building_name_validated'] = False
             self.logger.warning(f"[Livable] 建物名を1箇所からのみ取得: {building_names[0][0]}='{building_names[0][1]}'")
         else:
@@ -768,7 +767,26 @@ class LivableParser(BaseHtmlParser):
     
     def _extract_grantact_address(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
         """grantactページから住所を抽出"""
-        # JavaScriptから住所を取得
+        # 方法1: テーブルから住所を取得
+        tables = soup.find_all('table')
+        for table in tables:
+            for row in table.find_all('tr'):
+                th = row.find('th')
+                if th and '所在地' in th.get_text(strip=True):
+                    td = row.find('td')
+                    if td:
+                        address = td.get_text(strip=True)
+                        if address:
+                            normalized = self.normalize_address(address)
+                            if normalized:
+                                property_data['address'] = normalized
+                                return
+                            else:
+                                # 正規化が失敗した場合はログを出力
+                                self.logger.warning(f"[Grantact] 住所の正規化に失敗しました: {address}")
+                                # 住所は設定しない（無効なデータの可能性が高いため）
+        
+        # 方法2: JavaScriptから住所を取得（フォールバック）
         script_texts = soup.find_all('script', string=lambda text: text and 'address' in text if text else False)
         for script in script_texts:
             script_content = script.string
@@ -830,12 +848,28 @@ class LivableParser(BaseHtmlParser):
                 if 'building_name' not in property_data:
                     property_data['building_name'] = property_data['title']
             else:
-                property_data['title'] = title_text
-        else:
-            # フォールバック：ヘッドライン要素から取得
-            title_elem = soup.select_one('.o-detail-header__headline, h1, h2')
+                # パターンにマッチしない場合でも、タイトル全体を使用（後で区切り文字で分割）
+                # 例：「物件名」「物件名 | サイト名」「物件名｜サイト名」
+                if '|' in title_text or '｜' in title_text:
+                    # 区切り文字がある場合は最初の部分を取得
+                    property_data['title'] = re.split(r'[｜|]', title_text)[0].strip()
+                else:
+                    property_data['title'] = title_text
+                
+                # 建物名も設定
+                if 'building_name' not in property_data:
+                    property_data['building_name'] = property_data['title']
+        
+        # タイトルタグから取得できなかった場合のフォールバック
+        if 'title' not in property_data or not property_data.get('title'):
+            # h1, h2などのヘッドライン要素から取得
+            title_elem = soup.select_one('.o-detail-header__headline, h1.property-title, h1, h2')
             if title_elem:
-                property_data['title'] = title_elem.get_text(strip=True)
+                title_text = title_elem.get_text(strip=True)
+                if title_text:
+                    property_data['title'] = title_text
+                    if 'building_name' not in property_data:
+                        property_data['building_name'] = title_text
     
     def _extract_address(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
         """住所を抽出"""
@@ -876,10 +910,17 @@ class LivableParser(BaseHtmlParser):
                     break
         
         if address_from_html:
-            # normalize_addressで最終的なクリーニング
+            # normalize_addressで最終的なクリーニングと正規化
+            # このメソッドで「４丁目」→「4」への変換が行われるはず
             normalized = self.normalize_address(address_from_html)
             if normalized:
                 property_data['address'] = normalized
+            else:
+                # 正規化が失敗した場合はログを出力
+                self.logger.warning(f"住所の正規化に失敗しました: {address_from_html}")
+                # 住所は設定しない（無効なデータの可能性が高いため）
+        else:
+            self.logger.warning("住所情報を取得できませんでした")
     
     def _extract_detail_price(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> bool:
         """詳細ページから価格を抽出"""
@@ -1081,10 +1122,12 @@ class LivableParser(BaseHtmlParser):
         
         # 所在地
         elif '所在地' in key:
-            # normalize_addressがUI要素（「地図を見る」など）を自動的に削除
-            address = self.normalize_address(value)
-            if address:
-                property_data['address'] = address
+            # すでに住所が設定されている場合はスキップ（_extract_addressで既に正規化済みの可能性）
+            if 'address' not in property_data:
+                # normalize_addressがUI要素（「地図を見る」など）を自動的に削除
+                address = self.normalize_address(value)
+                if address:
+                    property_data['address'] = address
         
         # 交通
         elif '交通' in key or '最寄' in key:
@@ -1107,6 +1150,12 @@ class LivableParser(BaseHtmlParser):
             fund = extract_monthly_fee(value)
             if fund:
                 property_data['repair_fund'] = fund
+        
+        # 土地権利
+        elif '土地権利' in key or '敷地権' in key or '所有権' in key:
+            land_rights = self.extract_text(value)
+            if land_rights and land_rights != '-':
+                property_data['land_rights'] = land_rights
         
         # 部屋番号
         elif '部屋番号' in key or '号室' in key:
