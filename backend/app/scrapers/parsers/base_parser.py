@@ -136,4 +136,10 @@ class BaseHtmlParser:
 
         from ...utils.address_normalizer import AddressNormalizer
         normalizer = AddressNormalizer()
-        return normalizer.normalize(text)
+        result = normalizer.normalize(text)
+        
+        # 空文字列の場合もNoneを返す
+        if not result:
+            return None
+        
+        return result

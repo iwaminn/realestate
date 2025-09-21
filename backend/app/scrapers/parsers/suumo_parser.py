@@ -64,7 +64,6 @@ class SuumoParser(BaseHtmlParser):
                     from urllib.parse import urljoin
                     property_data['url'] = urljoin(self.BASE_URL, url)
                     # URLからIDを抽出
-                    import re
                     # 新しいURLパターン /nc_XXXXX/ に対応
                     id_match = re.search(r'/nc_(\d+)/', property_data['url'])
                     if not id_match:
@@ -226,7 +225,6 @@ class SuumoParser(BaseHtmlParser):
                 if building_name:
                     # 価格や間取り情報が含まれている場合は除去
                     # 例: "中銀高輪マンシオン 3480万円（1LDK）" → "中銀高輪マンシオン"
-                    import re
                     # 価格パターン（○○万円、○○億円、○○億のみ）を削除
                     building_name = re.sub(r'\s*\d+(?:\.\d+)?(?:万|億)(?:円)?.*$', '', building_name)
                     # 間取りパターン（括弧内の間取り情報）を削除
@@ -458,7 +456,6 @@ class SuumoParser(BaseHtmlParser):
                     property_data['title'] = building_name
                     
                     # 価格や間取り情報を削除してクリーンな建物名を取得
-                    import re
                     # 価格パターン（○○万円、○○億円、○○億のみ）を削除
                     building_name = re.sub(r'\s*\d+(?:\.\d+)?(?:万|億)(?:円)?.*$', '', building_name)
                     # 間取りパターン（括弧内の間取り情報）を削除
@@ -604,7 +601,35 @@ class SuumoParser(BaseHtmlParser):
                 value = self.extract_text(dd)
                 if key and value:
                     self._process_detail_item(key, value, property_data)
+        
+        # 方角が取得できていない場合、JavaScriptデータから抽出（フォールバック）
+        if not property_data.get('direction'):
+            self._extract_direction_from_javascript(soup, property_data)
     
+    def _extract_direction_from_javascript(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
+        """
+        JavaScriptデータから方角を抽出（フォールバック処理）
+        
+        Args:
+            soup: BeautifulSoupオブジェクト
+            property_data: データ格納先
+        """
+        
+        # script要素からJavaScriptデータを探す
+        for script in soup.find_all('script'):
+            if script.string and 'muki' in script.string:
+                # muki : "東" のパターンを探す
+                match = re.search(r'muki\s*:\s*"([^"]*)"', script.string)
+                if match:
+                    direction_raw = match.group(1)
+                    if direction_raw:
+                        # 方角を正規化（基底クラスのnormalize_directionメソッドを使用）
+                        direction = self.normalize_direction(direction_raw)
+                        if direction:
+                            property_data['direction'] = direction
+                            self.logger.info(f"Direction not found in HTML, extracted from JavaScript: {direction}")
+                break
+
     def _process_detail_item(self, key: str, value: str, property_data: Dict[str, Any]) -> None:
         """
         詳細アイテムを処理
@@ -634,6 +659,18 @@ class SuumoParser(BaseHtmlParser):
             area = self.parse_area(value)
             if area:
                 property_data['area'] = area
+            
+            # 専有面積のセル内にバルコニー面積が含まれる場合の処理
+            if 'バルコニー面積' in value and 'balcony_area' not in property_data:
+                # バルコニー面積：XX.XXm2 のパターンを探す
+                balcony_match = re.search(r'バルコニー面積[：:]\s*([0-9.]+)', value)
+                if balcony_match:
+                    try:
+                        balcony_area = float(balcony_match.group(1))
+                        property_data['balcony_area'] = balcony_area
+                        self.logger.info(f"Extracted balcony area from 専有面積 cell: {balcony_area}㎡")
+                    except ValueError:
+                        pass
         
         # バルコニー面積
         elif 'バルコニー' in key:
@@ -724,6 +761,19 @@ class SuumoParser(BaseHtmlParser):
             room = self.extract_text(value)
             if room and room != '-':
                 property_data['room_number'] = room
+
+        # その他面積（バルコニー面積が含まれる場合がある）
+        elif 'その他面積' in key and 'balcony_area' not in property_data:
+            # バルコニー面積：XX.XXm2 のパターンを探す
+            if 'バルコニー面積' in value:
+                balcony_match = re.search(r'バルコニー面積[：:]\s*([0-9.]+)', value)
+                if balcony_match:
+                    try:
+                        balcony_area = float(balcony_match.group(1))
+                        property_data['balcony_area'] = balcony_area
+                        self.logger.info(f"Extracted balcony area from その他面積 cell: {balcony_area}㎡")
+                    except ValueError:
+                        pass
     
     def _extract_agency_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """

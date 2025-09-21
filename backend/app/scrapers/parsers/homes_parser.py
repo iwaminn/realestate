@@ -461,11 +461,12 @@ class HomesParser(BaseHtmlParser):
                 
                 raise ValueError(error_msg)
             
-            # 1番目のspan: "中古マンション"であることを確認
+            # 1番目のspan: "中古マンション"、"マンション未入居"、または単に"マンション"であることを確認
             # 新しい構造では最初のspanが入れ子になっている場合がある
             first_span_text = self.extract_text(span_elements[0])
-            if "中古マンション" not in first_span_text:
-                error_msg = f"h1の1番目のspan要素が期待値と異なります: '{first_span_text}' (期待値: '中古マンション'を含む)"
+            # 「マンション」という文字列が含まれていればOKとする（より柔軟な判定）
+            if "マンション" not in first_span_text:
+                error_msg = f"h1の1番目のspan要素が期待値と異なります: '{first_span_text}' (期待値: 'マンション'を含む)"
                 self.logger.error(f"[HOMES] {error_msg}")
                 raise ValueError(error_msg)
             

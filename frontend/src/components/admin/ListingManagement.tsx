@@ -939,7 +939,7 @@ export const ListingManagement: React.FC = () => {
                           </Grid>
                           <Grid item xs={12}>
                             <Typography variant="caption" color="text.secondary">タイトル</Typography>
-                            <Typography variant="body2">{selectedListing.title}</Typography>
+                            <Typography variant="body2">{selectedListing.title || '-'}</Typography>
                           </Grid>
                           <Grid item xs={12} sm={6}>
                             <Typography variant="caption" color="text.secondary">掲載建物名</Typography>
@@ -969,6 +969,90 @@ export const ListingManagement: React.FC = () => {
                                 {selectedListing.url}
                               </Link>
                             </Typography>
+                          </Grid>
+
+                          {/* 掲載情報が保持する物件情報 */}
+                          <Grid item xs={12}>
+                            <Divider sx={{ my: 1 }} />
+                            <Typography variant="overline" color="text.secondary">掲載情報が保持する物件情報</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">階数</Typography>
+                            <Typography variant="body2">
+                              {selectedListing.listing_floor_number ? `${selectedListing.listing_floor_number}階` : '-'}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">専有面積</Typography>
+                            <Typography variant="body2">
+                              {selectedListing.listing_area ? `${selectedListing.listing_area}㎡` : '-'}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">間取り</Typography>
+                            <Typography variant="body2">{selectedListing.listing_layout || '-'}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">方角</Typography>
+                            <Typography variant="body2">{selectedListing.listing_direction || '-'}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">バルコニー面積</Typography>
+                            <Typography variant="body2">
+                              {selectedListing.listing_balcony_area ? `${selectedListing.listing_balcony_area}㎡` : '-'}
+                            </Typography>
+                          </Grid>
+
+                          {/* 掲載情報が保持する建物情報 */}
+                          <Grid item xs={12}>
+                            <Divider sx={{ my: 1 }} />
+                            <Typography variant="overline" color="text.secondary">掲載情報が保持する建物情報</Typography>
+                          </Grid>
+                          <Grid item xs={12}>
+                            <Typography variant="caption" color="text.secondary">住所</Typography>
+                            <Typography variant="body2">{selectedListing.listing_address || '-'}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">総階数</Typography>
+                            <Typography variant="body2">
+                              {selectedListing.listing_total_floors ? `${selectedListing.listing_total_floors}階建` : '-'}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">地下階数</Typography>
+                            <Typography variant="body2">
+                              {selectedListing.listing_basement_floors ? `地下${selectedListing.listing_basement_floors}階` : '-'}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">総戸数</Typography>
+                            <Typography variant="body2">
+                              {selectedListing.listing_total_units ? `${selectedListing.listing_total_units}戸` : '-'}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">築年月</Typography>
+                            <Typography variant="body2">
+                              {selectedListing.listing_built_year ?
+                                `${selectedListing.listing_built_year}年${selectedListing.listing_built_month ? selectedListing.listing_built_month + '月' : ''}`
+                                : '-'}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">建物構造</Typography>
+                            <Typography variant="body2">{selectedListing.listing_building_structure || '-'}</Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">土地権利</Typography>
+                            <Typography variant="body2">{selectedListing.listing_land_rights || '-'}</Typography>
+                          </Grid>
+                          <Grid item xs={12}>
+                            <Typography variant="caption" color="text.secondary">駐車場情報</Typography>
+                            <Typography variant="body2">{selectedListing.listing_parking_info || '-'}</Typography>
+                          </Grid>
+                          <Grid item xs={12}>
+                            <Typography variant="caption" color="text.secondary">駅情報</Typography>
+                            <Typography variant="body2" style={{ whiteSpace: 'pre-wrap' }}>{selectedListing.listing_station_info || '-'}</Typography>
                           </Grid>
                         </Grid>
                       </CardContent>

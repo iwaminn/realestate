@@ -659,7 +659,7 @@ class DataNormalizer:
             
         Example:
             >>> normalizer.format_station_info("東京メトロ銀座線銀座駅徒歩5分都営浅草線東銀座駅徒歩3分")
-            "東京メトロ銀座線銀座駅徒歩5分\\n都営浅草線東銀座駅徒歩3分"
+            "東京メトロ銀座線銀座駅徒歩5分\n都営浅草線東銀座駅徒歩3分"
         """
         if not text:
             return ""
@@ -667,16 +667,68 @@ class DataNormalizer:
         # HTMLタグだけは削除（表示を妨げるため）
         text = re.sub(r'<[^>]+>', '', text)
         
+        # 改行とスペースを正規化
+        # 「・」で終わる行と次の行を結合
+        lines = text.split('\n')
+        merged_lines = []
+        i = 0
+        while i < len(lines):
+            line = lines[i].strip()
+            if line.endswith('・') and i + 1 < len(lines):
+                # 「・」で終わる行は次の行と結合
+                next_line = lines[i + 1].strip()
+                merged_lines.append(line + next_line)
+                i += 2  # 2行処理したので2つ進める
+            else:
+                if line:  # 空行でない場合のみ追加
+                    merged_lines.append(line)
+                i += 1
+        
+        # 結合したテキストを再構成
+        text = ' '.join(merged_lines)
+        
         # 「、」で区切られている場合は改行に変換
         text = text.replace('、', '\n')
         
-        # 路線名の前で改行を入れる
-        railway_patterns_regex = (
-            r'(?=東京メトロ|都営|ＪＲ|JR|京王|小田急|東急|京急|京成|'
-            r'新交通|東武|西武|相鉄|りんかい線|つくばエクスプレス|'
-            r'横浜市営|東葉高速|北総|埼玉高速|多摩都市モノレール)'
-        )
-        text = re.sub(railway_patterns_regex, '\n', text)
+        # 路線名の前で改行を入れる処理
+        # ただし「線・」で接続されている複合路線は分割しない
+        
+        # まず、複合路線（「線・」を含む）を一時的に保護
+        protected_patterns = []
+        protected_counter = 0
+        
+        # 「東京メトロ南北線・都営地下鉄三田線」のようなパターンを保護
+        # 「線・」を含む部分全体を保護
+        combined_line_pattern = r'([^「」\s]+線・[^「」\s]+線)'
+        for match in re.finditer(combined_line_pattern, text):
+            placeholder = f'__PROTECTED_LINE_{protected_counter}__'
+            protected_patterns.append((placeholder, match.group(0)))
+            text = text.replace(match.group(0), placeholder)
+            protected_counter += 1
+        
+        # 通常の路線名の前で改行を入れる
+        # 路線名パターンのリスト
+        railway_patterns = [
+            '東京メトロ', '都営地下鉄', '都営', 'ＪＲ', 'JR', '京王', '小田急', 
+            '東急', '京急', '京成', '新交通', '東武', '西武', '相鉄', 
+            'りんかい線', 'つくばエクスプレス', '横浜市営', '東葉高速', 
+            '北総', '埼玉高速', '多摩都市モノレール'
+        ]
+        
+        # プレースホルダーの前でも改行を入れる
+        for i in range(protected_counter):
+            placeholder = f'__PROTECTED_LINE_{i}__'
+            # プレースホルダーの前に改行を入れる（文字列の先頭でない場合）
+            text = re.sub(f'(?<!^)(?<![\\n])(?={re.escape(placeholder)})', '\n', text)
+        
+        for pattern in railway_patterns:
+            # パターンの前に改行がない場合のみ改行を挿入
+            # ただし文字列の先頭の場合は改行を挿入しない
+            text = re.sub(f'(?<!^)(?<![\\n])(?={re.escape(pattern)})', '\n', text)
+        
+        # 保護したパターンを復元
+        for placeholder, original in protected_patterns:
+            text = text.replace(placeholder, original)
         
         # 各行を処理して駅情報の本質的な部分のみを抽出
         lines = text.split('\n')
