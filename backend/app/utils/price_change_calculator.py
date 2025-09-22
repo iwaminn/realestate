@@ -133,8 +133,8 @@ class PriceChangeCalculator:
             WITH date_range AS (
                 -- 連続した日付範囲を生成（記録がない日も含める）
                 SELECT generate_series(
-                    :start_date::date,
-                    :end_date::date,
+                    CAST(:start_date AS date),
+                    CAST(:end_date AS date),
                     '1 day'::interval
                 )::date as price_date
             ),
