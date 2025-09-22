@@ -90,46 +90,84 @@ class PriceChangeCalculator:
     
     def calculate_price_changes(self, master_property_id: int, start_date: Optional[date] = None) -> List[Dict]:
         """
-        物件の価格改定履歴を計算
+        物件の価格改定履歴を計算（改善版）
+        
+        主な改善点：
+        1. 連続した日付範囲を生成して、記録がない日も含める
+        2. アクティブな掲載のみを対象とする
+        3. 最新の状態（今日）も含めて価格変更を検出
         
         Args:
             master_property_id: 物件ID
-            start_date: 計算開始日（Noneの場合は全期間）
+            start_date: 計算開始日（Noneの場合は最初の掲載日から）
             
         Returns:
             価格改定履歴のリスト
         """
-        # SQLクエリで多数決ベースの価格変更を計算
+        # まず対象物件の掲載期間を取得
+        period_query = text("""
+            SELECT 
+                MIN(DATE(COALESCE(
+                    (SELECT MIN(recorded_at) FROM listing_price_history
+                     WHERE property_listing_id = pl.id),
+                    pl.first_seen_at,
+                    pl.created_at
+                ))) as start_date,
+                CURRENT_DATE as end_date
+            FROM property_listings pl
+            WHERE pl.master_property_id = :master_property_id
+              AND pl.is_active = true
+        """)
+        
+        period = self.db.execute(period_query, {'master_property_id': master_property_id}).fetchone()
+        
+        if not period or not period[0]:
+            logger.warning(f"物件ID {master_property_id} の有効な掲載が見つかりません")
+            return []
+        
+        calc_start_date = start_date or period[0]
+        calc_end_date = period[1]
+        
+        # 改善されたSQL クエリ
         query = text("""
-            WITH listing_prices_expanded AS (
+            WITH date_range AS (
+                -- 連続した日付範囲を生成（記録がない日も含める）
+                SELECT generate_series(
+                    :start_date::date,
+                    :end_date::date,
+                    '1 day'::interval
+                )::date as price_date
+            ),
+            active_listings AS (
+                -- アクティブな掲載のみを対象とする
+                SELECT * FROM property_listings
+                WHERE master_property_id = :master_property_id
+                  AND is_active = true
+            ),
+            listing_prices_expanded AS (
                 -- 各掲載の価格を日付ごとに展開
                 SELECT DISTINCT
-                    pl.master_property_id,
-                    pl.id as listing_id,
-                    dates.price_date,
+                    al.master_property_id,
+                    al.id as listing_id,
+                    dr.price_date,
                     COALESCE(
-                        lph_today.price,
-                        -- その日の記録がない場合は、直近の価格を使用
-                        (SELECT price FROM listing_price_history lph_prev
-                         WHERE lph_prev.property_listing_id = pl.id
-                           AND DATE(lph_prev.recorded_at) < dates.price_date
-                         ORDER BY lph_prev.recorded_at DESC
+                        -- その日の価格履歴
+                        (SELECT price FROM listing_price_history
+                         WHERE property_listing_id = al.id
+                           AND DATE(recorded_at) = dr.price_date
+                         ORDER BY recorded_at DESC
                          LIMIT 1),
-                        pl.current_price
+                        -- なければ直前の価格
+                        (SELECT price FROM listing_price_history
+                         WHERE property_listing_id = al.id
+                           AND DATE(recorded_at) < dr.price_date
+                         ORDER BY recorded_at DESC
+                         LIMIT 1),
+                        -- それもなければ現在価格（最新の状態）
+                        al.current_price
                     ) as price
-                FROM property_listings pl
-                CROSS JOIN (
-                    -- 対象期間内のすべての日付を生成
-                    SELECT DISTINCT DATE(lph.recorded_at) as price_date
-                    FROM listing_price_history lph
-                    JOIN property_listings pl2 ON pl2.id = lph.property_listing_id
-                    WHERE pl2.master_property_id = :master_property_id
-                      AND (:start_date IS NULL OR DATE(lph.recorded_at) >= :start_date)
-                ) dates
-                LEFT JOIN listing_price_history lph_today 
-                    ON lph_today.property_listing_id = pl.id 
-                    AND DATE(lph_today.recorded_at) = dates.price_date
-                WHERE pl.master_property_id = :master_property_id
+                FROM active_listings al
+                CROSS JOIN date_range dr
             ),
             daily_majority_prices AS (
                 -- 各日付の多数決価格を計算
@@ -148,7 +186,7 @@ class PriceChangeCalculator:
                     price as majority_price,
                     vote_count
                 FROM daily_majority_prices
-                ORDER BY price_date, vote_count DESC, price ASC
+                ORDER BY price_date, vote_count DESC, price ASC  -- 同票の場合は最低価格
             ),
             price_changes AS (
                 -- 価格変動を検出
@@ -187,7 +225,8 @@ class PriceChangeCalculator:
         
         result = self.db.execute(query, {
             'master_property_id': master_property_id,
-            'start_date': start_date
+            'start_date': calc_start_date,
+            'end_date': calc_end_date
         }).fetchall()
         
         changes = []
@@ -202,11 +241,17 @@ class PriceChangeCalculator:
                 'old_price_votes': row[6]
             })
         
+        logger.info(f"物件ID {master_property_id}: {len(changes)}件の価格変更を検出")
+        
         return changes
     
     def save_price_changes(self, master_property_id: int, changes: List[Dict]) -> int:
         """
         価格改定履歴をデータベースに保存
+        
+        重要な改善：
+        - 指定物件の既存の履歴をすべて削除してから新規作成
+        - これにより誤った日付の履歴も適切に削除される
         
         Args:
             master_property_id: 物件ID
@@ -215,16 +260,15 @@ class PriceChangeCalculator:
         Returns:
             保存された件数
         """
-        if not changes:
-            return 0
-        
         try:
-            # 既存のデータを削除（UPSERT的な処理）
-            change_dates = [c['change_date'] for c in changes]
+            # 既存のデータをすべて削除（誤った履歴も含めて完全にリセット）
             self.db.query(PropertyPriceChange).filter(
-                PropertyPriceChange.master_property_id == master_property_id,
-                PropertyPriceChange.change_date.in_(change_dates)
+                PropertyPriceChange.master_property_id == master_property_id
             ).delete(synchronize_session=False)
+            
+            if not changes:
+                self.db.commit()
+                return 0
             
             # 新しいデータを挿入
             for change in changes:
@@ -241,6 +285,7 @@ class PriceChangeCalculator:
                 self.db.add(price_change)
             
             self.db.commit()
+            logger.info(f"物件ID {master_property_id}: {len(changes)}件の価格改定履歴を保存（既存履歴は削除）")
             return len(changes)
             
         except Exception as e:
