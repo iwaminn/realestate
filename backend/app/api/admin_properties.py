@@ -19,6 +19,7 @@ async def get_properties(
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=100),
     property_id: Optional[int] = None,  # 物件ID検索を追加
+    building_id: Optional[int] = None,  # 建物ID検索を追加
     building_name: Optional[str] = None,
     address: Optional[str] = None,
     room_number: Optional[str] = None,
@@ -37,6 +38,11 @@ async def get_properties(
     if property_id:
         # 物件IDで直接検索
         query = query.filter(MasterProperty.id == property_id)
+    
+    if building_id:
+        # 建物IDで直接検索
+        query = query.filter(MasterProperty.building_id == building_id)
+    
     if building_name:
         # 共通の建物名検索関数を使用
         from ..utils.building_search import apply_building_name_filter_with_alias

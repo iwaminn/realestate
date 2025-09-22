@@ -478,19 +478,27 @@ export const BuildingManagement: React.FC = () => {
 
       {/* 検索フォーム */}
       <Paper sx={{ p: 3, mb: 3 }}>
-        <Grid container spacing={2}>
-          <Grid item xs={12} sm={6} md={4}>
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="h6" sx={{ fontWeight: 500, fontSize: '1.1rem' }}>
+            検索フィルター
+          </Typography>
+        </Box>
+        <Grid container spacing={2} alignItems="flex-start">
+          <Grid item xs={12} sm={6} md={3}>
             <TextField
               fullWidth
-              label="建物ID・建物名"
+              size="small"
+              label="建物名または建物ID"
               value={searchParams.name}
               onChange={(e) => setSearchParams({ ...searchParams, name: e.target.value })}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              placeholder="建物名または建物ID"
             />
           </Grid>
-          <Grid item xs={12} sm={6} md={4}>
+          <Grid item xs={12} sm={6} md={3}>
             <TextField
               fullWidth
+              size="small"
               label="住所"
               value={searchParams.address}
               onChange={(e) => setSearchParams({ ...searchParams, address: e.target.value })}
@@ -508,7 +516,7 @@ export const BuildingManagement: React.FC = () => {
                 }
               }}
               renderInput={(params) => (
-                <TextField {...params} label="築年数（以上）" />
+                <TextField {...params} label="築年数（以上）" size="small" />
               )}
             />
           </Grid>
@@ -523,7 +531,7 @@ export const BuildingManagement: React.FC = () => {
                 }
               }}
               renderInput={(params) => (
-                <TextField {...params} label="築年数（以下）" />
+                <TextField {...params} label="築年数（以下）" size="small" />
               )}
             />
           </Grid>
@@ -542,12 +550,12 @@ export const BuildingManagement: React.FC = () => {
                 }
               }}
               renderInput={(params) => (
-                <TextField {...params} label="総階数" />
+                <TextField {...params} label="総階数" size="small" />
               )}
             />
           </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <FormControl fullWidth>
+          <Grid item xs={12} sm={6} md={2}>
+            <FormControl fullWidth size="small">
               <InputLabel>掲載状態</InputLabel>
               <Select
                 value={searchParams.hasActiveListings}
@@ -560,28 +568,25 @@ export const BuildingManagement: React.FC = () => {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} md={6}>
-            <Box display="flex" gap={1}>
+          <Grid item xs={12} sm={12} md={2}>
+            <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', alignItems: 'center' }}>
               <Button
                 variant="contained"
-                startIcon={<SearchIcon />}
                 onClick={handleSearch}
+                startIcon={<SearchIcon />}
+                disabled={loading}
+                fullWidth
+                sx={{ maxWidth: { md: 120 } }}
               >
                 検索
               </Button>
               <Button
                 variant="outlined"
-                startIcon={<ClearIcon />}
                 onClick={handleClearSearch}
+                disabled={loading}
+                sx={{ minWidth: 'auto', px: 2 }}
               >
-                クリア
-              </Button>
-              <Button
-                variant="outlined"
-                startIcon={<RefreshIcon />}
-                onClick={fetchBuildings}
-              >
-                更新
+                <ClearIcon />
               </Button>
             </Box>
           </Grid>

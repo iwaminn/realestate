@@ -94,6 +94,20 @@ interface PropertyDetail extends Property {
     listing_building_name?: string;
     listing_address?: string;
     last_confirmed_at?: string;
+    listing_area?: number;
+    listing_floor_number?: number;
+    listing_layout?: string;
+    listing_direction?: string;
+    listing_built_year?: number;
+    listing_built_month?: number;
+    listing_total_floors?: number;
+    listing_total_units?: number;
+    management_fee?: number;
+    repair_fund?: number;
+    agency_name?: string;
+    agency_tel?: string;
+    first_seen_at?: string;
+    detail_fetched_at?: string;
   }>;
   // 過去の掲載情報
   inactive_listings: Array<{
@@ -207,7 +221,8 @@ export const PropertyManagement: React.FC = () => {
   const [rowsPerPage, setRowsPerPage] = useState(50);
   const [totalCount, setTotalCount] = useState(0);
   const [searchParams, setSearchParams] = useState({
-    propertyQuery: '',  // 物件ID・物件名統合検索
+    buildingQuery: '',  // 建物名または建物ID
+    propertyId: '',     // 物件ID
     address: '',
     minArea: '',
     maxArea: '',
@@ -254,12 +269,23 @@ export const PropertyManagement: React.FC = () => {
       params.append('offset', String(page * rowsPerPage));
       params.append('limit', String(rowsPerPage));
       
-      if (searchParams.propertyQuery) {
-        // 数値のみの場合は物件IDとして検索、そうでなければ建物名として検索
-        if (searchParams.propertyQuery.trim().match(/^\d+$/)) {
-          params.append('property_id', searchParams.propertyQuery.trim());
+      // 物件ID検索
+      if (searchParams.propertyId) {
+        const id = searchParams.propertyId.trim();
+        if (id.match(/^\d+$/)) {
+          params.append('property_id', id);
+        }
+      }
+
+      // 建物名または建物ID検索
+      if (searchParams.buildingQuery) {
+        const query = searchParams.buildingQuery.trim();
+        if (query.match(/^\d+$/)) {
+          // 数値のみの場合は建物IDとして検索
+          params.append('building_id', query);
         } else {
-          params.append('building_name', searchParams.propertyQuery);
+          // それ以外は建物名として検索
+          params.append('building_name', query);
         }
       }
       if (searchParams.address) params.append('address', searchParams.address);
@@ -346,7 +372,8 @@ export const PropertyManagement: React.FC = () => {
 
   const handleClearSearch = () => {
     setSearchParams({
-      propertyQuery: '',
+      buildingQuery: '',
+      propertyId: '',
       address: '',
       minArea: '',
       maxArea: '',
@@ -521,19 +548,38 @@ export const PropertyManagement: React.FC = () => {
 
       {/* 検索フォーム */}
       <Paper sx={{ p: 3, mb: 3 }}>
-        <Grid container spacing={2}>
-          <Grid item xs={12} sm={6} md={4}>
-            <TextField
-              fullWidth
-              label="物件ID・建物名"
-              value={searchParams.propertyQuery}
-              onChange={(e) => setSearchParams({ ...searchParams, propertyQuery: e.target.value })}
-              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-            />
-          </Grid>
+        <Box sx={{ mb: 2 }}>
+          <Typography variant="h6" sx={{ fontWeight: 500, fontSize: '1.1rem' }}>
+            検索フィルター
+          </Typography>
+        </Box>
+        <Grid container spacing={2} alignItems="flex-start">
           <Grid item xs={12} sm={6} md={3}>
             <TextField
               fullWidth
+              size="small"
+              label="建物名または建物ID"
+              value={searchParams.buildingQuery}
+              onChange={(e) => setSearchParams({ ...searchParams, buildingQuery: e.target.value })}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              placeholder="建物名または建物ID"
+            />
+          </Grid>
+          <Grid item xs={12} sm={6} md={2}>
+            <TextField
+              fullWidth
+              size="small"
+              label="物件ID"
+              value={searchParams.propertyId}
+              onChange={(e) => setSearchParams({ ...searchParams, propertyId: e.target.value })}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              placeholder="例: 5428"
+            />
+          </Grid>
+          <Grid item xs={12} sm={6} md={2}>
+            <TextField
+              fullWidth
+              size="small"
               label="住所"
               value={searchParams.address}
               onChange={(e) => setSearchParams({ ...searchParams, address: e.target.value })}
@@ -548,7 +594,7 @@ export const PropertyManagement: React.FC = () => {
                 setSearchParams({ ...searchParams, minArea: value || '' });
               }}
               renderInput={(params) => (
-                <TextField {...params} label="最小面積（㎡）" />
+                <TextField {...params} label="最小面積（㎡）" size="small" />
               )}
             />
           </Grid>
@@ -560,12 +606,12 @@ export const PropertyManagement: React.FC = () => {
                 setSearchParams({ ...searchParams, maxArea: value || '' });
               }}
               renderInput={(params) => (
-                <TextField {...params} label="最大面積（㎡）" />
+                <TextField {...params} label="最大面積（㎡）" size="small" />
               )}
             />
           </Grid>
-          <Grid item xs={12} sm={6} md={3}>
-            <FormControl fullWidth>
+          <Grid item xs={12} sm={6} md={2}>
+            <FormControl fullWidth size="small">
               <InputLabel>間取り</InputLabel>
               <Select
                 multiple
@@ -589,8 +635,8 @@ export const PropertyManagement: React.FC = () => {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} sm={6} md={2}>
-            <FormControl fullWidth>
+          <Grid item xs={12} sm={6} md={1.5}>
+            <FormControl fullWidth size="small">
               <InputLabel>方角</InputLabel>
               <Select
                 multiple
@@ -614,8 +660,8 @@ export const PropertyManagement: React.FC = () => {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} sm={6} md={2}>
-            <FormControl fullWidth>
+          <Grid item xs={12} sm={6} md={1.5}>
+            <FormControl fullWidth size="small">
               <InputLabel>掲載状態</InputLabel>
               <Select
                 value={searchParams.hasActiveListings}
@@ -628,28 +674,25 @@ export const PropertyManagement: React.FC = () => {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} md={6}>
-            <Box display="flex" gap={1}>
+          <Grid item xs={12} sm={12} md={2}>
+            <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', alignItems: 'center' }}>
               <Button
                 variant="contained"
-                startIcon={<SearchIcon />}
                 onClick={handleSearch}
+                startIcon={<SearchIcon />}
+                disabled={loading}
+                fullWidth
+                sx={{ maxWidth: { md: 120 } }}
               >
                 検索
               </Button>
               <Button
                 variant="outlined"
-                startIcon={<ClearIcon />}
                 onClick={handleClearSearch}
+                disabled={loading}
+                sx={{ minWidth: 'auto', px: 2 }}
               >
-                クリア
-              </Button>
-              <Button
-                variant="outlined"
-                startIcon={<RefreshIcon />}
-                onClick={fetchProperties}
-              >
-                更新
+                <ClearIcon />
               </Button>
             </Box>
           </Grid>

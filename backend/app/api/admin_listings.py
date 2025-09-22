@@ -19,6 +19,8 @@ async def get_listings(
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=100),
     listing_id: Optional[int] = None,  # 掲載ID検索を追加
+    building_id: Optional[int] = None,  # 建物ID検索を追加
+    master_property_id: Optional[int] = None,  # 物件ID検索を追加
     source_site: Optional[str] = None,
     building_name: Optional[str] = None,
     is_active: Optional[bool] = None,
@@ -37,6 +39,14 @@ async def get_listings(
     if listing_id:
         # 掲載IDで直接検索
         query = query.filter(PropertyListing.id == listing_id)
+    
+    if building_id:
+        # 建物IDで検索
+        query = query.join(MasterProperty).filter(MasterProperty.building_id == building_id)
+    
+    if master_property_id:
+        # 物件IDで検索
+        query = query.filter(PropertyListing.master_property_id == master_property_id)
     
     if source_site:
         query = query.filter(PropertyListing.source_site == source_site)

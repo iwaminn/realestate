@@ -132,6 +132,7 @@ async def get_duplicate_buildings(
         ).all()
     else:
         # 検索条件がない場合：重複の可能性が高い建物群を効率的に見つける
+        logger.info(f"DEBUG: 検索条件なしで重複候補を取得開始")
         
         # 優先度1: 同じ建物名または類似した建物名を持つ建物（最も重複の可能性が高い）
         # まず完全一致する建物名のグループを取得
@@ -147,6 +148,11 @@ async def get_duplicate_buildings(
         ).subquery()
         
         # 同名建物をすべて取得
+        try:
+            exact_count = db.query(exact_match_subquery).count()
+            logger.info(f"DEBUG: exact_match_subquery結果数: {exact_count}")
+        except:
+            logger.info(f"DEBUG: exact_match_subquery結果数: 取得できませんでした")
         buildings_with_count = db.query(
             Building,
             func.count(MasterProperty.id).label('property_count')
@@ -160,6 +166,12 @@ async def get_duplicate_buildings(
             Building.normalized_name,
             Building.id  # 同じ名前内でもID順で安定したソート
         ).all()
+        
+        logger.info(f"DEBUG: 同名建物数: {len(buildings_with_count)}")
+        
+        # 同名建物が見つからない場合の対処
+        if not buildings_with_count:
+            logger.info(f"DEBUG: 同名建物が見つからないため、全ての建物から重複候補を検索")
         
         # 優先度2: 同じ住所・築年・階数の組み合わせを持つ建物を追加
         # 同名建物だけでなく、属性が一致する建物も必ず含める
@@ -549,6 +561,25 @@ async def get_duplicate_buildings(
         
         # 優先度3: まだ枠がある場合は、通常の建物を追加（フォールバック）
         # 最大30件に制限して高速化（実際の重複はほぼ優先度1,2で見つかる）
+        logger.info(f"DEBUG: 優先度3前の建物数: {len(buildings_with_count)}")
+        
+        # 同名建物が見つからない場合も含めて、候補建物を取得
+        if len(buildings_with_count) == 0:
+            # 同名建物が全くない場合、まず物件のある建物を100件取得
+            logger.info("DEBUG: 同名建物が見つからないため、全建物から候補を取得")
+            buildings_with_count = db.query(
+                Building,
+                func.count(MasterProperty.id).label('property_count')
+            ).outerjoin(
+                MasterProperty, Building.id == MasterProperty.building_id
+            ).group_by(Building.id).having(
+                func.count(MasterProperty.id) > 0
+            ).order_by(
+                Building.normalized_name,
+                Building.id
+            ).limit(100).all()
+            logger.info(f"DEBUG: 全建物から{len(buildings_with_count)}件の候補を取得")
+        
         if len(buildings_with_count) < 30:
             remaining_buildings = db.query(
                 Building,
@@ -556,15 +587,18 @@ async def get_duplicate_buildings(
             ).outerjoin(
                 MasterProperty, Building.id == MasterProperty.building_id
             ).filter(
-                Building.id.notin_([b[0].id for b in buildings_with_count])
+                Building.id.notin_([b[0].id for b in buildings_with_count] if buildings_with_count else [])
             ).group_by(Building.id).having(
                 func.count(MasterProperty.id) > 0
             ).order_by(
                 Building.normalized_name,
                 Building.id  # 同じ名前内でもID順で安定したソート
-            ).all()
+            ).limit(30 - len(buildings_with_count)).all()
             
             buildings_with_count.extend(remaining_buildings)
+            logger.info(f"DEBUG: 優先度3で追加後の建物数: {len(buildings_with_count)}")
+    
+    logger.info(f"DEBUG: 最終的な建物数: {len(buildings_with_count)}")
     
     phase_times['building_fetch'] = time.time() - phase_start
     

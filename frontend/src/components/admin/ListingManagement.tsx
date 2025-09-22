@@ -78,6 +78,17 @@ interface ListingDetail extends Listing {
   listing_area?: number;
   listing_layout?: string;
   listing_direction?: string;
+  listing_balcony_area?: number;
+  listing_address?: string;
+  listing_total_floors?: number;
+  listing_total_units?: number;
+  listing_built_year?: number;
+  listing_built_month?: number;
+  listing_building_structure?: string;
+  listing_land_rights?: string;
+  listing_parking_info?: string;
+  listing_basement_floors?: number;
+  listing_station_info?: string;
   management_fee?: number;
   repair_fund?: number;
   agency_name?: string;
@@ -110,7 +121,9 @@ export const ListingManagement: React.FC = () => {
   // フィルター
   const [filters, setFilters] = useState({
     source_site: '',
-    listingQuery: '',  // 掲載ID・建物名統合検索
+    listing_id: '',      // 掲載ID
+    building_query: '',  // 建物名または建物ID
+    property_id: '',     // 物件ID
     is_active: '',
     ward: '',
   });
@@ -138,12 +151,32 @@ export const ListingManagement: React.FC = () => {
       };
 
       if (filters.source_site) params.source_site = filters.source_site;
-      if (filters.listingQuery) {
-        // 数値のみの場合は掲載IDとして検索、そうでなければ建物名として検索
-        if (filters.listingQuery.trim().match(/^\d+$/)) {
-          params.listing_id = filters.listingQuery.trim();
+
+      // 掲載ID検索
+      if (filters.listing_id) {
+        const id = filters.listing_id.trim();
+        if (id.match(/^\d+$/)) {
+          params.listing_id = id;
+        }
+      }
+
+      // 建物名または建物ID検索
+      if (filters.building_query) {
+        const query = filters.building_query.trim();
+        if (query.match(/^\d+$/)) {
+          // 数値のみの場合は建物IDとして検索
+          params.building_id = query;
         } else {
-          params.building_name = filters.listingQuery;
+          // それ以外は建物名として検索
+          params.building_name = query;
+        }
+      }
+
+      // 物件ID検索
+      if (filters.property_id) {
+        const id = filters.property_id.trim();
+        if (id.match(/^\d+$/)) {
+          params.master_property_id = id;
         }
       }
       if (filters.is_active !== '') params.is_active = filters.is_active === 'true';
@@ -169,7 +202,9 @@ export const ListingManagement: React.FC = () => {
   const handleClearFilters = () => {
     setFilters({
       source_site: '',
-      listingQuery: '',
+      listing_id: '',
+      building_query: '',
+      property_id: '',
       is_active: '',
       ward: '',
     });
@@ -321,25 +356,41 @@ export const ListingManagement: React.FC = () => {
             検索フィルター
           </Typography>
         </Box>
-        <Grid container spacing={2} alignItems="center">
-          <Grid item xs={12} sm={6} md={4}>
+        <Grid container spacing={2} alignItems="flex-start">
+          <Grid item xs={12} sm={6} md={3}>
             <TextField
               fullWidth
               size="small"
-              label="掲載ID・建物名"
-              value={filters.listingQuery}
-              onChange={(e) => setFilters({ ...filters, listingQuery: e.target.value })}
+              label="建物名または建物ID"
+              placeholder="建物名または建物ID"
+              value={filters.building_query}
+              onChange={(e) => setFilters({ ...filters, building_query: e.target.value })}
               onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-              InputProps={{
-                startAdornment: (
-                  <Box sx={{ mr: 1, display: 'flex', alignItems: 'center' }}>
-                    <SearchIcon fontSize="small" color="action" />
-                  </Box>
-                ),
-              }}
             />
           </Grid>
           <Grid item xs={12} sm={6} md={2}>
+            <TextField
+              fullWidth
+              size="small"
+              label="物件ID"
+              placeholder="例: 5428"
+              value={filters.property_id}
+              onChange={(e) => setFilters({ ...filters, property_id: e.target.value })}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+            />
+          </Grid>
+          <Grid item xs={12} sm={6} md={2}>
+            <TextField
+              fullWidth
+              size="small"
+              label="掲載ID"
+              placeholder="例: 12345"
+              value={filters.listing_id}
+              onChange={(e) => setFilters({ ...filters, listing_id: e.target.value })}
+              onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+            />
+          </Grid>
+          <Grid item xs={12} sm={4} md={1.5}>
             <FormControl fullWidth size="small">
               <InputLabel>サイト</InputLabel>
               <Select
@@ -379,7 +430,7 @@ export const ListingManagement: React.FC = () => {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} sm={6} md={2}>
+          <Grid item xs={12} sm={4} md={1.5}>
             <FormControl fullWidth size="small">
               <InputLabel>エリア</InputLabel>
               <Select
@@ -417,7 +468,7 @@ export const ListingManagement: React.FC = () => {
               </Select>
             </FormControl>
           </Grid>
-          <Grid item xs={12} sm={6} md={2}>
+          <Grid item xs={12} sm={4} md={1}>
             <FormControl fullWidth size="small">
               <InputLabel>状態</InputLabel>
               <Select
@@ -459,7 +510,7 @@ export const ListingManagement: React.FC = () => {
             </FormControl>
           </Grid>
           <Grid item xs={12} sm={12} md={2}>
-            <Box sx={{ display: 'flex', gap: 1, justifyContent: { xs: 'flex-start', md: 'flex-end' } }}>
+            <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', alignItems: 'center' }}>
               <Button
                 variant="contained"
                 onClick={handleSearch}
@@ -483,16 +534,30 @@ export const ListingManagement: React.FC = () => {
         </Grid>
         
         {/* アクティブフィルター表示 */}
-        {(filters.source_site || filters.listingQuery || filters.is_active !== '' || filters.ward) && (
+        {(filters.source_site || filters.listing_id || filters.building_query || filters.property_id || filters.is_active !== '' || filters.ward) && (
           <Box sx={{ mt: 2, display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
             <Typography variant="body2" color="text.secondary">
               適用中:
             </Typography>
-            {filters.listingQuery && (
+            {filters.listing_id && (
               <Chip
                 size="small"
-                label={`検索: ${filters.listingQuery}`}
-                onDelete={() => setFilters({ ...filters, listingQuery: '' })}
+                label={`掲載ID: ${filters.listing_id}`}
+                onDelete={() => setFilters({ ...filters, listing_id: '' })}
+              />
+            )}
+            {filters.building_query && (
+              <Chip
+                size="small"
+                label={`建物: ${filters.building_query}`}
+                onDelete={() => setFilters({ ...filters, building_query: '' })}
+              />
+            )}
+            {filters.property_id && (
+              <Chip
+                size="small"
+                label={`物件ID: ${filters.property_id}`}
+                onDelete={() => setFilters({ ...filters, property_id: '' })}
               />
             )}
             {filters.source_site && (
