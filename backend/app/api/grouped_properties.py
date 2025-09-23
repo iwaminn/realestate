@@ -26,11 +26,28 @@ async def get_properties_grouped_by_buildings(
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     include_inactive: bool = Query(False),
+    sort_by: Optional[str] = Query(None),
     db: Session = Depends(get_db)
 ):
     """物件検索結果を建物ごとにグループ化して返す（最適化版）"""
     
     # 建物ごとの物件数と条件に合う物件の集計クエリ
+    # 平均坪単価の計算用サブクエリ（㎡を坪に変換: 面積 / 3.30578）
+    tsubo_subq = db.query(
+        MasterProperty.building_id,
+        func.avg(
+            func.coalesce(PropertyListing.current_price, MasterProperty.final_price) / (MasterProperty.area / 3.30578)
+        ).label('avg_tsubo_price')
+    ).outerjoin(
+        PropertyListing,
+        and_(
+            PropertyListing.master_property_id == MasterProperty.id,
+            PropertyListing.is_active == True
+        )
+    ).filter(
+        MasterProperty.area > 0
+    ).group_by(MasterProperty.building_id).subquery()
+    
     base_query = db.query(
         Building.id,
         Building.normalized_name,
@@ -39,8 +56,12 @@ async def get_properties_grouped_by_buildings(
         Building.built_year,
         Building.built_month,
         Building.construction_type,
-        func.count(distinct(MasterProperty.id)).label('property_count')
-    ).join(MasterProperty)
+        Building.total_units,
+        func.count(distinct(MasterProperty.id)).label('property_count'),
+        tsubo_subq.c.avg_tsubo_price
+    ).join(MasterProperty).outerjoin(
+        tsubo_subq, Building.id == tsubo_subq.c.building_id
+    )
     
     # フィルタ条件の適用
     if min_area:
@@ -104,8 +125,66 @@ async def get_properties_grouped_by_buildings(
         Building.total_floors,
         Building.built_year,
         Building.built_month,
-        Building.construction_type
-    ).order_by(func.count(distinct(MasterProperty.id)).desc())
+        Building.construction_type,
+        Building.total_units,
+        tsubo_subq.c.avg_tsubo_price
+    )
+    
+    # 並び替えの適用（第2キーとして建物IDを追加して順序を安定させる）
+    if sort_by == 'building_age_asc':
+        # 築年数が新しい順（築年が大きい順）
+        base_query = base_query.order_by(
+            Building.built_year.desc().nullslast(),
+            Building.id  # 同じ築年の場合は建物IDで順序を固定
+        )
+    elif sort_by == 'building_age_desc':
+        # 築年数が古い順（築年が小さい順）
+        base_query = base_query.order_by(
+            Building.built_year.asc().nullsfirst(),
+            Building.id
+        )
+    elif sort_by == 'total_units_asc':
+        # 総戸数が少ない順
+        base_query = base_query.order_by(
+            Building.total_units.asc().nullsfirst(),
+            Building.id
+        )
+    elif sort_by == 'total_units_desc':
+        # 総戸数が多い順
+        base_query = base_query.order_by(
+            Building.total_units.desc().nullslast(),
+            Building.id
+        )
+    elif sort_by == 'property_count_asc':
+        # 販売戸数が少ない順
+        base_query = base_query.order_by(
+            func.count(distinct(MasterProperty.id)).asc(),
+            Building.id
+        )
+    elif sort_by == 'property_count_desc':
+        # 販売戸数が多い順
+        base_query = base_query.order_by(
+            func.count(distinct(MasterProperty.id)).desc(),
+            Building.id
+        )
+    elif sort_by == 'avg_tsubo_price_asc':
+        # 平均坪単価が安い順
+        base_query = base_query.order_by(
+            tsubo_subq.c.avg_tsubo_price.asc().nullsfirst(),
+            Building.id
+        )
+    elif sort_by == 'avg_tsubo_price_desc':
+        # 平均坪単価が高い順
+        base_query = base_query.order_by(
+            tsubo_subq.c.avg_tsubo_price.desc().nullslast(),
+            Building.id
+        )
+    else:
+        # デフォルト：販売戸数が多い順
+        base_query = base_query.order_by(
+            func.count(distinct(MasterProperty.id)).desc(),
+            Building.id
+        )
     
     # 全件数を取得
     total_query = base_query.subquery()
@@ -227,7 +306,9 @@ async def get_properties_grouped_by_buildings(
                 "built_year": building.built_year,
                 "built_month": building.built_month,
                 "construction_type": building.construction_type,
-                "building_age": datetime.now().year - building.built_year if building.built_year else None
+                "building_age": datetime.now().year - building.built_year if building.built_year else None,
+                "total_units": building.total_units,
+                "avg_tsubo_price": float(building.avg_tsubo_price) if building.avg_tsubo_price else None
             },
             "properties": properties_by_building.get(building.id, []),
             "total_properties": building.property_count

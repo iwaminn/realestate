@@ -14,6 +14,10 @@ import {
   Button,
   FormControlLabel,
   Checkbox,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel,
 } from '@mui/material';
 import {
   Apartment as ApartmentIcon,
@@ -42,6 +46,8 @@ interface Building {
   built_month: number | null;
   construction_type: string | null;
   building_age: number | null;
+  total_units?: number | null;
+  avg_tsubo_price?: number | null;
 }
 
 interface BuildingGroup {
@@ -71,6 +77,9 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
   const initialPage = parseInt(urlSearchParams.get('page') || '1');
   const [page, setPage] = useState(initialPage);
   const [totalPages, setTotalPages] = useState(0);
+  // URLパラメータから並び順を取得
+  const initialSortBy = urlSearchParams.get('sort') || 'default';
+  const [sortBy, setSortBy] = useState<string>(initialSortBy);
 
   const fetchBuildingGroups = async () => {
     setLoading(true);
@@ -93,8 +102,14 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
       params.append('per_page', '20');
       params.append('include_inactive', includeInactive.toString());
       
+      // 並び替えパラメータを追加
+      if (sortBy !== 'default') {
+        params.append('sort_by', sortBy);
+      }
+      
       const response = await fetch(`/api/properties-grouped-by-buildings?${params.toString()}`);
       const data = await response.json();
+      
       setBuildingGroups(data.buildings);
       setTotalCount(data.total);
       setTotalPages(data.total_pages);
@@ -107,13 +122,19 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
 
   useEffect(() => {
     fetchBuildingGroups();
-  }, [page, searchParams, includeInactive]);
+  }, [page, searchParams, includeInactive, sortBy]);
 
   // URLパラメータが外部から変更された場合（ブラウザの戻る/進むボタンなど）
   useEffect(() => {
     const pageFromUrl = parseInt(urlSearchParams.get('page') || '1');
+    const sortFromUrl = urlSearchParams.get('sort') || 'default';
+    
     if (pageFromUrl !== page) {
       setPage(pageFromUrl);
+    }
+    
+    if (sortFromUrl !== sortBy) {
+      setSortBy(sortFromUrl);
     }
   }, [location.search]); // URLの変更を監視
 
@@ -180,23 +201,71 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
 
   return (
     <Box>
-      <Box sx={{ mb: 2, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Typography variant="body1" color="text.secondary">
-          検索結果: {totalCount}棟
-        </Typography>
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={includeInactive}
+      <Box sx={{ mb: 2 }}>
+        {/* 上段：検索結果と並び替え */}
+        <Box sx={{ 
+          display: 'flex', 
+          flexDirection: { xs: 'column', sm: 'row' },
+          justifyContent: 'space-between', 
+          alignItems: { xs: 'stretch', sm: 'center' },
+          gap: 2,
+          mb: 2
+        }}>
+          <Typography variant="body1" color="text.secondary">
+            検索結果: {totalCount}棟
+          </Typography>
+          
+          <FormControl size="small" sx={{ minWidth: 200 }}>
+            <InputLabel>並び替え</InputLabel>
+            <Select
+              value={sortBy}
+              label="並び替え"
               onChange={(e) => {
-                if (onIncludeInactiveChange) {
-                  onIncludeInactiveChange(e.target.checked);
+                const newSortBy = e.target.value;
+                setSortBy(newSortBy);
+                
+                // URLパラメータを更新
+                const newParams = new URLSearchParams(urlSearchParams);
+                if (newSortBy !== 'default') {
+                  newParams.set('sort', newSortBy);
+                } else {
+                  newParams.delete('sort');
                 }
+                // ページ番号をリセット
+                newParams.delete('page');
+                setUrlSearchParams(newParams);
+                setPage(1);
               }}
-            />
-          }
-          label="販売終了物件を含む"
-        />
+            >
+              <MenuItem value="default">デフォルト（販売戸数が多い順）</MenuItem>
+              <MenuItem value="building_age_asc">築年数（新しい順）</MenuItem>
+              <MenuItem value="building_age_desc">築年数（古い順）</MenuItem>
+              <MenuItem value="total_units_asc">総戸数（少ない順）</MenuItem>
+              <MenuItem value="total_units_desc">総戸数（多い順）</MenuItem>
+              <MenuItem value="property_count_asc">販売戸数（少ない順）</MenuItem>
+              <MenuItem value="property_count_desc">販売戸数（多い順）</MenuItem>
+              <MenuItem value="avg_tsubo_price_asc">平均坪単価（安い順）</MenuItem>
+              <MenuItem value="avg_tsubo_price_desc">平均坪単価（高い順）</MenuItem>
+            </Select>
+          </FormControl>
+        </Box>
+        
+        {/* 下段：販売終了物件を含むチェックボックス */}
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end' }}>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={includeInactive}
+                onChange={(e) => {
+                  if (onIncludeInactiveChange) {
+                    onIncludeInactiveChange(e.target.checked);
+                  }
+                }}
+              />
+            }
+            label="販売終了物件を含む"
+          />
+        </Box>
       </Box>
 
       {buildingGroups.map((group) => (
@@ -227,7 +296,7 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
                   />
                 </Box>
 
-                <Box sx={{ display: 'flex', gap: 3, mb: 2 }}>
+                <Box sx={{ display: 'flex', gap: 3, mb: 2, flexWrap: 'wrap' }}>
                   {group.building.address && (
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                       <LocationIcon fontSize="small" color="action" />
@@ -239,6 +308,16 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
                   {group.building.total_floors && (
                     <Typography variant="body2" color="text.secondary">
                       {group.building.total_floors}階建
+                    </Typography>
+                  )}
+                  {group.building.total_units && (
+                    <Typography variant="body2" color="text.secondary">
+                      総戸数: {group.building.total_units}戸
+                    </Typography>
+                  )}
+                  {group.building.avg_tsubo_price && (
+                    <Typography variant="body2" color="text.secondary">
+                      平均坪単価: {Math.round(group.building.avg_tsubo_price).toLocaleString()}万円
                     </Typography>
                   )}
                   <Typography variant="body2" color="text.secondary">
