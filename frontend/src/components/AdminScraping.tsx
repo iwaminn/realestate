@@ -48,6 +48,7 @@ import {
 import axios from 'axios';
 import '../utils/axiosConfig';
 import DeleteConfirmDialog from './DeleteConfirmDialog';
+import { getScraperDisplayName } from '../constants/scraperConstants';
 
 interface Area {
   code: string;
@@ -515,7 +516,7 @@ const TaskRow = React.memo(({
         </TableCell>
         <TableCell>
           {task.scrapers ? task.scrapers.map(s => (
-            <Chip key={s} label={s} size="small" sx={{ mr: 0.5 }} />
+            <Chip key={s} label={getScraperDisplayName(s)} size="small" sx={{ mr: 0.5, my: 0.25 }} />
           )) : null}
         </TableCell>
         <TableCell>{task.max_properties}</TableCell>
@@ -725,7 +726,7 @@ const TaskProgress = React.memo(({ task }: any) => {
         <Grid item xs={12} md={4} key={key}>
           <Paper variant="outlined" sx={{ p: 2 }}>
             <Box component="div" fontWeight="medium" fontSize="0.875rem" sx={{ mb: 1 }}>
-              {progress.scraper || 'N/A'} - {progress.area || progress.area_name || 'N/A'}
+              {getScraperDisplayName(progress.scraper) || 'N/A'} - {progress.area || progress.area_name || 'N/A'}
             </Box>
             <List dense>
               <ListItem>
@@ -1961,7 +1962,7 @@ const AdminScraping: React.FC = () => {
               <TableHead>
                 <TableRow>
                   <TableCell width={40}></TableCell>
-                  <TableCell>エリア</TableCell>
+                  <TableCell sx={{ minWidth: 150 }}>エリア</TableCell>
                   <TableCell>スクレイパー</TableCell>
                   <TableCell>処理上限数</TableCell>
                   <TableCell>ステータス</TableCell>

@@ -45,6 +45,12 @@ import { format } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import axios from 'axios';
 import '../../utils/axiosConfig';
+import {
+  AVAILABLE_SCRAPERS,
+  AVAILABLE_AREAS,
+  AVAILABLE_MAX_PROPERTIES,
+  getScraperDisplayName,
+} from '../../constants/scraperConstants';
 
 interface Schedule {
   id: number;
@@ -109,26 +115,10 @@ export const ScheduleManagement: React.FC = () => {
     is_active: true,
   });
 
-  // 利用可能なスクレイパーとエリア
-  const availableScrapers = ['suumo', 'homes', 'rehouse', 'nomu', 'livable'];
-  const availableMaxProperties = [100, 200, 300, 400, 500, 1000, 2000, 3000, 4000, 5000, 10000];
-  const availableAreas = [
-    { code: '13101', name: '千代田区' },
-    { code: '13103', name: '港区' },
-    { code: '13102', name: '中央区' },
-    { code: '13113', name: '渋谷区' },
-    { code: '13104', name: '新宿区' },
-    { code: '13105', name: '文京区' },
-    { code: '13110', name: '目黒区' },
-    { code: '13109', name: '品川区' },
-    { code: '13112', name: '世田谷区' },
-    { code: '13116', name: '豊島区' },
-    { code: '13106', name: '台東区' },
-    { code: '13114', name: '中野区' },
-    { code: '13115', name: '杉並区' },
-    { code: '13108', name: '江東区' },
-    { code: '13107', name: '墨田区' },
-  ];
+  // 共通定数を使用
+  const availableScrapers = AVAILABLE_SCRAPERS;
+  const availableMaxProperties = AVAILABLE_MAX_PROPERTIES;
+  const availableAreas = AVAILABLE_AREAS;
 
   useEffect(() => {
     fetchSchedules();
@@ -323,7 +313,7 @@ export const ScheduleManagement: React.FC = () => {
           <Table>
             <TableHead>
               <TableRow>
-                <TableCell>名前</TableCell>
+                <TableCell sx={{ minWidth: 150 }}>名前</TableCell>
                 <TableCell>スクレイパー</TableCell>
                 <TableCell>エリア</TableCell>
                 <TableCell>実行間隔</TableCell>
@@ -332,7 +322,7 @@ export const ScheduleManagement: React.FC = () => {
                 <TableCell>最終実行</TableCell>
                 <TableCell>次回実行</TableCell>
                 <TableCell>ステータス</TableCell>
-                <TableCell align="center">操作</TableCell>
+                <TableCell align="center" sx={{ minWidth: 120 }}>操作</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -351,7 +341,7 @@ export const ScheduleManagement: React.FC = () => {
                   <TableCell>
                     <Box display="flex" flexWrap="wrap" gap={0.5}>
                       {schedule.scrapers.map((scraper) => (
-                        <Chip key={scraper} label={scraper} size="small" />
+                        <Chip key={scraper} label={getScraperDisplayName(scraper)} size="small" />
                       ))}
                     </Box>
                   </TableCell>
@@ -368,13 +358,13 @@ export const ScheduleManagement: React.FC = () => {
                       )}
                     </Box>
                   </TableCell>
-                  <TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>
                     {schedule.schedule_type === 'interval' 
                       ? formatInterval(schedule.interval_minutes || 0)
                       : `毎日 ${schedule.daily_hour?.toString().padStart(2, '0')}:${schedule.daily_minute?.toString().padStart(2, '0')}`
                     }
                   </TableCell>
-                  <TableCell>
+                  <TableCell sx={{ whiteSpace: 'nowrap' }}>
                     <Typography variant="body2">
                       {schedule.max_properties}件
                     </Typography>
@@ -422,7 +412,7 @@ export const ScheduleManagement: React.FC = () => {
                       />
                     )}
                   </TableCell>
-                  <TableCell align="center">
+                  <TableCell align="center" sx={{ minWidth: 120, whiteSpace: 'nowrap' }}>
                     <Tooltip title="今すぐ実行">
                       <span>
                         <IconButton
@@ -503,6 +493,7 @@ export const ScheduleManagement: React.FC = () => {
                 options={availableScrapers}
                 value={formData.scrapers}
                 onChange={(_, newValue) => setFormData({ ...formData, scrapers: newValue })}
+                getOptionLabel={(option) => getScraperDisplayName(option)}
                 renderInput={(params) => (
                   <TextField {...params} label="スクレイパー" required />
                 )}
@@ -512,12 +503,12 @@ export const ScheduleManagement: React.FC = () => {
                       style={{ marginRight: 8 }}
                       checked={selected}
                     />
-                    {option}
+                    {getScraperDisplayName(option)}
                   </li>
                 )}
                 renderTags={(value, getTagProps) =>
                   value.map((option, index) => (
-                    <Chip {...getTagProps({ index })} key={option} label={option} size="small" />
+                    <Chip {...getTagProps({ index })} key={option} label={getScraperDisplayName(option)} size="small" />
                   ))
                 }
               />
@@ -689,6 +680,7 @@ export const ScheduleManagement: React.FC = () => {
                 options={availableScrapers}
                 value={formData.scrapers}
                 onChange={(_, newValue) => setFormData({ ...formData, scrapers: newValue })}
+                getOptionLabel={(option) => getScraperDisplayName(option)}
                 renderInput={(params) => (
                   <TextField {...params} label="スクレイパー" required />
                 )}
@@ -698,12 +690,12 @@ export const ScheduleManagement: React.FC = () => {
                       style={{ marginRight: 8 }}
                       checked={selected}
                     />
-                    {option}
+                    {getScraperDisplayName(option)}
                   </li>
                 )}
                 renderTags={(value, getTagProps) =>
                   value.map((option, index) => (
-                    <Chip {...getTagProps({ index })} key={option} label={option} size="small" />
+                    <Chip {...getTagProps({ index })} key={option} label={getScraperDisplayName(option)} size="small" />
                   ))
                 }
               />

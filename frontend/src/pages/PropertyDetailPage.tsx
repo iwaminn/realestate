@@ -48,6 +48,7 @@ import {
   ExpandLess,
 } from '@mui/icons-material';
 import { BookmarkButton } from '../components/BookmarkButton';
+import { getScraperDisplayName } from '../constants/scraperConstants';
 import { getHazardMapUrlFromBuilding } from '../utils/geocoding';
 import {
   LineChart,
@@ -674,7 +675,7 @@ const PropertyDetailPage: React.FC = () => {
                   onClick={() => window.open(listing.url, '_blank')}
                 >
                   <TableCell>
-                    <Chip label={listing.source_site} size="small" />
+                    <Chip label={getScraperDisplayName(listing.source_site)} size="small" />
                   </TableCell>
                   <TableCell>{listing.title}</TableCell>
                   <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>{formatPrice(listing.current_price)}</TableCell>
@@ -780,7 +781,7 @@ const PropertyDetailPage: React.FC = () => {
                     onClick={() => window.open(listing.url, '_blank')}
                   >
                     <TableCell>
-                      <Chip label={listing.source_site} size="small" />
+                      <Chip label={getScraperDisplayName(listing.source_site)} size="small" />
                     </TableCell>
                     <TableCell>{listing.title}</TableCell>
                     <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>{formatPrice(listing.current_price)}</TableCell>
@@ -872,7 +873,7 @@ const PropertyDetailPage: React.FC = () => {
                         key={source}
                         type="monotone"
                         dataKey={source}
-                        name={source}
+                        name={getScraperDisplayName(source)}
                         stroke={`hsl(${(index + 1) * 120}, 70%, 50%)`}
                         strokeWidth={1}
                         strokeDasharray="5 5"
