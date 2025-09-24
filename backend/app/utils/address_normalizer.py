@@ -203,72 +203,214 @@ class AddressNormalizer:
     
     def find_address_end_position(self, address: str) -> Optional[int]:
         """
-        住所の有効な終端位置を検出する共通メソッド
-        
+        日本の住所として有効な終端位置を厳密に検出
+
+        住所の構成要素：
+        1. 都道府県
+        2. 市区町村（郡）
+        3. 町名・大字
+        4. 丁目・番地・号
+
+        建物名は含まない（建物名は住所ではない）
+
         Args:
             address: 住所文字列
-            
+
         Returns:
             住所の終端位置（インデックス）、見つからない場合はNone
         """
-        # パターン1: ○丁目○番地○号 / ○丁目○番○号 / ○丁目○-○-○
+        if not address:
+            return None
+
+        # 数字パターンの定義（全角・半角・漢数字）
+        num_pattern = r'[０-９0-9一二三四五六七八九十百千万〇○]+'
+
+        # 最も詳細な住所パターンから順に試行
+
+        # パターン1: ○丁目○番地○号（最も正式な表記）
         pattern1 = re.compile(
-            r'[０-９0-9一二三四五六七八九十百千万〇○]+'  # 数字1
-            r'丁目'  # 丁目
-            r'[\s]*'  # 空白（あってもなくても）
-            r'[０-９0-9一二三四五六七八九十百千万〇○]+'  # 数字2
-            r'(?:番地?|[-－−])'  # 番地/番/ハイフン
-            r'[\s]*'  # 空白
-            r'(?:[０-９0-9一二三四五六七八九十百千万〇○]+)?'  # 数字3（オプション）
-            r'(?:号|[-－−])?'  # 号/ハイフン（オプション）
+            num_pattern + r'丁目' +
+            r'[\s]*' +
+            num_pattern + r'番地' +
+            r'[\s]*' +
+            num_pattern + r'号'
         )
         match = pattern1.search(address)
         if match:
             return match.end()
-        
-        # パターン2: ○丁目○ （丁目の後に数字のみ）
+
+        # パターン2: ○丁目○番○号
         pattern2 = re.compile(
-            r'[０-９0-9一二三四五六七八九十百千万〇○]+'  # 数字1
-            r'丁目'  # 丁目
-            r'[\s]*'  # 空白
-            r'[０-９0-9一二三四五六七八九十百千万〇○]+'  # 数字2
-            r'(?![番号丁])'  # 番・号・丁が続かない
+            num_pattern + r'丁目' +
+            r'[\s]*' +
+            num_pattern + r'番' +
+            r'[\s]*' +
+            num_pattern + r'号'
         )
         match = pattern2.search(address)
         if match:
             return match.end()
-        
-        # パターン3: 単独の○丁目
+
+        # パターン3: ○丁目○-○（ハイフン区切り）
         pattern3 = re.compile(
-            r'[０-９0-9一二三四五六七八九十百千万〇○]+'  # 数字
-            r'丁目'  # 丁目
-            r'(?![\s]*[０-９0-9一二三四五六七八九十百千万〇○])'  # 後に数字が続かない
+            num_pattern + r'丁目' +
+            r'[\s]*' +
+            num_pattern + r'[-－−]' + num_pattern +
+            r'(?:[-－−]' + num_pattern + r')?'  # 3つ目の数字はオプション
         )
         match = pattern3.search(address)
         if match:
             return match.end()
-        
-        # パターン4: ハイフン区切りの番地（丁目なし）
-        # 例：「千駄ヶ谷4-20-3」「日本橋3-5-1」「三番町26-1」
+
+        # パターン4: ○丁目○番地
         pattern4 = re.compile(
-            r'(?<=[ぁ-んァ-ヶー一-龯])'  # 前に日本語文字
-            r'[０-９0-9]+'  # 数字1
-            r'[-－−]'  # ハイフン
-            r'[０-９0-9]+'  # 数字2
-            r'(?:[-－−][０-９0-9]+)?'  # 数字3（オプション）
+            num_pattern + r'丁目' +
+            r'[\s]*' +
+            num_pattern + r'番地'
         )
         match = pattern4.search(address)
         if match:
             return match.end()
+
+        # パターン5: ○丁目○番
+        pattern5 = re.compile(
+            num_pattern + r'丁目' +
+            r'[\s]*' +
+            num_pattern + r'番'
+        )
+        match = pattern5.search(address)
+        if match:
+            return match.end()
+
+        # パターン6: ○丁目○（丁目の後に数字のみ）
+        pattern6 = re.compile(
+            num_pattern + r'丁目' +
+            r'[\s]*' +
+            num_pattern +
+            r'(?![番号])'  # 番・号が続かない場合
+        )
+        match = pattern6.search(address)
+        if match:
+            return match.end()
+
+        # パターン7: ○丁目（丁目のみ）
+        pattern7 = re.compile(
+            num_pattern + r'丁目' +
+            r'(?![\s]*' + num_pattern + r')'  # 後に数字が続かない
+        )
+        match = pattern7.search(address)
+        if match:
+            return match.end()
+
+        # パターン8: ハイフン区切りの番地（丁目なし）
+        # 例：「千駄ヶ谷4-20-3」「日本橋3-5-1」「三番町26-1」
+        # 町名の後に直接数字-数字パターンが来る場合
+        pattern8 = re.compile(
+            r'(?<=[ぁ-んァ-ヶー一-龯])'  # 前に日本語文字（町名）
+            r'[０-９0-9]+' +  # 数字1
+            r'[-－−]' +  # ハイフン
+            r'[０-９0-9]+' +  # 数字2
+            r'(?:[-－−][０-９0-9]+)?'  # 数字3（オプション）
+        )
+        match = pattern8.search(address)
+        if match:
+            return match.end()
+
+        # パターン9: 番地表記（○番地○号、○番○号など）
+        pattern9 = re.compile(
+            r'(?<=[ぁ-んァ-ヶー一-龯])' +  # 前に日本語文字
+            num_pattern + r'番地?' +
+            r'[\s]*' +
+            num_pattern + r'号?'
+        )
+        match = pattern9.search(address)
+        if match:
+            return match.end()
+
+        # パターン10: 町名の後の単純な数字（最も簡略な表記）
+        pattern10 = re.compile(
+            r'(?<=[ぁ-んァ-ヶー一-龯])' +  # 前に日本語文字
+            r'[０-９0-9]+' +  # 数字のみ
+            r'(?![０-９0-9\-－−番号丁])'  # 後に番地関連の文字が続かない
+        )
+        match = pattern10.search(address)
+        if match:
+            return match.end()
+
+        # パターン11: 町名のみで終わる場合（番地なし）
+        # 「東京都中央区銀座」「東京都千代田区丸の内」など
+        # 市区町村の後に町名があり、その後に番地等がない場合
         
+        # 東京の町名パターンを定義（番地を含まない町名のみ）
+        # 注意：「丁目」パターンは既にパターン1-7で処理済みなので、ここでは不要
+        tokyo_town_patterns = [
+            # 番地なしでも有効な特別な地名
+            r'^(銀座|丸の内|大手町|有楽町|霞が関|永田町|日比谷|赤坂|青山|六本木|新宿|渋谷|原宿|表参道|日本橋)',
+            
+            # ○○町で終わる（東京で最も一般的、ただし「丁目」を含まない）
+            r'^[ぁ-んァ-ヶー一-龯々]{2,}町',
+            
+            # 方角＋地名（例：南青山、北青山、西新宿、東新橋）
+            # カタカナを除外してひらがな・漢字のみにする
+            r'^[東西南北][ぁ-ん一-龯々]+',
+            
+            # ○○坂、○○谷、○○橋、○○台など地形由来
+            r'^[ぁ-んァ-ヶー一-龯々]{2,}(坂|谷|橋|台|原|川|田|山|ヶ丘|が丘|ケ丘)',
+            
+            # 番町（一番町〜六番町）- これは特別なケース
+            r'^[一二三四五六]番町',
+            
+            # 上○○、下○○、中○○、元○○（例：上原、中落合、下落合、元代々木）
+            # カタカナを除外してひらがな・漢字のみにする
+            r'^(上|下|中|元)[ぁ-ん一-龯々]+',
+        ]
+        
+        # まず、市区町村を探す（都道府県の後の市区町村のみ）
+        # 都道府県の後に来る最初の市・区、または郡＋町村を探す
+        prefecture_pattern = r'(?:東京都|北海道|(?:京都|大阪)府|(?:青森|岩手|宮城|秋田|山形|福島|茨城|栃木|群馬|埼玉|千葉|神奈川|新潟|富山|石川|福井|山梨|長野|岐阜|静岡|愛知|三重|滋賀|兵庫|奈良|和歌山|鳥取|島根|岡山|広島|山口|徳島|香川|愛媛|高知|福岡|佐賀|長崎|熊本|大分|宮崎|鹿児島|沖縄)県)'
+        
+        # パターン1: 都道府県＋市/区
+        city_match = re.search(prefecture_pattern + r'([^市区]+(?:市|区))', address)
+        if not city_match:
+            # パターン2: 都道府県＋郡＋町/村
+            city_match = re.search(prefecture_pattern + r'([^郡]+郡[^町村]+(?:町|村))', address)
+        if not city_match:
+            # パターン3: 都道府県なしで市/区から始まる場合
+            city_match = re.search(r'^([^市区]+(?:市|区))', address)
+        
+        if city_match:
+            # 市区町村の後の部分を取得
+            after_city = address[city_match.end():]
+            
+            # まず数字が来る場合は町名なしとして扱う
+            if re.match(r'^[０-９0-9]', after_city.strip()):
+                return None
+            
+            # GoogleMaps等のUI要素で始まる場合も町名なしとして扱う
+            if re.match(r'^[Gg]oogle', after_city.strip()):
+                return None
+            
+            # 町名パターンをチェック
+            after_city_stripped = after_city.strip()
+            
+            # 東京の町名パターンを順にチェック
+            for pattern in tokyo_town_patterns:
+                match = re.match(pattern, after_city_stripped)
+                if match:
+                    # 町名の終端位置を取得
+                    town_len = match.end()
+                    stripped_len = len(after_city) - len(after_city.lstrip())
+                    # 市区町村の終端位置 + 空白 + 町名の長さ
+                    return city_match.end() + stripped_len + town_len
+            
         return None
 
     def remove_ui_elements(self, address: str) -> str:
         """
         住所文字列からUI要素（地図リンクなど）を削除
         
-        住所として有効な終端パターンの後にUI関連のキーワードが来た場合、
-        それ以降を削除する
+        find_address_end_positionメソッドを使用して住所の有効な終端位置を検出し、
+        それ以降のUI要素や建物名を削除する
         """
         if not address:
             return ""
@@ -276,30 +418,49 @@ class AddressNormalizer:
         # HTMLタグを削除（念のため）
         address = re.sub(r'<[^>]+>', '', address)
         
-        # 共通メソッドを使用して住所の終端位置を検出
+        # 住所の終端位置を検出
         end_pos = self.find_address_end_position(address)
         if end_pos is not None:
             return address[:end_pos].strip()
         
-        # パターンにマッチしない場合、区市町村までを抽出
-        # 「周辺」を除外対象に追加
-        basic_pattern = r'^(.*?(?:都|道|府|県).*?(?:区|市|町|村)[^地図\[【\(周辺]*)'
-        match = re.search(basic_pattern, address)
-        if match:
-            # 末尾の不要な文字を削除
-            result = match.group(1).rstrip('、。・周辺')
-            # 「周辺」で終わる場合は削除
+        # パターンにマッチしない場合のフォールバック処理
+        # フォールバック1: UI要素のキーワードで分割
+        ui_keywords = [
+            # 地図関連
+            'GoogleMaps', 'Google Maps', 'GOOGLEMAPS', 'googlemaps',
+            'グーグルマップ', 'Googleマップ', 'Google地図',
+            '地図', 'マップ', 'MAP', 'Map', 'map',
+            # リンク・表示関連
+            'を見る', 'はこちら', '詳細', '周辺', 'へのリンク',
+            'もっと見る', 'アクセス',
+            # 記号
+            '※', '＊', '[', '【', '(', '→'
+        ]
+        
+        # 最も早く出現するキーワードの位置を探す
+        earliest_pos = len(address)
+        for keyword in ui_keywords:
+            pos = address.find(keyword)
+            if pos != -1 and pos < earliest_pos:
+                earliest_pos = pos
+        
+        # キーワードが見つかった場合、その前までを返す
+        if earliest_pos < len(address):
+            result = address[:earliest_pos].strip()
+            # 末尾の句読点や「周辺」を削除
+            result = result.rstrip('、。・')
             if result.endswith('周辺'):
                 result = result[:-2]
-            return result.strip()
+            return result
         
-        # それでもマッチしない場合は、明らかに住所でない部分を削除
-        # 「地図」「MAP」などのキーワード以降を削除
-        unwanted_keywords = ['地図', 'MAP', 'Map', 'map', 'マップ', '周辺', '詳細', 'もっと見る', 'アクセス', '※', '＊', '[', '【', '(', '→']
-        for keyword in unwanted_keywords:
-            if keyword in address:
-                address = address.split(keyword)[0]
+        # フォールバック2: 基本的な住所パターンで抽出
+        # 都道府県＋市区町村までは最低限抽出を試みる
+        basic_pattern = r'^(.*?(?:都|道|府|県).*?(?:区|市|町|村))'
+        match = re.search(basic_pattern, address)
+        if match:
+            return match.group(1).strip()
         
+        # すべてのパターンにマッチしない場合は元の文字列を返す
         return address.strip()
 
     def contains_address_pattern(self, text: str) -> bool:
@@ -333,7 +494,7 @@ class AddressNormalizer:
         if not address:
             return ""
         
-        # UI要素を削除
+        # UI要素を削除（内部でfind_address_end_positionも呼ばれる）
         address = self.remove_ui_elements(address)
         
         # Unicode正規化
