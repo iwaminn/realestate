@@ -46,7 +46,7 @@ import {
 } from '@mui/icons-material';
 import { propertyApi } from '../api/propertyApi';
 import { Property, PriceChangeInfo } from '../types/property';
-import { getHazardMapUrlFromBuilding } from '../utils/geocoding';
+// Geocoding utilities are loaded dynamically when needed
 
 interface BuildingStats {
   total_units: number;
@@ -152,19 +152,19 @@ const BuildingPropertiesPage: React.FC = () => {
       setProperties(response.properties);
       setBuilding(response.building);
       
-      // 建物IDから座標を取得してハザードマップURLを生成（非同期）
-      if (response.building?.id) {
-        const buildingId = response.building.id;
+      // 住所から座標を取得してハザードマップURLを生成（非同期）
+      if (response.building?.address) {
         const address = response.building.address;
-        // 住所に「号」まで含まれている場合のみ
-        if (address && address.match(/\d+-\d+-\d+|\d+号/)) {
-          // 非同期で座標を取得（ページ表示をブロックしない）
-          getHazardMapUrlFromBuilding(buildingId).then(url => {
+        // 住所から直接ハザードマップURLを生成
+        import('../utils/geocoding').then(({ getHazardMapUrl }) => {
+          getHazardMapUrl(address).then(url => {
+            console.log('ハザードマップURL生成:', url);
             setHazardMapUrl(url);
-          }).catch(() => {
+          }).catch((error) => {
+            console.error('ハザードマップURL生成エラー:', error);
             // ハザードマップURL生成エラーは無視（デフォルトURLを使用）
           });
-        }
+        });
       }
       
       // 統計情報を計算
@@ -555,8 +555,8 @@ const BuildingPropertiesPage: React.FC = () => {
                   <Typography variant={isMobile ? "body1" : "h6"}>
                     {building.address || '不明'}
                   </Typography>
-                  {/* 住所に「号」まで含まれている場合、Google Mapsとハザードマップへのリンクを表示 */}
-                  {building.address && building.address.match(/\d+-\d+-\d+|\d+号/) && (
+                  {/* 住所がある場合、Google Mapsとハザードマップへのリンクを表示 */}
+                  {building.address && (
                     <Box sx={{ display: 'flex', gap: 1 }}>
                       <Box
                         component="a"

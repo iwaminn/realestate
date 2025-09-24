@@ -197,7 +197,7 @@ async def get_properties_grouped_by_buildings(
     building_ids = [b.id for b in buildings]
     
     if building_ids:
-        # 各建物の物件を一括取得（最大6件ずつ）
+        # 各建物の物件を一括取得（最大3件ずつ）
         properties_query = db.query(
             MasterProperty.id,
             MasterProperty.building_id,
@@ -279,8 +279,8 @@ async def get_properties_grouped_by_buildings(
             if prop.building_id not in properties_by_building:
                 properties_by_building[prop.building_id] = []
             
-            # 最大6件まで
-            if len(properties_by_building[prop.building_id]) < 6:
+            # 最大3件まで
+            if len(properties_by_building[prop.building_id]) < 3:
                 properties_by_building[prop.building_id].append({
                     "id": prop.id,
                     "room_number": prop.room_number,

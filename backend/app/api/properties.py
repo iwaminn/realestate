@@ -3,7 +3,7 @@ from fastapi import APIRouter, Query, HTTPException, Depends
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy.orm import Session, joinedload
-from sqlalchemy import func, or_, and_, distinct, String, select
+from sqlalchemy import func, or_, and_, distinct, String, select, case
 
 from ..database import get_db
 from ..models import Building, MasterProperty, PropertyListing, ListingPriceHistory
@@ -96,6 +96,14 @@ async def get_properties(
         order_column = MasterProperty.area
     elif sort_by == "built_year":
         order_column = Building.built_year
+    elif sort_by == "tsubo_price":
+        # 坪単価を計算（価格 ÷ 面積 × 3.30578）
+        # 面積が0の場合を除外するため、CASE文を使用
+        order_column = case(
+            (MasterProperty.area > 0, 
+             func.coalesce(price_subquery.c.min_price, MasterProperty.final_price) / (MasterProperty.area / 3.30578)),
+            else_=None
+        )
     else:
         order_column = price_subquery.c.latest_price_update
     

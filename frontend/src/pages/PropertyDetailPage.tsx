@@ -49,7 +49,7 @@ import {
 } from '@mui/icons-material';
 import { BookmarkButton } from '../components/BookmarkButton';
 import { getScraperDisplayName } from '../constants/scraperConstants';
-import { getHazardMapUrlFromBuilding } from '../utils/geocoding';
+// Geocoding utilities are loaded dynamically when needed
 import {
   LineChart,
   Line,
@@ -86,19 +86,17 @@ const PropertyDetailPage: React.FC = () => {
       const data = await propertyApi.getPropertyDetail(propertyId);
       setPropertyDetail(data);
       
-      // 建物IDから座標を取得してハザードマップURLを生成（非同期）
-      if (data?.master_property?.building?.id) {
-        const buildingId = data.master_property.building.id;
+      // 建物の住所から座標を取得してハザードマップURLを生成（非同期）
+      if (data?.master_property?.building?.address) {
         const address = data.master_property.building.address;
-        // 住所に「号」まで含まれている場合のみ
-        if (address && address.match(/\d+-\d+-\d+|\d+号/)) {
-          // 非同期で座標を取得（ページ表示をブロックしない）
-          getHazardMapUrlFromBuilding(buildingId).then(url => {
+        // 非同期で座標を取得（ページ表示をブロックしない）
+        import('../utils/geocoding').then(({ getHazardMapUrl }) => {
+          getHazardMapUrl(address).then(url => {
             setHazardMapUrl(url);
           }).catch(() => {
             // ハザードマップURL生成エラーは無視（デフォルトURLを使用）
           });
-        }
+        });
       }
     } catch (err) {
       setError('物件詳細の取得に失敗しました。');
@@ -182,7 +180,7 @@ const PropertyDetailPage: React.FC = () => {
     });
   } else {
     // フォールバック：従来の方法で統合
-    const dateMap = new Map<string, { prices: number[], sources: Set<string> }>();
+    const dateMap: Map<string, { prices: number[], sources: Set<string> }> = new Map();
     
     Object.entries(price_histories_by_listing).forEach(([listingId, histories]) => {
       const listing = listings.find(l => l.id === parseInt(listingId));
@@ -200,7 +198,7 @@ const PropertyDetailPage: React.FC = () => {
     });
     
     // 日付ごとに代表価格を算出
-    const dateEntries = Array.from(dateMap.entries()) as [string, { prices: number[], sources: Set<string> }][];
+    const dateEntries = Array.from(dateMap.entries());
     dateEntries.sort((a, b) => a[0].localeCompare(b[0])).forEach(([date, data]) => {
       const uniquePrices = [...new Set(data.prices)];
       const representativePrice = uniquePrices.length === 1 ? uniquePrices[0] : Math.min(...uniquePrices);
@@ -371,8 +369,8 @@ const PropertyDetailPage: React.FC = () => {
                       <Typography variant="body2" color="text.secondary">
                         {building.address}
                       </Typography>
-                      {/* 住所に「号」まで含まれている場合、Google Mapsへのリンクを表示 */}
-                      {building.address && building.address.match(/\d+-\d+-\d+|\d+号/) && (
+                      {/* 住所がある場合、Google Mapsへのリンクを表示 */}
+                      {building.address && (
                         <Box sx={{ 
                           display: 'flex', 
                           gap: { xs: 1.5, md: 1 }, 

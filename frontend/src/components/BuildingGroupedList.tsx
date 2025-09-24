@@ -78,7 +78,7 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
   const [page, setPage] = useState(initialPage);
   const [totalPages, setTotalPages] = useState(0);
   // URLパラメータから並び順を取得
-  const initialSortBy = urlSearchParams.get('sort') || 'default';
+  const initialSortBy = urlSearchParams.get('sort') || 'property_count_desc';
   const [sortBy, setSortBy] = useState<string>(initialSortBy);
 
   const fetchBuildingGroups = async () => {
@@ -103,7 +103,7 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
       params.append('include_inactive', includeInactive.toString());
       
       // 並び替えパラメータを追加
-      if (sortBy !== 'default') {
+      if (sortBy !== 'property_count_desc') {
         params.append('sort_by', sortBy);
       }
       
@@ -127,7 +127,7 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
   // URLパラメータが外部から変更された場合（ブラウザの戻る/進むボタンなど）
   useEffect(() => {
     const pageFromUrl = parseInt(urlSearchParams.get('page') || '1');
-    const sortFromUrl = urlSearchParams.get('sort') || 'default';
+    const sortFromUrl = urlSearchParams.get('sort') || 'property_count_desc';
     
     if (pageFromUrl !== page) {
       setPage(pageFromUrl);
@@ -226,7 +226,7 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
                 
                 // URLパラメータを更新
                 const newParams = new URLSearchParams(urlSearchParams);
-                if (newSortBy !== 'default') {
+                if (newSortBy !== 'property_count_desc') {
                   newParams.set('sort', newSortBy);
                 } else {
                   newParams.delete('sort');
@@ -237,15 +237,14 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
                 setPage(1);
               }}
             >
-              <MenuItem value="default">デフォルト（販売戸数が多い順）</MenuItem>
+              <MenuItem value="property_count_desc">販売戸数（多い順）</MenuItem>
+              <MenuItem value="property_count_asc">販売戸数（少ない順）</MenuItem>
               <MenuItem value="building_age_asc">築年数（新しい順）</MenuItem>
               <MenuItem value="building_age_desc">築年数（古い順）</MenuItem>
-              <MenuItem value="total_units_asc">総戸数（少ない順）</MenuItem>
               <MenuItem value="total_units_desc">総戸数（多い順）</MenuItem>
-              <MenuItem value="property_count_asc">販売戸数（少ない順）</MenuItem>
-              <MenuItem value="property_count_desc">販売戸数（多い順）</MenuItem>
-              <MenuItem value="avg_tsubo_price_asc">平均坪単価（安い順）</MenuItem>
+              <MenuItem value="total_units_asc">総戸数（少ない順）</MenuItem>
               <MenuItem value="avg_tsubo_price_desc">平均坪単価（高い順）</MenuItem>
+              <MenuItem value="avg_tsubo_price_asc">平均坪単価（安い順）</MenuItem>
             </Select>
           </FormControl>
         </Box>
@@ -364,7 +363,7 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
             </Grid>
 
             {/* 全物件を見るボタン */}
-            {group.total_properties > 6 && (
+            {group.total_properties > 3 && (
               <Box sx={{ mt: 2, textAlign: 'center' }}>
                 <Button
                   variant="outlined"

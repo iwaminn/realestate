@@ -354,12 +354,14 @@ const PropertyListPage: React.FC = () => {
                   >
                     <MenuItem value="updated_at-desc">更新日（新しい順）</MenuItem>
                     <MenuItem value="updated_at-asc">更新日（古い順）</MenuItem>
-                    <MenuItem value="price-asc">価格（安い順）</MenuItem>
                     <MenuItem value="price-desc">価格（高い順）</MenuItem>
+                    <MenuItem value="price-asc">価格（安い順）</MenuItem>
                     <MenuItem value="area-desc">面積（広い順）</MenuItem>
                     <MenuItem value="area-asc">面積（狭い順）</MenuItem>
                     <MenuItem value="built_year-desc">築年数（新しい順）</MenuItem>
                     <MenuItem value="built_year-asc">築年数（古い順）</MenuItem>
+                    <MenuItem value="tsubo_price-desc">坪単価（高い順）</MenuItem>
+                    <MenuItem value="tsubo_price-asc">坪単価（安い順）</MenuItem>
                   </Select>
                 </FormControl>
               )}

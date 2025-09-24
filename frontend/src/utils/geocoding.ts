@@ -35,15 +35,18 @@ export async function getCoordinatesFromBuilding(buildingId: number): Promise<{ 
  */
 export async function getCoordinatesFromAddress(address: string): Promise<{ lat: number; lng: number } | null> {
   try {
+    console.log('ジオコーディング開始:', address);
     const response = await axios.post('/api/geocoding/geocode', { address });
     const data = response.data;
+    
+    console.log('APIレスポンス:', data);
     
     if (data && data.latitude !== undefined && data.longitude !== undefined) {
       console.log(`座標取得成功: ${address} -> lat: ${data.latitude}, lng: ${data.longitude}`);
       return { lat: data.latitude, lng: data.longitude };
     }
     
-    console.warn('住所から座標を取得できませんでした:', address);
+    console.warn('住所から座標を取得できませんでした:', address, data);
     return null;
   } catch (error) {
     console.error('ジオコーディングエラー:', error);
@@ -57,7 +60,21 @@ export async function getCoordinatesFromAddress(address: string): Promise<{ lat:
  * @returns ハザードマップのURL
  */
 export async function getHazardMapUrlFromBuilding(buildingId: number): Promise<string> {
-  const coords = await getCoordinatesFromBuilding(buildingId);
+  // まず建物の座標を取得
+  let coords = await getCoordinatesFromBuilding(buildingId);
+  
+  // 座標が取得できない場合、住所からジオコーディングを試みる
+  if (!coords) {
+    try {
+      const response = await axios.get(`/api/buildings/${buildingId}`);
+      if (response.data && response.data.address) {
+        console.log(`建物ID ${buildingId} の座標がないため、住所からジオコーディング: ${response.data.address}`);
+        coords = await getCoordinatesFromAddress(response.data.address);
+      }
+    } catch (error) {
+      console.error('建物情報の取得エラー:', error);
+    }
+  }
   
   if (coords) {
     // 座標が取得できた場合は、その位置を中心としたハザードマップURLを生成
