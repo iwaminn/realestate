@@ -62,7 +62,8 @@ async def get_recent_updates_cached(
         .join(active_listing_subq, active_listing_subq.c.master_property_id == MasterProperty.id)
         .filter(
             PropertyPriceChange.change_date >= cutoff_date,
-            MasterProperty.sold_at.is_(None)  # 販売終了物件を除外
+            MasterProperty.sold_at.is_(None),  # 販売終了物件を除外
+            Building.is_valid_name == True  # 広告文のみの建物を除外
         )
         .order_by(PropertyPriceChange.change_date.desc())
     ).all()
