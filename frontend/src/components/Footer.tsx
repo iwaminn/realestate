@@ -43,23 +43,14 @@ const Footer: React.FC = () => {
                 物件情報は各不動産サイトから収集したものであり、最新の状況とは異なる場合があります。
               </Typography>
 
-              <Box sx={{
-                p: 2,
-                backgroundColor: '#fff8e1',
-                borderLeft: '4px solid #ffc107',
-                borderRadius: '4px',
-                mb: 2
-              }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', mb: 1 }}>
-                  <Warning sx={{ color: '#f57c00', mr: 1, fontSize: 20 }} />
-                  <Typography variant="subtitle2" sx={{ fontWeight: 'bold', color: '#f57c00' }}>
-                    ご利用にあたって
-                  </Typography>
-                </Box>
-                <Typography variant="caption" color="text.secondary">
-                  ・掲載情報は参考情報です。必ず不動産会社に最新情報をご確認ください<br />
-                  ・本サイトは物件の仲介・販売は行っておりません<br />
-                  ・情報の正確性について一切の保証はいたしかねます
+              <Box sx={{ mb: 2 }}>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 1, fontWeight: 500 }}>
+                  ご利用にあたって
+                </Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.6 }}>
+                  掲載情報は各不動産サイトから収集した参考情報です。<br />
+                  実際の物件情報は不動産会社に直接ご確認ください。<br />
+                  本サイトは物件の仲介・販売は行っておりません。
                 </Typography>
               </Box>
             </Box>
