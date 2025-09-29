@@ -22,6 +22,7 @@ import Footer from './components/Footer';
 import DisclaimerPage from './pages/DisclaimerPage';
 import TermsPage from './pages/TermsPage';
 import PrivacyPage from './pages/PrivacyPage';
+import TransactionPricesPage from './pages/TransactionPricesPage';
 import './utils/axiosConfig'; // Axiosの設定を読み込む
 
 const theme = createTheme({
@@ -73,6 +74,7 @@ function App() {
                   <Route path="/updates" element={<PropertyUpdatesPage />} />
                   <Route path="/verify-email" element={<VerifyEmailPage />} />
                   <Route path="/auth/callback" element={<AuthCallbackPage />} />
+                  <Route path="/transaction-prices" element={<TransactionPricesPage />} />
                   {/* 法的ページ */}
                   <Route path="/terms/disclaimer" element={<DisclaimerPage />} />
                   <Route path="/terms" element={<TermsPage />} />

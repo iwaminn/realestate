@@ -31,6 +31,7 @@ from .api import bookmarks
 from .api import auth
 from .api import oauth
 from .api import geocoding
+from .api import transaction_prices
 
 app = FastAPI(title="不動産横断検索API", version="1.0.0")
 
@@ -109,6 +110,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
 app.include_router(oauth.router, prefix="/api/oauth", tags=["oauth"])
 app.include_router(bookmarks.router, prefix="/api/bookmarks", tags=["bookmarks"])
 app.include_router(geocoding.router)
+app.include_router(transaction_prices.router)
 
 
 # 起動時の初期化

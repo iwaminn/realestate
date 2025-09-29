@@ -682,6 +682,68 @@ class PropertyPriceChangeQueue(Base):
     )
 
 
+class TransactionPrice(Base):
+    """不動産取引価格テーブル（国土交通省データ）"""
+    __tablename__ = "transaction_prices"
+
+    # 基本情報
+    id = Column(Integer, primary_key=True)
+    transaction_id = Column(String(50), unique=True, index=True)  # 取引ID
+
+    # 物件情報
+    property_type = Column(String(20))  # 種類（中古マンション等）
+    district_code = Column(String(10))  # 市区町村コード
+    district_name = Column(String(50))  # 市区町村名
+    area_name = Column(String(100))  # 地区名
+    nearest_station = Column(String(100))  # 最寄駅
+    station_distance = Column(Integer)  # 駅からの距離（分）
+
+    # 取引情報
+    transaction_price = Column(Integer)  # 取引価格（万円）
+    price_per_sqm = Column(Integer)  # 坪単価（円/㎡）
+    transaction_period = Column(String(20))  # 取引時期
+    transaction_year = Column(Integer)  # 取引年
+    transaction_quarter = Column(Integer)  # 四半期（1-4）
+
+    # 土地情報
+    land_area = Column(Float)  # 土地面積（㎡）
+    land_shape = Column(String(20))  # 土地の形状
+    frontage = Column(Float)  # 間口（m）
+
+    # 建物情報（マンションの場合）
+    floor_area = Column(Float)  # 専有面積（㎡）
+    floor_number = Column(String(10))  # 階数
+    layout = Column(String(20))  # 間取り
+    built_year = Column(String(20))  # 建築年
+    building_structure = Column(String(50))  # 建物の構造
+    use = Column(String(50))  # 用途
+
+    # 都市計画
+    city_planning = Column(String(100))  # 都市計画
+    building_coverage_ratio = Column(Float)  # 建ぺい率（%）
+    floor_area_ratio = Column(Float)  # 容積率（%）
+
+    # 取引の状況
+    purpose = Column(String(50))  # 今後の利用目的
+    front_road_direction = Column(String(20))  # 前面道路：方位
+    front_road_type = Column(String(50))  # 前面道路：種類
+    front_road_width = Column(Float)  # 前面道路：幅員（m）
+
+    # その他
+    remarks = Column(Text)  # 備考
+
+    # メタデータ
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+
+    __table_args__ = (
+        Index('idx_transaction_area_period', 'area_name', 'transaction_period'),
+        Index('idx_transaction_type_period', 'property_type', 'transaction_period'),
+        Index('idx_transaction_station', 'nearest_station'),
+        Index('idx_transaction_year_quarter', 'transaction_year', 'transaction_quarter'),
+    )
+
+
 # 他のモデルをインポート（循環参照を避けるため最後にインポート）
 from .models_property_matching import AmbiguousPropertyMatch
 # from .models_scraping_task import ScrapingTask, ScrapingTaskProgress  # 循環インポート回避のためコメントアウト
