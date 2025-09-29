@@ -16,6 +16,8 @@ import {
   CircularProgress,
   Pagination,
   Stack,
+  useMediaQuery,
+  useTheme,
 } from '@mui/material';
 import {
   Chart as ChartJS,
@@ -52,8 +54,8 @@ interface TransactionData {
   floor_area: number | null;
   transaction_year: number;
   transaction_quarter: number;
-  nearest_station: string | null;
-  station_distance: number | null;
+  layout: string | null;
+  built_year: number | null;
 }
 
 interface AreaStatistics {
@@ -73,12 +75,16 @@ interface PriceTrendData {
   transaction_count: number;
 }
 
-type OrderBy = 'transaction_year' | 'area_name' | 'transaction_price' | 'price_per_sqm' | 'floor_area' | 'station_distance';
+type OrderBy = 'transaction_year' | 'area_name' | 'transaction_price' | 'price_per_sqm' | 'floor_area';
 type Order = 'asc' | 'desc';
 
 const TransactionPricesPage: React.FC = () => {
+  const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [loading, setLoading] = useState(false);
   const [areas, setAreas] = useState<string[]>([]);
+  const [areasByDistrict, setAreasByDistrict] = useState<{[key: string]: string[]}>({});
+  const [selectedDistrict, setSelectedDistrict] = useState<string>('');
   const [selectedArea, setSelectedArea] = useState<string>('');
   const [selectedYear, setSelectedYear] = useState<number | ''>('');
   const [startYear, setStartYear] = useState<number>(2020);
@@ -108,8 +114,12 @@ const TransactionPricesPage: React.FC = () => {
   useEffect(() => {
     const fetchAreas = async () => {
       try {
-        const response = await axios.get('/api/transaction-prices/areas');
-        setAreas(response.data);
+        const [areasRes, areasByDistrictRes] = await Promise.all([
+          axios.get('/api/transaction-prices/areas'),
+          axios.get('/api/transaction-prices/areas-by-district')
+        ]);
+        setAreas(areasRes.data);
+        setAreasByDistrict(areasByDistrictRes.data);
       } catch (error) {
         console.error('エリア取得エラー:', error);
       }
@@ -171,6 +181,12 @@ const TransactionPricesPage: React.FC = () => {
     };
     fetchData();
   }, [selectedArea, selectedYear, startYear, startQuarter, endYear, endQuarter]);
+
+  // 区選択ハンドラー
+  const handleDistrictChange = (event: SelectChangeEvent<string>) => {
+    setSelectedDistrict(event.target.value);
+    setSelectedArea(''); // 区が変更されたらエリアをリセット
+  };
 
   // エリア選択ハンドラー
   const handleAreaChange = (event: SelectChangeEvent<string>) => {
@@ -246,11 +262,179 @@ const TransactionPricesPage: React.FC = () => {
     });
   };
 
-  // フィルタリング済みデータ
-  const filteredPriceTrends = filterByPeriod(priceTrends);
-  const filteredTransactions = filterByPeriod(transactions);
-  const filteredSizeTrends = filterByPeriod(sizeTrends);
-  const filteredAgeTrends = filterByPeriod(ageTrends);
+  // 区選択によるエリアフィルター関数
+  const filterByDistrict = (data: any[]) => {
+    // 区が選択されていない場合はすべて表示
+    if (!selectedDistrict) return data;
+    
+    // 選択された区のエリアリストを取得
+    const districtAreas = areasByDistrict[selectedDistrict] || [];
+    
+    // データのエリアが選択された区に含まれているか確認
+    return data.filter(d => {
+      const areaName = d.area_name;
+      // area_nameがnullまたはundefinedの場合（全体集計データ）は、
+      // 区選択時は表示しない
+      if (!areaName) return false;
+      return districtAreas.includes(areaName);
+    });
+  };
+
+  // 区選択時は個別取引データから価格推移を再計算
+  const calculateDistrictTrends = () => {
+    if (!selectedDistrict || !transactions.length) return priceTrends;
+    
+    const districtAreas = areasByDistrict[selectedDistrict] || [];
+    const districtTransactions = transactions.filter(t => districtAreas.includes(t.area_name));
+    
+    // 期間ごとにグループ化して集計
+    const trendMap = new Map<string, { sum: number; count: number; sumPrice: number }>();
+    
+    districtTransactions.forEach(t => {
+      if (!t.price_per_sqm || !t.transaction_year || !t.transaction_quarter) return;
+      
+      const key = `${t.transaction_year}-${t.transaction_quarter}`;
+      const existing = trendMap.get(key) || { sum: 0, count: 0, sumPrice: 0 };
+      
+      trendMap.set(key, {
+        sum: existing.sum + t.price_per_sqm,
+        count: existing.count + 1,
+        sumPrice: existing.sumPrice + (t.transaction_price || 0)
+      });
+    });
+    
+    // MapをPriceTrendDataの配列に変換
+    const trends: PriceTrendData[] = [];
+    trendMap.forEach((value, key) => {
+      const [year, quarter] = key.split('-').map(Number);
+      trends.push({
+        year,
+        quarter,
+        avg_price_per_sqm: value.sum / value.count / 10000, // 万円/㎡に変換
+        transaction_count: value.count
+      });
+    });
+    
+    // 年・四半期順にソート
+    return trends.sort((a, b) => {
+      const aValue = a.year * 4 + a.quarter;
+      const bValue = b.year * 4 + b.quarter;
+      return aValue - bValue;
+    });
+  };
+  
+  // 区選択時は広さ別データも再計算
+  const calculateDistrictSizeTrends = () => {
+    if (!selectedDistrict || !transactions.length) return sizeTrends;
+    
+    const districtAreas = areasByDistrict[selectedDistrict] || [];
+    const districtTransactions = transactions.filter(t => districtAreas.includes(t.area_name));
+    
+    // 広さカテゴリーの定義
+    const sizeCategories = [
+      { name: "20㎡未満", min: 0, max: 20 },
+      { name: "20-40㎡", min: 20, max: 40 },
+      { name: "40-60㎡", min: 40, max: 60 },
+      { name: "60-80㎡", min: 60, max: 80 },
+      { name: "80-100㎡", min: 80, max: 100 },
+      { name: "100㎡以上", min: 100, max: 999 }
+    ];
+    
+    const results: any[] = [];
+    
+    // カテゴリーごとに集計
+    sizeCategories.forEach(category => {
+      const categoryMap = new Map<string, { sum: number; count: number }>();
+      
+      districtTransactions.forEach(t => {
+        if (!t.price_per_sqm || !t.floor_area || !t.transaction_year || !t.transaction_quarter) return;
+        if (t.floor_area < category.min || t.floor_area >= category.max) return;
+        
+        const key = `${t.transaction_year}-${t.transaction_quarter}`;
+        const existing = categoryMap.get(key) || { sum: 0, count: 0 };
+        
+        categoryMap.set(key, {
+          sum: existing.sum + t.price_per_sqm,
+          count: existing.count + 1
+        });
+      });
+      
+      categoryMap.forEach((value, key) => {
+        const [year, quarter] = key.split('-').map(Number);
+        results.push({
+          category: category.name,
+          year,
+          quarter,
+          avg_price_per_sqm: value.sum / value.count / 10000,
+          transaction_count: value.count
+        });
+      });
+    });
+    
+    return results;
+  };
+  
+  // 区選択時は築年別データも再計算
+  const calculateDistrictAgeTrends = () => {
+    if (!selectedDistrict || !transactions.length) return ageTrends;
+    
+    const districtAreas = areasByDistrict[selectedDistrict] || [];
+    const districtTransactions = transactions.filter(t => districtAreas.includes(t.area_name));
+    
+    // 築年カテゴリーの定義
+    const ageCategories = [
+      { name: "築5年以内", min: 0, max: 5 },
+      { name: "築5-10年", min: 5, max: 10 },
+      { name: "築10-15年", min: 10, max: 15 },
+      { name: "築15-20年", min: 15, max: 20 },
+      { name: "築20年超", min: 20, max: 100 }
+    ];
+    
+    const results: any[] = [];
+    
+    // カテゴリーごとに集計
+    ageCategories.forEach(category => {
+      const categoryMap = new Map<string, { sum: number; count: number }>();
+      
+      districtTransactions.forEach(t => {
+        if (!t.price_per_sqm || !t.built_year || !t.transaction_year || !t.transaction_quarter) return;
+        
+        const age = t.transaction_year - t.built_year;
+        if (age < category.min || age >= category.max) return;
+        
+        const key = `${t.transaction_year}-${t.transaction_quarter}`;
+        const existing = categoryMap.get(key) || { sum: 0, count: 0 };
+        
+        categoryMap.set(key, {
+          sum: existing.sum + t.price_per_sqm,
+          count: existing.count + 1
+        });
+      });
+      
+      categoryMap.forEach((value, key) => {
+        const [year, quarter] = key.split('-').map(Number);
+        results.push({
+          category: category.name,
+          year,
+          quarter,
+          avg_price_per_sqm: value.sum / value.count / 10000,
+          transaction_count: value.count
+        });
+      });
+    });
+    
+    return results;
+  };
+  
+  // フィルタリング済みデータ（期間と区の両方でフィルター）
+  const districtPriceTrends = selectedDistrict ? calculateDistrictTrends() : priceTrends;
+  const districtSizeTrends = selectedDistrict ? calculateDistrictSizeTrends() : sizeTrends;
+  const districtAgeTrends = selectedDistrict ? calculateDistrictAgeTrends() : ageTrends;
+  
+  const filteredPriceTrends = filterByPeriod(districtPriceTrends);
+  const filteredTransactions = filterByDistrict(filterByPeriod(transactions));
+  const filteredSizeTrends = filterByPeriod(districtSizeTrends);
+  const filteredAgeTrends = filterByPeriod(districtAgeTrends);
 
 
 
@@ -280,10 +464,7 @@ const TransactionPricesPage: React.FC = () => {
         aValue = a.floor_area || 0;
         bValue = b.floor_area || 0;
         break;
-      case 'station_distance':
-        aValue = a.station_distance || 999;
-        bValue = b.station_distance || 999;
-        break;
+
       default:
         return 0;
     }
@@ -406,8 +587,28 @@ const TransactionPricesPage: React.FC = () => {
     <Container maxWidth="lg">
       <Box sx={{ py: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom>
-          港区 不動産取引価格分析
+          成約価格情報
         </Typography>
+
+        {/* データ出典説明 */}
+        <Paper sx={{ p: 2, mb: 3, bgcolor: 'info.main', color: 'info.contrastText' }}>
+          <Typography variant="body2">
+            本データは国土交通省のWEBサイト
+            <a
+              href="https://www.reinfolib.mlit.go.jp/"
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: 'inherit', fontWeight: 'bold' }}
+            >
+              「不動産情報ライブラリ」
+            </a>
+            から取得した成約価格情報をもとに集計・分析したものです。
+          </Typography>
+          <Typography variant="caption" sx={{ mt: 1, display: 'block' }}>
+            ※指定流通機構（レインズ）保有の不動産取引価格情報を、国土交通省が個別の不動産取引が特定できないよう加工し、
+            消費者向け不動産取引情報サービス「レインズ・マーケット・インフォメーション」（RMI）にて公表している情報
+          </Typography>
+        </Paper>
 
         {/* フィルター */}
         <Paper sx={{ p: 2, mb: 3 }}>
@@ -415,8 +616,23 @@ const TransactionPricesPage: React.FC = () => {
             期間を選択してください（{startYear}年Q{startQuarter} ～ {endYear}年Q{endQuarter}）
           </Typography>
           <Grid container spacing={2}>
-            <Grid item xs={12} md={4}>
+            <Grid item xs={12} sm={6} md={3}>
               <FormControl fullWidth>
+                <InputLabel>区を選択</InputLabel>
+                <Select
+                  value={selectedDistrict}
+                  onChange={handleDistrictChange}
+                  label="区を選択"
+                >
+                  <MenuItem value="">全区</MenuItem>
+                  {Object.keys(areasByDistrict).map(district => (
+                    <MenuItem key={district} value={district}>{district}</MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+            </Grid>
+            <Grid item xs={12} sm={6} md={3}>
+              <FormControl fullWidth disabled={!selectedDistrict}>
                 <InputLabel>エリアを選択</InputLabel>
                 <Select
                   value={selectedArea}
@@ -424,13 +640,13 @@ const TransactionPricesPage: React.FC = () => {
                   label="エリアを選択"
                 >
                   <MenuItem value="">全エリア</MenuItem>
-                  {areas.map(area => (
+                  {selectedDistrict && areasByDistrict[selectedDistrict]?.map(area => (
                     <MenuItem key={area} value={area}>{area}</MenuItem>
                   ))}
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={6} md={3}>
+            <Grid item xs={6} sm={4} md={2}>
               <FormControl fullWidth>
                 <InputLabel>開始年</InputLabel>
                 <Select
@@ -446,23 +662,23 @@ const TransactionPricesPage: React.FC = () => {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={6} md={2}>
+            <Grid item xs={6} sm={2} md={1}>
               <FormControl fullWidth>
-                <InputLabel>開始四半期</InputLabel>
+                <InputLabel>Q</InputLabel>
                 <Select
                   value={startQuarter}
                   onChange={handleStartQuarterChange}
-                  label="開始四半期"
+                  label="Q"
                 >
                   {[1, 2, 3, 4]
                     .filter(q => startYear < endYear || q <= endQuarter)
                     .map(q => (
-                      <MenuItem key={q} value={q}>第{q}四半期</MenuItem>
+                      <MenuItem key={q} value={q}>Q{q}</MenuItem>
                     ))}
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={6} md={3}>
+            <Grid item xs={6} sm={4} md={2}>
               <FormControl fullWidth>
                 <InputLabel>終了年</InputLabel>
                 <Select
@@ -478,18 +694,18 @@ const TransactionPricesPage: React.FC = () => {
                 </Select>
               </FormControl>
             </Grid>
-            <Grid item xs={6} md={2}>
+            <Grid item xs={6} sm={2} md={1}>
               <FormControl fullWidth>
-                <InputLabel>終了四半期</InputLabel>
+                <InputLabel>Q</InputLabel>
                 <Select
                   value={endQuarter}
                   onChange={handleEndQuarterChange}
-                  label="終了四半期"
+                  label="Q"
                 >
                   {[1, 2, 3, 4]
                     .filter(q => startYear < endYear || q >= startQuarter)
                     .map(q => (
-                      <MenuItem key={q} value={q}>第{q}四半期</MenuItem>
+                      <MenuItem key={q} value={q}>Q{q}</MenuItem>
                     ))}
                 </Select>
               </FormControl>
@@ -567,25 +783,91 @@ const TransactionPricesPage: React.FC = () => {
                     期間別統計サマリー
                   </Typography>
                   <Box sx={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <table style={{
+                      width: '100%',
+                      borderCollapse: 'collapse',
+                      fontSize: isMobile ? '0.85rem' : '0.9rem'
+                    }}>
                       <thead>
-                        <tr style={{ borderBottom: '2px solid #ddd' }}>
-                          <th style={{ padding: '8px', textAlign: 'left' }}>期間</th>
-                          <th style={{ padding: '8px', textAlign: 'right' }}>取引件数</th>
-                          <th style={{ padding: '8px', textAlign: 'right' }}>平均単価<br/>（万円/㎡）</th>
+                        <tr style={{ borderBottom: '2px solid #ddd', backgroundColor: '#f5f5f5' }}>
+                          <th style={{
+                            padding: isMobile ? '10px 12px' : '8px',
+                            textAlign: 'left',
+                            whiteSpace: 'nowrap',
+                            width: isMobile ? '40%' : 'auto'
+                          }}>
+                            期間
+                          </th>
+                          <th style={{
+                            padding: isMobile ? '10px 12px' : '8px',
+                            textAlign: 'right',
+                            whiteSpace: 'nowrap',
+                            width: isMobile ? '25%' : 'auto'
+                          }}>
+                            {isMobile ? '件数' : '取引件数'}
+                          </th>
+                          <th style={{
+                            padding: isMobile ? '10px 12px' : '8px',
+                            textAlign: 'right',
+                            whiteSpace: 'nowrap',
+                            width: isMobile ? '35%' : 'auto'
+                          }}>
+                            {isMobile ? '単価' : '平均単価'}<br/>
+                            <span style={{ fontSize: '0.8em' }}>{isMobile ? '(万/㎡)' : '（万円/㎡）'}</span>
+                          </th>
                           {selectedArea && (
-                            <th style={{ padding: '8px', textAlign: 'right' }}>エリア</th>
+                            <th style={{
+                              padding: isMobile ? '10px 12px' : '8px',
+                              textAlign: 'right',
+                              whiteSpace: 'nowrap'
+                            }}>
+                              エリア
+                            </th>
                           )}
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredPriceTrends.map((trend) => (
-                          <tr key={`${trend.year}-${trend.quarter}`} style={{ borderBottom: '1px solid #eee' }}>
-                            <td style={{ padding: '8px' }}>{trend.year}年第{trend.quarter}四半期</td>
-                            <td style={{ padding: '8px', textAlign: 'right' }}>{trend.transaction_count}</td>
-                            <td style={{ padding: '8px', textAlign: 'right' }}>{trend.avg_price_per_sqm.toFixed(1)}</td>
+                        {filteredPriceTrends.map((trend, index) => (
+                          <tr key={`${trend.year}-${trend.quarter}`} style={{
+                            borderBottom: '1px solid #eee',
+                            backgroundColor: index % 2 === 0 ? 'white' : '#fafafa'
+                          }}>
+                            <td style={{
+                              padding: isMobile ? '10px 12px' : '8px',
+                              fontSize: isMobile ? '0.85rem' : '0.9rem',
+                              whiteSpace: 'nowrap'
+                            }}>
+                              {isMobile ?
+                                `${trend.year}年Q${trend.quarter}` :
+                                `${trend.year}年第${trend.quarter}四半期`
+                              }
+                            </td>
+                            <td style={{
+                              padding: isMobile ? '10px 12px' : '8px',
+                              textAlign: 'right',
+                              fontSize: isMobile ? '0.85rem' : '0.9rem',
+                              fontWeight: 'bold'
+                            }}>
+                              {trend.transaction_count}
+                            </td>
+                            <td style={{
+                              padding: isMobile ? '10px 12px' : '8px',
+                              textAlign: 'right',
+                              fontSize: isMobile ? '0.85rem' : '0.9rem',
+                              fontWeight: 'bold',
+                              color: '#1976d2'
+                            }}>
+                              {trend.avg_price_per_sqm.toFixed(1)}
+                            </td>
                             {selectedArea && (
-                              <td style={{ padding: '8px', textAlign: 'right' }}>{trend.area_name || selectedArea}</td>
+                              <td style={{
+                                padding: isMobile ? '10px 12px' : '8px',
+                                textAlign: 'right',
+                                fontSize: isMobile ? '0.85rem' : '0.9rem',
+                                whiteSpace: 'nowrap'
+                              }}>
+                                {trend.area_name || selectedArea}
+                              </td>
                             )}
                           </tr>
                         ))}
@@ -602,7 +884,7 @@ const TransactionPricesPage: React.FC = () => {
                 <CardContent>
                   <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
                     <Typography variant="h6">
-                      個別取引一覧（全{filteredTransactions.length}件）
+                      個別取引一覧（{filteredTransactions.length.toLocaleString()}件）
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
                       {startIndex + 1}～{Math.min(endIndex, filteredTransactions.length)}件を表示
@@ -610,149 +892,194 @@ const TransactionPricesPage: React.FC = () => {
                   </Stack>
                   
                   <Box sx={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.9rem' }}>
+                    <table style={{
+                      width: isMobile ? 'auto' : '100%',
+                      borderCollapse: 'collapse',
+                      fontSize: isMobile ? '0.85rem' : '0.9rem'
+                    }}>
                       <thead>
                         <tr style={{ borderBottom: '2px solid #ddd', backgroundColor: '#f5f5f5' }}>
-                          <th style={{ padding: '8px', textAlign: 'center', minWidth: '50px' }}>No.</th>
-                          <th 
-                            style={{ 
-                              padding: '8px', 
-                              textAlign: 'left', 
-                              minWidth: '100px',
+                          {!isMobile && <th style={{ padding: '8px', textAlign: 'center', minWidth: '30px' }}>No.</th>}
+                          <th
+                            style={{
+                              padding: isMobile ? '8px 10px' : '8px',
+                              textAlign: 'left',
+                              minWidth: isMobile ? '50px' : '100px',
                               cursor: 'pointer',
                               userSelect: 'none'
                             }}
                             onClick={() => handleRequestSort('transaction_year')}
                           >
-                            取引時期
+                            {isMobile ? '時期' : '取引時期'}
                             {orderBy === 'transaction_year' && (
-                              <span style={{ marginLeft: '4px' }}>
+                              <span style={{ marginLeft: '2px', fontSize: '0.8em' }}>
                                 {order === 'desc' ? '▼' : '▲'}
                               </span>
                             )}
                           </th>
-                          <th 
-                            style={{ 
-                              padding: '8px', 
-                              textAlign: 'left', 
-                              minWidth: '100px',
+                          <th
+                            style={{
+                              padding: isMobile ? '8px 10px' : '8px',
+                              textAlign: 'left',
                               cursor: 'pointer',
-                              userSelect: 'none'
+                              userSelect: 'none',
+                              whiteSpace: 'nowrap'
                             }}
                             onClick={() => handleRequestSort('area_name')}
                           >
                             エリア
                             {orderBy === 'area_name' && (
-                              <span style={{ marginLeft: '4px' }}>
+                              <span style={{ marginLeft: '2px', fontSize: '0.8em' }}>
                                 {order === 'desc' ? '▼' : '▲'}
                               </span>
                             )}
                           </th>
-                          <th 
-                            style={{ 
-                              padding: '8px', 
-                              textAlign: 'right', 
-                              minWidth: '100px',
+                          <th
+                            style={{
+                              padding: isMobile ? '8px 10px' : '8px',
+                              textAlign: 'right',
+                              minWidth: isMobile ? '55px' : '100px',
                               cursor: 'pointer',
-                              userSelect: 'none'
+                              userSelect: 'none',
+                              whiteSpace: 'nowrap'
                             }}
                             onClick={() => handleRequestSort('transaction_price')}
                           >
-                            取引価格<br/>（万円）
+                            {isMobile ? '価格' : '取引価格'}<br/>
+                            <span style={{ fontSize: '0.8em' }}>(万円)</span>
                             {orderBy === 'transaction_price' && (
-                              <span style={{ marginLeft: '4px' }}>
+                              <span style={{ marginLeft: '2px', fontSize: '0.8em' }}>
                                 {order === 'desc' ? '▼' : '▲'}
                               </span>
                             )}
                           </th>
-                          <th 
-                            style={{ 
-                              padding: '8px', 
+                          <th
+                            style={{
+                              padding: isMobile ? '8px 10px' : '8px',
                               textAlign: 'right',
+                              minWidth: isMobile ? '40px' : '80px',
                               cursor: 'pointer',
                               userSelect: 'none'
                             }}
                             onClick={() => handleRequestSort('price_per_sqm')}
                           >
-                            単価<br/>（万円/㎡）
+                            {isMobile ? '㎡単' : '単価'}<br/>
+                            <span style={{ fontSize: '0.8em' }}>(万)</span>
                             {orderBy === 'price_per_sqm' && (
-                              <span style={{ marginLeft: '4px' }}>
+                              <span style={{ marginLeft: '2px', fontSize: '0.8em' }}>
                                 {order === 'desc' ? '▼' : '▲'}
                               </span>
                             )}
                           </th>
-                          <th 
-                            style={{ 
-                              padding: '8px', 
+                          <th
+                            style={{
+                              padding: isMobile ? '8px 10px' : '8px',
                               textAlign: 'right',
+                              minWidth: isMobile ? '35px' : '70px',
                               cursor: 'pointer',
                               userSelect: 'none'
                             }}
                             onClick={() => handleRequestSort('floor_area')}
                           >
-                            面積<br/>（㎡）
+                            面積<br/>
+                            <span style={{ fontSize: '0.8em' }}>(㎡)</span>
                             {orderBy === 'floor_area' && (
-                              <span style={{ marginLeft: '4px' }}>
+                              <span style={{ marginLeft: '2px', fontSize: '0.8em' }}>
                                 {order === 'desc' ? '▼' : '▲'}
                               </span>
                             )}
                           </th>
-                          <th style={{ padding: '8px', textAlign: 'left' }}>間取り</th>
-                          <th style={{ padding: '8px', textAlign: 'left' }}>最寄駅</th>
-                          <th 
-                            style={{ 
-                              padding: '8px', 
-                              textAlign: 'right',
-                              cursor: 'pointer',
-                              userSelect: 'none'
-                            }}
-                            onClick={() => handleRequestSort('station_distance')}
-                          >
-                            駅距離<br/>（分）
-                            {orderBy === 'station_distance' && (
-                              <span style={{ marginLeft: '4px' }}>
-                                {order === 'desc' ? '▼' : '▲'}
-                              </span>
-                            )}
+                          <th style={{
+                            padding: isMobile ? '8px 10px' : '8px',
+                            textAlign: 'left',
+                            minWidth: isMobile ? '50px' : '60px',
+                            whiteSpace: 'nowrap'
+                          }}>
+                            間取り
                           </th>
-                          <th style={{ padding: '8px', textAlign: 'left' }}>建築年</th>
+                          {!isMobile && <th style={{ padding: '8px', textAlign: 'left' }}>建築年</th>}
                         </tr>
                       </thead>
                       <tbody>
                         {paginatedTransactions.map((transaction, index) => (
-                          <tr key={transaction.id} style={{ 
+                          <tr key={transaction.id} style={{
                             borderBottom: '1px solid #eee',
                             backgroundColor: index % 2 === 0 ? 'white' : '#fafafa'
                           }}>
-                            <td style={{ padding: '8px', textAlign: 'center' }}>
-                              {startIndex + index + 1}
+                            {!isMobile && (
+                              <td style={{ padding: '8px', textAlign: 'center', fontSize: '0.85rem' }}>
+                                {startIndex + index + 1}
+                              </td>
+                            )}
+                            <td style={{
+                              padding: isMobile ? '8px 10px' : '8px',
+                              fontSize: isMobile ? '0.8rem' : '0.9rem',
+                              whiteSpace: 'nowrap'
+                            }}>
+                              {isMobile ?
+                                `${String(transaction.transaction_year).slice(-2)}Q${transaction.transaction_quarter}` :
+                                `${transaction.transaction_year}年Q${transaction.transaction_quarter}`
+                              }
                             </td>
-                            <td style={{ padding: '8px' }}>
-                              {transaction.transaction_year}年Q{transaction.transaction_quarter}
-                            </td>
-                            <td style={{ padding: '8px' }}>{transaction.area_name}</td>
-                            <td style={{ padding: '8px', textAlign: 'right' }}>
+                            <td style={{
+                              padding: isMobile ? '8px 10px' : '8px',
+                              fontSize: isMobile ? '0.8rem' : '0.9rem',
+                              whiteSpace: 'nowrap'
+                            }}>{transaction.area_name}</td>
+                            <td style={{
+                              padding: isMobile ? '8px 10px' : '8px',
+                              textAlign: 'right',
+                              fontSize: isMobile ? '0.8rem' : '0.9rem',
+                              whiteSpace: 'nowrap',
+                              fontWeight: isMobile ? 'bold' : 'normal'
+                            }}>
                               {transaction.transaction_price?.toLocaleString() || '-'}
                             </td>
-                            <td style={{ padding: '8px', textAlign: 'right' }}>
-                              {transaction.price_per_sqm ? 
+                            <td style={{
+                              padding: isMobile ? '8px 10px' : '8px',
+                              textAlign: 'right',
+                              fontSize: isMobile ? '0.8rem' : '0.9rem',
+                              whiteSpace: 'nowrap'
+                            }}>
+                              {transaction.price_per_sqm ?
                                 (transaction.price_per_sqm / 10000).toFixed(1) : '-'}
                             </td>
-                            <td style={{ padding: '8px', textAlign: 'right' }}>
+                            <td style={{
+                              padding: isMobile ? '8px 10px' : '8px',
+                              textAlign: 'right',
+                              fontSize: isMobile ? '0.8rem' : '0.9rem',
+                              whiteSpace: 'nowrap'
+                            }}>
                               {transaction.floor_area?.toFixed(1) || '-'}
                             </td>
-                            <td style={{ padding: '8px' }}>{transaction.layout || '-'}</td>
-                            <td style={{ padding: '8px' }}>{transaction.nearest_station || '-'}</td>
-                            <td style={{ padding: '8px', textAlign: 'right' }}>
-                              {transaction.station_distance || '-'}
+                            <td style={{
+                              padding: isMobile ? '8px 10px' : '8px',
+                              fontSize: isMobile ? '0.8rem' : '0.9rem',
+                              whiteSpace: 'nowrap'
+                            }}>
+                              {(() => {
+                                let layout = transaction.layout || '-';
+                                if (layout !== '-') {
+                                  // 全角英数字を半角に変換
+                                  layout = layout
+                                    .replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+                                    .replace(/[Ａ-Ｚａ-ｚ]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+                                    .replace(/　/g, ' ')
+                                    .replace(/（/g, '(')
+                                    .replace(/）/g, ')');
+                                }
+                                return layout;
+                              })()}
                             </td>
-                            <td style={{ padding: '8px' }}>{transaction.built_year || '-'}</td>
+                            {!isMobile && (
+                              <td style={{ padding: '8px' }}>{transaction.built_year ? `${transaction.built_year}年` : '-'}</td>
+                            )}
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </Box>
-                  
+
                   {totalPages > 1 && (
                     <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
                       <Pagination 

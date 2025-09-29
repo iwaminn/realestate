@@ -695,8 +695,6 @@ class TransactionPrice(Base):
     district_code = Column(String(10))  # 市区町村コード
     district_name = Column(String(50))  # 市区町村名
     area_name = Column(String(100))  # 地区名
-    nearest_station = Column(String(100))  # 最寄駅
-    station_distance = Column(Integer)  # 駅からの距離（分）
 
     # 取引情報
     transaction_price = Column(Integer)  # 取引価格（万円）
@@ -714,7 +712,7 @@ class TransactionPrice(Base):
     floor_area = Column(Float)  # 専有面積（㎡）
     floor_number = Column(String(10))  # 階数
     layout = Column(String(20))  # 間取り
-    built_year = Column(String(20))  # 建築年
+    built_year = Column(Integer)  # 建築年（数値形式）
     building_structure = Column(String(50))  # 建物の構造
     use = Column(String(50))  # 用途
 
@@ -739,7 +737,6 @@ class TransactionPrice(Base):
     __table_args__ = (
         Index('idx_transaction_area_period', 'area_name', 'transaction_period'),
         Index('idx_transaction_type_period', 'property_type', 'transaction_period'),
-        Index('idx_transaction_station', 'nearest_station'),
         Index('idx_transaction_year_quarter', 'transaction_year', 'transaction_quarter'),
     )
 
