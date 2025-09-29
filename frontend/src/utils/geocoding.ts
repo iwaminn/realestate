@@ -88,9 +88,22 @@ export async function getHazardMapUrlFromBuilding(buildingId: number): Promise<s
     console.log(`ハザードマップURL生成: ${hazardMapUrl}`);
     return hazardMapUrl;
   }
-  
-  // 座標が取得できない場合は、デフォルトのハザードマップURLを返す
-  console.warn('座標が取得できなかったため、デフォルトURLを使用');
+
+  // 座標が取得できない場合は、建物情報から住所を取得してURLに含める
+  try {
+    const response = await axios.get(`/api/buildings/${buildingId}`);
+    if (response.data && response.data.address) {
+      const encodedAddress = encodeURIComponent(response.data.address);
+      const hazardMapUrlWithAddress = `https://disaportal.gsi.go.jp/maps/index.html?base=pale&ls=disid_kouzui%2C0.8%7Cdisid_takashio%2C0.8%7Cdisid_doseki%2C0.8%7Cdisid_tsunami%2C0.8&disp=11111&lcd=disid_kouzui&vs=c1j0h0k0l0u0t0z0r0s0m0f1&d=l#address=${encodedAddress}`;
+      console.log(`座標取得失敗、住所パラメータ付きURL生成: ${hazardMapUrlWithAddress}`);
+      return hazardMapUrlWithAddress;
+    }
+  } catch (error) {
+    console.error('建物住所の取得エラー:', error);
+  }
+
+  // 座標も住所も取得できない場合は、デフォルトのハザードマップURLを返す
+  console.warn('座標・住所が取得できなかったため、デフォルトURLを使用');
   return 'https://disaportal.gsi.go.jp/hazardmap/maps/index.html';
 }
 
@@ -101,15 +114,18 @@ export async function getHazardMapUrlFromBuilding(buildingId: number): Promise<s
  */
 export async function getHazardMapUrl(address: string): Promise<string> {
   const coords = await getCoordinatesFromAddress(address);
-  
+
   if (coords) {
     // 座標が取得できた場合は、その位置を中心としたハザードマップURLを生成
     const hazardMapUrl = `https://disaportal.gsi.go.jp/maps/index.html?ll=${coords.lat},${coords.lng}&z=15&base=pale&ls=disid_kouzui%2C0.8%7Cdisid_takashio%2C0.8%7Cdisid_doseki%2C0.8%7Cdisid_tsunami%2C0.8&disp=11111&lcd=disid_kouzui&vs=c1j0h0k0l0u0t0z0r0s0m0f1&d=l`;
     console.log(`ハザードマップURL生成: ${hazardMapUrl}`);
     return hazardMapUrl;
   }
-  
-  // 座標が取得できない場合は、デフォルトのハザードマップURLを返す
-  console.warn('座標が取得できなかったため、デフォルトURLを使用');
-  return 'https://disaportal.gsi.go.jp/hazardmap/maps/index.html';
+
+  // 座標が取得できない場合は、住所検索機能付きのハザードマップURLを返す
+  // 住所をエンコードして検索パラメータとして渡す
+  const encodedAddress = encodeURIComponent(address);
+  const hazardMapUrlWithAddress = `https://disaportal.gsi.go.jp/maps/index.html?base=pale&ls=disid_kouzui%2C0.8%7Cdisid_takashio%2C0.8%7Cdisid_doseki%2C0.8%7Cdisid_tsunami%2C0.8&disp=11111&lcd=disid_kouzui&vs=c1j0h0k0l0u0t0z0r0s0m0f1&d=l#address=${encodedAddress}`;
+  console.log(`座標取得失敗、住所パラメータ付きURL生成: ${hazardMapUrlWithAddress}`);
+  return hazardMapUrlWithAddress;
 }

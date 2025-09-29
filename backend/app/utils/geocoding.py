@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
 座標取得ユーティリティ
-国土地理院のAPIを使用して住所から緯度経度を取得
+東京大学CSISのシンプルジオコーディングAPIを使用して住所から緯度経度を取得
 """
 
 import requests
+import xml.etree.ElementTree as ET
 from typing import Optional, Tuple
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -13,46 +14,56 @@ from ..utils.logger import api_logger
 
 class GeocodingService:
     """座標取得サービス"""
-    
-    # 国土地理院ジオコーディングAPI
-    GSI_API_URL = "https://msearch.gsi.go.jp/address-search/AddressSearch"
+
+    # 東京大学CSISシンプルジオコーディングAPI
+    CSIS_API_URL = "https://geocode.csis.u-tokyo.ac.jp/cgi-bin/simple_geocode.cgi"
     
     @classmethod
     def get_coordinates_from_address(cls, address: str) -> Optional[Tuple[float, float]]:
         """
-        住所から緯度経度を取得
-        
+        住所から緯度経度を取得（東京大学CSISシンプルジオコーディング使用）
+
         Args:
             address: 住所文字列
-            
+
         Returns:
             (latitude, longitude) のタプル、または取得失敗時はNone
         """
         try:
-            # 国土地理院APIにリクエスト
+            # 東京大学CSISシンプルジオコーディングAPIにリクエスト
             response = requests.get(
-                cls.GSI_API_URL,
-                params={"q": address},
+                cls.CSIS_API_URL,
+                params={
+                    "addr": address,
+                    "charset": "UTF8"
+                },
                 timeout=10
             )
             response.raise_for_status()
-            
-            data = response.json()
-            
-            if data and len(data) > 0:
-                # 最初の結果を使用
-                result = data[0]
-                if "geometry" in result and "coordinates" in result["geometry"]:
-                    # GeoJSON形式は[経度, 緯度]の順
-                    lng, lat = result["geometry"]["coordinates"]
+
+            # XMLレスポンスをパース
+            root = ET.fromstring(response.content)
+
+            # 最初の候補を取得
+            candidate = root.find('candidate')
+            if candidate is not None:
+                longitude_elem = candidate.find('longitude')
+                latitude_elem = candidate.find('latitude')
+
+                if longitude_elem is not None and latitude_elem is not None:
+                    lng = float(longitude_elem.text)
+                    lat = float(latitude_elem.text)
                     api_logger.info(f"座標取得成功: {address} -> ({lat}, {lng})")
                     return (lat, lng)
-            
+
             api_logger.warning(f"座標が見つかりませんでした: {address}")
             return None
-            
+
         except requests.RequestException as e:
             api_logger.error(f"ジオコーディングAPIエラー: {e}", exc_info=True)
+            return None
+        except ET.ParseError as e:
+            api_logger.error(f"XMLパースエラー: {e}", exc_info=True)
             return None
         except Exception as e:
             api_logger.error(f"座標取得エラー: {e}", exc_info=True)
@@ -82,10 +93,13 @@ class GeocodingService:
                 api_logger.info(f"建物に住所がありません: ID={building_id}")
                 return False
             
-            # 「号」まで含まれていない場合はスキップ（詳細住所のみ対象）
-            # ただし「-」のみの判定は曖昧なので「号」を優先
+            # 番地情報が含まれているかチェック（より柔軟な判定）
+            # 以下のいずれかのパターンにマッチすれば詳細住所とみなす：
+            # - 1-2 形式（2つの数字、例：2-101）
+            # - 1-2-3 形式（3つ以上の数字、例：2-3-101）
+            # - 「号」が含まれる（例：2丁目3番101号）
             import re
-            if not re.search(r'\d+-\d+-\d+|号', building.address):
+            if not re.search(r'\d+-\d+|号', building.address):
                 api_logger.info(f"詳細住所ではないためスキップ: {building.address}")
                 return False
             

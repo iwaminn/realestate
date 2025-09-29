@@ -140,33 +140,48 @@ async def update_listing_status(
         # 各掲載を非アクティブに更新
         for listing in inactive_listings:
             listing.is_active = False
-            listing.delisted_at = now  # 非掲載日時を設定
+            listing.delisted_at = now
             listing.updated_at = now
             properties_to_update.add(listing.master_property_id)
-            
-            # その物件の他のアクティブな掲載があるか確認
+        
+        # 全掲載が非アクティブになった物件を販売終了とする
+        from ...utils.price_queries import calculate_final_price_for_sold_property
+        
+        for property_id in properties_to_update:
+            # その物件のアクティブな掲載があるか確認
             active_count = db.query(PropertyListing).filter(
-                PropertyListing.master_property_id == listing.master_property_id,
-                PropertyListing.is_active.is_(True),
-                PropertyListing.id != listing.id
+                PropertyListing.master_property_id == property_id,
+                PropertyListing.is_active.is_(True)
             ).count()
             
             # 他にアクティブな掲載がない場合、物件を販売終了とする
             if active_count == 0:
                 master_property = db.query(MasterProperty).filter(
-                    MasterProperty.id == listing.master_property_id
+                    MasterProperty.id == property_id
                 ).first()
                 
                 if master_property and not master_property.sold_at:
-                    master_property.sold_at = now
+                    # 全掲載の最新のdelisted_atを取得
+                    all_listings = db.query(PropertyListing).filter(
+                        PropertyListing.master_property_id == property_id
+                    ).all()
+                    
+                    max_delisted_at = max(
+                        (listing.delisted_at for listing in all_listings if listing.delisted_at),
+                        default=now
+                    )
+                    
+                    master_property.sold_at = max_delisted_at
                     sold_properties.add(master_property.id)
                     
-                    # 最終価格を多数決で決定
+                    # 最終価格を計算
                     try:
-                        updater = MajorityVoteUpdater(db)
-                        updater.update_final_price_by_majority(master_property.id)
+                        final_price = calculate_final_price_for_sold_property(db, property_id)
+                        if final_price:
+                            master_property.final_price = final_price
+                            master_property.final_price_updated_at = now
                     except Exception as e:
-                        print(f"最終価格の更新に失敗: property_id={master_property.id}, error={e}")
+                        print(f"最終価格の更新に失敗: property_id={property_id}, error={e}")
         
         # 影響を受けた全物件の最初の掲載日と価格改定日を更新
         from ...utils.property_utils import update_latest_price_change

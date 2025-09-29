@@ -29,7 +29,6 @@ from ..utils.building_name_normalizer import (
     extract_room_number as extract_room_number_common
 )
 from ..utils.property_utils import update_earliest_listing_date
-from ..utils.price_queries import calculate_final_price_for_sold_property
 
 # BuildingListingNameManagerは循環インポートを避けるため遅延インポート
 from ..utils.exceptions import TaskPausedException, TaskCancelledException, MaintenanceException
@@ -1545,72 +1544,11 @@ class BaseScraper(ABC):
             if unaccounted > 0:
                 self.log_warning(f'詳細取得したが統計に含まれていない物件が{unaccounted}件あります')
         
-        # 販売終了物件を自動マーク
-        self._mark_sold_properties(area_code)
-        
         self.logger.info(f"[DEBUG] scrape_area終了、結果を返却")
         debug_log(f"[{self.source_site}] scrape_area終了、結果を返却")
         
         return result
     
-    def _mark_sold_properties(self, area_code: str):
-        """全掲載が非アクティブになった物件をsold状態にマークし、最終価格を計算"""
-        self.logger.info(f"販売終了物件の確認開始: エリア={area_code}")
-        
-        sold_count = 0
-        db = SessionLocal()
-        
-        try:
-            properties = db.query(MasterProperty).join(
-                PropertyListing, MasterProperty.id == PropertyListing.master_property_id
-            ).filter(
-                PropertyListing.area_code == area_code,
-                MasterProperty.sold_at.is_(None)
-            ).distinct().all()
-            
-            for prop in properties:
-                active_listings = db.query(PropertyListing).filter(
-                    PropertyListing.master_property_id == prop.id,
-                    PropertyListing.is_active == True
-                ).count()
-                
-                if active_listings == 0:
-                    all_listings = db.query(PropertyListing).filter(
-                        PropertyListing.master_property_id == prop.id
-                    ).all()
-                    
-                    if not all_listings:
-                        continue
-                    
-                    max_delisted_at = max(
-                        (listing.delisted_at for listing in all_listings if listing.delisted_at),
-                        default=None
-                    )
-                    
-                    if max_delisted_at:
-                        prop.sold_at = max_delisted_at
-                        
-                        final_price = calculate_final_price_for_sold_property(db, prop.id)
-                        if final_price:
-                            prop.final_price = final_price
-                            self.logger.info(f"物件ID={prop.id}を販売終了にマーク: sold_at={max_delisted_at}, final_price={final_price}万円")
-                        else:
-                            self.logger.warning(f"物件ID={prop.id}を販売終了にマーク: sold_at={max_delisted_at}, final_price計算不可")
-                        
-                        sold_count += 1
-            
-            if sold_count > 0:
-                db.commit()
-                self.logger.info(f"販売終了物件のマーク完了: {sold_count}件")
-            else:
-                self.logger.info(f"販売終了物件なし")
-                
-        except Exception as e:
-            self.logger.error(f"販売終了物件のマーク処理でエラー: {str(e)}")
-            db.rollback()
-        finally:
-            db.close()
-
     def _check_resume_state(self) -> Tuple[List[Dict[str, Any]], int, bool]:
         """再開時の状態をチェックし、適切な状態を返す"""
         self.logger.info(f"[DEBUG] 再開チェック: phase={self._get_stat('phase')}, collected={len(self._collected_properties)}, page={self._current_page}, processed={self._processed_count}")
