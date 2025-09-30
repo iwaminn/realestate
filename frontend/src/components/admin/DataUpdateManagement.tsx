@@ -32,6 +32,7 @@ import {
   Warning as WarningIcon,
   Refresh as RefreshIcon,
   TrendingUp as TrendingUpIcon,
+  Assessment as AssessmentIcon,
 } from '@mui/icons-material';
 import axios from 'axios';
 
@@ -59,6 +60,16 @@ interface ListingStats {
   oldest_unchecked_date: string | null;
 }
 
+interface TransactionPriceStats {
+  total_count: number;
+  latest_year: number | null;
+  latest_quarter: number | null;
+  oldest_year: number | null;
+  oldest_quarter: number | null;
+  recent_30days_count: number;
+  area_count: number;
+}
+
 export const DataUpdateManagement: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [queueStatus, setQueueStatus] = useState<QueueStatus | null>(null);
@@ -75,6 +86,8 @@ export const DataUpdateManagement: React.FC = () => {
     inactive_listings?: number;
     sold_properties?: number;
   } | null>(null);
+  const [transactionPriceStats, setTransactionPriceStats] = useState<TransactionPriceStats | null>(null);
+  const [updatingTransactionPrices, setUpdatingTransactionPrices] = useState(false);
 
   // キューステータスを取得
   const fetchQueueStatus = async () => {
@@ -106,18 +119,30 @@ export const DataUpdateManagement: React.FC = () => {
     }
   };
 
+  // 成約価格統計を取得
+  const fetchTransactionPriceStats = async () => {
+    try {
+      const response = await axios.get('/api/admin/transaction-prices/stats');
+      setTransactionPriceStats(response.data);
+    } catch (error) {
+      console.error('成約価格統計の取得に失敗:', error);
+    }
+  };
+
   useEffect(() => {
     fetchQueueStatus();
     fetchCacheStats();
     fetchListingStats();
-    
+    fetchTransactionPriceStats();
+
     // 定期的に更新
     const interval = setInterval(() => {
       fetchQueueStatus();
       fetchCacheStats();
       fetchListingStats();
+      fetchTransactionPriceStats();
     }, 30000); // 30秒ごと
-    
+
     return () => clearInterval(interval);
   }, []);
 
@@ -214,6 +239,34 @@ export const DataUpdateManagement: React.FC = () => {
       });
     } finally {
       setUpdatingListingStatus(false);
+    }
+  };
+
+  // 成約価格情報を更新
+  const updateTransactionPrices = async (mode: 'update' | 'full' = 'update') => {
+    if (!confirm(`成約価格情報を${mode === 'full' ? '全期間' : '最新データのみ'}更新しますか？\n更新には数分かかる場合があります。`)) {
+      return;
+    }
+
+    setUpdatingTransactionPrices(true);
+
+    try {
+      const response = await axios.post('/api/admin/transaction-prices/update', null, {
+        params: { mode }
+      });
+      setMessage({
+        type: 'success',
+        text: response.data.message
+      });
+      // 統計を再取得
+      await fetchTransactionPriceStats();
+    } catch (error) {
+      setMessage({
+        type: 'error',
+        text: '成約価格情報の更新に失敗しました'
+      });
+    } finally {
+      setUpdatingTransactionPrices(false);
     }
   };
 
@@ -445,6 +498,124 @@ export const DataUpdateManagement: React.FC = () => {
               </Card>
             </Grid>
           )}
+        </Grid>
+      </Box>
+
+      {/* 成約価格情報セクション */}
+      <Box sx={{ mb: 4 }}>
+        <Typography variant="h6" sx={{ mb: 2, display: 'flex', alignItems: 'center' }}>
+          <AssessmentIcon sx={{ mr: 1 }} color="info" />
+          成約価格情報管理
+        </Typography>
+
+        <Grid container spacing={3}>
+          {/* 更新ボタンカード */}
+          <Grid item xs={12} md={6}>
+            <Card sx={{ height: '100%' }}>
+              <CardContent>
+                <Typography variant="subtitle1" gutterBottom fontWeight="bold">
+                  成約価格情報の更新
+                </Typography>
+                <Typography variant="body2" color="text.secondary" paragraph>
+                  国土交通省の不動産情報ライブラリAPIから最新の成約価格データを取得します。
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  • 最新データのみ：直近の四半期のみ取得（推奨）
+                </Typography>
+                <Typography variant="body2" color="text.secondary">
+                  • 全期間：すべての期間のデータを再取得
+                </Typography>
+              </CardContent>
+              <CardActions>
+                <Button
+                  variant="contained"
+                  color="info"
+                  onClick={() => updateTransactionPrices('update')}
+                  disabled={updatingTransactionPrices || loading}
+                  startIcon={updatingTransactionPrices ? <CircularProgress size={20} /> : <AssessmentIcon />}
+                  sx={{ mr: 1 }}
+                >
+                  最新データを更新
+                </Button>
+                <Button
+                  variant="outlined"
+                  color="info"
+                  onClick={() => updateTransactionPrices('full')}
+                  disabled={updatingTransactionPrices || loading}
+                  size="small"
+                >
+                  全期間更新
+                </Button>
+              </CardActions>
+            </Card>
+          </Grid>
+
+          {/* 統計情報カード */}
+          <Grid item xs={12} md={6}>
+            {transactionPriceStats && (
+              <Card sx={{ height: '100%' }}>
+                <CardContent>
+                  <Typography variant="subtitle1" gutterBottom fontWeight="bold">
+                    成約価格統計
+                  </Typography>
+                  <Box sx={{ mt: 2 }}>
+                    <Grid container spacing={2}>
+                      <Grid item xs={6}>
+                        <Tooltip title="データベースに保存されている成約価格レコードの総数" arrow>
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">
+                              総件数
+                            </Typography>
+                            <Typography variant="h6">
+                              {transactionPriceStats.total_count.toLocaleString()}件
+                            </Typography>
+                          </Box>
+                        </Tooltip>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Tooltip title="データベースに含まれる最新の成約時期" arrow>
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">
+                              最新データ
+                            </Typography>
+                            <Typography variant="body2">
+                              {transactionPriceStats.latest_year && transactionPriceStats.latest_quarter
+                                ? `${transactionPriceStats.latest_year}年Q${transactionPriceStats.latest_quarter}`
+                                : '-'}
+                            </Typography>
+                          </Box>
+                        </Tooltip>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Tooltip title="過去30日以内に取得された成約価格データの件数" arrow>
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">
+                              直近30日追加
+                            </Typography>
+                            <Typography variant="h6">
+                              {transactionPriceStats.recent_30days_count.toLocaleString()}件
+                            </Typography>
+                          </Box>
+                        </Tooltip>
+                      </Grid>
+                      <Grid item xs={6}>
+                        <Tooltip title="成約データが存在するエリア（町名）の総数" arrow>
+                          <Box>
+                            <Typography variant="body2" color="text.secondary">
+                              対象エリア数
+                            </Typography>
+                            <Typography variant="h6">
+                              {transactionPriceStats.area_count}エリア
+                            </Typography>
+                          </Box>
+                        </Tooltip>
+                      </Grid>
+                    </Grid>
+                  </Box>
+                </CardContent>
+              </Card>
+            )}
+          </Grid>
         </Grid>
       </Box>
 

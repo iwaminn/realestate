@@ -21,6 +21,7 @@ from .api import admin_buildings
 from .api import admin_matching
 from .api import admin_schedules
 from .api import admin_users
+from .api import admin_transaction_prices
 from .api.admin import price_changes as admin_price_changes
 from .api import properties
 from .api import properties_recent_updates
@@ -100,6 +101,7 @@ app.include_router(admin_buildings.router)
 app.include_router(admin_matching.router)
 app.include_router(admin_schedules.router)
 app.include_router(admin_users.router, prefix="/api/admin", tags=["admin-users"])
+app.include_router(admin_transaction_prices.router, prefix="/api", tags=["admin-transaction-prices"])
 app.include_router(admin_price_changes.router, prefix="/api", tags=["admin-price-changes"])
 app.include_router(properties_recent_updates.router)  # より具体的なパスを先に登録
 app.include_router(properties.router)
