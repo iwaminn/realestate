@@ -253,6 +253,7 @@ async def get_building_properties(
     if not include_inactive:
         query = query.filter(MasterProperty.sold_at.is_(None))
         query = query.filter(price_subquery.c.master_property_id.isnot(None))
+        query = query.filter(price_subquery.c.has_active_listing == True)
     
     # 階数でソート
     query = query.order_by(

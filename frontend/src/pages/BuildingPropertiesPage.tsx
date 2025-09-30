@@ -203,9 +203,12 @@ const BuildingPropertiesPage: React.FC = () => {
           const avgPricePerTsubo = pricePerTsubos.length > 0
             ? pricePerTsubos.reduce((a, b) => a + b, 0) / pricePerTsubos.length
             : 0;
-          
+
+          // 販売中の物件数をカウント（sold_atがnullかつhas_active_listingがtrueの物件のみ）
+          const activeUnitsCount = response.properties.filter(p => !p.sold_at && p.has_active_listing).length;
+
           setStats({
-            total_units: response.properties.length,
+            total_units: activeUnitsCount,
             price_range: {
               min: Math.min(...prices),
               max: Math.max(...prices),
@@ -220,8 +223,11 @@ const BuildingPropertiesPage: React.FC = () => {
           });
         } else {
           // 価格や面積情報がない場合でも建物情報は表示
+          // 販売中の物件数をカウント（sold_atがnullかつhas_active_listingがtrueの物件のみ）
+          const activeUnitsCount = response.properties.filter(p => !p.sold_at && p.has_active_listing).length;
+
           setStats({
-            total_units: response.properties.length,
+            total_units: activeUnitsCount,
             price_range: {
               min: 0,
               max: 0,
