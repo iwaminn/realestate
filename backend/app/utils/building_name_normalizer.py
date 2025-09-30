@@ -85,13 +85,13 @@ def normalize_building_name(building_name: str) -> str:
     # 装飾記号をスペースに変換（●■★◆▲◇□◎○△▽♪など）
     # 保持する記号: 英数字、日本語、・（中点）、&、-、~、括弧、スペース
     import string
-    allowed_chars = set(string.ascii_letters + string.digits + '・&-~()[] 　')
+    allowed_chars = set(string.ascii_letters + string.digits + '・&-~()[] 　々')  # 々を追加
     # 日本語文字の範囲を追加（ひらがな、カタカナ、漢字）
     result = []
     for char in normalized:
         if char in allowed_chars:
             result.append(char)
-        elif '\u3040' <= char <= '\u9fff':  # 日本語文字の範囲
+        elif '\u3000' <= char <= '\u9fff':  # 日本語文字の範囲（U+3000から開始して々を含む）
             result.append(char)
         elif '\uff00' <= char <= '\uffef':  # 全角記号の一部（全角英数字など）
             result.append(char)
@@ -324,7 +324,9 @@ def canonicalize_building_name(building_name: str) -> str:
         # 中点（・）は除外して、日本語文字のみを残す
         elif char == '・':
             continue  # 中点は削除
-        elif '\u3040' <= char <= '\u9fff':  # 日本語文字の範囲
+        elif char == '々':  # 繰り返し記号は保持
+            result.append(char)
+        elif '\u3000' <= char <= '\u9fff':  # 日本語文字の範囲（U+3000から開始）
             result.append(char)
         # それ以外の文字（記号、スペース等）は削除
     
