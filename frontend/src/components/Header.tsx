@@ -51,7 +51,7 @@ const Header: React.FC = () => {
     { text: '物件検索', icon: <SearchIcon />, path: '/' },
     { text: 'ブックマーク', icon: <BookmarkIcon />, path: '/bookmarks' },
     { text: '更新情報', icon: <UpdateIcon />, path: '/updates' },
-    { text: '取引価格', icon: <TrendingUpIcon />, path: '/transaction-prices' },
+    { text: '成約価格', icon: <TrendingUpIcon />, path: '/transaction-prices' },
     { text: '管理画面', icon: <AdminPanelSettingsIcon />, path: '/admin' },
   ];
 
@@ -90,7 +90,7 @@ const Header: React.FC = () => {
                 更新情報
               </Button>
               <Button color="inherit" onClick={() => navigate('/transaction-prices')}>
-                取引価格
+                成約価格
               </Button>
               <Button color="inherit" onClick={() => navigate('/admin')}>
                 管理画面
