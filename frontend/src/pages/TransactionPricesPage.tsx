@@ -18,6 +18,7 @@ import {
   Stack,
   useMediaQuery,
   useTheme,
+  Button,
 } from '@mui/material';
 import {
   Chart as ChartJS,
@@ -73,6 +74,7 @@ interface PriceTrendData {
   quarter: number;
   avg_price_per_sqm: number;
   transaction_count: number;
+  area_name?: string;
 }
 
 type OrderBy = 'transaction_year' | 'area_name' | 'transaction_price' | 'price_per_sqm' | 'floor_area';
@@ -81,7 +83,8 @@ type Order = 'asc' | 'desc';
 const TransactionPricesPage: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
-  const [loading, setLoading] = useState(false);
+  const [statsLoading, setStatsLoading] = useState(false);
+  const [transactionsLoading, setTransactionsLoading] = useState(false);
   const [areas, setAreas] = useState<string[]>([]);
   const [areasByDistrict, setAreasByDistrict] = useState<{[key: string]: string[]}>({});
   const [selectedDistrict, setSelectedDistrict] = useState<string>('');
@@ -94,6 +97,7 @@ const TransactionPricesPage: React.FC = () => {
   const [areaStats, setAreaStats] = useState<AreaStatistics[]>([]);
   const [priceTrends, setPriceTrends] = useState<PriceTrendData[]>([]);
   const [areaSpecificTrends, setAreaSpecificTrends] = useState<{[key: string]: PriceTrendData[]}>({});
+  const [top5DistrictTrends, setTop5DistrictTrends] = useState<{[key: string]: PriceTrendData[]}>({});
   const [transactions, setTransactions] = useState<TransactionData[]>([]);
   const [sizeTrends, setSizeTrends] = useState<any[]>([]);
   const [ageTrends, setAgeTrends] = useState<any[]>([]);
@@ -101,6 +105,8 @@ const TransactionPricesPage: React.FC = () => {
   const [rowsPerPage] = useState<number>(50);
   const [orderBy, setOrderBy] = useState<OrderBy>('transaction_year');
   const [order, setOrder] = useState<Order>('desc');
+  const [totalTransactions, setTotalTransactions] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(0);
 
   // 並び替えハンドラー
   const handleRequestSort = (property: OrderBy) => {
@@ -108,6 +114,11 @@ const TransactionPricesPage: React.FC = () => {
     setOrder(isAsc ? 'desc' : 'asc');
     setOrderBy(property);
     setCurrentPage(1); // 並び替え時はページを1に戻す
+  };
+
+  // ページ変更ハンドラー
+  const handlePageChange = (event: React.ChangeEvent<unknown>, value: number) => {
+    setCurrentPage(value);
   };
 
   // エリア一覧を取得
@@ -130,38 +141,73 @@ const TransactionPricesPage: React.FC = () => {
   // データを取得
   useEffect(() => {
     const fetchData = async () => {
-      setLoading(true);
+      setStatsLoading(true);
       try {
-        // エリア統計
-        const statsParams: any = {};
-        if (selectedYear) statsParams.year = selectedYear;
+        // 共通パラメータ（期間フィルター）
+        const periodParams: any = {
+          start_year: startYear,
+          start_quarter: startQuarter,
+          end_year: endYear,
+          end_quarter: endQuarter
+        };
 
-        const [statsRes, trendsRes, transactionsRes, sizeTrendsRes, ageTrendsRes] = await Promise.all([
+        // エリア統計用パラメータ
+        const statsParams: any = { ...periodParams };
+
+        // グラフ用のパラメータ
+        const trendParams: any = { ...periodParams };
+        if (selectedArea) {
+          trendParams.area = selectedArea;
+        } else if (selectedDistrict) {
+          trendParams.district = selectedDistrict;
+        }
+
+        // 広さ別・築年別用パラメータ
+        const sizeTrendsParams: any = { ...periodParams };
+        const ageTrendsParams: any = { ...periodParams };
+        if (selectedDistrict && !selectedArea) {
+          sizeTrendsParams.district = selectedDistrict;
+          ageTrendsParams.district = selectedDistrict;
+        }
+
+        const [statsRes, trendsRes, sizeTrendsRes, ageTrendsRes] = await Promise.all([
           axios.get('/api/transaction-prices/statistics/by-area', { params: statsParams }),
-          axios.get('/api/transaction-prices/trends', {
-            params: selectedArea ? { area: selectedArea } : {}
-          }),
-          axios.get('/api/transaction-prices/transactions', {
-            params: {
-              ...(selectedArea && { area: selectedArea }),
-              ...(selectedYear && { year: selectedYear }),
-            }
-          }),
-          axios.get('/api/transaction-prices/trends-by-size'),
-          axios.get('/api/transaction-prices/trends-by-age')
+          axios.get('/api/transaction-prices/trends', { params: trendParams }),
+          axios.get('/api/transaction-prices/trends-by-size', { params: sizeTrendsParams }),
+          axios.get('/api/transaction-prices/trends-by-age', { params: ageTrendsParams })
         ]);
 
         setAreaStats(statsRes.data);
         setPriceTrends(trendsRes.data);
-        setTransactions(transactionsRes.data);
         setSizeTrends(sizeTrendsRes.data);
         setAgeTrends(ageTrendsRes.data);
 
-        // 上位5エリアの時系列データを取得
-        if (statsRes.data.length > 0 && !selectedArea) {
+        // 区で絞り込んでいない場合、都心5区の推移データを取得
+        if (!selectedDistrict && !selectedArea) {
+          const top5Districts = ['千代田区', '中央区', '港区', '新宿区', '渋谷区'];
+          const districtPromises = top5Districts.map((district: string) =>
+            axios.get('/api/transaction-prices/trends', {
+              params: { district, ...periodParams }
+            })
+          );
+
+          const districtResults = await Promise.all(districtPromises);
+          const trendsMap: {[key: string]: PriceTrendData[]} = {};
+
+          top5Districts.forEach((district: string, index: number) => {
+            trendsMap[district] = districtResults[index].data;
+          });
+
+          setTop5DistrictTrends(trendsMap);
+        } else {
+          setTop5DistrictTrends({});
+        }
+
+        // 上位5エリアの時系列データを取得（区選択時のみ）
+        if (statsRes.data.length > 0 && !selectedArea && selectedDistrict) {
           const topAreaNames = statsRes.data.slice(0, 5).map((s: AreaStatistics) => s.area_name);
           const areaPromises = topAreaNames.map((area: string) =>
-            axios.get('/api/transaction-prices/trends', { params: { area } })
+            axios.get('/api/transaction-prices/trends', { params: { area, ...periodParams } })
           );
 
           const areaResults = await Promise.all(areaPromises);
@@ -172,15 +218,56 @@ const TransactionPricesPage: React.FC = () => {
           });
 
           setAreaSpecificTrends(trendsMap);
+        } else {
+          setAreaSpecificTrends({});
         }
       } catch (error) {
         console.error('データ取得エラー:', error);
       } finally {
-        setLoading(false);
+        setStatsLoading(false);
       }
     };
     fetchData();
-  }, [selectedArea, selectedYear, startYear, startQuarter, endYear, endQuarter]);
+  }, [selectedArea, selectedDistrict, startYear, startQuarter, endYear, endQuarter]);
+
+  // 個別取引データを取得（ページネーション対応）
+  useEffect(() => {
+    const fetchTransactions = async () => {
+      setTransactionsLoading(true);
+      try {
+        const params: any = {
+          page: currentPage,
+          page_size: rowsPerPage,
+          order_by: orderBy,
+          order: order
+        };
+
+        // フィルターパラメータ
+        if (selectedArea) params.area = selectedArea;
+        if (selectedDistrict && !selectedArea) params.district = selectedDistrict;
+        if (selectedYear) params.year = selectedYear;
+        if (startYear) params.start_year = startYear;
+        if (startQuarter) params.start_quarter = startQuarter;
+        if (endYear) params.end_year = endYear;
+        if (endQuarter) params.end_quarter = endQuarter;
+
+        const response = await axios.get('/api/transaction-prices/transactions', { params });
+
+        setTransactions(response.data.data || []);
+        setTotalTransactions(response.data.total || 0);
+        setTotalPages(response.data.total_pages || 0);
+      } catch (error) {
+        console.error('取引データ取得エラー:', error);
+        setTransactions([]);
+        setTotalTransactions(0);
+        setTotalPages(0);
+      } finally {
+        setTransactionsLoading(false);
+      }
+    };
+
+    fetchTransactions();
+  }, [selectedArea, selectedDistrict, selectedYear, startYear, startQuarter, endYear, endQuarter, currentPage, rowsPerPage, orderBy, order]);
 
   // 区選択ハンドラー
   const handleDistrictChange = (event: SelectChangeEvent<string>) => {
@@ -245,242 +332,13 @@ const TransactionPricesPage: React.FC = () => {
     }
   };
 
-  // 期間でデータをフィルタリング
-  const filterByPeriod = (data: any[]) => {
-
-    return data.filter(d => {
-      const dYear = d.year || d.transaction_year;
-      const dQuarter = d.quarter || d.transaction_quarter;
-      
-      if (!dYear || !dQuarter) return false;
-
-      const startValue = startYear * 4 + startQuarter;
-      const endValue = endYear * 4 + endQuarter;
-      const dataValue = dYear * 4 + dQuarter;
-
-      return dataValue >= startValue && dataValue <= endValue;
-    });
-  };
-
-  // 区選択によるエリアフィルター関数
-  const filterByDistrict = (data: any[]) => {
-    // 区が選択されていない場合はすべて表示
-    if (!selectedDistrict) return data;
-    
-    // 選択された区のエリアリストを取得
-    const districtAreas = areasByDistrict[selectedDistrict] || [];
-    
-    // データのエリアが選択された区に含まれているか確認
-    return data.filter(d => {
-      const areaName = d.area_name;
-      // area_nameがnullまたはundefinedの場合（全体集計データ）は、
-      // 区選択時は表示しない
-      if (!areaName) return false;
-      return districtAreas.includes(areaName);
-    });
-  };
-
-  // 区選択時は個別取引データから価格推移を再計算
-  const calculateDistrictTrends = () => {
-    if (!selectedDistrict || !transactions.length) return priceTrends;
-    
-    const districtAreas = areasByDistrict[selectedDistrict] || [];
-    const districtTransactions = transactions.filter(t => districtAreas.includes(t.area_name));
-    
-    // 期間ごとにグループ化して集計
-    const trendMap = new Map<string, { sum: number; count: number; sumPrice: number }>();
-    
-    districtTransactions.forEach(t => {
-      if (!t.price_per_sqm || !t.transaction_year || !t.transaction_quarter) return;
-      
-      const key = `${t.transaction_year}-${t.transaction_quarter}`;
-      const existing = trendMap.get(key) || { sum: 0, count: 0, sumPrice: 0 };
-      
-      trendMap.set(key, {
-        sum: existing.sum + t.price_per_sqm,
-        count: existing.count + 1,
-        sumPrice: existing.sumPrice + (t.transaction_price || 0)
-      });
-    });
-    
-    // MapをPriceTrendDataの配列に変換
-    const trends: PriceTrendData[] = [];
-    trendMap.forEach((value, key) => {
-      const [year, quarter] = key.split('-').map(Number);
-      trends.push({
-        year,
-        quarter,
-        avg_price_per_sqm: value.sum / value.count / 10000, // 万円/㎡に変換
-        transaction_count: value.count
-      });
-    });
-    
-    // 年・四半期順にソート
-    return trends.sort((a, b) => {
-      const aValue = a.year * 4 + a.quarter;
-      const bValue = b.year * 4 + b.quarter;
-      return aValue - bValue;
-    });
-  };
-  
-  // 区選択時は広さ別データも再計算
-  const calculateDistrictSizeTrends = () => {
-    if (!selectedDistrict || !transactions.length) return sizeTrends;
-    
-    const districtAreas = areasByDistrict[selectedDistrict] || [];
-    const districtTransactions = transactions.filter(t => districtAreas.includes(t.area_name));
-    
-    // 広さカテゴリーの定義
-    const sizeCategories = [
-      { name: "20㎡未満", min: 0, max: 20 },
-      { name: "20-40㎡", min: 20, max: 40 },
-      { name: "40-60㎡", min: 40, max: 60 },
-      { name: "60-80㎡", min: 60, max: 80 },
-      { name: "80-100㎡", min: 80, max: 100 },
-      { name: "100㎡以上", min: 100, max: 999 }
-    ];
-    
-    const results: any[] = [];
-    
-    // カテゴリーごとに集計
-    sizeCategories.forEach(category => {
-      const categoryMap = new Map<string, { sum: number; count: number }>();
-      
-      districtTransactions.forEach(t => {
-        if (!t.price_per_sqm || !t.floor_area || !t.transaction_year || !t.transaction_quarter) return;
-        if (t.floor_area < category.min || t.floor_area >= category.max) return;
-        
-        const key = `${t.transaction_year}-${t.transaction_quarter}`;
-        const existing = categoryMap.get(key) || { sum: 0, count: 0 };
-        
-        categoryMap.set(key, {
-          sum: existing.sum + t.price_per_sqm,
-          count: existing.count + 1
-        });
-      });
-      
-      categoryMap.forEach((value, key) => {
-        const [year, quarter] = key.split('-').map(Number);
-        results.push({
-          category: category.name,
-          year,
-          quarter,
-          avg_price_per_sqm: value.sum / value.count / 10000,
-          transaction_count: value.count
-        });
-      });
-    });
-    
-    return results;
-  };
-  
-  // 区選択時は築年別データも再計算
-  const calculateDistrictAgeTrends = () => {
-    if (!selectedDistrict || !transactions.length) return ageTrends;
-    
-    const districtAreas = areasByDistrict[selectedDistrict] || [];
-    const districtTransactions = transactions.filter(t => districtAreas.includes(t.area_name));
-    
-    // 築年カテゴリーの定義
-    const ageCategories = [
-      { name: "築5年以内", min: 0, max: 5 },
-      { name: "築5-10年", min: 5, max: 10 },
-      { name: "築10-15年", min: 10, max: 15 },
-      { name: "築15-20年", min: 15, max: 20 },
-      { name: "築20年超", min: 20, max: 100 }
-    ];
-    
-    const results: any[] = [];
-    
-    // カテゴリーごとに集計
-    ageCategories.forEach(category => {
-      const categoryMap = new Map<string, { sum: number; count: number }>();
-      
-      districtTransactions.forEach(t => {
-        if (!t.price_per_sqm || !t.built_year || !t.transaction_year || !t.transaction_quarter) return;
-        
-        const age = t.transaction_year - t.built_year;
-        if (age < category.min || age >= category.max) return;
-        
-        const key = `${t.transaction_year}-${t.transaction_quarter}`;
-        const existing = categoryMap.get(key) || { sum: 0, count: 0 };
-        
-        categoryMap.set(key, {
-          sum: existing.sum + t.price_per_sqm,
-          count: existing.count + 1
-        });
-      });
-      
-      categoryMap.forEach((value, key) => {
-        const [year, quarter] = key.split('-').map(Number);
-        results.push({
-          category: category.name,
-          year,
-          quarter,
-          avg_price_per_sqm: value.sum / value.count / 10000,
-          transaction_count: value.count
-        });
-      });
-    });
-    
-    return results;
-  };
-  
-  // フィルタリング済みデータ（期間と区の両方でフィルター）
-  const districtPriceTrends = selectedDistrict ? calculateDistrictTrends() : priceTrends;
-  const districtSizeTrends = selectedDistrict ? calculateDistrictSizeTrends() : sizeTrends;
-  const districtAgeTrends = selectedDistrict ? calculateDistrictAgeTrends() : ageTrends;
-  
-  const filteredPriceTrends = filterByPeriod(districtPriceTrends);
-  const filteredTransactions = filterByDistrict(filterByPeriod(transactions));
-  const filteredSizeTrends = filterByPeriod(districtSizeTrends);
-  const filteredAgeTrends = filterByPeriod(districtAgeTrends);
+  // バックエンドで期間フィルタリング済みのため、フロントエンドでの追加フィルタリングは不要
 
 
 
-  // ソート済みデータ
-  const sortedTransactions = [...filteredTransactions].sort((a, b) => {
-    let aValue: any;
-    let bValue: any;
-
-    switch (orderBy) {
-      case 'transaction_year':
-        aValue = a.transaction_year * 10 + a.transaction_quarter;
-        bValue = b.transaction_year * 10 + b.transaction_quarter;
-        break;
-      case 'area_name':
-        aValue = a.area_name || '';
-        bValue = b.area_name || '';
-        break;
-      case 'transaction_price':
-        aValue = a.transaction_price || 0;
-        bValue = b.transaction_price || 0;
-        break;
-      case 'price_per_sqm':
-        aValue = a.price_per_sqm || 0;
-        bValue = b.price_per_sqm || 0;
-        break;
-      case 'floor_area':
-        aValue = a.floor_area || 0;
-        bValue = b.floor_area || 0;
-        break;
-
-      default:
-        return 0;
-    }
-
-    if (order === 'asc') {
-      return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
-    } else {
-      return aValue > bValue ? -1 : aValue < bValue ? 1 : 0;
-    }
-  });
-
-  // ページング計算
-  const totalPages = Math.ceil(sortedTransactions.length / rowsPerPage);
+  // 表示用のインデックス計算
   const startIndex = (currentPage - 1) * rowsPerPage;
-  const endIndex = startIndex + rowsPerPage;
-  const paginatedTransactions = sortedTransactions.slice(startIndex, endIndex);
+  const endIndex = Math.min(startIndex + rowsPerPage, totalTransactions);
 
 
 
@@ -491,25 +349,55 @@ const TransactionPricesPage: React.FC = () => {
 
   // 価格推移チャートのデータ
   const trendChartData = {
-    labels: filteredPriceTrends.map(d => `${d.year}年Q${d.quarter}`),
+    labels: priceTrends.map(d => `${d.year}年Q${d.quarter}`),
     datasets: [
       {
-        label: '平均価格（万円/㎡）',
-        data: filteredPriceTrends.map(d => d.avg_price_per_sqm),
+        label: selectedArea ? selectedArea : selectedDistrict ? `${selectedDistrict}平均` : '全体平均',
+        data: priceTrends.map(d => d.avg_price_per_sqm),
         borderColor: 'rgb(75, 192, 192)',
         backgroundColor: 'rgba(75, 192, 192, 0.5)',
+        borderWidth: 3,
         tension: 0.1,
-      }
+      },
+      // 都心5区の推移（区で絞り込んでいない場合のみ表示）
+      ...(!selectedDistrict && !selectedArea && Object.keys(top5DistrictTrends).length > 0
+        ? Object.entries(top5DistrictTrends).map(([district, trends], index) => {
+            const colors = [
+              'rgba(255, 99, 132, 1)',    // 千代田区 - 赤
+              'rgba(54, 162, 235, 1)',    // 中央区 - 青
+              'rgba(255, 206, 86, 1)',    // 港区 - 黄
+              'rgba(153, 102, 255, 1)',   // 新宿区 - 紫
+              'rgba(255, 159, 64, 1)',    // 渋谷区 - オレンジ
+            ];
+
+            const dataMap = new Map(
+              trends.map(t => [`${t.year}Q${t.quarter}`, t.avg_price_per_sqm])
+            );
+
+            return {
+              label: district,
+              data: priceTrends.map(d => {
+                const key = `${d.year}Q${d.quarter}`;
+                return dataMap.get(key) || null;
+              }),
+              borderColor: colors[index % colors.length],
+              backgroundColor: colors[index % colors.length].replace('1)', '0.2)'),
+              borderWidth: 2,
+              borderDash: [5, 5],  // 点線
+              tension: 0.1,
+            };
+          })
+        : [])
     ]
   };
 
   // 取引件数推移チャートのデータ
   const volumeChartData = {
-    labels: filteredPriceTrends.map(d => `${d.year}年Q${d.quarter}`),
+    labels: priceTrends.map(d => `${d.year}年Q${d.quarter}`),
     datasets: [
       {
         label: '取引件数',
-        data: filteredPriceTrends.map(d => d.transaction_count),
+        data: priceTrends.map(d => d.transaction_count),
         backgroundColor: 'rgba(54, 162, 235, 0.5)',
         borderColor: 'rgba(54, 162, 235, 1)',
         borderWidth: 1,
@@ -520,9 +408,9 @@ const TransactionPricesPage: React.FC = () => {
 
 
   // 広さ別価格推移チャート
-  const sizeCategories = [...new Set(filteredSizeTrends.map(d => d.category))];
+  const sizeCategories = [...new Set(sizeTrends.map(d => d.category))];
   const sizeTrendChartData = {
-    labels: filteredPriceTrends.map(d => `${d.year}年Q${d.quarter}`),
+    labels: priceTrends.map(d => `${d.year}年Q${d.quarter}`),
     datasets: sizeCategories.map((category, index) => {
       const colors = [
         'rgba(255, 99, 132, 1)',
@@ -533,14 +421,14 @@ const TransactionPricesPage: React.FC = () => {
         'rgba(255, 159, 64, 1)',
       ];
 
-      const categoryTrends = filteredSizeTrends.filter(d => d.category === category);
+      const categoryTrends = sizeTrends.filter(d => d.category === category);
       const dataMap = new Map(
         categoryTrends.map(t => [`${t.year}Q${t.quarter}`, t.avg_price_per_sqm])
       );
 
       return {
         label: category,
-        data: filteredPriceTrends.map(d => {
+        data: priceTrends.map(d => {
           const key = `${d.year}Q${d.quarter}`;
           return dataMap.get(key) || null;
         }),
@@ -552,9 +440,9 @@ const TransactionPricesPage: React.FC = () => {
   };
 
   // 築年別価格推移チャート
-  const ageCategories = [...new Set(filteredAgeTrends.map(d => d.category))];
+  const ageCategories = [...new Set(ageTrends.map(d => d.category))];
   const ageTrendChartData = {
-    labels: filteredPriceTrends.map(d => `${d.year}年Q${d.quarter}`),
+    labels: priceTrends.map(d => `${d.year}年Q${d.quarter}`),
     datasets: ageCategories.map((category, index) => {
       const colors = [
         'rgba(255, 99, 132, 1)',
@@ -564,14 +452,14 @@ const TransactionPricesPage: React.FC = () => {
         'rgba(153, 102, 255, 1)',
       ];
 
-      const categoryTrends = filteredAgeTrends.filter(d => d.category === category);
+      const categoryTrends = ageTrends.filter(d => d.category === category);
       const dataMap = new Map(
         categoryTrends.map(t => [`${t.year}Q${t.quarter}`, t.avg_price_per_sqm])
       );
 
       return {
         label: category,
-        data: filteredPriceTrends.map(d => {
+        data: priceTrends.map(d => {
           const key = `${d.year}Q${d.quarter}`;
           return dataMap.get(key) || null;
         }),
@@ -713,14 +601,30 @@ const TransactionPricesPage: React.FC = () => {
           </Grid>
         </Paper>
 
-        {loading ? (
-          <Box display="flex" justifyContent="center" py={5}>
-            <CircularProgress />
-          </Box>
-        ) : (
-          <>
+        <>
+          {/* グラフ・統計情報エリア */}
+          <Box sx={{ position: 'relative', minHeight: statsLoading ? '400px' : 'auto' }}>
+            {statsLoading && (
+              <Box
+                display="flex"
+                justifyContent="center"
+                alignItems="center"
+                sx={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  bgcolor: 'rgba(255, 255, 255, 0.7)',
+                  zIndex: 1
+                }}
+              >
+                <CircularProgress />
+              </Box>
+            )}
+
             {/* 価格推移チャート */}
-            {filteredPriceTrends.length > 0 && (
+            {priceTrends.length > 0 && (
               <Card sx={{ mb: 3 }}>
                 <CardContent>
                   <Typography variant="h6" gutterBottom>
@@ -734,7 +638,7 @@ const TransactionPricesPage: React.FC = () => {
             )}
 
             {/* 取引件数推移チャート */}
-            {filteredPriceTrends.length > 0 && (
+            {priceTrends.length > 0 && (
               <Card sx={{ mb: 3 }}>
                 <CardContent>
                   <Typography variant="h6" gutterBottom>
@@ -776,7 +680,7 @@ const TransactionPricesPage: React.FC = () => {
 
 
             {/* 期間別統計テーブル */}
-            {filteredPriceTrends.length > 0 && (
+            {priceTrends.length > 0 && (
               <Card sx={{ mb: 3 }}>
                 <CardContent>
                   <Typography variant="h6" gutterBottom>
@@ -827,7 +731,7 @@ const TransactionPricesPage: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {filteredPriceTrends.map((trend, index) => (
+                        {priceTrends.map((trend, index) => (
                           <tr key={`${trend.year}-${trend.quarter}`} style={{
                             borderBottom: '1px solid #eee',
                             backgroundColor: index % 2 === 0 ? 'white' : '#fafafa'
@@ -878,19 +782,42 @@ const TransactionPricesPage: React.FC = () => {
               </Card>
             )}
 
+          </Box>
+
+          {/* 個別取引一覧エリア */}
+          <Box sx={{ position: 'relative', minHeight: transactionsLoading ? '400px' : 'auto' }}>
+            {transactionsLoading && (
+              <Box
+                display="flex"
+                justifyContent="center"
+                alignItems="center"
+                sx={{
+                  position: 'absolute',
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  bgcolor: 'rgba(255, 255, 255, 0.7)',
+                  zIndex: 1
+                }}
+              >
+                <CircularProgress />
+              </Box>
+            )}
+
             {/* 個別取引一覧 */}
-            {filteredTransactions.length > 0 && (
+            {transactions.length > 0 && (
               <Card>
                 <CardContent>
                   <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
                     <Typography variant="h6">
-                      個別取引一覧（{filteredTransactions.length.toLocaleString()}件）
+                      個別取引一覧（全{totalTransactions.toLocaleString()}件）
                     </Typography>
                     <Typography variant="body2" color="text.secondary">
-                      {startIndex + 1}～{Math.min(endIndex, filteredTransactions.length)}件を表示
+                      {startIndex + 1}～{endIndex}件を表示
                     </Typography>
                   </Stack>
-                  
+
                   <Box sx={{ overflowX: 'auto' }}>
                     <table style={{
                       width: isMobile ? 'auto' : '100%',
@@ -1001,7 +928,7 @@ const TransactionPricesPage: React.FC = () => {
                         </tr>
                       </thead>
                       <tbody>
-                        {paginatedTransactions.map((transaction, index) => (
+                        {transactions.map((transaction, index) => (
                           <tr key={transaction.id} style={{
                             borderBottom: '1px solid #eee',
                             backgroundColor: index % 2 === 0 ? 'white' : '#fafafa'
@@ -1062,8 +989,8 @@ const TransactionPricesPage: React.FC = () => {
                                 if (layout !== '-') {
                                   // 全角英数字を半角に変換
                                   layout = layout
-                                    .replace(/[０-９]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
-                                    .replace(/[Ａ-Ｚａ-ｚ]/g, s => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+                                    .replace(/[０-９]/g, (s: string) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
+                                    .replace(/[Ａ-Ｚａ-ｚ]/g, (s: string) => String.fromCharCode(s.charCodeAt(0) - 0xFEE0))
                                     .replace(/　/g, ' ')
                                     .replace(/（/g, '(')
                                     .replace(/）/g, ')');
@@ -1082,21 +1009,23 @@ const TransactionPricesPage: React.FC = () => {
 
                   {totalPages > 1 && (
                     <Box sx={{ display: 'flex', justifyContent: 'center', mt: 3 }}>
-                      <Pagination 
-                        count={totalPages} 
-                        page={currentPage} 
-                        onChange={(event, value) => setCurrentPage(value)}
+                      <Pagination
+                        count={totalPages}
+                        page={currentPage}
+                        onChange={handlePageChange}
                         color="primary"
                         showFirstButton
                         showLastButton
                       />
                     </Box>
                   )}
+
+
                 </CardContent>
               </Card>
             )}
-          </>
-        )}
+          </Box>
+        </>
       </Box>
     </Container>
   );

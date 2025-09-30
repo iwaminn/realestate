@@ -196,56 +196,144 @@ async def get_areas_by_district(db: Session = Depends(get_db)) -> Dict[str, List
 @router.get("/transactions")
 async def get_transactions(
     area: Optional[str] = Query(None, description="エリア名"),
+    district: Optional[str] = Query(None, description="区名"),
     year: Optional[int] = Query(None, description="取引年"),
     quarter: Optional[int] = Query(None, description="四半期"),
     min_price: Optional[int] = Query(None, description="最低価格（万円）"),
     max_price: Optional[int] = Query(None, description="最高価格（万円）"),
+    start_year: Optional[int] = Query(None, description="開始年"),
+    start_quarter: Optional[int] = Query(None, description="開始四半期"),
+    end_year: Optional[int] = Query(None, description="終了年"),
+    end_quarter: Optional[int] = Query(None, description="終了四半期"),
+    order_by: str = Query("transaction_year", description="ソートカラム（transaction_year, area_name, transaction_price, price_per_sqm, floor_area）"),
+    order: str = Query("desc", description="ソート順（asc, desc）"),
+    page: int = Query(1, ge=1, description="ページ番号"),
+    page_size: int = Query(50, ge=1, le=500, description="1ページあたりの件数"),
     db: Session = Depends(get_db)
-) -> List[TransactionPriceResponse]:
-    """成約価格データを取得"""
+) -> Dict:
+    """成約価格データを取得（完全なサーバー側ページネーション・ソート対応）"""
 
     query = db.query(TransactionPrice)
 
+    # エリアフィルター
     if area:
         query = query.filter(TransactionPrice.area_name == area)
+    
+    # 区フィルター（区に属するエリアでフィルタリング）
+    if district:
+        # 区とエリアのマッピング定義（get_areas_by_districtから流用）
+        district_mapping = {
+            "千代田区": ["一番町", "二番町", "三番町", "五番町", "六番町", "九段北", "九段南", "内神田", "内幸町"],
+            "中央区": ["京橋", "佃", "入船", "八丁堀", "勝どき", "新富", "新川", "日本橋", "月島", "東日本橋", "晴海", "築地", "銀座"],
+            "港区": ["三田", "元赤坂", "元麻布", "六本木", "北青山", "南青山", "南麻布", "台場", "東新橋", "東麻布", "海岸", "港南", "浜松町", "白金", "白金台", "芝", "芝公園", "芝大門", "芝浦", "虎ノ門", "西新橋", "西麻布", "赤坂", "高輪", "麻布十番", "麻布台", "新橋"],
+            "新宿区": ["上落合", "下宮比町", "下落合", "中井", "中町", "中落合", "四谷", "大久保", "新宿", "早稲田", "歌舞伎町", "神楽坂", "西新宿", "高田馬場"],
+            "渋谷区": ["上原", "代々木", "代官山町", "元代々木町", "初台", "円山町", "千駄ケ谷", "南平台町", "恵比寿", "恵比寿南", "恵比寿西", "幡ケ谷", "広尾", "本町", "東", "松濤", "桜丘町", "渋谷", "神南", "神宮前", "神山町", "神泉町", "笹塚", "西原", "道玄坂", "鉢山町", "鶯谷町", "富ヶ谷"]
+        }
+        
+        if district in district_mapping:
+            district_areas = district_mapping[district]
+            query = query.filter(TransactionPrice.area_name.in_(district_areas))
+    
+    # 年フィルター
     if year:
         query = query.filter(TransactionPrice.transaction_year == year)
     if quarter:
         query = query.filter(TransactionPrice.transaction_quarter == quarter)
+        
+    # 期間フィルター
+    if start_year and start_quarter and end_year and end_quarter:
+        # 期間を数値化して比較
+        start_value = start_year * 4 + start_quarter
+        end_value = end_year * 4 + end_quarter
+        
+        # サブクエリを使って期間内のレコードのみ抽出
+        query = query.filter(
+            (TransactionPrice.transaction_year * 4 + TransactionPrice.transaction_quarter).between(start_value, end_value)
+        )
+    
+    # 価格フィルター
     if min_price:
         query = query.filter(TransactionPrice.transaction_price >= min_price)
     if max_price:
         query = query.filter(TransactionPrice.transaction_price <= max_price)
 
-    # 上限を撤廃（パフォーマンス注意）
-    transactions = query.order_by(
-        TransactionPrice.transaction_year.desc(),
-        TransactionPrice.transaction_quarter.desc()
-    ).all()
-
-    return [
-        TransactionPriceResponse(
-            id=t.id,
-            area_name=t.area_name,
-            transaction_price=t.transaction_price,
-            price_per_sqm=t.price_per_sqm,
-            floor_area=t.floor_area,
-            transaction_year=t.transaction_year,
-            transaction_quarter=t.transaction_quarter,
-            built_year=t.built_year,
-            layout=t.layout
+    # 総件数を取得
+    total_count = query.count()
+    
+    # ソート処理
+    if order_by == "transaction_year":
+        if order == "desc":
+            query = query.order_by(
+                TransactionPrice.transaction_year.desc(),
+                TransactionPrice.transaction_quarter.desc()
+            )
+        else:
+            query = query.order_by(
+                TransactionPrice.transaction_year.asc(),
+                TransactionPrice.transaction_quarter.asc()
+            )
+    elif order_by == "area_name":
+        if order == "desc":
+            query = query.order_by(TransactionPrice.area_name.desc())
+        else:
+            query = query.order_by(TransactionPrice.area_name.asc())
+    elif order_by == "transaction_price":
+        if order == "desc":
+            query = query.order_by(TransactionPrice.transaction_price.desc())
+        else:
+            query = query.order_by(TransactionPrice.transaction_price.asc())
+    elif order_by == "price_per_sqm":
+        if order == "desc":
+            query = query.order_by(TransactionPrice.price_per_sqm.desc())
+        else:
+            query = query.order_by(TransactionPrice.price_per_sqm.asc())
+    elif order_by == "floor_area":
+        if order == "desc":
+            query = query.order_by(TransactionPrice.floor_area.desc())
+        else:
+            query = query.order_by(TransactionPrice.floor_area.asc())
+    else:
+        # デフォルトは年・四半期の降順
+        query = query.order_by(
+            TransactionPrice.transaction_year.desc(),
+            TransactionPrice.transaction_quarter.desc()
         )
-        for t in transactions
-    ]
+    
+    # ページネーション
+    offset = (page - 1) * page_size
+    transactions = query.offset(offset).limit(page_size).all()
+
+    return {
+        "data": [
+            TransactionPriceResponse(
+                id=t.id,
+                area_name=t.area_name,
+                transaction_price=t.transaction_price,
+                price_per_sqm=t.price_per_sqm,
+                floor_area=t.floor_area,
+                transaction_year=t.transaction_year,
+                transaction_quarter=t.transaction_quarter,
+                built_year=t.built_year,
+                layout=t.layout
+            )
+            for t in transactions
+        ],
+        "total": total_count,
+        "page": page,
+        "page_size": page_size,
+        "total_pages": (total_count + page_size - 1) // page_size
+    }
 
 
 @router.get("/statistics/by-area")
 async def get_area_statistics(
-    year: Optional[int] = Query(None, description="取引年"),
-    quarter: Optional[int] = Query(None, description="四半期"),
+    start_year: Optional[int] = Query(None, description="開始年"),
+    start_quarter: Optional[int] = Query(None, description="開始四半期"),
+    end_year: Optional[int] = Query(None, description="終了年"),
+    end_quarter: Optional[int] = Query(None, description="終了四半期"),
     db: Session = Depends(get_db)
 ) -> List[AreaStatistics]:
-    """エリア別の統計情報を取得"""
+    """エリア別の統計情報を取得（期間指定対応）"""
 
     query = db.query(
         TransactionPrice.area_name,
@@ -260,10 +348,18 @@ async def get_area_statistics(
         TransactionPrice.area_name.isnot(None)
     )
 
-    if year:
-        query = query.filter(TransactionPrice.transaction_year == year)
-    if quarter:
-        query = query.filter(TransactionPrice.transaction_quarter == quarter)
+    # 期間フィルター
+    if start_year and start_quarter:
+        start_value = start_year * 4 + start_quarter
+        query = query.filter(
+            (TransactionPrice.transaction_year * 4 + TransactionPrice.transaction_quarter) >= start_value
+        )
+    
+    if end_year and end_quarter:
+        end_value = end_year * 4 + end_quarter
+        query = query.filter(
+            (TransactionPrice.transaction_year * 4 + TransactionPrice.transaction_quarter) <= end_value
+        )
 
     results = query.group_by(TransactionPrice.area_name).all()
 
@@ -284,9 +380,14 @@ async def get_area_statistics(
 @router.get("/trends")
 async def get_price_trends(
     area: Optional[str] = Query(None, description="エリア名"),
+    district: Optional[str] = Query(None, description="区名"),
+    start_year: Optional[int] = Query(None, description="開始年"),
+    start_quarter: Optional[int] = Query(None, description="開始四半期"),
+    end_year: Optional[int] = Query(None, description="終了年"),
+    end_quarter: Optional[int] = Query(None, description="終了四半期"),
     db: Session = Depends(get_db)
 ) -> List[PriceTrendData]:
-    """価格推移データを取得"""
+    """価格推移データを取得（期間指定対応）"""
 
     query = db.query(
         TransactionPrice.transaction_year,
@@ -299,6 +400,34 @@ async def get_price_trends(
 
     if area:
         query = query.filter(TransactionPrice.area_name == area)
+    
+    # 区フィルター（区に属するエリアでフィルタリング）
+    if district and not area:
+        # 区とエリアのマッピング定義（簡略版）
+        district_mapping = {
+            "千代田区": ["一番町", "二番町", "三番町", "五番町", "六番町", "九段北", "九段南", "内神田", "内幸町"],
+            "中央区": ["京橋", "佃", "入船", "八丁堀", "勝どき", "新富", "新川", "日本橋", "月島", "東日本橋", "晴海", "築地", "銀座"],
+            "港区": ["三田", "元赤坂", "元麻布", "六本木", "北青山", "南青山", "南麻布", "台場", "東新橋", "東麻布", "海岸", "港南", "浜松町", "白金", "白金台", "芝", "芝公園", "芝大門", "芝浦", "虎ノ門", "西新橋", "西麻布", "赤坂", "高輪", "麻布十番", "麻布台", "新橋"],
+            "新宿区": ["上落合", "下宮比町", "下落合", "中井", "中町", "中落合", "四谷", "大久保", "新宿", "早稲田", "歌舞伎町", "神楽坂", "西新宿", "高田馬場"],
+            "渋谷区": ["上原", "代々木", "代官山町", "元代々木町", "初台", "円山町", "千駄ケ谷", "南平台町", "恵比寿", "恵比寿南", "恵比寿西", "幡ケ谷", "広尾", "本町", "東", "松濤", "桜丘町", "渋谷", "神南", "神宮前", "神山町", "神泉町", "笹塚", "西原", "道玄坂", "鉢山町", "鶯谷町", "富ヶ谷"]
+        }
+        
+        if district in district_mapping:
+            district_areas = district_mapping[district]
+            query = query.filter(TransactionPrice.area_name.in_(district_areas))
+
+    # 期間フィルター
+    if start_year and start_quarter:
+        start_value = start_year * 4 + start_quarter
+        query = query.filter(
+            (TransactionPrice.transaction_year * 4 + TransactionPrice.transaction_quarter) >= start_value
+        )
+    
+    if end_year and end_quarter:
+        end_value = end_year * 4 + end_quarter
+        query = query.filter(
+            (TransactionPrice.transaction_year * 4 + TransactionPrice.transaction_quarter) <= end_value
+        )
 
     results = query.group_by(
         TransactionPrice.transaction_year,
@@ -322,10 +451,29 @@ async def get_price_trends(
 
 @router.get("/trends-by-size")
 async def get_trends_by_size(
+    district: Optional[str] = Query(None, description="区名"),
+    start_year: Optional[int] = Query(None, description="開始年"),
+    start_quarter: Optional[int] = Query(None, description="開始四半期"),
+    end_year: Optional[int] = Query(None, description="終了年"),
+    end_quarter: Optional[int] = Query(None, description="終了四半期"),
     db: Session = Depends(get_db)
 ) -> List[Dict]:
-    """広さ別の価格推移データを取得"""
+    """広さ別の価格推移データを取得（期間指定対応）"""
 
+    # 区フィルター用のマッピング
+    district_areas = []
+    if district:
+        district_mapping = {
+            "千代田区": ["一番町", "二番町", "三番町", "五番町", "六番町", "九段北", "九段南", "内神田", "内幸町"],
+            "中央区": ["京橋", "佃", "入船", "八丁堀", "勝どき", "新富", "新川", "日本橋", "月島", "東日本橋", "晴海", "築地", "銀座"],
+            "港区": ["三田", "元赤坂", "元麻布", "六本木", "北青山", "南青山", "南麻布", "台場", "東新橋", "東麻布", "海岸", "港南", "浜松町", "白金", "白金台", "芝", "芝公園", "芝大門", "芝浦", "虎ノ門", "西新橋", "西麻布", "赤坂", "高輪", "麻布十番", "麻布台", "新橋"],
+            "新宿区": ["上落合", "下宮比町", "下落合", "中井", "中町", "中落合", "四谷", "大久保", "新宿", "早稲田", "歌舞伎町", "神楽坂", "西新宿", "高田馬場"],
+            "渋谷区": ["上原", "代々木", "代官山町", "元代々木町", "初台", "円山町", "千駄ケ谷", "南平台町", "恵比寿", "恵比寿南", "恵比寿西", "幡ケ谷", "広尾", "本町", "東", "松濤", "桜丘町", "渋谷", "神南", "神宮前", "神山町", "神泉町", "笹塚", "西原", "道玄坂", "鉢山町", "鶯谷町", "富ヶ谷"]
+        }
+        
+        if district in district_mapping:
+            district_areas = district_mapping[district]
+    
     # 広さカテゴリーを定義
     size_categories = [
         ("20㎡未満", 0, 20),
@@ -348,7 +496,26 @@ async def get_trends_by_size(
             TransactionPrice.price_per_sqm.isnot(None),
             TransactionPrice.floor_area >= min_size,
             TransactionPrice.floor_area < max_size
-        ).group_by(
+        )
+        
+        # 区フィルターを適用
+        if district_areas:
+            query = query.filter(TransactionPrice.area_name.in_(district_areas))
+        
+        # 期間フィルター
+        if start_year and start_quarter:
+            start_value = start_year * 4 + start_quarter
+            query = query.filter(
+                (TransactionPrice.transaction_year * 4 + TransactionPrice.transaction_quarter) >= start_value
+            )
+        
+        if end_year and end_quarter:
+            end_value = end_year * 4 + end_quarter
+            query = query.filter(
+                (TransactionPrice.transaction_year * 4 + TransactionPrice.transaction_quarter) <= end_value
+            )
+        
+        query = query.group_by(
             TransactionPrice.transaction_year,
             TransactionPrice.transaction_quarter
         ).order_by(
@@ -370,14 +537,30 @@ async def get_trends_by_size(
 
 @router.get("/trends-by-age")
 async def get_trends_by_age(
+    district: Optional[str] = Query(None, description="区名"),
+    start_year: Optional[int] = Query(None, description="開始年"),
+    start_quarter: Optional[int] = Query(None, description="開始四半期"),
+    end_year: Optional[int] = Query(None, description="終了年"),
+    end_quarter: Optional[int] = Query(None, description="終了四半期"),
     db: Session = Depends(get_db)
 ) -> List[Dict]:
-    """築年数別の価格推移データを取得"""
+    """築年数別の価格推移データを取得（期間指定対応）"""
 
-    # 築年カテゴリーを定義（取引時点での築年数を計算）
-    results = []
+    # 区フィルター用のマッピング
+    district_areas = []
+    if district:
+        district_mapping = {
+            "千代田区": ["一番町", "二番町", "三番町", "五番町", "六番町", "九段北", "九段南", "内神田", "内幸町"],
+            "中央区": ["京橋", "佃", "入船", "八丁堀", "勝どき", "新富", "新川", "日本橋", "月島", "東日本橋", "晴海", "築地", "銀座"],
+            "港区": ["三田", "元赤坂", "元麻布", "六本木", "北青山", "南青山", "南麻布", "台場", "東新橋", "東麻布", "海岸", "港南", "浜松町", "白金", "白金台", "芝", "芝公園", "芝大門", "芝浦", "虎ノ門", "西新橋", "西麻布", "赤坂", "高輪", "麻布十番", "麻布台", "新橋"],
+            "新宿区": ["上落合", "下宮比町", "下落合", "中井", "中町", "中落合", "四谷", "大久保", "新宿", "早稲田", "歌舞伎町", "神楽坂", "西新宿", "高田馬場"],
+            "渋谷区": ["上原", "代々木", "代官山町", "元代々木町", "初台", "円山町", "千駄ケ谷", "南平台町", "恵比寿", "恵比寿南", "恵比寿西", "幡ケ谷", "広尾", "本町", "東", "松濤", "桜丘町", "渋谷", "神南", "神宮前", "神山町", "神泉町", "笹塚", "西原", "道玄坂", "鉢山町", "鶯谷町", "富ヶ谷"]
+        }
+        
+        if district in district_mapping:
+            district_areas = district_mapping[district]
 
-    # 築年数カテゴリー
+    # 築年数カテゴリーを定義
     age_categories = [
         ("築5年以内", 0, 5),
         ("築5-10年", 5, 10),
@@ -386,12 +569,33 @@ async def get_trends_by_age(
         ("築20年超", 20, 100)
     ]
 
-    # 全データを取得して築年数を計算
-    transactions = db.query(TransactionPrice).filter(
+    results = []
+
+    # クエリを構築
+    query = db.query(TransactionPrice).filter(
         TransactionPrice.price_per_sqm.isnot(None),
         TransactionPrice.built_year.isnot(None),
         TransactionPrice.transaction_year.isnot(None)
-    ).all()
+    )
+    
+    # 区フィルターを適用
+    if district_areas:
+        query = query.filter(TransactionPrice.area_name.in_(district_areas))
+    
+    # 期間フィルター
+    if start_year and start_quarter:
+        start_value = start_year * 4 + start_quarter
+        query = query.filter(
+            (TransactionPrice.transaction_year * 4 + TransactionPrice.transaction_quarter) >= start_value
+        )
+    
+    if end_year and end_quarter:
+        end_value = end_year * 4 + end_quarter
+        query = query.filter(
+            (TransactionPrice.transaction_year * 4 + TransactionPrice.transaction_quarter) <= end_value
+        )
+    
+    transactions = query.all()
 
     # 築年数別にグループ化
     from collections import defaultdict
