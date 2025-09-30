@@ -347,6 +347,48 @@ const TransactionPricesPage: React.FC = () => {
     setCurrentPage(1);
   }, [selectedArea, startYear, startQuarter, endYear, endQuarter]);
 
+  // グラフ共通のレスポンシブオプション
+  const chartOptions = {
+    responsive: true,
+    maintainAspectRatio: true,
+    aspectRatio: isMobile ? 1.2 : 2,
+    plugins: {
+      legend: {
+        display: true,
+        position: 'top' as const,
+        labels: {
+          boxWidth: isMobile ? 12 : 20,
+          font: {
+            size: isMobile ? 10 : 12
+          }
+        }
+      },
+      tooltip: {
+        enabled: true,
+        mode: 'index' as const,
+        intersect: false,
+      }
+    },
+    scales: {
+      x: {
+        ticks: {
+          font: {
+            size: isMobile ? 9 : 11
+          },
+          maxRotation: isMobile ? 45 : 0,
+          minRotation: isMobile ? 45 : 0
+        }
+      },
+      y: {
+        ticks: {
+          font: {
+            size: isMobile ? 9 : 11
+          }
+        }
+      }
+    }
+  };
+
   // 価格推移チャートのデータ
   const trendChartData = {
     labels: priceTrends.map(d => `${d.year}年Q${d.quarter}`),
@@ -472,14 +514,14 @@ const TransactionPricesPage: React.FC = () => {
 
 
   return (
-    <Container maxWidth="lg">
-      <Box sx={{ py: 4 }}>
-        <Typography variant="h4" component="h1" gutterBottom>
+    <Container maxWidth="lg" sx={{ px: isMobile ? 0.5 : 3 }}>
+      <Box sx={{ py: isMobile ? 1 : 4 }}>
+        <Typography variant="h4" component="h1" gutterBottom sx={{ mb: isMobile ? 1 : 2 }}>
           成約価格情報
         </Typography>
 
         {/* データ出典説明 */}
-        <Paper sx={{ p: 2, mb: 3, bgcolor: 'info.main', color: 'info.contrastText' }}>
+        <Paper sx={{ p: isMobile ? 1.5 : 2, mb: isMobile ? 1.5 : 3, bgcolor: 'info.main', color: 'info.contrastText' }}>
           <Typography variant="body2">
             本データは国土交通省のWEBサイト
             <a
@@ -499,11 +541,11 @@ const TransactionPricesPage: React.FC = () => {
         </Paper>
 
         {/* フィルター */}
-        <Paper sx={{ p: 2, mb: 3 }}>
+        <Paper sx={{ p: isMobile ? 1.5 : 2, mb: isMobile ? 1.5 : 3 }}>
           <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
             期間を選択してください（{startYear}年Q{startQuarter} ～ {endYear}年Q{endQuarter}）
           </Typography>
-          <Grid container spacing={2}>
+          <Grid container spacing={isMobile ? 1.5 : 2}>
             <Grid item xs={12} sm={6} md={3}>
               <FormControl fullWidth>
                 <InputLabel>区を選択</InputLabel>
@@ -625,28 +667,28 @@ const TransactionPricesPage: React.FC = () => {
 
             {/* 価格推移チャート */}
             {priceTrends.length > 0 && (
-              <Card sx={{ mb: 3 }}>
-                <CardContent>
+              <Card sx={{ mb: isMobile ? 1.5 : 3 }}>
+                <CardContent sx={{ p: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
                   <Typography variant="h6" gutterBottom>
                     価格推移
                     {selectedArea && <Chip label={selectedArea} sx={{ ml: 2 }} />}
                     <Chip label={`${startYear}年Q${startQuarter} ～ ${endYear}年Q${endQuarter}`} sx={{ ml: 1 }} size="small" />
                   </Typography>
-                  <Line data={trendChartData} />
+                  <Line data={trendChartData} options={chartOptions} />
                 </CardContent>
               </Card>
             )}
 
             {/* 取引件数推移チャート */}
             {priceTrends.length > 0 && (
-              <Card sx={{ mb: 3 }}>
-                <CardContent>
+              <Card sx={{ mb: isMobile ? 1.5 : 3 }}>
+                <CardContent sx={{ p: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
                   <Typography variant="h6" gutterBottom>
                     取引件数推移
                     {selectedArea && <Chip label={selectedArea} sx={{ ml: 2 }} />}
                     <Chip label={`${startYear}年Q${startQuarter} ～ ${endYear}年Q${endQuarter}`} sx={{ ml: 1 }} size="small" />
                   </Typography>
-                  <Bar data={volumeChartData} />
+                  <Bar data={volumeChartData} options={chartOptions} />
                 </CardContent>
               </Card>
             )}
@@ -655,24 +697,24 @@ const TransactionPricesPage: React.FC = () => {
 
             {/* 広さ別価格推移 */}
             {sizeTrends.length > 0 && (
-              <Card sx={{ mb: 3 }}>
-                <CardContent>
+              <Card sx={{ mb: isMobile ? 1.5 : 3 }}>
+                <CardContent sx={{ p: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
                   <Typography variant="h6" gutterBottom>
                     広さ別単価推移
                   </Typography>
-                  <Line data={sizeTrendChartData} />
+                  <Line data={sizeTrendChartData} options={chartOptions} />
                 </CardContent>
               </Card>
             )}
 
             {/* 築年別価格推移 */}
             {ageTrends.length > 0 && (
-              <Card sx={{ mb: 3 }}>
-                <CardContent>
+              <Card sx={{ mb: isMobile ? 1.5 : 3 }}>
+                <CardContent sx={{ p: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
                   <Typography variant="h6" gutterBottom>
                     築年別単価推移
                   </Typography>
-                  <Line data={ageTrendChartData} />
+                  <Line data={ageTrendChartData} options={chartOptions} />
                 </CardContent>
               </Card>
             )}
@@ -681,8 +723,8 @@ const TransactionPricesPage: React.FC = () => {
 
             {/* 期間別統計テーブル */}
             {priceTrends.length > 0 && (
-              <Card sx={{ mb: 3 }}>
-                <CardContent>
+              <Card sx={{ mb: isMobile ? 1.5 : 3 }}>
+                <CardContent sx={{ p: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
                   <Typography variant="h6" gutterBottom>
                     期間別統計サマリー
                   </Typography>
@@ -808,7 +850,7 @@ const TransactionPricesPage: React.FC = () => {
             {/* 個別取引一覧 */}
             {transactions.length > 0 && (
               <Card>
-                <CardContent>
+                <CardContent sx={{ p: isMobile ? 1.5 : 2, '&:last-child': { pb: isMobile ? 1.5 : 2 } }}>
                   <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
                     <Typography variant="h6">
                       個別取引一覧（全{totalTransactions.toLocaleString()}件）
