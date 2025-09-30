@@ -22,6 +22,7 @@ import {
   Cookie,
   Storage,
 } from '@mui/icons-material';
+import { APP_CONFIG } from '../config/app';
 
 const PrivacyPage: React.FC = () => {
   useEffect(() => {
@@ -48,7 +49,7 @@ const PrivacyPage: React.FC = () => {
         </Box>
 
         <Typography variant="body1" sx={{ mb: 4, lineHeight: 1.8 }}>
-          都心マンションDB（以下、「当サービス」といいます）は、利用者のプライバシーを尊重し、
+          {APP_CONFIG.APP_NAME}（以下、「当サービス」といいます）は、利用者のプライバシーを尊重し、
           個人情報の保護に努めます。本プライバシーポリシーは、当サービスにおける個人情報の取扱いについて説明します。
         </Typography>
 

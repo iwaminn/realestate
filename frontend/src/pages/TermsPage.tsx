@@ -14,6 +14,7 @@ import {
   ArrowBack,
   Gavel,
 } from '@mui/icons-material';
+import { APP_CONFIG } from '../config/app';
 
 const TermsPage: React.FC = () => {
   useEffect(() => {
@@ -40,7 +41,7 @@ const TermsPage: React.FC = () => {
         </Box>
 
         <Typography variant="body1" sx={{ mb: 4, lineHeight: 1.8 }}>
-          この利用規約（以下、「本規約」といいます）は、都心マンションDB（以下、「本サービス」といいます）の利用条件を定めるものです。
+          この利用規約（以下、「本規約」といいます）は、{APP_CONFIG.APP_NAME}（以下、「本サービス」といいます）の利用条件を定めるものです。
           利用者の皆様には、本規約に従って本サービスをご利用いただきます。
         </Typography>
 

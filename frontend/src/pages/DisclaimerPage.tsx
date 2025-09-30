@@ -17,6 +17,7 @@ import {
   Warning,
   Info,
 } from '@mui/icons-material';
+import { APP_CONFIG } from '../config/app';
 
 const DisclaimerPage: React.FC = () => {
   useEffect(() => {
@@ -43,7 +44,7 @@ const DisclaimerPage: React.FC = () => {
         </Box>
 
         <Typography variant="body1" sx={{ mb: 4, lineHeight: 1.8 }}>
-          都心マンションDB（以下、「本サイト」といいます）をご利用いただく前に、以下の免責事項をよくお読みください。
+          {APP_CONFIG.APP_NAME}（以下、「本サイト」といいます）をご利用いただく前に、以下の免責事項をよくお読みください。
           本サイトをご利用いただいた場合、これらの免責事項に同意したものとみなされます。
         </Typography>
 
