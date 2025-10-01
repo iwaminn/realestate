@@ -471,10 +471,68 @@ const BuildingPropertiesPage: React.FC = () => {
         </Button>
 
         {building && (
-          <Typography variant="h4" gutterBottom sx={{ mb: 3 }}>
-            <ApartmentIcon sx={{ mr: 1, verticalAlign: 'bottom' }} />
-            {building.normalized_name}
-          </Typography>
+          <>
+            <Typography variant="h4" gutterBottom>
+              <ApartmentIcon sx={{ mr: 1, verticalAlign: 'bottom' }} />
+              {building.normalized_name}
+            </Typography>
+
+            {/* 建物の基本情報 */}
+            <Paper elevation={2} sx={{ p: isMobile ? 2 : 3, mb: isMobile ? 2 : 3 }}>
+              <Grid container spacing={isMobile ? 2 : 3}>
+                <Grid item xs={12} sm={6} md={3}>
+                  <Box>
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      築年月
+                    </Typography>
+                    <Typography variant={isMobile ? "body1" : "h6"}>
+                      {building.built_year ? (
+                        <>
+                          {building.built_year}年{building.built_month ? `${building.built_month}月` : ''}
+                          <Typography component="span" variant="body1" color="text.secondary" sx={{ ml: 1 }}>
+                            （築{new Date().getFullYear() - building.built_year}年）
+                          </Typography>
+                        </>
+                      ) : '不明'}
+                    </Typography>
+                  </Box>
+                </Grid>
+
+                <Grid item xs={12} sm={6} md={3}>
+                  <Box>
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      総戸数
+                    </Typography>
+                    <Typography variant={isMobile ? "body1" : "h6"}>
+                      {building.total_units ? `${building.total_units}戸` : '-'}
+                    </Typography>
+                  </Box>
+                </Grid>
+
+                <Grid item xs={12} sm={6} md={3}>
+                  <Box>
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      総階数
+                    </Typography>
+                    <Typography variant={isMobile ? "body1" : "h6"}>
+                      {building.total_floors ? `${building.total_floors}階` : '-'}
+                    </Typography>
+                  </Box>
+                </Grid>
+
+                <Grid item xs={12} sm={6} md={3}>
+                  <Box>
+                    <Typography variant="subtitle2" color="text.secondary" gutterBottom>
+                      所在地
+                    </Typography>
+                    <Typography variant={isMobile ? "body1" : "h6"}>
+                      {building.address || '不明'}
+                    </Typography>
+                  </Box>
+                </Grid>
+              </Grid>
+            </Paper>
+          </>
         )}
 
         <Box sx={{ mb: 3 }}>
