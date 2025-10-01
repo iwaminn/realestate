@@ -11,7 +11,6 @@ import {
   CircularProgress,
   Alert,
   Paper,
-  Divider,
   Button,
   Table,
   TableBody,
@@ -45,7 +44,7 @@ import {
   ExpandLess as ExpandLessIcon
 } from '@mui/icons-material';
 import { propertyApi } from '../api/propertyApi';
-import { Property, PriceChangeInfo } from '../types/property';
+import { Property } from '../types/property';
 // Geocoding utilities are loaded dynamically when needed
 
 interface BuildingStats {
@@ -66,6 +65,104 @@ interface BuildingStats {
 type ViewMode = 'card' | 'table';
 type OrderBy = 'earliest_published_at' | 'floor_number' | 'area' | 'min_price' | 'layout' | 'direction' | 'price_per_tsubo';
 type Order = 'asc' | 'desc';
+
+// Googleマップとハザードマップのリンクコンポーネント
+interface MapLinksProps {
+  address: string;
+  hazardMapUrl: string;
+}
+
+const MapLinks: React.FC<MapLinksProps> = ({ address, hazardMapUrl }) => {
+  if (!address) return null;
+
+  return (
+    <Box sx={{ display: 'flex', gap: 1 }}>
+      <Box
+        component="a"
+        href={`https://www.google.com/maps/search/${encodeURIComponent(address)}`}
+        target="_blank"
+        rel="noopener noreferrer"
+        sx={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          padding: '4px 8px',
+          borderRadius: '4px',
+          border: '1px solid #dadce0',
+          textDecoration: 'none',
+          backgroundColor: 'white',
+          transition: 'all 0.2s',
+          width: 'fit-content',
+          '&:hover': {
+            backgroundColor: '#f1f3f4',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+          }
+        }}
+      >
+        {/* Google Maps公式アイコン */}
+        <Box
+          component="img"
+          src="https://www.gstatic.com/images/branding/product/1x/maps_24dp.png"
+          alt="Google Maps"
+          sx={{
+            width: 18,
+            height: 18,
+            mr: 0.75
+          }}
+        />
+        <Typography
+          variant="body2"
+          sx={{
+            fontSize: '0.8125rem',
+            color: '#1a73e8',
+            fontWeight: 500
+          }}
+        >
+          Google Mapsで表示
+        </Typography>
+      </Box>
+      <Box
+        component="a"
+        href={hazardMapUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        sx={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          padding: '4px 8px',
+          borderRadius: '4px',
+          border: '1px solid #ff9800',
+          textDecoration: 'none',
+          backgroundColor: '#fff3e0',
+          transition: 'all 0.2s',
+          width: 'fit-content',
+          '&:hover': {
+            backgroundColor: '#ffe0b2',
+            boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
+          }
+        }}
+      >
+        <WarningIcon
+          sx={{
+            width: 18,
+            height: 18,
+            mr: 0.75,
+            color: '#ff9800'
+          }}
+        />
+        <Typography
+          variant="body2"
+          sx={{
+            fontSize: '0.8125rem',
+            color: '#ff9800',
+            fontWeight: 500
+          }}
+        >
+          ハザードマップ
+        </Typography>
+      </Box>
+    </Box>
+  );
+};
 
 const BuildingPropertiesPage: React.FC = () => {
   const { buildingId } = useParams<{ buildingId: string }>();
@@ -525,9 +622,16 @@ const BuildingPropertiesPage: React.FC = () => {
                     <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                       所在地
                     </Typography>
-                    <Typography variant={isMobile ? "body1" : "h6"}>
-                      {building.address || '不明'}
-                    </Typography>
+                    <Box sx={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 1
+                    }}>
+                      <Typography variant={isMobile ? "body1" : "h6"}>
+                        {building.address || '不明'}
+                      </Typography>
+                      <MapLinks address={building.address} hazardMapUrl={hazardMapUrl} />
+                    </Box>
                   </Box>
                 </Grid>
               </Grid>
@@ -628,102 +732,15 @@ const BuildingPropertiesPage: React.FC = () => {
                 <Typography variant="subtitle2" color="text.secondary" gutterBottom>
                   所在地
                 </Typography>
-                <Box sx={{ 
-                  display: 'flex', 
+                <Box sx={{
+                  display: 'flex',
                   flexDirection: 'column',
                   gap: 1
                 }}>
                   <Typography variant={isMobile ? "body1" : "h6"}>
                     {building.address || '不明'}
                   </Typography>
-                  {/* 住所がある場合、Google Mapsとハザードマップへのリンクを表示 */}
-                  {building.address && (
-                    <Box sx={{ display: 'flex', gap: 1 }}>
-                      <Box
-                        component="a"
-                        href={`https://www.google.com/maps/search/${encodeURIComponent(building.address)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        sx={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          padding: '4px 8px',
-                          borderRadius: '4px',
-                          border: '1px solid #dadce0',
-                          textDecoration: 'none',
-                          backgroundColor: 'white',
-                          transition: 'all 0.2s',
-                          width: 'fit-content',
-                          '&:hover': {
-                            backgroundColor: '#f1f3f4',
-                            boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
-                          }
-                        }}
-                      >
-                        {/* Google Maps公式アイコン */}
-                        <Box
-                          component="img"
-                          src="https://www.gstatic.com/images/branding/product/1x/maps_24dp.png"
-                          alt="Google Maps"
-                          sx={{
-                            width: 18,
-                            height: 18,
-                            mr: 0.75
-                          }}
-                        />
-                        <Typography
-                          variant="body2"
-                          sx={{
-                            fontSize: '0.8125rem',
-                            color: '#1a73e8',
-                            fontWeight: 500
-                          }}
-                        >
-                          Google Mapsで表示
-                        </Typography>
-                      </Box>
-                      <Box
-                        component="a"
-                        href={hazardMapUrl}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        sx={{
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          padding: '4px 8px',
-                          borderRadius: '4px',
-                          border: '1px solid #ff9800',
-                          textDecoration: 'none',
-                          backgroundColor: '#fff3e0',
-                          transition: 'all 0.2s',
-                          width: 'fit-content',
-                          '&:hover': {
-                            backgroundColor: '#ffe0b2',
-                            boxShadow: '0 1px 2px rgba(0,0,0,0.1)'
-                          }
-                        }}
-                      >
-                        <WarningIcon
-                          sx={{
-                            width: 18,
-                            height: 18,
-                            mr: 0.75,
-                            color: '#ff9800'
-                          }}
-                        />
-                        <Typography
-                          variant="body2"
-                          sx={{
-                            fontSize: '0.8125rem',
-                            color: '#ff9800',
-                            fontWeight: 500
-                          }}
-                        >
-                          ハザードマップ
-                        </Typography>
-                      </Box>
-                    </Box>
-                  )}
+                  <MapLinks address={building.address} hazardMapUrl={hazardMapUrl} />
                 </Box>
               </Box>
             </Grid>
