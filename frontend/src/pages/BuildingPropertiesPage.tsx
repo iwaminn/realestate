@@ -457,28 +457,45 @@ const BuildingPropertiesPage: React.FC = () => {
   
   if (!properties.length) {
     return (
-      <Container maxWidth="xl" sx={{ 
-        py: 4, 
+      <Container maxWidth="xl" sx={{
+        py: 4,
         px: isMobile ? 1 : 3
       }}>
-        <Alert severity="info">
-          物件が見つかりません
-          {!includeInactive && (
-            <Box sx={{ mt: 1 }}>
-              <Typography variant="body2">
-                販売終了物件を表示する場合は、URLに「?includeInactive=true」を追加してください。
-              </Typography>
-            </Box>
-          )}
-        </Alert>
         <Button
           component={Link}
           to="/"
           startIcon={<ArrowBackIcon />}
-          sx={{ mt: 2 }}
+          sx={{ mb: 2 }}
         >
           物件一覧に戻る
         </Button>
+
+        {building && (
+          <Typography variant="h4" gutterBottom sx={{ mb: 3 }}>
+            <ApartmentIcon sx={{ mr: 1, verticalAlign: 'bottom' }} />
+            {building.normalized_name}
+          </Typography>
+        )}
+
+        <Box sx={{ mb: 3 }}>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={includeInactive}
+                onChange={(e) => {
+                  const newValue = e.target.checked;
+                  setIncludeInactive(newValue);
+                  updateUrlParams({ includeInactive: newValue });
+                }}
+              />
+            }
+            label="販売終了物件を含む"
+          />
+        </Box>
+
+        <Alert severity="info">
+          {includeInactive ? '販売終了物件を含めても物件が見つかりません。' : '販売中の物件が見つかりません。販売終了物件を表示するには、上のチェックボックスをオンにしてください。'}
+        </Alert>
       </Container>
     );
   }
