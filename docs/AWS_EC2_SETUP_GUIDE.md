@@ -192,7 +192,7 @@ MAIL_PASSWORD=your-app-password
 MAIL_SERVER=smtp.gmail.com
 MAIL_PORT=587
 MAIL_FROM=noreply@yourdomain.com
-MAIL_FROM_NAME=都心中古マンション価格チェッカー
+MAIL_FROM_NAME=都心マンション価格チェッカー
 MAIL_STARTTLS=True
 MAIL_SSL_TLS=False
 
@@ -1118,7 +1118,7 @@ MAIL_PASSWORD=xxxx xxxx xxxx xxxx  # 生成されたアプリパスワード
 MAIL_SERVER=smtp.gmail.com
 MAIL_PORT=587
 MAIL_FROM=your-email@gmail.com
-MAIL_FROM_NAME=都心中古マンション価格チェッカー
+MAIL_FROM_NAME=都心マンション価格チェッカー
 MAIL_STARTTLS=True
 MAIL_SSL_TLS=False
 ```
@@ -1156,7 +1156,7 @@ MAIL_PASSWORD=SG.xxxxxxxxxxxxxxxxxxxxx  # 生成されたAPIキー
 MAIL_SERVER=smtp.sendgrid.net
 MAIL_PORT=587
 MAIL_FROM=noreply@yourdomain.com  # 検証済みメールアドレス
-MAIL_FROM_NAME=都心中古マンション価格チェッカー
+MAIL_FROM_NAME=都心マンション価格チェッカー
 MAIL_STARTTLS=True
 MAIL_SSL_TLS=False
 ```
@@ -1222,7 +1222,7 @@ MAIL_PASSWORD=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY  # SMTPパスワード
 MAIL_SERVER=email-smtp.ap-northeast-1.amazonaws.com
 MAIL_PORT=587
 MAIL_FROM=noreply@yourdomain.com  # 検証済みメールアドレス
-MAIL_FROM_NAME=都心中古マンション価格チェッカー
+MAIL_FROM_NAME=都心マンション価格チェッカー
 MAIL_STARTTLS=True
 MAIL_SSL_TLS=False
 ```
