@@ -12,11 +12,11 @@ export const API_CONFIG = {
   
   // APIパス
   PATHS: {
-    PROPERTIES_GROUPED: '/api/properties-grouped-by-buildings',
-    BOOKMARKS: '/api/bookmarks',
-    AUTH: '/api/auth',
-    GEOCODING: '/api/geocoding',
-    ADMIN: '/api/admin',
+    PROPERTIES_GROUPED: '/properties-grouped-by-buildings',
+    BOOKMARKS: '/bookmarks',
+    AUTH: '/auth',
+    GEOCODING: '/geocoding',
+    ADMIN: '/admin',
   }
 };
 
