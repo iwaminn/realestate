@@ -1303,8 +1303,8 @@ const AdminScraping: React.FC = () => {
       
       // タスク一覧取得
       const url = activeOnly 
-        ? '/api/admin/scraping/tasks?active_only=true'
-        : '/api/admin/scraping/tasks';
+        ? '/admin/scraping/tasks?active_only=true'
+        : '/admin/scraping/tasks';
       const response = await axios.get(url);
       
       
@@ -1326,7 +1326,7 @@ const AdminScraping: React.FC = () => {
         const finalStates = await Promise.all(
           completedTaskIds.map(async taskId => {
             try {
-              const finalResponse = await axios.get(`/api/admin/scraping/tasks/${taskId}`);
+              const finalResponse = await axios.get(`/admin/scraping/tasks/${taskId}`);
               return finalResponse.data;
             } catch (error) {
               // エラーは無視（最終状態の取得に失敗）
@@ -1342,7 +1342,7 @@ const AdminScraping: React.FC = () => {
             if (lastTimestamp) {
               try {
                 const diffResponse = await axios.get(
-                  `/api/admin/scraping/tasks/${task.task_id}/logs/diff`,
+                  `/admin/scraping/tasks/${task.task_id}/logs/diff`,
                   { params: { last_log_timestamp: lastTimestamp } }
                 );
                 return { taskId: task.task_id, diff: diffResponse.data };
@@ -1608,7 +1608,7 @@ const AdminScraping: React.FC = () => {
     }
     setLoadingButtons(prev => ({ ...prev, [`delete-${taskId}`]: true }));
     try {
-      await axios.delete(`/api/admin/scraping/tasks/${taskId}`);
+      await axios.delete(`/admin/scraping/tasks/${taskId}`);
       
       // タスクリストからすぐに削除
       setTasks(prev => prev.filter(t => t.task_id !== taskId));
