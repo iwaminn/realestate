@@ -61,7 +61,7 @@ Route 53は月額$0.50/ホストゾーンのコストがかかりますが、AWS
 3. **ホストゾーンの作成**
    - 左メニューから「ホストゾーン」をクリック
    - 「ホストゾーンの作成」ボタンをクリック
-   - **ドメイン名**: `your-domain.com`（取得済みのドメイン名を入力）
+   - **ドメイン名**: `mscan.jp`（取得済みのドメイン名を入力）
    - **説明**: `不動産検索システム用DNS`（任意）
    - **タイプ**: `パブリックホストゾーン`を選択
    - **タグ**: 必要に応じて追加（例: `Name: realestate-dns`）
@@ -78,7 +78,7 @@ Route 53は月額$0.50/ホストゾーンのコストがかかりますが、AWS
 1. **作成したホストゾーンを開く**
 2. **「レコードを作成」ボタンをクリック**
 3. **ルートドメイン用のAレコード作成**
-   - **レコード名**: 空白のまま（ルートドメイン`your-domain.com`用）
+   - **レコード名**: 空白のまま（ルートドメイン`mscan.jp`用）
    - **レコードタイプ**: `A - IPv4アドレスにルーティング`
    - **値**: EC2のElastic IPアドレス（例: `52.69.123.45`）
    - **TTL**: `300`秒（デフォルト）
@@ -133,22 +133,22 @@ Route 53は月額$0.50/ホストゾーンのコストがかかりますが、AWS
 
 ```bash
 # ローカルマシンから確認（Mac/Linux）
-nslookup your-domain.com
+nslookup mscan.jp
 
 # 期待される結果:
 # Server:		8.8.8.8
 # Address:	8.8.8.8#53
 #
 # Non-authoritative answer:
-# Name:	your-domain.com
+# Name:	mscan.jp
 # Address: 52.69.123.45  ← Elastic IPと一致すればOK
 
 # digコマンドでも確認可能
-dig your-domain.com +short
+dig mscan.jp +short
 # 52.69.123.45 ← Elastic IPが表示されればOK
 
 # Windowsの場合
-nslookup your-domain.com 8.8.8.8
+nslookup mscan.jp 8.8.8.8
 ```
 
 ---
@@ -221,7 +221,7 @@ Cloudflareは無料プランでも高機能なDNS・CDN・SSL証明書を提供�
 
 2. **サイトを追加**
    - 「サイトを追加」をクリック
-   - ドメイン名を入力（例: `your-domain.com`）
+   - ドメイン名を入力（例: `mscan.jp`）
    - 「サイトを追加」をクリック
    - プラン選択: 「Free」を選択
 
@@ -265,14 +265,14 @@ Cloudflareは無料プランでも高機能なDNS・CDN・SSL証明書を提供�
 
 ```bash
 # ローカルマシンから
-nslookup your-domain.com
+nslookup mscan.jp
 
 # 期待される結果:
-# Name:	your-domain.com
+# Name:	mscan.jp
 # Address: <EC2のElastic IP>
 
 # digコマンドで詳細確認
-dig your-domain.com
+dig mscan.jp
 
 # オンラインツールでも確認可能
 # https://www.whatsmydns.net/
@@ -283,22 +283,22 @@ dig your-domain.com
 
 ```bash
 # ドメインでアクセスできることを確認
-curl -I http://your-domain.com
+curl -I http://mscan.jp
 
 # 期待される結果:
 # HTTP/1.1 200 OK または 301/302 (リダイレクト)
 
 # ブラウザでもアクセス確認
-# http://your-domain.com
+# http://mscan.jp
 ```
 
 3. **pingテスト**
 
 ```bash
-ping your-domain.com
+ping mscan.jp
 
 # 期待される結果:
-# PING your-domain.com (52.69.123.45): 56 data bytes
+# PING mscan.jp (52.69.123.45): 56 data bytes
 # 64 bytes from 52.69.123.45: icmp_seq=0 ttl=52 time=10.2 ms
 ```
 
@@ -321,8 +321,8 @@ ipconfig /flushdns
 sudo systemd-resolve --flush-caches
 
 # 3. 別のDNSサーバーで確認
-dig @8.8.8.8 your-domain.com        # Google DNS
-dig @1.1.1.1 your-domain.com        # Cloudflare DNS
+dig @8.8.8.8 mscan.jp        # Google DNS
+dig @1.1.1.1 mscan.jp        # Cloudflare DNS
 ```
 
 **「このサイトにアクセスできません」エラーの場合**:
@@ -423,18 +423,18 @@ MAIL_USERNAME=your-email@gmail.com
 MAIL_PASSWORD=your-app-password  # Gmailの場合はアプリパスワード
 MAIL_SERVER=smtp.gmail.com
 MAIL_PORT=587
-MAIL_FROM=noreply@yourdomain.com
+MAIL_FROM=noreply@mscan.jp
 MAIL_FROM_NAME=都心マンション価格チェッカー
 MAIL_STARTTLS=True
 MAIL_SSL_TLS=False
 
 # フロントエンドURL（メール内のリンク用）
-FRONTEND_URL=https://yourdomain.com  # HTTPSを推奨
+FRONTEND_URL=https://mscan.jp  # HTTPSを推奨
 
 # Google OAuth設定（オプション）
 GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-client-secret
-GOOGLE_REDIRECT_URI=https://yourdomain.com/api/oauth/google/callback
+GOOGLE_REDIRECT_URI=https://mscan.jp/api/oauth/google/callback
 
 # スクレイパー設定
 SCRAPER_DETAIL_REFETCH_DAYS=90
@@ -520,7 +520,7 @@ cat nginx-site.conf
 ```bash
 nano nginx-site.conf
 # server_name _; を以下のように変更
-# server_name your-domain.com;
+# server_name mscan.jp;
 ```
 
 > **注意**: これらのファイルもGitで管理されているため、変更する場合は開発環境で編集してコミット→本番環境で`git pull`してください。
@@ -777,10 +777,10 @@ sudo apt install -y certbot
 docker compose -f docker-compose.prod.yml stop nginx
 
 # 証明書の取得
-sudo certbot certonly --standalone -d your-domain.com
+sudo certbot certonly --standalone -d mscan.jp
 
 # 証明書の確認
-sudo ls -la /etc/letsencrypt/live/your-domain.com/
+sudo ls -la /etc/letsencrypt/live/mscan.jp/
 # fullchain.pem と privkey.pem が存在することを確認
 ```
 
@@ -800,18 +800,18 @@ upstream frontend {
 # HTTPからHTTPSへのリダイレクト
 server {
     listen 80;
-    server_name your-domain.com;
+    server_name mscan.jp;
     return 301 https://$server_name$request_uri;
 }
 
 # HTTPS設定
 server {
     listen 443 ssl http2;
-    server_name your-domain.com;
+    server_name mscan.jp;
 
     # SSL証明書
-    ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
+    ssl_certificate /etc/letsencrypt/live/mscan.jp/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/mscan.jp/privkey.pem;
 
     # SSL設定
     ssl_protocols TLSv1.2 TLSv1.3;
@@ -919,10 +919,10 @@ nano .env
 
 ```env
 # HTTPSに変更
-FRONTEND_URL=https://your-domain.com
+FRONTEND_URL=https://mscan.jp
 
 # Google OAuthのリダイレクトURIもHTTPSに
-GOOGLE_REDIRECT_URI=https://your-domain.com/api/oauth/google/callback
+GOOGLE_REDIRECT_URI=https://mscan.jp/api/oauth/google/callback
 ```
 
 ### 8.5 Nginxコンテナの再起動
@@ -935,7 +935,7 @@ docker compose -f docker-compose.prod.yml up -d nginx
 docker compose -f docker-compose.prod.yml logs nginx
 
 # HTTPSでアクセスできることを確認
-curl -I https://your-domain.com
+curl -I https://mscan.jp
 ```
 
 ### 8.6 証明書の自動更新設定
@@ -971,15 +971,15 @@ chmod +x /home/ubuntu/renew-cert.sh
 
 ```bash
 # HTTPアクセスがHTTPSにリダイレクトされることを確認
-curl -I http://your-domain.com
-# Location: https://your-domain.com が返ることを確認
+curl -I http://mscan.jp
+# Location: https://mscan.jp が返ることを確認
 
 # HTTPSでアクセスできることを確認
-curl -I https://your-domain.com
+curl -I https://mscan.jp
 # 200 OK が返ることを確認
 
 # SSL証明書の有効性を確認
-openssl s_client -connect your-domain.com:443 -servername your-domain.com < /dev/null
+openssl s_client -connect mscan.jp:443 -servername mscan.jp < /dev/null
 ```
 
 ### 8.8 Google OAuthの設定更新（HTTPS使用時）
@@ -991,7 +991,7 @@ HTTPSを有効にした後、Google Cloud ConsoleでリダイレクトURIを更�
 3. 「APIとサービス」→「認証情報」
 4. OAuth 2.0クライアントIDを選択
 5. 「承認済みのリダイレクトURI」に追加：
-   - `https://your-domain.com/api/oauth/google/callback`
+   - `https://mscan.jp/api/oauth/google/callback`
 6. 「保存」をクリック
 
 ### 8.9 トラブルシューティング
@@ -1011,8 +1011,8 @@ sudo netstat -tulpn | grep :80
 **エラー: "Failed authorization procedure"**
 ```bash
 # ドメインのDNSレコードが正しく設定されているか確認
-nslookup your-domain.com
-dig your-domain.com
+nslookup mscan.jp
+dig mscan.jp
 
 # ファイアウォールで80番ポートが開いているか確認
 sudo ufw status
@@ -1281,7 +1281,7 @@ MAIL_USERNAME=apikey
 MAIL_PASSWORD=SG.xxxxxxxxxxxxxxxxxxxxx  # 生成されたAPIキー
 MAIL_SERVER=smtp.sendgrid.net
 MAIL_PORT=587
-MAIL_FROM=noreply@yourdomain.com  # 検証済みメールアドレス
+MAIL_FROM=noreply@mscan.jp  # 検証済みメールアドレス
 MAIL_FROM_NAME=都心マンション価格チェッカー
 MAIL_STARTTLS=True
 MAIL_SSL_TLS=False
@@ -1302,7 +1302,7 @@ MAIL_SSL_TLS=False
 aws sesv2 put-account-details \
   --production-access-enabled \
   --mail-type TRANSACTIONAL \
-  --website-url https://your-domain.com \
+  --website-url https://mscan.jp \
   --use-case-description "Real estate search service email verification"
 ```
 
@@ -1314,7 +1314,7 @@ aws sesv2 put-account-details \
 2. **送信元メールアドレスの検証**
 ```bash
 # メールアドレスの検証
-aws sesv2 create-email-identity --email-identity noreply@yourdomain.com --region ap-northeast-1
+aws sesv2 create-email-identity --email-identity noreply@mscan.jp --region ap-northeast-1
 ```
 
 または、AWSコンソールから：
@@ -1347,7 +1347,7 @@ MAIL_USERNAME=AKIAIOSFODNN7EXAMPLE  # SMTP認証情報のユーザー名
 MAIL_PASSWORD=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY  # SMTPパスワード
 MAIL_SERVER=email-smtp.ap-northeast-1.amazonaws.com
 MAIL_PORT=587
-MAIL_FROM=noreply@yourdomain.com  # 検証済みメールアドレス
+MAIL_FROM=noreply@mscan.jp  # 検証済みメールアドレス
 MAIL_FROM_NAME=都心マンション価格チェッカー
 MAIL_STARTTLS=True
 MAIL_SSL_TLS=False
