@@ -578,7 +578,7 @@ const PropertyUpdatesPage: React.FC = () => {
                     onClick={() => navigate(`/properties/${property.id}`)}
                     sx={{ cursor: 'pointer' }}
                   >
-                    <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                    <TableCell sx={{ px: { xs: 1, sm: 2 } }}>
                       <Box>
                         {property.building_name}
                         {property.room_number && ` ${property.room_number}号室`}
@@ -587,7 +587,7 @@ const PropertyUpdatesPage: React.FC = () => {
                         </Typography>
                       </Box>
                     </TableCell>
-                    <TableCell align="right" sx={{ pl: { xs: 0, sm: 0.5 }, pr: { xs: 0.5, sm: 0.5 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                    <TableCell align="right" sx={{ pl: { xs: 0, sm: 0.5 }, pr: { xs: 0.5, sm: 0.5 }, whiteSpace: 'nowrap' }}>
                       {property.floor_number ? (
                         <>
                           <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.floor_number}</Box>
@@ -595,7 +595,7 @@ const PropertyUpdatesPage: React.FC = () => {
                         </>
                       ) : '-'}
                     </TableCell>
-                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, whiteSpace: 'nowrap' }}>
                       {property.area ? (
                         <>
                           <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.area}</Box>
@@ -603,19 +603,19 @@ const PropertyUpdatesPage: React.FC = () => {
                         </>
                       ) : '-'}
                     </TableCell>
-                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, whiteSpace: 'nowrap' }}>
                       <Box sx={{ fontWeight: 'bold' }}>
                         {formatPrice(property.price, !isMobile)}
                       </Box>
                     </TableCell>
-                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, whiteSpace: 'nowrap' }}>
                       {property.previous_price ? (
                         <Box sx={{ textDecoration: 'line-through', color: 'text.secondary' }}>
                           {formatPrice(property.previous_price, !isMobile)}
                         </Box>
                       ) : '-'}
                     </TableCell>
-                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 } }}>
                       {property.price_diff ? (
                         <Box>
                           <Chip
@@ -638,9 +638,9 @@ const PropertyUpdatesPage: React.FC = () => {
                         </Box>
                       ) : '-'}
                     </TableCell>
-                    <TableCell sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>{property.layout || '-'}</TableCell>
-                    <TableCell sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>{property.direction || '-'}</TableCell>
-                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                    <TableCell sx={{ px: { xs: 1, sm: 1 } }}>{property.layout || '-'}</TableCell>
+                    <TableCell sx={{ px: { xs: 1, sm: 1 } }}>{property.direction || '-'}</TableCell>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, whiteSpace: 'nowrap' }}>
                       {property.built_year ? (
                         <>
                           <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>築{new Date().getFullYear() - property.built_year}年</Box>
@@ -648,7 +648,7 @@ const PropertyUpdatesPage: React.FC = () => {
                         </>
                       ) : '-'}
                     </TableCell>
-                    <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, whiteSpace: 'nowrap' }}>
                       {property.days_on_market !== null && property.days_on_market !== undefined ? (
                         <>
                           <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.days_on_market}日</Box>
@@ -924,7 +924,7 @@ const PropertyUpdatesPage: React.FC = () => {
                     onClick={() => navigate(`/properties/${property.id}`)}
                     sx={{ cursor: 'pointer' }}
                   >
-                    <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                    <TableCell sx={{ px: { xs: 1, sm: 2 } }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.5, sm: 1 } }}>
                         <Typography 
                           component="span"
@@ -952,7 +952,7 @@ const PropertyUpdatesPage: React.FC = () => {
                         </Box>
                       </Box>
                     </TableCell>
-                    <TableCell align="right" sx={{ pl: { xs: 0, sm: 0.5 }, pr: { xs: 0.5, sm: 0.5 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                    <TableCell align="right" sx={{ pl: { xs: 0, sm: 0.5 }, pr: { xs: 0.5, sm: 0.5 }, whiteSpace: 'nowrap' }}>
                       {property.floor_number ? (
                         <>
                           <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.floor_number}</Box>
@@ -960,7 +960,7 @@ const PropertyUpdatesPage: React.FC = () => {
                         </>
                       ) : '-'}
                     </TableCell>
-                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, whiteSpace: 'nowrap' }}>
                       {property.area ? (
                         <>
                           <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.area}</Box>
@@ -968,14 +968,14 @@ const PropertyUpdatesPage: React.FC = () => {
                         </>
                       ) : '-'}
                     </TableCell>
-                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, whiteSpace: 'nowrap' }}>
                       <Box sx={{ fontWeight: 'bold', color: theme.palette.success.main }}>
                         {formatPrice(property.price, !isMobile)}
                       </Box>
                     </TableCell>
-                    <TableCell sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>{property.layout || '-'}</TableCell>
-                    <TableCell sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>{property.direction || '-'}</TableCell>
-                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                    <TableCell sx={{ px: { xs: 1, sm: 1 } }}>{property.layout || '-'}</TableCell>
+                    <TableCell sx={{ px: { xs: 1, sm: 1 } }}>{property.direction || '-'}</TableCell>
+                    <TableCell align="right" sx={{ px: { xs: 1, sm: 1 }, whiteSpace: 'nowrap' }}>
                       {property.built_year ? (
                         <>
                           <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>築{new Date().getFullYear() - property.built_year}年</Box>
@@ -983,7 +983,7 @@ const PropertyUpdatesPage: React.FC = () => {
                         </>
                       ) : '-'}
                     </TableCell>
-                    <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>{formatDate(property.created_at)}</TableCell>
+                    <TableCell sx={{ px: { xs: 1, sm: 2 } }}>{formatDate(property.created_at)}</TableCell>
                   </TableRow>
                 ))}
               </TableBody>

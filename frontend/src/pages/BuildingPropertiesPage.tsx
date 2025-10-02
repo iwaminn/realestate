@@ -1051,7 +1051,7 @@ const BuildingPropertiesPage: React.FC = () => {
                   }}
                   onClick={() => navigate(`/properties/${property.id}`)}
                 >
-                  <TableCell align="right" sx={{ pl: { xs: 0, sm: 2 }, pr: { xs: 0.5, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                  <TableCell align="right" sx={{ pl: { xs: 0, sm: 2 }, pr: { xs: 0.5, sm: 2 } }}>
                     <Box display="flex" alignItems="center" justifyContent="flex-end" flexWrap="nowrap">
                       {property.sold_at && (
                         <Chip
@@ -1095,7 +1095,7 @@ const BuildingPropertiesPage: React.FC = () => {
                       </Box>
                     </Box>
                   </TableCell>
-                  <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, whiteSpace: 'nowrap' }}>
                     {property.area ? (
                       <>
                         <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.area}</Box>
@@ -1103,7 +1103,7 @@ const BuildingPropertiesPage: React.FC = () => {
                       </>
                     ) : '-'}
                   </TableCell>
-                  <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 2 } }}>
                     <Box sx={{ whiteSpace: 'nowrap' }}>
                       {property.sold_at && property.last_sale_price
                         ? formatPrice(property.last_sale_price, isSmallScreen)
@@ -1115,17 +1115,17 @@ const BuildingPropertiesPage: React.FC = () => {
                       </Box>
                     )}
                   </TableCell>
-                  <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                  <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, whiteSpace: 'nowrap' }}>
                     {property.sold_at && property.last_sale_price
                       ? calculatePricePerTsubo(property.last_sale_price, property.area, isSmallScreen)
                       : calculatePricePerTsubo(property.majority_price || property.min_price, property.area, isSmallScreen)}
                   </TableCell>
-                  <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>{property.layout || '-'}</TableCell>
-                  <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                  <TableCell sx={{ px: { xs: 1, sm: 2 }, whiteSpace: 'nowrap' }}>{property.layout || '-'}</TableCell>
+                  <TableCell sx={{ px: { xs: 1, sm: 2 }, whiteSpace: 'nowrap' }}>
                     <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>{property.direction ? `${property.direction}向き` : '-'}</Box>
-                    <Box sx={{ display: { xs: 'inline', sm: 'none' }, fontSize: '0.7rem' }}>{property.direction || '-'}</Box>
+                    <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.direction || '-'}</Box>
                   </TableCell>
-                  <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                  <TableCell sx={{ px: { xs: 1, sm: 2 } }}>
                     <Box sx={{ whiteSpace: 'nowrap' }}>
                       <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>
                         {formatDate(property.earliest_published_at)}
@@ -1140,7 +1140,7 @@ const BuildingPropertiesPage: React.FC = () => {
                       </Box>
                     )}
                   </TableCell>
-                  <TableCell sx={{ px: { xs: 0.5, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' } }}>
+                  <TableCell sx={{ px: { xs: 0.5, sm: 2 } }}>
                     {property.price_change_info ? (
                       <Box sx={{ 
                         display: { xs: 'flex', sm: 'block' },
@@ -1150,14 +1150,13 @@ const BuildingPropertiesPage: React.FC = () => {
                       }}>
                         {/* PC版：日付表示 */}
                         <Box sx={{ display: { xs: 'none', sm: 'block' } }}>
-                          <Typography variant="body2" sx={{ fontSize: '0.875rem', whiteSpace: 'nowrap' }}>
+                          <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>
                             {formatDate(property.price_change_info.date)}
                           </Typography>
                           <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.25 }}>
                             <Typography 
                               variant="body2" 
                               sx={{ 
-                                fontSize: '0.8rem',
                                 color: 'text.secondary',
                                 textDecoration: 'line-through',
                                 whiteSpace: 'nowrap'
@@ -1168,7 +1167,6 @@ const BuildingPropertiesPage: React.FC = () => {
                             <Typography 
                               variant="body2" 
                               sx={{ 
-                                fontSize: '0.8rem',
                                 color: property.price_change_info.change_amount > 0 ? 'error.main' : 'success.main',
                                 fontWeight: 'bold',
                                 whiteSpace: 'nowrap'
@@ -1183,14 +1181,13 @@ const BuildingPropertiesPage: React.FC = () => {
                         
                         {/* モバイル版：コンパクト表示 */}
                         <Box sx={{ display: { xs: 'flex', sm: 'none' }, flexDirection: 'column', gap: 0.25 }}>
-                          <Typography variant="body2" sx={{ fontSize: '0.75rem', whiteSpace: 'nowrap' }}>
+                          <Typography variant="body2" sx={{ whiteSpace: 'nowrap' }}>
                             {calculateDaysFromPublished(property.price_change_info.date)}
                           </Typography>
                           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
                             <Typography 
                               variant="body2" 
                               sx={{ 
-                                fontSize: '0.7rem',
                                 color: 'text.secondary',
                                 textDecoration: 'line-through',
                                 whiteSpace: 'nowrap'
@@ -1201,7 +1198,6 @@ const BuildingPropertiesPage: React.FC = () => {
                             <Typography 
                               variant="body2" 
                               sx={{ 
-                                fontSize: '0.75rem',
                                 color: property.price_change_info.change_amount > 0 ? 'error.main' : 'success.main',
                                 fontWeight: 'bold',
                                 whiteSpace: 'nowrap'
@@ -1218,7 +1214,7 @@ const BuildingPropertiesPage: React.FC = () => {
                     )}
                   </TableCell>
                   {includeInactive && (
-                    <TableCell sx={{ px: { xs: 1, sm: 2 }, fontSize: { xs: '0.75rem', sm: '0.875rem' }, whiteSpace: 'nowrap' }}>
+                    <TableCell sx={{ px: { xs: 1, sm: 2 }, whiteSpace: 'nowrap' }}>
                       {property.sold_at ? (
                         <>
                           <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>{formatDate(property.sold_at)}</Box>

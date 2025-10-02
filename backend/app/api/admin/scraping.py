@@ -1546,6 +1546,18 @@ def execute_scraping_strategy(
                     db_task.status = 'completed'
                     db_task.completed_at = datetime.now()
                     db.commit()
+                    
+                    # スクレイピング完了後に価格改定履歴キューを自動処理
+                    try:
+                        from ...utils.price_change_calculator import PriceChangeCalculator
+                        calculator = PriceChangeCalculator(db)
+                        print(f"[{task_id}] スクレイピング完了。価格改定履歴キューの処理を開始します...")
+                        stats = calculator.process_queue(limit=1000)
+                        print(f"[{task_id}] 価格改定履歴キューの処理完了: 処理={stats['processed']}件, 失敗={stats['failed']}件, 変更={stats['changes_found']}件")
+                    except Exception as queue_error:
+                        print(f"[{task_id}] 価格改定履歴キューの処理に失敗: {queue_error}")
+                        # キュー処理の失敗はメインタスクに影響させない
+                    
                     # 正常完了フック実行
                     if hooks:
                         hooks.trigger_completion(task_id, "completed")

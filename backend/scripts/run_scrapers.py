@@ -8,8 +8,6 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-import schedule
-import time
 import logging
 import argparse
 from datetime import datetime
@@ -117,6 +115,11 @@ def run_all_scrapers(area: str = "minato", max_properties: int = 100, force_deta
         total_errors=results['failed']
     )
     
+    # スクレイピング完了後に価格改定履歴キューを自動処理
+    if final_status == 'completed':
+        logger.info("スクレイピング完了。価格改定履歴キューの処理を開始します...")
+        process_price_change_queue()
+    
     return results
 
 
@@ -182,6 +185,11 @@ def run_single_scraper(scraper_name: str, area: str = "minato", max_properties: 
         
         # タスクのステータスを更新
         update_task_status(task_id, 'completed', completed_at=datetime.now())
+        
+        # スクレイピング完了後に価格改定履歴キューを自動処理
+        logger.info("スクレイピング完了。価格改定履歴キューの処理を開始します...")
+        process_price_change_queue()
+        
     except Exception as e:
         logger.error(f"{scraper_name} scraper failed: {e}", exc_info=True)
         update_task_status(task_id, 'error', completed_at=datetime.now(), total_errors=1)
@@ -404,23 +412,40 @@ def check_task_existence() -> bool:
         return False
 
 
-def scheduled_job():
-    """スケジュールされたジョブ"""
-    logger.info("=" * 50)
-    logger.info(f"Scheduled job started at {datetime.now()}")
+def process_price_change_queue(limit: int = 1000):
+    """
+    価格改定履歴キューを処理
     
-    # デフォルト設定でスクレイピングを実行
-    # （run_all_scrapers内でタスクが作成される）
-    result = run_all_scrapers()
-    
-    # エラーが多い場合は継続しない
-    if result and result.get('failed', 0) == 5 and result.get('success', 0) == 0:
-        logger.error("All scrapers failed. Stopping scheduled execution.")
-        return False
-    
-    logger.info(f"Scheduled job completed at {datetime.now()}")
-    logger.info("=" * 50)
-    return True  # 継続を示す
+    Args:
+        limit: 一度に処理する最大件数（デフォルト: 1000）
+    """
+    try:
+        from backend.app.database import SessionLocal
+        from backend.app.utils.price_change_calculator import PriceChangeCalculator
+        
+        session = SessionLocal()
+        try:
+            calculator = PriceChangeCalculator(session)
+            
+            # キューに入っている物件を処理
+            logger.info(f"価格改定履歴キューの処理を開始（最大{limit}件）...")
+            stats = calculator.process_queue(limit)
+            
+            logger.info(
+                f"価格改定履歴キューの処理完了: "
+                f"処理={stats['processed']}件, "
+                f"失敗={stats['failed']}件, "
+                f"変更={stats['changes_found']}件"
+            )
+            
+            return stats
+            
+        finally:
+            session.close()
+    except Exception as e:
+        logger.error(f"価格改定履歴キューの処理に失敗: {e}", exc_info=True)
+        return {'processed': 0, 'failed': 0, 'changes_found': 0}
+
 
 
 def main():
