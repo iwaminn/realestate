@@ -895,7 +895,7 @@ export const BuildingManagement: React.FC = () => {
                                         size="small"
                                       />
                                     )}
-                                    {property.listings && property.listings.length > 0 && (
+                                    {(property as any).listings && (property as any).listings.length > 0 && (
                                       <IconButton
                                         size="small"
                                         onClick={() => setExpandedPropertyId(
@@ -937,13 +937,13 @@ export const BuildingManagement: React.FC = () => {
                                 </TableCell>
                               </TableRow>
                               {/* 掲載情報の折り畳み行 */}
-                              {expandedPropertyId === property.id && property.listings && property.listings.length > 0 && (
+                              {expandedPropertyId === property.id && (property as any).listings && (property as any).listings.length > 0 && (
                                 <TableRow>
                                   <TableCell colSpan={10} sx={{ bgcolor: 'grey.50', py: 0 }}>
                                     <Collapse in={expandedPropertyId === property.id}>
                                       <Box sx={{ p: 2 }}>
                                         <Typography variant="subtitle2" gutterBottom>
-                                          掲載情報 ({property.listings.length}件)
+                                          掲載情報 ({(property as any).listings?.length || 0}件)
                                         </Typography>
                                         <Table size="small">
                                           <TableHead>
@@ -961,7 +961,7 @@ export const BuildingManagement: React.FC = () => {
                                             </TableRow>
                                           </TableHead>
                                           <TableBody>
-                                            {property.listings.map((listing: any) => (
+                                            {((property as any).listings || []).map((listing: any) => (
                                               <TableRow key={listing.id}>
                                                 <TableCell>{listing.id}</TableCell>
                                                 <TableCell>

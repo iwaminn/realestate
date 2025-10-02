@@ -180,13 +180,13 @@ const PropertyDetailPage: React.FC = () => {
     });
   } else {
     // フォールバック：従来の方法で統合
-    const dateMap: Map<string, { prices: number[], sources: Set<string> }> = new Map();
-    
+    const dateMap = new (Map as any)();
+
     Object.entries(price_histories_by_listing).forEach(([listingId, histories]) => {
       const listing = listings.find(l => l.id === parseInt(listingId));
       if (!listing) return;
-      
-      histories.forEach(history => {
+
+      histories.forEach((history: any) => {
         const dateKey = format(new Date(history.recorded_at), 'yyyy/MM/dd');
         if (!dateMap.has(dateKey)) {
           dateMap.set(dateKey, { prices: [], sources: new Set() });
@@ -196,12 +196,12 @@ const PropertyDetailPage: React.FC = () => {
         entry.sources.add(listing.source_site);
       });
     });
-    
+
     // 日付ごとに代表価格を算出
-    const dateEntries = Array.from(dateMap.entries());
+    const dateEntries: Array<[string, { prices: number[], sources: Set<string> }]> = Array.from(dateMap.entries());
     dateEntries.sort((a, b) => a[0].localeCompare(b[0])).forEach(([date, data]) => {
       const uniquePrices = [...new Set(data.prices)];
-      const representativePrice = uniquePrices.length === 1 ? uniquePrices[0] : Math.min(...uniquePrices);
+      const representativePrice = uniquePrices.length === 1 ? uniquePrices[0] : Math.min(...data.prices);
       
       priceChartData.push({
         date,

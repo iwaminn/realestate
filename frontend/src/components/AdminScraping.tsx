@@ -515,7 +515,7 @@ const TaskRow = React.memo(({
           </Box>
         </TableCell>
         <TableCell>
-          {task.scrapers ? task.scrapers.map(s => (
+          {task.scrapers ? task.scrapers.map((s: string) => (
             <Chip key={s} label={getScraperDisplayName(s)} size="small" sx={{ mr: 0.5, my: 0.25 }} />
           )) : null}
         </TableCell>
@@ -665,9 +665,9 @@ const TaskRow = React.memo(({
             <TaskDetails 
               task={task}
               logTabValue={logTabValues[task.task_id] || 0}
-              setLogTabValue={(value) => setLogTabValues(prev => ({ ...prev, [task.task_id]: value }))}
+              setLogTabValue={(value: number) => setLogTabValues((prev: Record<string, number>) => ({ ...prev, [task.task_id]: value }))}
               logPage={logPages[task.task_id] || 1}
-              setLogPage={(page) => setLogPages(prev => ({ ...prev, [task.task_id]: page }))}
+              setLogPage={(page: number) => setLogPages((prev: Record<string, number>) => ({ ...prev, [task.task_id]: page }))}
             />
           </Collapse>
         </TableCell>
@@ -875,7 +875,7 @@ const TaskLogs = React.memo(({ task, logPage, setLogPage }: any) => {
       )}
       <Box sx={{ maxHeight: 400, overflow: 'auto' }}>
         <List dense>
-          {paginatedLogs.map((log, index) => (
+          {paginatedLogs.map((log: any, index: number) => (
             <ListItem key={index} sx={{ 
               py: 0.5,
               borderBottom: '1px solid',
@@ -979,7 +979,7 @@ const TaskErrorLogs = React.memo(({ task }: any) => {
       )}
       <Box sx={{ maxHeight: 400, overflow: 'auto', overflowX: 'hidden' }}>
         <List dense sx={{ width: '100%' }}>
-          {paginatedLogs.map((log, index) => (
+          {paginatedLogs.map((log: any, index: number) => (
             <ListItem key={index} sx={{ 
               py: 0.5,
               borderBottom: '1px solid',
@@ -1117,7 +1117,7 @@ const TaskWarningLogs = React.memo(({ task }: any) => {
       )}
       <Box sx={{ maxHeight: 400, overflow: 'auto' }}>
         <List dense>
-          {paginatedLogs.map((log, index) => (
+          {paginatedLogs.map((log: any, index: number) => (
             <ListItem key={index} sx={{ 
               py: 0.5,
               borderBottom: '1px solid',
