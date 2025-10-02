@@ -13,7 +13,7 @@ dist/
 build/
 
 # Poetry
-poetry.lock
+# poetry.lock は本番環境のDockerビルドで必要なためコミットする
 
 # Node
 node_modules/
