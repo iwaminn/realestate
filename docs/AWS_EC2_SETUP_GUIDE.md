@@ -547,9 +547,6 @@ docker ps
 ```bash
 # データベーススキーマの作成
 docker exec realestate-backend poetry run python backend/scripts/init_schema.py
-
-# サイトマスターの初期化
-docker exec realestate-backend poetry run python backend/scripts/create_site_master.py
 ```
 
 #### バックアップから復元する場合
@@ -603,9 +600,6 @@ docker exec realestate-postgres pg_restore -U realestate -d realestate -v /tmp/r
 
 # 5. バックエンドを起動
 docker compose -f docker-compose.prod.yml start backend
-
-# 6. サイトマスターの初期化（まだ存在しない場合のみ）
-docker exec realestate-backend poetry run python backend/scripts/create_site_master.py
 ```
 
 **4. 復元の確認**
