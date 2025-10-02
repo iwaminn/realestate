@@ -53,7 +53,7 @@ services:
       # - MAIL_FROM_NAME=都心マンションDB
       # - MAIL_STARTTLS=True
       # - MAIL_SSL_TLS=False
-      # - FRONTEND_URL=https://yourdomain.com
+      - FRONTEND_URL=${FRONTEND_URL}
       # Google OAuth設定（開発環境用）
       # .envファイルから読み込み
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}

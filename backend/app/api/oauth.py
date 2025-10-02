@@ -10,10 +10,13 @@ import os
 import secrets
 from datetime import datetime
 from typing import Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 from ..database import get_db
 from ..models import User
-from ..utils.auth import create_access_token
+from ..utils.auth import create_access_token, create_user_session
 
 router = APIRouter()
 
@@ -139,7 +142,11 @@ async def google_callback(
         data={"sub": str(user.id), "email": user.email}
     )
     
+    # セッションを作成（トークンを有効化）
+    create_user_session(db, user.id, jti, expires_at)
+    
     # フロントエンドにリダイレクト（トークン付き）
     redirect_url = f"{FRONTEND_URL}/auth/callback?token={jwt_token}"
+    print(f"[OAuth] Created session for user {user.id}, jti={jti}, redirect to {redirect_url[:80]}...")
     
     return RedirectResponse(url=redirect_url)

@@ -47,8 +47,10 @@ def verify_token(token: str) -> Optional[Dict[Any, Any]]:
     """JWTトークンを検証"""
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        print(f"[Auth] Token verified successfully: jti={payload.get('jti')[:8] if payload.get('jti') else 'None'}...")
         return payload
-    except jwt.PyJWTError:
+    except jwt.PyJWTError as e:
+        print(f"[Auth] Token verification failed: {e}")
         return None
 
 def authenticate_user(db: Session, email: str, password: str) -> Optional[User]:
@@ -84,7 +86,9 @@ def revoke_user_session(db: Session, jti: str) -> bool:
 def is_token_revoked(db: Session, jti: str) -> bool:
     """トークンが無効化されているかチェック"""
     session = db.query(UserSession).filter(UserSession.jti == jti).first()
-    return session.is_revoked if session else True
+    result = session.is_revoked if session else True
+    print(f"[Auth] Token revoked check: jti={jti[:8]}..., session_exists={session is not None}, is_revoked={result}")
+    return result
 
 def get_current_user_from_token(db: Session, token: str) -> Optional[User]:
     """トークンから現在のユーザーを取得"""

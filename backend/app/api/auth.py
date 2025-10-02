@@ -90,6 +90,7 @@ def require_auth(
     db: Session = Depends(get_db)
 ) -> User:
     """認証が必須のエンドポイント用"""
+    print(f"[Auth] require_auth called, credentials={credentials}")
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

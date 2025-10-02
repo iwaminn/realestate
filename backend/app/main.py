@@ -52,6 +52,10 @@ async def log_requests(request, call_next):
     start_time = time.time()
     
     # リクエストログ
+    auth_header = request.headers.get("authorization", "None")
+    if request.url.path == "/api/auth/me":
+        print(f"[Middleware] /auth/me request, Authorization header: {auth_header[:50] if auth_header != 'None' else 'None'}...")
+    
     api_logger.info(
         "API Request",
         extra={
