@@ -456,6 +456,8 @@ ls -la docker-compose.prod.yml
 cat docker-compose.prod.yml
 ```
 
+> **重要**: `poetry.lock` ファイルはGit管理されています。本番環境で正確な依存関係を再現するため、このファイルは削除しないでください。
+
 **主な特徴**：
 - PostgreSQL、バックエンド、フロントエンド、Nginxの4つのサービス
 - 環境変数は`.env`ファイルから読み込み
