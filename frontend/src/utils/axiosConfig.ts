@@ -1,8 +1,8 @@
 import axios from 'axios';
-import { API_CONFIG } from '../config/api';
 
-// APIのベースURLを設定
-axios.defaults.baseURL = API_CONFIG.BASE_URL;
+// APIのベースURL（本番環境では相対パス、開発環境ではlocalhost）
+// Viteの環境変数を使用
+axios.defaults.baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
 // Axiosのインターセプターを設定
 axios.interceptors.request.use(
