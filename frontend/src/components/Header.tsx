@@ -22,7 +22,6 @@ import BookmarkIcon from '@mui/icons-material/Bookmark';
 import LoginIcon from '@mui/icons-material/Login';
 import MenuIcon from '@mui/icons-material/Menu';
 import UpdateIcon from '@mui/icons-material/Update';
-import AdminPanelSettingsIcon from '@mui/icons-material/AdminPanelSettings';
 import SearchIcon from '@mui/icons-material/Search';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
 import { APP_CONFIG } from '../config/app';
@@ -52,7 +51,6 @@ const Header: React.FC = () => {
     { text: 'ブックマーク', icon: <BookmarkIcon />, path: '/bookmarks' },
     { text: '更新情報', icon: <UpdateIcon />, path: '/updates' },
     { text: '成約価格', icon: <TrendingUpIcon />, path: '/transaction-prices' },
-    { text: '管理画面', icon: <AdminPanelSettingsIcon />, path: '/admin' },
   ];
 
   return (
@@ -91,9 +89,6 @@ const Header: React.FC = () => {
               </Button>
               <Button color="inherit" onClick={() => navigate('/transaction-prices')}>
                 成約価格
-              </Button>
-              <Button color="inherit" onClick={() => navigate('/admin')}>
-                管理画面
               </Button>
 
               {/* ユーザー認証部分 */}
