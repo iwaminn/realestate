@@ -868,7 +868,161 @@ curl -I https://mscan.jp
 openssl s_client -connect mscan.jp:443 -servername mscan.jp < /dev/null
 ```
 
-### 8.7 Google OAuthの設定更新（HTTPS使用時）
+### 8.7 Google OAuthの設定（オプション）
+
+Google アカウントでのログイン機能を有効にする場合は、以下の手順でGoogle OAuth 2.0を設定します。
+
+#### 8.7.1 Google Cloud Consoleでプロジェクトを作成
+
+1. **Google Cloud Consoleにアクセス**
+   - https://console.cloud.google.com/ にアクセス
+   - Googleアカウントでログイン
+
+2. **新しいプロジェクトを作成**
+   - 画面上部の「プロジェクトを選択」をクリック
+   - 「新しいプロジェクト」をクリック
+   - プロジェクト名: 任意（例: mscan-oauth）
+   - 「作成」をクリック
+
+3. **プロジェクトを選択**
+   - 作成したプロジェクトが自動的に選択されます
+
+#### 8.7.2 OAuth同意画面の設定
+
+**現在のGoogle Cloud Consoleの画面構成に対応した手順:**
+
+1. **APIとサービス → OAuth同意画面**
+   - 左メニューから「APIとサービス」→「OAuth同意画面」を選択
+
+2. **User Typeの選択**
+   - **外部**を選択（一般ユーザーが利用可能）
+   - 「作成」をクリック
+
+3. **アプリ情報の入力**
+   - **アプリ名**: `mscan.jp 都心マンション価格チェッカー`
+   - **ユーザーサポートメール**: あなたのメールアドレス（admin@mscan.jpなど）
+   - **アプリのロゴ**: （オプション）
+   - **承認済みドメイン**: `mscan.jp`
+   - **デベロッパーの連絡先情報**: あなたのメールアドレス
+   - 「保存して次へ」をクリック
+
+4. **OAuth同意画面が作成されます**
+   - 画面左にメニューが表示されます：
+     - **概要** (Overview)
+     - **ブランディング** (Branding)
+     - **対象** (Audience)
+     - **クライアント** (Clients)
+     - **データアクセス** (Data Access)
+     - **検証センター** (Verification Center)
+
+5. **スコープの設定**
+   - 左メニューから「**データアクセス**」をクリック
+   - 「スコープを追加または削除」ボタンをクリック
+   - 検索ボックスで以下のスコープを検索して選択：
+     - `.../auth/userinfo.email` （メールアドレスの取得）
+     - `.../auth/userinfo.profile` （プロフィール情報の取得）
+   - 「更新」ボタンをクリック
+   - 画面上部の「保存して次へ」をクリック
+
+6. **テストユーザーの追加**（オプション - 本番公開前のテスト用）
+   - 左メニューから「**対象**」をクリック
+   - 「テストユーザーを追加」セクションで、テストに使用するGoogleアカウントを追加
+   - **注意**: テストステータスのままでも、後で本番公開申請を行えば全ユーザーがログイン可能になります
+   - 今は追加せずスキップしても問題ありません
+
+7. **設定完了の確認**
+   - 左メニューの「**概要**」をクリック
+   - 以下が設定されていることを確認：
+     - ✓ アプリ名が表示されている
+     - ✓ スコープが2件追加されている
+     - ✓ 公開ステータスが「テスト」または「本番環境」になっている
+
+#### 8.7.3 OAuth 2.0クライアントIDの作成
+
+1. **認証情報ページを開く**
+   - 左メニューから「APIとサービス」→「認証情報」を選択
+
+2. **OAuth 2.0クライアントIDを作成**
+   - 「認証情報を作成」→「OAuth 2.0クライアントID」をクリック
+
+3. **アプリケーションの種類を選択**
+   - **アプリケーションの種類**: `ウェブアプリケーション`
+   - **名前**: `mscan.jp Web Client`
+
+4. **承認済みのリダイレクトURIを追加**
+   
+   **開発環境用（ローカル）:**
+   ```
+   http://localhost:3001/api/oauth/google/callback
+   ```
+   
+   **本番環境用（HTTPS）:**
+   ```
+   https://mscan.jp/api/oauth/google/callback
+   ```
+   
+   > **注意**: 両方を追加することで、開発環境と本番環境の両方で使用可能になります。
+
+5. **作成**
+   - 「作成」ボタンをクリック
+   - **クライアントIDとクライアントシークレット**が表示されます
+   - これらをコピーして安全な場所に保存（**重要: クライアントシークレットは再表示できません**）
+
+#### 8.7.4 環境変数の設定
+
+本番サーバーの`.env`ファイルにOAuth設定を追加します：
+
+```bash
+cd /home/ubuntu/realestate
+nano .env
+```
+
+以下を追加：
+
+```env
+# Google OAuth設定
+GOOGLE_CLIENT_ID=123456789012-abcdefghijklmnopqrstuvwxyz123456.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=GOCSPX-abcdefghijklmnopqrstuvwxyz
+GOOGLE_REDIRECT_URI=https://mscan.jp/api/oauth/google/callback
+```
+
+**開発環境の場合**（`/home/ubuntu/realestate/.env`）:
+```env
+GOOGLE_REDIRECT_URI=http://localhost:3001/api/oauth/google/callback
+```
+
+#### 8.7.5 コンテナの再起動
+
+```bash
+cd /home/ubuntu/realestate
+docker compose -f docker-compose.prod.yml down
+docker compose -f docker-compose.prod.yml up -d
+```
+
+#### 8.7.6 動作確認
+
+1. **フロントエンドにアクセス**
+   - https://mscan.jp にアクセス
+   - ユーザーアイコンをクリック
+   - 「Googleでログイン」ボタンが表示されることを確認
+
+2. **ログインテスト**
+   - 「Googleでログイン」をクリック
+   - Googleアカウント選択画面が表示される
+   - アカウントを選択してログイン
+   - mscan.jpにリダイレクトされ、ログイン状態になる
+
+#### 8.7.7 本番公開（オプション）
+
+テストユーザーのみでなく、一般ユーザーにも公開する場合：
+
+1. **Google Cloud Console → OAuth同意画面**
+2. **「アプリを公開」ボタンをクリック**
+3. 確認画面で「確認」をクリック
+
+> **注意**: 本番公開前に、プライバシーポリシーと利用規約のURLを設定する必要がある場合があります。
+
+#### 8.7.8 HTTPSへの移行時の更新
 
 HTTPSを有効にした後、Google Cloud ConsoleでリダイレクトURIを更新します：
 
@@ -1105,82 +1259,409 @@ nginx-site.confにキャッシュ設定を追加することで、APIレスポ�
 # }
 ```
 
-## 13. メール送信の設定
+## 13. メール機能の設定（Google Workspace）
 
-本システムでは、ユーザー登録時のメール認証にメール送信機能を使用します。以下のいずれかのメールサービスを設定してください。
+本システムでは、独自ドメイン（mscan.jp）を使用したプロフェッショナルなメール送受信のため、Google Workspaceを使用します。
 
-### 13.1 Gmail（開発・小規模運用向け）
+### 13.1 Google Workspaceアカウントの作成
 
 #### 手順
 
-1. **Googleアカウントで2段階認証を有効化**
+1. **Google Workspaceに登録**
+   - https://workspace.google.com/ にアクセス
+   - 「使ってみる」をクリック
+   - ビジネス名: 任意（例: mscan.jp）
+   - 従業員数: 自分のみ
+   - 国/地域: 日本
+
+2. **ドメインの設定**
+   - 「使用するドメインを指定」を選択
+   - ドメイン名: `mscan.jp` を入力
+   - 「次へ」をクリック
+
+3. **管理者アカウントの作成**
+   - メールアドレス: `admin@mscan.jp`（推奨）または任意
+   - パスワードを設定
+
+4. **プランの選択**
+   - **Business Starter**: 月額680円/ユーザー（推奨）
+     - 30GBストレージ
+     - カスタムメール（@mscan.jp）
+     - セキュアなビデオ会議
+   - **Business Standard**: 月額1,360円/ユーザー
+     - 2TBストレージ
+     - その他ビジネス機能
+
+### 13.2 ドメイン所有権の確認
+
+Google Workspaceの設定ウィザードに従ってドメイン所有権を確認します。
+
+#### 方法1: TXTレコードによる確認（推奨）
+
+1. **Google Workspaceで確認コードを取得**
+   - 管理コンソール (https://admin.google.com/) にログイン
+   - 「ドメインの確認」画面で表示される確認コードをコピー
+
+2. **Route 53でTXTレコードを追加**
+```bash
+# AWS CLIでTXTレコードを追加する場合
+aws route53 change-resource-record-sets \
+  --hosted-zone-id YOUR_HOSTED_ZONE_ID \
+  --change-batch '{
+    "Changes": [{
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "mscan.jp",
+        "Type": "TXT",
+        "TTL": 3600,
+        "ResourceRecords": [{
+          "Value": "\"google-site-verification=YOUR_VERIFICATION_CODE\""
+        }]
+      }
+    }]
+  }'
+```
+
+または、**Route 53コンソールで手動設定**：
+   - Route 53コンソール → ホストゾーン → mscan.jp
+   - 「レコードを作成」をクリック
+   - レコードタイプ: TXT
+   - 名前: （空欄）
+   - 値: `google-site-verification=YOUR_VERIFICATION_CODE`
+   - TTL: 3600
+   - 「レコードを作成」
+
+3. **Google側で確認を実行**
+   - Google Workspace管理コンソールに戻る
+   - 「ドメインの所有権を確認」をクリック
+   - 確認には数分～最大48時間かかる場合があります
+
+### 13.3 MXレコードの設定（メール受信用）
+
+メールを受信するため、MXレコードをGoogleのメールサーバーに向けます。
+
+#### Route 53での設定
+
+**Route 53コンソール**:
+1. Route 53コンソール → ホストゾーン → mscan.jp
+2. 「レコードを作成」をクリック
+3. 以下の5つのMXレコードを追加（優先度順）:
+
+| 優先度 | メールサーバー |
+|--------|----------------|
+| 1      | ASPMX.L.GOOGLE.COM |
+| 5      | ALT1.ASPMX.L.GOOGLE.COM |
+| 5      | ALT2.ASPMX.L.GOOGLE.COM |
+| 10     | ALT3.ASPMX.L.GOOGLE.COM |
+| 10     | ALT4.ASPMX.L.GOOGLE.COM |
+
+**設定例（最初のレコード）**:
+- レコード名: （空欄）
+- レコードタイプ: MX
+- 値: `1 ASPMX.L.GOOGLE.COM`
+- TTL: 3600
+
+**AWS CLIでの設定例**:
+```bash
+aws route53 change-resource-record-sets \
+  --hosted-zone-id YOUR_HOSTED_ZONE_ID \
+  --change-batch '{
+    "Changes": [{
+      "Action": "CREATE",
+      "ResourceRecordSet": {
+        "Name": "mscan.jp",
+        "Type": "MX",
+        "TTL": 3600,
+        "ResourceRecords": [
+          {"Value": "1 ASPMX.L.GOOGLE.COM"},
+          {"Value": "5 ALT1.ASPMX.L.GOOGLE.COM"},
+          {"Value": "5 ALT2.ASPMX.L.GOOGLE.COM"},
+          {"Value": "10 ALT3.ASPMX.L.GOOGLE.COM"},
+          {"Value": "10 ALT4.ASPMX.L.GOOGLE.COM"}
+        ]
+      }
+    }]
+  }'
+```
+
+### 13.4 SPF/DKIM/DMARCレコードの設定（送信認証用）
+
+メール送信の信頼性を高めるため、認証レコードを設定します。
+
+#### SPFレコード（送信者認証）
+
+**Route 53で設定**:
+- レコードタイプ: TXT
+- 名前: （空欄）
+- 値: `v=spf1 include:_spf.google.com ~all`
+- TTL: 3600
+
+#### DKIMレコード（電子署名）
+
+1. **Google Workspace管理コンソールでDKIMを有効化**
+   - https://admin.google.com/ にログイン
+   - アプリ → Google Workspace → Gmail → メールの認証
+   - 「新しいレコードを生成」をクリック
+   - DKIM鍵のサイズ: 2048ビット（推奨）
+   - 表示されるDNSレコードをコピー
+
+2. **Route 53でTXTレコードを追加**
+   - レコード名: `google._domainkey`
+   - レコードタイプ: TXT
+   - 値: Google Workspaceで表示されたDKIM鍵（例: `v=DKIM1; k=rsa; p=MIGfMA0GCS...`）
+   - TTL: 3600
+
+3. **Google側でDKIMを有効化**
+   - 管理コンソールで「認証を開始」をクリック
+
+#### DMARCレコード（ポリシー設定）
+
+**Route 53で設定**:
+- レコード名: `_dmarc`
+- レコードタイプ: TXT
+- 値: `v=DMARC1; p=quarantine; rua=mailto:admin@mscan.jp`
+- TTL: 3600
+
+**DMARCポリシーの意味**:
+- `p=quarantine`: 認証失敗メールを迷惑メールフォルダに
+- `p=reject`: 認証失敗メールを拒否（より厳格）
+- `rua=`: レポート送信先メールアドレス
+
+### 13.5 メールアドレスの作成
+
+#### 推奨メールアドレス構成
+
+1. **admin@mscan.jp** - 管理者用（既に作成済み）
+2. **noreply@mscan.jp** - システム送信用（パスワードリセット等）
+3. **info@mscan.jp** - 問い合わせ用（オプション）
+
+#### メールアドレスの作成手順
+
+以下の手順で、noreply@mscan.jpとinfo@mscan.jpの両方を作成します。
+
+##### 共通手順: ユーザーの追加
+
+1. **Google Workspace管理コンソールにアクセス**
+   - https://admin.google.com/ にログイン
+   - admin@mscan.jpアカウントでログイン
+
+2. **新しいユーザーを追加**
+   - 左メニューから「ディレクトリ」→「ユーザー」をクリック
+   - 「新しいユーザーを追加」ボタンをクリック
+
+##### noreply@mscan.jpの作成
+
+1. **ユーザー情報を入力**
+   - **名**: No
+   - **姓**: Reply
+   - **メインのメールアドレス**: `noreply`（@mscan.jpは自動的に付加されます）
+   - **パスワード**: 自動生成またはカスタム設定（16文字以上推奨）
+   - 「追加」をクリック
+
+2. **アプリパスワードの生成（SMTP用）**
+   - noreply@mscan.jpアカウントでログイン（https://mail.google.com/）
    - https://myaccount.google.com/security にアクセス
    - 「2段階認証プロセス」を有効化
-
-2. **アプリパスワードの生成**
    - https://myaccount.google.com/apppasswords にアクセス
-   - アプリ名（例: 都心マンションDB）を入力
+   - アプリ名: `都心マンション価格チェッカー`
    - 「生成」をクリック
-   - 表示された16文字のパスワードをコピー
+   - 表示された16文字のパスワードをコピー（**重要: 再表示できません**）
+   - このパスワードを`.env`ファイルの`MAIL_PASSWORD`に設定
 
-3. **.envファイルに設定**
+##### info@mscan.jpの作成
+
+1. **ユーザー情報を入力**
+   - 管理コンソールで再度「新しいユーザーを追加」をクリック
+   - **名**: Info
+   - **姓**: mscan.jp
+   - **メインのメールアドレス**: `info`
+   - **パスワード**: 強力なパスワードを設定（16文字以上推奨）
+   - 「追加」をクリック
+
+2. **メールの受信確認**
+   - info@mscan.jpアカウントでログイン（https://mail.google.com/）
+   - 正常にログインできることを確認
+   - このアカウントでメールの送受信が可能になります
+
+3. **メール転送設定（オプション）**
+   
+   info@mscan.jpへのメールをadmin@mscan.jpに転送したい場合：
+   
+   - info@mscan.jpでログイン
+   - Gmail設定（右上の歯車アイコン）→「すべての設定を表示」
+   - 「メール転送とPOP/IMAP」タブ
+   - 「転送先アドレスを追加」をクリック
+   - admin@mscan.jpを入力
+   - 確認コードを入力（admin@mscan.jpに届いたメールから）
+   - 「受信メールをadmin@mscan.jpに転送して、infoのコピーを受信トレイに残す」を選択
+   - 「変更を保存」
+
+##### 作成したメールアドレスの用途
+
+| メールアドレス | 用途 | SMTP送信 | 受信 |
+|----------------|------|----------|------|
+| admin@mscan.jp | 管理者用 | - | ✅ |
+| noreply@mscan.jp | システム送信専用 | ✅ | - |
+| info@mscan.jp | 問い合わせ受付 | - | ✅ |
+
+> **ヒント**: info@mscan.jpは問い合わせフォームやフッターに記載する公開メールアドレスとして使用できます。
+
+### 13.6 アプリケーションのメール設定
+
+#### .envファイルの設定
+
+本番サーバー（EC2）の`.env`ファイルを編集：
+
+```bash
+cd /home/ubuntu/realestate
+nano .env
+```
+
+以下の内容を設定：
+
 ```env
-MAIL_USERNAME=your-email@gmail.com
-MAIL_PASSWORD=xxxx xxxx xxxx xxxx  # 生成されたアプリパスワード
+# メール送信設定（Google Workspace）
+MAIL_USERNAME=noreply@mscan.jp
+MAIL_PASSWORD=abcdefghijklmnop  # 生成されたアプリパスワード（16文字、スペースなし）
 MAIL_SERVER=smtp.gmail.com
 MAIL_PORT=587
-MAIL_FROM=your-email@gmail.com
+MAIL_FROM=noreply@mscan.jp
 MAIL_FROM_NAME=都心マンション価格チェッカー
 MAIL_STARTTLS=True
 MAIL_SSL_TLS=False
 ```
 
-#### 制限事項
-- 1日500通まで（Googleの制限）
-- 大規模運用には不向き
+> **重要**: Googleが表示するアプリパスワードは `xxxx xxxx xxxx xxxx` のようにスペース区切りですが、`.env`ファイルには**スペースを削除して** `xxxxxxxxxxxxxxxx` のように16文字連続で入力してください。
 
-### 13.2 SendGrid（中規模運用向け）
+#### 設定の反映
 
-#### 手順
+**重要**: `.env`ファイルを変更した場合は、コンテナを完全に再起動する必要があります。
 
-1. **SendGridアカウントの作成**
-   - https://sendgrid.com/ にアクセス
-   - 無料プランに登録（月100通まで無料）
+```bash
+cd /home/ubuntu/realestate
 
-2. **APIキーの生成**
-   - SendGridダッシュボードにログイン
-   - Settings → API Keys
-   - 「Create API Key」をクリック
-   - 名前を入力（例: realestate-prod）
-   - Permissions: Full Access
-   - 生成されたAPIキーをコピー（再表示できないので注意）
+# コンテナを完全に停止して再起動
+docker compose -f docker-compose.prod.yml down
+docker compose -f docker-compose.prod.yml up -d
 
-3. **送信元メールアドレスの検証**
-   - Settings → Sender Authentication
-   - 「Verify a Single Sender」をクリック
-   - 送信元メールアドレスと情報を入力
-   - 確認メールのリンクをクリックして認証
-
-4. **.envファイルに設定**
-```env
-MAIL_USERNAME=apikey
-MAIL_PASSWORD=SG.xxxxxxxxxxxxxxxxxxxxx  # 生成されたAPIキー
-MAIL_SERVER=smtp.sendgrid.net
-MAIL_PORT=587
-MAIL_FROM=noreply@mscan.jp  # 検証済みメールアドレス
-MAIL_FROM_NAME=都心マンション価格チェッカー
-MAIL_STARTTLS=True
-MAIL_SSL_TLS=False
+# 環境変数が正しく読み込まれたか確認
+docker exec realestate-backend env | grep MAIL_
 ```
 
-#### 料金プラン
-- Free: 月100通まで無料
-- Essentials: 月$19.95～（月50,000通）
-- Pro: 月$89.95～（月100,000通）
+### 13.7 メール送信のテスト
 
-### 13.3 AWS SES（大規模運用向け）
+#### テストスクリプトの作成と実行
 
-#### 手順
+**方法1: コンテナ内に直接作成して実行（推奨）**
+
+```bash
+# test_email.pyをコンテナ内の/tmpに作成
+docker exec realestate-backend bash -c 'cat > /tmp/test_email.py << '\''EOF'\''
+import os
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
+import asyncio
+
+conf = ConnectionConfig(
+    MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
+    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),
+    MAIL_FROM=os.getenv("MAIL_FROM"),
+    MAIL_PORT=int(os.getenv("MAIL_PORT", 587)),
+    MAIL_SERVER=os.getenv("MAIL_SERVER"),
+    MAIL_STARTTLS=os.getenv("MAIL_STARTTLS", "True").lower() == "true",
+    MAIL_SSL_TLS=os.getenv("MAIL_SSL_TLS", "False").lower() == "true",
+    USE_CREDENTIALS=True,
+)
+
+async def send_test_email():
+    message = MessageSchema(
+        subject="【テスト】メール送信確認",
+        recipients=["YOUR_EMAIL@example.com"],  # ← あなたのメールアドレスに変更
+        body="Google Workspaceからのメール送信テストです。",
+        subtype="html"
+    )
+    
+    fm = FastMail(conf)
+    await fm.send_message(message)
+    print("✓ メール送信成功")
+
+if __name__ == "__main__":
+    asyncio.run(send_test_email())
+EOF'
+
+# テスト実行（YOUR_EMAIL@example.comを実際のアドレスに変更してから実行）
+docker exec realestate-backend bash -c "cd /app && poetry run python /tmp/test_email.py"
+```
+
+**方法2: ホスト側で作成してコピー**
+
+```bash
+# ホスト側でファイルを作成
+cd /home/ubuntu/realestate
+cat > test_email.py << 'EOF'
+import os
+from fastapi_mail import FastMail, MessageSchema, ConnectionConfig
+import asyncio
+
+conf = ConnectionConfig(
+    MAIL_USERNAME=os.getenv("MAIL_USERNAME"),
+    MAIL_PASSWORD=os.getenv("MAIL_PASSWORD"),
+    MAIL_FROM=os.getenv("MAIL_FROM"),
+    MAIL_PORT=int(os.getenv("MAIL_PORT", 587)),
+    MAIL_SERVER=os.getenv("MAIL_SERVER"),
+    MAIL_STARTTLS=os.getenv("MAIL_STARTTLS", "True").lower() == "true",
+    MAIL_SSL_TLS=os.getenv("MAIL_SSL_TLS", "False").lower() == "true",
+    USE_CREDENTIALS=True,
+)
+
+async def send_test_email():
+    message = MessageSchema(
+        subject="【テスト】メール送信確認",
+        recipients=["YOUR_EMAIL@example.com"],  # ← あなたのメールアドレスに変更
+        body="Google Workspaceからのメール送信テストです。",
+        subtype="html"
+    )
+    
+    fm = FastMail(conf)
+    await fm.send_message(message)
+    print("✓ メール送信成功")
+
+if __name__ == "__main__":
+    asyncio.run(send_test_email())
+EOF
+
+# コンテナにコピー
+docker cp test_email.py realestate-backend:/tmp/
+
+# テスト実行
+docker exec realestate-backend bash -c "cd /app && poetry run python /tmp/test_email.py"
+```
+
+> **重要**: `YOUR_EMAIL@example.com` を実際にメールを受信したいアドレスに変更してから実行してください
+
+**成功した場合**: `✓ メール送信成功` と表示され、指定したメールアドレスにメールが届きます。
+
+**失敗した場合のトラブルシューティング**:
+- アプリパスワードが正しいか確認
+- 2段階認証が有効になっているか確認
+- `.env`ファイルのメールアドレスが正しいか確認
+
+### 13.8 料金について
+
+#### Google Workspace Business Starter
+- **月額**: 680円/ユーザー
+- **年間**: 8,160円/ユーザー
+- **推奨ユーザー数**: 2ユーザー
+  - admin@mscan.jp（管理者用）
+  - noreply@mscan.jp（システム送信用）
+- **合計**: 月額1,360円、年間16,320円
+
+#### 追加費用
+- ドメイン登録（Route 53）: 年間約1,500円（既存）
+- EC2インスタンス: 既存のコスト
+
+**合計運用コスト**: 月額約1,360円（Google Workspaceのみ）
+
+## 手順
 
 1. **AWS SESの有効化**
 ```bash
