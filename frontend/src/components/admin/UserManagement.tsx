@@ -139,7 +139,7 @@ export const UserManagement: React.FC = () => {
       if (searchQuery) params.append('search', searchQuery);
       if (filterActive !== null) params.append('is_active', String(filterActive));
 
-      const response = await axios.get(`/api/admin/users?${params}`);
+      const response = await axios.get(`/admin/users?${params}`);
       setUsers(response.data.users);
       setTotalUsers(response.data.total);
     } catch (error: any) {
@@ -161,7 +161,7 @@ export const UserManagement: React.FC = () => {
 
   const loadUserDetail = async (userId: number) => {
     try {
-      const response = await axios.get(`/api/admin/users/${userId}`);
+      const response = await axios.get(`/admin/users/${userId}`);
       setSelectedUser(response.data);
       setDetailDialogOpen(true);
     } catch (error: any) {
@@ -193,7 +193,7 @@ export const UserManagement: React.FC = () => {
         updateData.password = editForm.password;
       }
 
-      await axios.put(`/api/admin/users/${selectedUser.id}`, updateData);
+      await axios.put(`/admin/users/${selectedUser.id}`, updateData);
       
       setSuccess('ユーザー情報を更新しました');
       setEditDialogOpen(false);
@@ -208,7 +208,7 @@ export const UserManagement: React.FC = () => {
     if (!selectedUser) return;
 
     try {
-      await axios.delete(`/api/admin/users/${selectedUser.id}`);
+      await axios.delete(`/admin/users/${selectedUser.id}`);
       
       setSuccess('ユーザーを削除しました');
       setDeleteDialogOpen(false);
