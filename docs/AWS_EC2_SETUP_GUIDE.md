@@ -537,6 +537,8 @@ docker ps
 
 ### 5.2 データベースの初期化
 
+#### 新規構築の場合
+
 ```bash
 # データベーススキーマの作成
 docker exec realestate-backend poetry run python backend/scripts/init_schema.py
@@ -544,6 +546,61 @@ docker exec realestate-backend poetry run python backend/scripts/init_schema.py
 # サイトマスターの初期化
 docker exec realestate-backend poetry run python backend/scripts/create_site_master.py
 ```
+
+#### バックアップから復元する場合
+
+開発環境や既存環境からデータベースをバックアップして本番環境に復元する手順：
+
+**1. 既存環境でバックアップを作成**
+
+```bash
+# 開発環境またはバックアップ元環境で実行
+docker exec realestate-postgres pg_dump -U realestate -d realestate -F c -f /tmp/realestate_backup.dump
+
+# バックアップファイルをホストにコピー
+docker cp realestate-postgres:/tmp/realestate_backup.dump ./realestate_backup.dump
+```
+
+**2. バックアップファイルを本番環境に転送**
+
+```bash
+# ローカル環境から本番環境へ転送
+scp -i ~/.ssh/your-key.pem realestate_backup.dump ubuntu@your-ec2-ip:/home/ubuntu/
+```
+
+**3. 本番環境でバックアップを復元**
+
+```bash
+# 本番環境にSSH接続
+ssh -i ~/.ssh/your-key.pem ubuntu@your-ec2-ip
+cd /home/ubuntu/realestate
+
+# バックアップファイルをコンテナにコピー
+docker cp /home/ubuntu/realestate_backup.dump realestate-postgres:/tmp/
+
+# データベースを削除して再作成（既存データが削除されるので注意！）
+docker exec realestate-postgres psql -U realestate -d postgres -c "DROP DATABASE IF EXISTS realestate;"
+docker exec realestate-postgres psql -U realestate -d postgres -c "CREATE DATABASE realestate;"
+
+# バックアップを復元
+docker exec realestate-postgres pg_restore -U realestate -d realestate -v /tmp/realestate_backup.dump
+
+# サイトマスターの初期化（まだ存在しない場合のみ）
+docker exec realestate-backend poetry run python backend/scripts/create_site_master.py
+```
+
+**4. 復元の確認**
+
+```bash
+# データベースに接続して確認
+docker exec realestate-postgres psql -U realestate -d realestate -c "\dt"
+docker exec realestate-postgres psql -U realestate -d realestate -c "SELECT COUNT(*) FROM master_properties;"
+```
+
+**注意事項**：
+- 復元時は既存のデータベースを削除するため、本番環境で初めて実行する場合のみ推奨
+- 定期的なバックアップは「11.2 定期メンテナンス」を参照
+- 大量のデータがある場合は復元に時間がかかります
 
 ## 6. システムの管理
 
