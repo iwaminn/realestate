@@ -466,162 +466,59 @@ cat docker-compose.prod.yml
 
 > **重要**: `docker-compose.prod.yml`はGitで管理されているため、設定を変更する場合は開発環境で編集してGitにコミット→本番環境で`git pull`する流れを推奨します。
 
-### 4.4 本番用フロントエンドDockerfileの作成
+### 4.4 本番用フロントエンドDockerfileの確認
+
+本番環境用の`docker/frontend/Dockerfile.prod`ファイルは既にリポジトリに含まれています。
 
 ```bash
-cat > docker/frontend/Dockerfile.prod << 'EOF'
-FROM node:18-alpine as builder
-
-WORKDIR /app
-
-# 依存関係のインストール
-COPY frontend/package*.json ./
-RUN npm ci
-
-# アプリケーションのビルド
-COPY frontend ./
-ARG VITE_API_URL
-ENV VITE_API_URL=$VITE_API_URL
-RUN npm run build
-
-# 本番用イメージ
-FROM node:18-alpine
-
-WORKDIR /app
-
-# serve パッケージのインストール
-RUN npm install -g serve
-
-# ビルド済みファイルのコピー
-COPY --from=builder /app/dist ./dist
-
-EXPOSE 3000
-
-CMD ["serve", "-s", "dist", "-l", "3000"]
-EOF
+# リポジトリのクローン時に自動的に含まれます
+cat docker/frontend/Dockerfile.prod
 ```
 
-### 4.5 Nginx設定ファイルの作成
+**主な特徴**：
+- **マルチステージビルド**：ビルド用と実行用の2段階で最適化
+- **ビルドステージ**：依存関係のインストール→Viteでビルド
+- **実行ステージ**：`serve`パッケージで静的ファイルを配信
+- **軽量化**：ビルド時の依存関係は最終イメージに含まれない
+- **環境変数対応**：`VITE_API_URL`をビルド時に設定可能
+
+> **注意**: このファイルもGitで管理されているため、変更する場合は開発環境で編集してコミット→本番環境で`git pull`してください。
+
+### 4.5 Nginx設定ファイルの確認
+
+本番環境用のNginx設定ファイル（`nginx.conf`と`nginx-site.conf`）は既にリポジトリに含まれています。
 
 ```bash
-# nginx.confの作成
-cat > nginx.conf << 'EOF'
-user nginx;
-worker_processes auto;
-error_log /var/log/nginx/error.log warn;
-pid /var/run/nginx.pid;
+# リポジトリのクローン時に自動的に含まれます
+ls -la nginx*.conf
 
-events {
-    worker_connections 1024;
-}
-
-http {
-    include /etc/nginx/mime.types;
-    default_type application/octet-stream;
-
-    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
-                    '$status $body_bytes_sent "$http_referer" '
-                    '"$http_user_agent" "$http_x_forwarded_for"';
-
-    access_log /var/log/nginx/access.log main;
-
-    sendfile on;
-    tcp_nopush on;
-    tcp_nodelay on;
-    keepalive_timeout 65;
-    types_hash_max_size 2048;
-    client_max_body_size 20M;
-
-    # Gzip圧縮
-    gzip on;
-    gzip_vary on;
-    gzip_proxied any;
-    gzip_comp_level 6;
-    gzip_types text/plain text/css text/xml text/javascript
-               application/json application/javascript application/xml+rss
-               application/rss+xml application/atom+xml image/svg+xml;
-
-    # レート制限
-    limit_req_zone $binary_remote_addr zone=api_limit:10m rate=10r/s;
-    limit_req_zone $binary_remote_addr zone=general_limit:10m rate=30r/s;
-
-    include /etc/nginx/conf.d/*.conf;
-}
-EOF
+# 設定内容の確認
+cat nginx.conf
+cat nginx-site.conf
 ```
 
+**nginx.conf の主な設定**：
+- ワーカープロセス：自動設定
+- Gzip圧縮：有効（レスポンスサイズの削減）
+- レート制限：API 10req/秒、一般 30req/秒
+- 最大アップロードサイズ：20MB
+
+**nginx-site.conf の主な設定**：
+- フロントエンド：ポート3000へプロキシ
+- API：`/api/`パスをバックエンド（ポート8000）へプロキシ
+- タイムアウト：300秒（スクレイピング対応）
+- ヘルスチェック：`/health`エンドポイント
+- HTTPS対応：コメントアウトされた設定あり（Let's Encrypt利用時に有効化）
+
+**ドメイン名の設定**：
+`nginx-site.conf`の`server_name`を自分のドメイン名に変更してください：
 ```bash
-# nginx-site.confの作成
-cat > nginx-site.conf << 'EOF'
-upstream backend {
-    server backend:8000;
-}
-
-upstream frontend {
-    server frontend:3000;
-}
-
-# HTTPSリダイレクト（HTTPS使用時はコメントアウトを解除）
-# server {
-#     listen 80;
-#     server_name your-domain.com;
-#     return 301 https://$server_name$request_uri;
-# }
-
-server {
-    listen 80;
-    server_name _;
-
-    # フロントエンド
-    location / {
-        proxy_pass http://frontend;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        # レート制限
-        limit_req zone=general_limit burst=20 nodelay;
-    }
-
-    # API
-    location /api {
-        proxy_pass http://backend;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        # レート制限
-        limit_req zone=api_limit burst=20 nodelay;
-
-        # タイムアウト設定
-        proxy_connect_timeout 300s;
-        proxy_send_timeout 300s;
-        proxy_read_timeout 300s;
-    }
-
-    # 静的ファイルのキャッシュ
-    location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|woff|woff2|ttf|eot)$ {
-        proxy_pass http://frontend;
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-
-    # ヘルスチェック
-    location /health {
-        access_log off;
-        return 200 "healthy\n";
-        add_header Content-Type text/plain;
-    }
-}
-EOF
+nano nginx-site.conf
+# server_name _; を以下のように変更
+# server_name your-domain.com;
 ```
+
+> **注意**: これらのファイルもGitで管理されているため、変更する場合は開発環境で編集してコミット→本番環境で`git pull`してください。
 
 ## 5. アプリケーションの起動
 
