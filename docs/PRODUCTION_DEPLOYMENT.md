@@ -281,7 +281,7 @@ cp .env.production .env
 docker-compose build
 
 # 3. データベースのマイグレーション
-docker-compose exec backend poetry run python backend/scripts/init_v2_schema.py
+docker-compose exec backend poetry run python backend/scripts/init_schema.py
 docker-compose exec backend poetry run python backend/scripts/add_google_oauth.py
 
 # 4. サービスを起動

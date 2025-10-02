@@ -539,7 +539,7 @@ docker ps
 
 ```bash
 # データベーススキーマの作成
-docker exec realestate-backend poetry run python backend/scripts/init_v2_schema.py
+docker exec realestate-backend poetry run python backend/scripts/init_schema.py
 
 # サイトマスターの初期化
 docker exec realestate-backend poetry run python backend/scripts/create_site_master.py
@@ -1064,7 +1064,7 @@ docker compose -f docker-compose.prod.yml down
 docker compose -f docker-compose.prod.yml up -d --build
 
 # データベースマイグレーション（必要な場合）
-docker exec realestate-backend poetry run python backend/scripts/init_v2_schema.py
+docker exec realestate-backend poetry run python backend/scripts/init_schema.py
 ```
 
 ### 11.2 定期メンテナンス
