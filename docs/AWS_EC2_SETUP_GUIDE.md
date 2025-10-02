@@ -953,7 +953,7 @@ Google アカウントでのログイン機能を有効にする場合は、以�
    
    **開発環境用（ローカル）:**
    ```
-   http://localhost:3001/api/oauth/google/callback
+   http://localhost:8000/api/oauth/google/callback
    ```
    
    **本番環境用（HTTPS）:**
@@ -962,6 +962,7 @@ Google アカウントでのログイン機能を有効にする場合は、以�
    ```
    
    > **注意**: 両方を追加することで、開発環境と本番環境の両方で使用可能になります。
+   > 開発環境ではバックエンド（ポート8000）にGoogleが直接リダイレクトするため、8000番ポートを使用します。
 
 5. **作成**
    - 「作成」ボタンをクリック
@@ -988,8 +989,10 @@ GOOGLE_REDIRECT_URI=https://mscan.jp/api/oauth/google/callback
 
 **開発環境の場合**（`/home/ubuntu/realestate/.env`）:
 ```env
-GOOGLE_REDIRECT_URI=http://localhost:3001/api/oauth/google/callback
+GOOGLE_REDIRECT_URI=http://localhost:8000/api/oauth/google/callback
 ```
+
+> **注意**: 開発環境ではフロントエンド（localhost:3001）からバックエンド（localhost:8000）にAPIリクエストを送るため、GoogleはバックエンドのURLにリダイレクトします。
 
 #### 8.7.5 コンテナの再起動
 

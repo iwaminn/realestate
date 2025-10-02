@@ -54,10 +54,11 @@ services:
       # - MAIL_STARTTLS=True
       # - MAIL_SSL_TLS=False
       # - FRONTEND_URL=https://yourdomain.com
-      # Google OAuth設定（本番環境用）
-      # - GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
-      # - GOOGLE_CLIENT_SECRET=your-client-secret
-      # - GOOGLE_REDIRECT_URI=https://yourdomain.com/api/oauth/google/callback
+      # Google OAuth設定（開発環境用）
+      # .envファイルから読み込み
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
     command: poetry run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
     depends_on:
       - postgres

@@ -555,7 +555,7 @@ class User(Base):
     last_login_at = Column(DateTime)
     
     # リレーション
-    bookmarks = relationship("PropertyBookmark", back_populates="user")
+    bookmarks = relationship("PropertyBookmark", back_populates="user", cascade="all, delete-orphan")
     
     # インデックス
     __table_args__ = (
