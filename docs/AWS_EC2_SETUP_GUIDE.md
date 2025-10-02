@@ -784,132 +784,18 @@ sudo ls -la /etc/letsencrypt/live/mscan.jp/
 # fullchain.pem と privkey.pem が存在することを確認
 ```
 
-### 8.2 Nginx HTTPS設定の追加
+### 8.2 最新コードの取得
+
+HTTPS設定は既にリポジトリに含まれているため、最新コードを取得するだけで適用されます：
 
 ```bash
-# nginx-site.confを編集してHTTPS設定を追加
-cat > nginx-site.conf << 'EOF'
-upstream backend {
-    server backend:8000;
-}
-
-upstream frontend {
-    server frontend:3000;
-}
-
-# HTTPからHTTPSへのリダイレクト
-server {
-    listen 80;
-    server_name mscan.jp;
-    return 301 https://$server_name$request_uri;
-}
-
-# HTTPS設定
-server {
-    listen 443 ssl http2;
-    server_name mscan.jp;
-
-    # SSL証明書
-    ssl_certificate /etc/letsencrypt/live/mscan.jp/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/mscan.jp/privkey.pem;
-
-    # SSL設定
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384';
-    ssl_prefer_server_ciphers off;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 10m;
-
-    # セキュリティヘッダー
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-
-    # フロントエンド
-    location / {
-        proxy_pass http://frontend;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_cache_bypass $http_upgrade;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        # レート制限
-        limit_req zone=general_limit burst=20 nodelay;
-    }
-
-    # API
-    location /api {
-        proxy_pass http://backend;
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-
-        # レート制限
-        limit_req zone=api_limit burst=20 nodelay;
-
-        # タイムアウト設定
-        proxy_connect_timeout 300s;
-        proxy_send_timeout 300s;
-        proxy_read_timeout 300s;
-    }
-
-    # 静的ファイルのキャッシュ
-    location ~* \.(jpg|jpeg|png|gif|ico|css|js|svg|woff|woff2|ttf|eot)$ {
-        proxy_pass http://frontend;
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-
-    # ヘルスチェック
-    location /health {
-        access_log off;
-        return 200 "healthy
-";
-        add_header Content-Type text/plain;
-    }
-}
-EOF
+cd /home/ubuntu/realestate
+git pull origin master
 ```
 
-### 8.3 docker-compose.prod.ymlの更新
+> **注意**: `nginx-site.conf` と `docker-compose.prod.yml` は既にHTTPS対応済みです。手動で編集する必要はありません。
 
-SSL証明書をNginxコンテナにマウントします：
-
-```bash
-# docker-compose.prod.ymlのnginxセクションを編集
-nano docker-compose.prod.yml
-```
-
-nginxセクションのvolumesに証明書ディレクトリを追加：
-
-```yaml
-  nginx:
-    image: nginx:alpine
-    container_name: realestate-nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx-site.conf:/etc/nginx/conf.d/default.conf:ro
-      - nginx_cache:/var/cache/nginx
-      - /etc/letsencrypt:/etc/letsencrypt:ro  # この行を追加
-    depends_on:
-      - backend
-      - frontend
-    restart: unless-stopped
-    networks:
-      - realestate-network
-```
-
-### 8.4 環境変数の更新
+### 8.3 環境変数の更新
 
 HTTPSを使用する場合、.envファイルの以下の設定を更新します：
 
@@ -925,11 +811,11 @@ FRONTEND_URL=https://mscan.jp
 GOOGLE_REDIRECT_URI=https://mscan.jp/api/oauth/google/callback
 ```
 
-### 8.5 Nginxコンテナの再起動
+### 8.4 システムの再起動
 
 ```bash
-# 設定を反映するためにNginxコンテナを再起動
-docker compose -f docker-compose.prod.yml up -d nginx
+# すべてのコンテナを再起動
+docker compose -f docker-compose.prod.yml up -d
 
 # ログを確認してエラーがないことを確認
 docker compose -f docker-compose.prod.yml logs nginx
@@ -938,7 +824,7 @@ docker compose -f docker-compose.prod.yml logs nginx
 curl -I https://mscan.jp
 ```
 
-### 8.6 証明書の自動更新設定
+### 8.5 証明書の自動更新設定
 
 Let's Encryptの証明書は90日間有効なため、自動更新の設定が必要です：
 
@@ -967,7 +853,7 @@ chmod +x /home/ubuntu/renew-cert.sh
 (crontab -l 2>/dev/null; echo "0 3 1 * * /home/ubuntu/renew-cert.sh") | crontab -
 ```
 
-### 8.7 HTTPSの動作確認
+### 8.6 HTTPSの動作確認
 
 ```bash
 # HTTPアクセスがHTTPSにリダイレクトされることを確認
@@ -982,7 +868,7 @@ curl -I https://mscan.jp
 openssl s_client -connect mscan.jp:443 -servername mscan.jp < /dev/null
 ```
 
-### 8.8 Google OAuthの設定更新（HTTPS使用時）
+### 8.7 Google OAuthの設定更新（HTTPS使用時）
 
 HTTPSを有効にした後、Google Cloud ConsoleでリダイレクトURIを更新します：
 
@@ -994,7 +880,7 @@ HTTPSを有効にした後、Google Cloud ConsoleでリダイレクトURIを更�
    - `https://mscan.jp/api/oauth/google/callback`
 6. 「保存」をクリック
 
-### 8.9 トラブルシューティング
+### 8.8 トラブルシューティング
 
 #### SSL証明書の取得に失敗する場合
 
