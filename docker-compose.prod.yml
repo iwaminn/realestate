@@ -1,0 +1,93 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: realestate-postgres
+    environment:
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - TZ=Asia/Tokyo
+      - PGTZ=Asia/Tokyo
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - realestate-network
+
+  backend:
+    build:
+      context: .
+      dockerfile: docker/backend/Dockerfile
+    container_name: realestate-backend
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DATABASE_URL=${DATABASE_URL}
+      - TZ=Asia/Tokyo
+      - ADMIN_USERNAME=${ADMIN_USERNAME}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - DISABLE_ADMIN_AUTH=${DISABLE_ADMIN_AUTH:-false}
+      - SCRAPER_DETAIL_REFETCH_DAYS=${SCRAPER_DETAIL_REFETCH_DAYS:-90}
+      - MAIL_USERNAME=${MAIL_USERNAME}
+      - MAIL_PASSWORD=${MAIL_PASSWORD}
+      - MAIL_SERVER=${MAIL_SERVER}
+      - MAIL_PORT=${MAIL_PORT}
+      - MAIL_FROM=${MAIL_FROM}
+      - MAIL_FROM_NAME=${MAIL_FROM_NAME}
+      - MAIL_STARTTLS=${MAIL_STARTTLS:-True}
+      - MAIL_SSL_TLS=${MAIL_SSL_TLS:-False}
+      - FRONTEND_URL=${FRONTEND_URL}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - realestate-network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: docker/frontend/Dockerfile.prod
+      args:
+        VITE_API_URL: /api
+    container_name: realestate-frontend
+    restart: unless-stopped
+    networks:
+      - realestate-network
+
+  nginx:
+    image: nginx:alpine
+    container_name: realestate-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx-site.conf:/etc/nginx/conf.d/default.conf:ro
+      - nginx_cache:/var/cache/nginx
+    depends_on:
+      - backend
+      - frontend
+    restart: unless-stopped
+    networks:
+      - realestate-network
+
+networks:
+  realestate-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  nginx_cache:

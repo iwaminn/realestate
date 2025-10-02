@@ -91,13 +91,19 @@ const PrivacyPage: React.FC = () => {
           <List>
             <ListItem>
               <ListItemText
-                primary="ブックマーク機能で保存された物件情報（ブラウザのローカルストレージに保存）"
+                primary="ユーザー登録情報（メールアドレス、パスワード等）"
                 sx={{ pl: 2 }}
               />
             </ListItem>
             <ListItem>
               <ListItemText
-                primary="検索条件、並び順等の設定情報"
+                primary="ブックマークした物件情報（サーバーのデータベースに保存）"
+                sx={{ pl: 2 }}
+              />
+            </ListItem>
+            <ListItem>
+              <ListItemText
+                primary="検索条件、並び順等の設定情報（URLパラメータ経由）"
                 sx={{ pl: 2 }}
               />
             </ListItem>
@@ -197,21 +203,24 @@ const PrivacyPage: React.FC = () => {
           <List>
             <ListItem>
               <ListItemText
-                primary="ブックマークした物件のID"
-                secondary="お気に入り物件を保存するため"
+                primary="認証トークン"
+                secondary="ログイン状態を維持するため"
                 sx={{ pl: 2 }}
               />
             </ListItem>
             <ListItem>
               <ListItemText
-                primary="検索条件・フィルター設定"
+                primary="表示設定・並び順"
                 secondary="次回訪問時の利便性向上のため"
                 sx={{ pl: 2 }}
               />
             </ListItem>
           </List>
-          <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
-            これらの情報は利用者のブラウザにのみ保存され、サーバーには送信されません。
+          <Typography variant="body2" sx={{ lineHeight: 1.8, mb: 1 }}>
+            これらの情報は利用者のブラウザにのみ保存されます。
+          </Typography>
+          <Typography variant="body2" sx={{ lineHeight: 1.8, fontWeight: 'bold' }}>
+            ※ブックマーク情報や物件データは、ローカルストレージではなくサーバーのデータベースに安全に保管されます。
           </Typography>
         </Box>
 
@@ -315,17 +324,7 @@ const PrivacyPage: React.FC = () => {
         </Box>
 
         <Typography variant="h5" sx={{ mb: 2, fontWeight: 'bold' }}>
-          8. 子供のプライバシー保護
-        </Typography>
-        <Box sx={{ mb: 4, pl: 2 }}>
-          <Typography variant="body1" paragraph sx={{ lineHeight: 1.8 }}>
-            当サービスは、13歳未満の子供から意図的に個人情報を収集することはありません。
-            13歳未満の子供が個人情報を提供したことが判明した場合、速やかに削除いたします。
-          </Typography>
-        </Box>
-
-        <Typography variant="h5" sx={{ mb: 2, fontWeight: 'bold' }}>
-          9. プライバシーポリシーの変更
+          8. プライバシーポリシーの変更
         </Typography>
         <Box sx={{ mb: 4, pl: 2 }}>
           <Typography variant="body1" paragraph sx={{ lineHeight: 1.8 }}>
@@ -335,7 +334,7 @@ const PrivacyPage: React.FC = () => {
         </Box>
 
         <Typography variant="h5" sx={{ mb: 2, fontWeight: 'bold' }}>
-          10. お問い合わせ
+          9. お問い合わせ
         </Typography>
         <Box sx={{ mb: 4, pl: 2 }}>
           <Typography variant="body1" paragraph sx={{ lineHeight: 1.8 }}>
@@ -362,7 +361,7 @@ const PrivacyPage: React.FC = () => {
         <Box sx={{ mt: 4, pt: 3, borderTop: '1px solid #e0e0e0' }}>
           <Typography variant="body2" color="text.secondary" align="center">
             制定日: 2025年1月24日<br />
-            最終更新日: 2025年1月24日
+            最終更新日: 2025年10月1日
           </Typography>
         </Box>
       </Paper>

@@ -43,69 +43,296 @@
 
 ドメイン名を使用する場合、DNSレコードを設定してElastic IPと紐付けます。
 
-#### Route 53を使用する場合
+> **注意**: ドメインを使用しない場合は、このセクションをスキップしてElastic IPで直接アクセスできます。
 
-1. **ホストゾーンの作成**
+---
+
+#### 方法1: AWS Route 53を使用する場合（推奨）
+
+Route 53は月額$0.50/ホストゾーンのコストがかかりますが、AWSとの統合が簡単です。
+
+##### ステップ1: ホストゾーンの作成
+
+1. **AWSマネジメントコンソールにログイン**
+2. **Route 53サービスを開く**
+   - 検索バーで「Route 53」と入力
+   - または、サービス一覧から「ネットワーキングとコンテンツ配信」→「Route 53」
+
+3. **ホストゾーンの作成**
+   - 左メニューから「ホストゾーン」をクリック
+   - 「ホストゾーンの作成」ボタンをクリック
+   - **ドメイン名**: `your-domain.com`（取得済みのドメイン名を入力）
+   - **説明**: `不動産検索システム用DNS`（任意）
+   - **タイプ**: `パブリックホストゾーン`を選択
+   - **タグ**: 必要に応じて追加（例: `Name: realestate-dns`）
+   - 「ホストゾーンの作成」ボタンをクリック
+
+4. **ネームサーバー情報をメモ**
+   - 作成されたホストゾーンを開く
+   - **NSレコード**（タイプがNS）をクリック
+   - 4つのネームサーバー（例: `ns-123.awsdns-45.com`）をメモまたはコピー
+   - これは後でドメインレジストラで設定します
+
+##### ステップ2: Aレコードの作成
+
+1. **作成したホストゾーンを開く**
+2. **「レコードを作成」ボタンをクリック**
+3. **ルートドメイン用のAレコード作成**
+   - **レコード名**: 空白のまま（ルートドメイン`your-domain.com`用）
+   - **レコードタイプ**: `A - IPv4アドレスにルーティング`
+   - **値**: EC2のElastic IPアドレス（例: `52.69.123.45`）
+   - **TTL**: `300`秒（デフォルト）
+   - **ルーティングポリシー**: `シンプルルーティング`
+   - 「レコードを作成」ボタンをクリック
+
+4. **wwwサブドメイン用のAレコード作成**（オプション）
+   - 再度「レコードを作成」をクリック
+   - **レコード名**: `www`
+   - **レコードタイプ**: `A - IPv4アドレスにルーティング`
+   - **値**: 同じElastic IPアドレス
+   - **TTL**: `300`秒
+   - 「レコードを作成」ボタンをクリック
+
+##### ステップ3: ドメインレジストラでネームサーバーを変更
+
+ドメインを購入したレジストラ（お名前.com、ムームードメイン、Google Domains等）の管理画面で設定します。
+
+**お名前.comの場合**:
+1. [お名前.com Navi](https://www.onamae.com/navi/login/)にログイン
+2. 「ドメイン」タブ→「ドメイン機能一覧」をクリック
+3. 設定するドメインの「ネームサーバー」→「変更する」をクリック
+4. 「他のネームサーバーを利用」を選択
+5. Route 53でメモした4つのネームサーバーを入力:
+   ```
+   プライマリネームサーバー: ns-123.awsdns-45.com
+   セカンダリネームサーバー: ns-456.awsdns-78.net
+   3番目のネームサーバー: ns-789.awsdns-01.org
+   4番目のネームサーバー: ns-012.awsdns-34.co.uk
+   ```
+6. 「確認」→「OK」をクリック
+
+**ムームードメインの場合**:
+1. [ムームードメイン](https://muumuu-domain.com/)のコントロールパネルにログイン
+2. 「ドメイン管理」→「ドメイン操作」→「ネームサーバ設定変更」
+3. 対象ドメインの「ネームサーバ設定変更」をクリック
+4. 「GMOペパボ以外のネームサーバを使用する」を選択
+5. Route 53の4つのネームサーバーを入力
+6. 「ネームサーバ設定変更」をクリック
+
+**Google Domainsの場合**:
+1. [Google Domains](https://domains.google.com/)にログイン
+2. 対象ドメインを選択
+3. 左メニューから「DNS」をクリック
+4. 「カスタムネームサーバーを使用する」を選択
+5. Route 53の4つのネームサーバーを入力
+6. 「保存」をクリック
+
+> **重要**: ネームサーバーの変更は反映まで**数時間～最大48時間**かかります。
+
+##### ステップ4: DNS反映の確認
+
 ```bash
-# AWS CLIを使用する場合
-aws route53 create-hosted-zone --name your-domain.com --caller-reference $(date +%s)
-```
-
-または、AWSコンソールから：
-- Route 53ダッシュボードを開く
-- 「ホストゾーンの作成」をクリック
-- ドメイン名（例: your-domain.com）を入力
-- タイプ: パブリックホストゾーン
-- 「作成」をクリック
-
-2. **Aレコードの作成**
-```bash
-# AレコードでElastic IPを指定
-# Route 53コンソールから：
-# - ホストゾーンを選択
-# - 「レコードを作成」をクリック
-# - レコード名: 空白（ルートドメイン）または www
-# - レコードタイプ: A
-# - 値: <Elastic IPアドレス>
-# - TTL: 300
-# - 「レコードを作成」をクリック
-```
-
-3. **ネームサーバーの設定**
-- Route 53のホストゾーンに表示されるNSレコード（ネームサーバー）をコピー
-- ドメインレジストラ（お名前.com、ムームードメインなど）の管理画面でネームサーバーを変更
-- 反映まで数時間～48時間かかる場合があります
-
-#### 他のDNSサービス（お名前.com、Cloudflareなど）を使用する場合
-
-1. **DNSレジストラの管理画面にログイン**
-
-2. **Aレコードの追加**
-```
-レコードタイプ: A
-ホスト名: @ （ルートドメイン）または www
-値/IPアドレス: <Elastic IPアドレス>
-TTL: 3600 または Auto
-```
-
-3. **DNSの反映確認**
-```bash
-# ローカルマシンから（DNSの反映には時間がかかります）
+# ローカルマシンから確認（Mac/Linux）
 nslookup your-domain.com
+
+# 期待される結果:
+# Server:		8.8.8.8
+# Address:	8.8.8.8#53
+#
+# Non-authoritative answer:
+# Name:	your-domain.com
+# Address: 52.69.123.45  ← Elastic IPと一致すればOK
+
+# digコマンドでも確認可能
+dig your-domain.com +short
+# 52.69.123.45 ← Elastic IPが表示されればOK
+
+# Windowsの場合
+nslookup your-domain.com 8.8.8.8
+```
+
+---
+
+#### 方法2: お名前.comやムームードメインのDNSを使用する場合（無料）
+
+ドメインレジストラのDNS機能を使う場合は、Route 53の月額料金がかかりません。
+
+##### お名前.comの場合
+
+1. **お名前.com Naviにログイン**
+   - https://www.onamae.com/navi/login/
+
+2. **DNS設定を開く**
+   - 「ドメイン」タブ→「DNS関連機能の設定」
+   - 対象ドメインにチェック→「次へ」
+
+3. **Aレコードを追加**
+   - 「DNSレコード設定を利用する」の「設定する」をクリック
+   - **ホスト名**: 空白（ルートドメイン）
+   - **TYPE**: `A`
+   - **VALUE**: EC2のElastic IP（例: `52.69.123.45`）
+   - **TTL**: `3600`
+   - 「追加」ボタンをクリック
+
+4. **wwwサブドメイン用のAレコードを追加**（オプション）
+   - **ホスト名**: `www`
+   - **TYPE**: `A`
+   - **VALUE**: 同じElastic IP
+   - **TTL**: `3600`
+   - 「追加」ボタンをクリック
+
+5. **設定を確認して保存**
+   - 画面下部の「確認画面へ進む」
+   - 内容を確認して「設定する」
+
+##### ムームードメインの場合
+
+1. **ムームードメインのコントロールパネルにログイン**
+   - https://muumuu-domain.com/
+
+2. **DNS設定を開く**
+   - 「ドメイン管理」→「ドメイン操作」→「ムームーDNS」
+   - 対象ドメインの「変更」をクリック
+
+3. **カスタム設定を選択**
+   - 「カスタム設定」を選択
+   - 「設定2」をクリック
+
+4. **Aレコードを追加**
+   - **サブドメイン**: 空白（ルートドメイン）
+   - **種別**: `A`
+   - **内容**: EC2のElastic IP（例: `52.69.123.45`）
+   - **優先度**: 空白
+
+5. **wwwサブドメイン用のAレコードを追加**
+   - **サブドメイン**: `www`
+   - **種別**: `A`
+   - **内容**: 同じElastic IP
+   - **優先度**: 空白
+
+6. **「セットアップ情報変更」をクリック**
+
+##### Cloudflareの場合（無料でCDN・SSL付き）
+
+Cloudflareは無料プランでも高機能なDNS・CDN・SSL証明書を提供します。
+
+1. **Cloudflareにサインアップ**
+   - https://dash.cloudflare.com/sign-up
+
+2. **サイトを追加**
+   - 「サイトを追加」をクリック
+   - ドメイン名を入力（例: `your-domain.com`）
+   - 「サイトを追加」をクリック
+   - プラン選択: 「Free」を選択
+
+3. **既存のDNSレコードをスキャン**
+   - Cloudflareが自動的に既存のDNSレコードをスキャン
+   - スキャン結果を確認して「続行」
+
+4. **Aレコードを追加/確認**
+   - 「DNSレコードを追加」をクリック
+   - **タイプ**: `A`
+   - **名前**: `@`（ルートドメイン）または空白
+   - **IPv4アドレス**: EC2のElastic IP
+   - **プロキシ状態**: オレンジ色（プロキシ経由）またはグレー（DNSのみ）
+     - オレンジ: CloudflareのCDN・SSL・DDoS保護を有効化
+     - グレー: DNSのみ（直接EC2にアクセス）
+   - **TTL**: `Auto`
+   - 「保存」をクリック
+
+5. **wwwレコードを追加**
+   - **タイプ**: `A`
+   - **名前**: `www`
+   - **IPv4アドレス**: 同じElastic IP
+   - プロキシ状態とTTLは同様に設定
+   - 「保存」をクリック
+
+6. **ネームサーバーを変更**
+   - Cloudflareが表示する2つのネームサーバーをメモ（例: `adam.ns.cloudflare.com`）
+   - ドメインレジストラの管理画面でネームサーバーを変更
+   - 変更完了後、Cloudflareの画面で「完了、ネームサーバーを確認」をクリック
+
+7. **SSL/TLS設定**（Cloudflareのプロキシ使用時）
+   - 左メニュー「SSL/TLS」をクリック
+   - **暗号化モード**: `フレキシブル`を選択（初期設定）
+   - 後でEC2側でSSL証明書を設定したら`フル`に変更
+
+---
+
+#### DNS設定後の確認手順
+
+1. **DNS反映の確認**（反映まで10分～48時間）
+
+```bash
+# ローカルマシンから
+nslookup your-domain.com
+
+# 期待される結果:
+# Name:	your-domain.com
+# Address: <EC2のElastic IP>
+
+# digコマンドで詳細確認
 dig your-domain.com
 
-# IPアドレスがElastic IPと一致することを確認
+# オンラインツールでも確認可能
+# https://www.whatsmydns.net/
+# ドメイン名を入力して世界中のDNSサーバーから確認
 ```
 
-#### ドメイン設定後の確認
+2. **HTTPアクセス確認**
 
 ```bash
 # ドメインでアクセスできることを確認
 curl -I http://your-domain.com
 
-# pingテスト
-ping your-domain.com
+# 期待される結果:
+# HTTP/1.1 200 OK または 301/302 (リダイレクト)
+
+# ブラウザでもアクセス確認
+# http://your-domain.com
 ```
+
+3. **pingテスト**
+
+```bash
+ping your-domain.com
+
+# 期待される結果:
+# PING your-domain.com (52.69.123.45): 56 data bytes
+# 64 bytes from 52.69.123.45: icmp_seq=0 ttl=52 time=10.2 ms
+```
+
+---
+
+#### トラブルシューティング
+
+**DNSが反映されない場合**:
+```bash
+# 1. ドメインレジストラのネームサーバー設定を再確認
+# 2. DNSキャッシュをクリア（ローカルマシン）
+
+# Macの場合
+sudo dscacheutil -flushcache; sudo killall -HUP mDNSResponder
+
+# Windowsの場合
+ipconfig /flushdns
+
+# Linuxの場合
+sudo systemd-resolve --flush-caches
+
+# 3. 別のDNSサーバーで確認
+dig @8.8.8.8 your-domain.com        # Google DNS
+dig @1.1.1.1 your-domain.com        # Cloudflare DNS
+```
+
+**「このサイトにアクセスできません」エラーの場合**:
+- EC2のセキュリティグループでHTTP(80)とHTTPS(443)が開いているか確認
+- Nginx/Apacheが起動しているか確認: `docker ps`
+- EC2インスタンスが起動しているか確認
+
+**Cloudflare使用時のエラー**:
+- プロキシ状態をオレンジからグレーに変更して直接接続を試す
+- SSL/TLS設定を「フレキシブル」に変更
 
 ## 2. サーバーへの接続と初期設定
 
@@ -170,25 +397,27 @@ cp .env.example .env
 nano .env
 ```
 
-以下の内容を編集：
+**重要な設定項目**を以下のように編集します：
 
 ```env
+# ==============================================
+# 本番環境用設定（必ず変更が必要）
+# ==============================================
+
 # データベース設定
-DATABASE_URL=postgresql://realestate:realestate_pass@postgres:5432/realestate
-POSTGRES_USER=realestate
-POSTGRES_PASSWORD=your-secure-password-here  # 必ず変更
 POSTGRES_DB=realestate
+POSTGRES_USER=realestate
+POSTGRES_PASSWORD=YOUR_STRONG_PASSWORD_HERE  # ← 必ず変更！
+DATABASE_URL=postgresql://realestate:YOUR_STRONG_PASSWORD_HERE@postgres:5432/realestate
 
-# 管理画面認証（本番環境では必ず変更）
+# 管理画面認証
 ADMIN_USERNAME=admin
-ADMIN_PASSWORD=your-secure-password-here
-
-# 開発時の認証バイパス（本番環境では必ずfalseにすること）
-DISABLE_ADMIN_AUTH=false
+ADMIN_PASSWORD=YOUR_ADMIN_PASSWORD_HERE  # ← 必ず変更！
+DISABLE_ADMIN_AUTH=false  # 本番環境では必ずfalse
 
 # メール送信設定（本番環境で必須）
 MAIL_USERNAME=your-email@gmail.com
-MAIL_PASSWORD=your-app-password
+MAIL_PASSWORD=your-app-password  # Gmailの場合はアプリパスワード
 MAIL_SERVER=smtp.gmail.com
 MAIL_PORT=587
 MAIL_FROM=noreply@yourdomain.com
@@ -197,115 +426,45 @@ MAIL_STARTTLS=True
 MAIL_SSL_TLS=False
 
 # フロントエンドURL（メール内のリンク用）
-FRONTEND_URL=http://your-domain-or-ip
+FRONTEND_URL=https://yourdomain.com  # HTTPSを推奨
 
 # Google OAuth設定（オプション）
 GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
 GOOGLE_CLIENT_SECRET=your-client-secret
-GOOGLE_REDIRECT_URI=http://your-domain-or-ip/api/oauth/google/callback
+GOOGLE_REDIRECT_URI=https://yourdomain.com/api/oauth/google/callback
 
 # スクレイパー設定
 SCRAPER_DETAIL_REFETCH_DAYS=90
 ```
 
-### 4.3 本番用Docker Compose設定の作成
+> **セキュリティ上の注意**:
+> - `.env`ファイルはGitにコミットしないでください（`.gitignore`に含まれています）
+> - パスワードは複雑で推測されにくいものを使用してください
+> - 本番環境では`DISABLE_ADMIN_AUTH=false`を必ず設定してください
+> - HTTPSを使用する場合は、すべてのURLを`https://`に変更してください
+
+### 4.3 本番用Docker Compose設定の確認
+
+本番環境用の`docker-compose.prod.yml`ファイルは既にリポジトリに含まれています。
 
 ```bash
-cat > docker-compose.prod.yml << 'EOF'
-version: '3.8'
+# リポジトリのクローン時に自動的に含まれます
+cd /home/ubuntu/realestate
+ls -la docker-compose.prod.yml
 
-services:
-  postgres:
-    image: postgres:15
-    container_name: realestate-postgres
-    environment:
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-      - TZ=Asia/Tokyo
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - realestate-network
-
-  backend:
-    build:
-      context: .
-      dockerfile: docker/backend/Dockerfile
-    container_name: realestate-backend
-    environment:
-      - PYTHONUNBUFFERED=1
-      - DATABASE_URL=${DATABASE_URL}
-      - TZ=Asia/Tokyo
-      - ADMIN_USERNAME=${ADMIN_USERNAME}
-      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
-      - DISABLE_ADMIN_AUTH=${DISABLE_ADMIN_AUTH:-false}
-      - SCRAPER_DETAIL_REFETCH_DAYS=${SCRAPER_DETAIL_REFETCH_DAYS:-90}
-      - MAIL_USERNAME=${MAIL_USERNAME}
-      - MAIL_PASSWORD=${MAIL_PASSWORD}
-      - MAIL_SERVER=${MAIL_SERVER}
-      - MAIL_PORT=${MAIL_PORT}
-      - MAIL_FROM=${MAIL_FROM}
-      - MAIL_FROM_NAME=${MAIL_FROM_NAME}
-      - MAIL_STARTTLS=${MAIL_STARTTLS:-True}
-      - MAIL_SSL_TLS=${MAIL_SSL_TLS:-False}
-      - FRONTEND_URL=${FRONTEND_URL}
-      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
-      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
-      - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
-    volumes:
-      - ./logs:/app/logs
-      - ./data:/app/data
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
-    networks:
-      - realestate-network
-
-  frontend:
-    build:
-      context: .
-      dockerfile: docker/frontend/Dockerfile.prod
-      args:
-        VITE_API_URL: /api
-    container_name: realestate-frontend
-    restart: unless-stopped
-    networks:
-      - realestate-network
-
-  nginx:
-    image: nginx:alpine
-    container_name: realestate-nginx
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx-site.conf:/etc/nginx/conf.d/default.conf:ro
-      - nginx_cache:/var/cache/nginx
-    depends_on:
-      - backend
-      - frontend
-    restart: unless-stopped
-    networks:
-      - realestate-network
-
-networks:
-  realestate-network:
-    driver: bridge
-
-volumes:
-  postgres_data:
-  nginx_cache:
-EOF
+# 確認
+cat docker-compose.prod.yml
 ```
+
+**主な特徴**：
+- PostgreSQL、バックエンド、フロントエンド、Nginxの4つのサービス
+- 環境変数は`.env`ファイルから読み込み
+- Nginxがリバースプロキシとして動作（ポート80/443のみ公開）
+- 本番用Dockerfileを使用（フロントエンドは最適化されたビルド）
+- ヘルスチェック機能付き
+- 自動再起動設定（`restart: unless-stopped`）
+
+> **重要**: `docker-compose.prod.yml`はGitで管理されているため、設定を変更する場合は開発環境で編集してGitにコミット→本番環境で`git pull`する流れを推奨します。
 
 ### 4.4 本番用フロントエンドDockerfileの作成
 
