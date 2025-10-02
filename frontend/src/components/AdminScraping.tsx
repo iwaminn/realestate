@@ -1249,7 +1249,7 @@ const AdminScraping: React.FC = () => {
 
   const fetchAreas = async () => {
     try {
-      const response = await axios.get('/api/admin/areas');
+      const response = await axios.get('/admin/areas');
       setAreas(response.data.areas);
     } catch (error: any) {
       // エラーは既にsetErrorで処理されている
@@ -1265,7 +1265,7 @@ const AdminScraping: React.FC = () => {
   const fetchAlerts = async () => {
     try {
       // 未解決のアラートのみを取得
-      const response = await axios.get('/api/admin/scraper-alerts?resolved=false');
+      const response = await axios.get('/admin/scraper-alerts?resolved=false');
       // APIが配列を直接返す場合とオブジェクトでラップされた場合の両方に対応
       const alertData = Array.isArray(response.data) ? response.data : response.data.alerts || [];
       // 未解決のアラートのみをフィルタリング（念のため）
@@ -1290,7 +1290,7 @@ const AdminScraping: React.FC = () => {
       // 停止タスクチェック（リクエストされた場合のみ）
       if (checkStalled) {
         try {
-          const checkResponse = await axios.post('/api/admin/scraping/check-stalled-tasks', {
+          const checkResponse = await axios.post('/admin/scraping/check-stalled-tasks', {
             threshold_minutes: 10
           });
           if (checkResponse.data.stalled_tasks > 0) {
@@ -1476,7 +1476,7 @@ const AdminScraping: React.FC = () => {
         requestData.ignore_error_history = true;
       }
       
-      const response = await axios.post('/api/admin/scraping/start-parallel', requestData);
+      const response = await axios.post('/admin/scraping/start-parallel', requestData);
       
       // 新しいタスクを追加
       setTasks(prev => [response.data, ...prev]);
@@ -1507,7 +1507,7 @@ const AdminScraping: React.FC = () => {
       
       while (attempts < maxAttempts) {
         await new Promise(resolve => setTimeout(resolve, 500));
-        const response = await axios.get('/api/admin/scraping/tasks');
+        const response = await axios.get('/admin/scraping/tasks');
         const updatedTask = response.data.find((t: ScrapingTask) => t.task_id === taskId);
         
         if (updatedTask && updatedTask.status === 'paused') {
@@ -1542,7 +1542,7 @@ const AdminScraping: React.FC = () => {
       
       while (attempts < maxAttempts) {
         await new Promise(resolve => setTimeout(resolve, 500));
-        const response = await axios.get('/api/admin/scraping/tasks');
+        const response = await axios.get('/admin/scraping/tasks');
         const updatedTask = response.data.find((t: ScrapingTask) => t.task_id === taskId);
         
         if (updatedTask && updatedTask.status === 'running') {
@@ -1580,7 +1580,7 @@ const AdminScraping: React.FC = () => {
       
       while (attempts < maxAttempts) {
         await new Promise(resolve => setTimeout(resolve, 500));
-        const tasksResponse = await axios.get('/api/admin/scraping/tasks');
+        const tasksResponse = await axios.get('/admin/scraping/tasks');
         const updatedTask = tasksResponse.data.find((t: ScrapingTask) => t.task_id === taskId);
         
         if (updatedTask && (updatedTask.status === 'cancelled' || updatedTask.status === 'completed' || updatedTask.status === 'error' || updatedTask.status === 'failed')) {
@@ -1643,7 +1643,7 @@ const AdminScraping: React.FC = () => {
     setLoading(true);
     
     try {
-      const response = await axios.delete('/api/admin/scraping/all-tasks');
+      const response = await axios.delete('/admin/scraping/all-tasks');
       alert(`${response.data.deleted_count}件のタスクを削除しました`);
       await fetchTasks();
     } catch (error: any) {

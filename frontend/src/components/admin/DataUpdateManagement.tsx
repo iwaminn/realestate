@@ -92,7 +92,7 @@ export const DataUpdateManagement: React.FC = () => {
   // キューステータスを取得
   const fetchQueueStatus = async () => {
     try {
-      const response = await axios.get('/api/admin/price-changes/queue-status');
+      const response = await axios.get('/admin/price-changes/queue-status');
       setQueueStatus(response.data.queue_status);
     } catch (error) {
       console.error('キューステータスの取得に失敗:', error);
@@ -102,7 +102,7 @@ export const DataUpdateManagement: React.FC = () => {
   // キャッシュ統計を取得
   const fetchCacheStats = async () => {
     try {
-      const response = await axios.get('/api/admin/price-changes/cache-stats');
+      const response = await axios.get('/admin/price-changes/cache-stats');
       setCacheStats(response.data);
     } catch (error) {
       console.error('キャッシュ統計の取得に失敗:', error);
@@ -112,7 +112,7 @@ export const DataUpdateManagement: React.FC = () => {
   // 掲載状態の統計を取得
   const fetchListingStats = async () => {
     try {
-      const response = await axios.get('/api/admin/listing-status-stats');
+      const response = await axios.get('/admin/listing-status-stats');
       setListingStats(response.data);
     } catch (error) {
       console.error('掲載状態統計の取得に失敗:', error);
@@ -122,7 +122,7 @@ export const DataUpdateManagement: React.FC = () => {
   // 成約価格統計を取得
   const fetchTransactionPriceStats = async () => {
     try {
-      const response = await axios.get('/api/admin/transaction-prices/stats');
+      const response = await axios.get('/admin/transaction-prices/stats');
       setTransactionPriceStats(response.data);
     } catch (error) {
       console.error('成約価格統計の取得に失敗:', error);
@@ -207,7 +207,7 @@ export const DataUpdateManagement: React.FC = () => {
     setListingUpdateResult(null);
     
     try {
-      const response = await axios.post('/api/admin/update-listing-status');
+      const response = await axios.post('/admin/update-listing-status');
       setListingUpdateResult({
         success: true,
         message: response.data.message,
@@ -251,7 +251,7 @@ export const DataUpdateManagement: React.FC = () => {
     setUpdatingTransactionPrices(true);
 
     try {
-      const response = await axios.post('/api/admin/transaction-prices/update', null, {
+      const response = await axios.post('/admin/transaction-prices/update', null, {
         params: { mode }
       });
       setMessage({
@@ -276,7 +276,7 @@ export const DataUpdateManagement: React.FC = () => {
     setMessage(null);
     
     try {
-      const response = await axios.post('/api/admin/price-changes/process-queue', null, {
+      const response = await axios.post('/admin/price-changes/process-queue', null, {
         params: { limit: 1000 }
       });
       

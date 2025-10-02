@@ -148,7 +148,7 @@ const PropertyDuplicateGroups: React.FC = () => {
         params.building_name = searchTerm;
       }
       
-      const response = await axios.get('/api/admin/duplicate-properties', {
+      const response = await axios.get('/admin/duplicate-properties', {
         params
       });
       
@@ -239,7 +239,7 @@ const PropertyDuplicateGroups: React.FC = () => {
         // 一部選択の場合：選択vs未選択のみ除外（選択同士は除外しない）
         for (const selectedId of selectedIds) {
           for (const unselectedId of unselectedIds) {
-            await axios.post('/api/admin/exclude-properties', {
+            await axios.post('/admin/exclude-properties', {
               property1_id: selectedId,
               property2_id: unselectedId,
               reason: '別グループとして分離'
@@ -250,7 +250,7 @@ const PropertyDuplicateGroups: React.FC = () => {
         // 全選択の場合：すべての組み合わせを除外
         for (let i = 0; i < selectedIds.length; i++) {
           for (let j = i + 1; j < selectedIds.length; j++) {
-            await axios.post('/api/admin/exclude-properties', {
+            await axios.post('/admin/exclude-properties', {
               property1_id: selectedIds[i],
               property2_id: selectedIds[j],
               reason: '手動で別物件として指定'
@@ -330,7 +330,7 @@ const PropertyDuplicateGroups: React.FC = () => {
       for (const secondaryId of secondaryProperties) {
   
         try {
-          const response = await axios.post('/api/admin/merge-properties', {
+          const response = await axios.post('/admin/merge-properties', {
             primary_property_id: primaryProperty,
             secondary_property_id: secondaryId
           });

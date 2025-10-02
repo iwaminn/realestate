@@ -305,7 +305,7 @@ export const BuildingManagement: React.FC = () => {
     
     setSearchingBuildings(true);
     try {
-      const response = await axios.get('/api/admin/buildings/search', {
+      const response = await axios.get('/admin/buildings/search', {
         params: { query: buildingSearchQuery, limit: 20 }
       });
       setBuildingSearchResults(response.data.buildings || []);

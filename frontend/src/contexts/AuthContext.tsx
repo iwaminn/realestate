@@ -51,7 +51,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const checkAuth = async () => {
     try {
       // 管理APIにアクセスして認証を確認
-      await axios.get('/api/admin/areas', { timeout: 10000 }); // 10秒のタイムアウト
+      await axios.get('/admin/areas', { timeout: 10000 }); // 10秒のタイムアウト
       setIsAuthenticated(true);
       const storedUsername = localStorage.getItem('adminUsername');
       setUsername(storedUsername);
@@ -81,7 +81,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const authHeader = 'Basic ' + btoa(username + ':' + password);
       
       // テスト用のAPIリクエストを送信
-      const response = await axios.get('/api/admin/areas', {
+      const response = await axios.get('/admin/areas', {
         headers: {
           'Authorization': authHeader
         }

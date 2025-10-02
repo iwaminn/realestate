@@ -126,8 +126,8 @@ const TransactionPricesPage: React.FC = () => {
     const fetchAreas = async () => {
       try {
         const [areasRes, areasByDistrictRes] = await Promise.all([
-          axios.get('/api/transaction-prices/areas'),
-          axios.get('/api/transaction-prices/areas-by-district')
+          axios.get('/transaction-prices/areas'),
+          axios.get('/transaction-prices/areas-by-district')
         ]);
         setAreas(areasRes.data);
         setAreasByDistrict(areasByDistrictRes.data);
@@ -171,10 +171,10 @@ const TransactionPricesPage: React.FC = () => {
         }
 
         const [statsRes, trendsRes, sizeTrendsRes, ageTrendsRes] = await Promise.all([
-          axios.get('/api/transaction-prices/statistics/by-area', { params: statsParams }),
-          axios.get('/api/transaction-prices/trends', { params: trendParams }),
-          axios.get('/api/transaction-prices/trends-by-size', { params: sizeTrendsParams }),
-          axios.get('/api/transaction-prices/trends-by-age', { params: ageTrendsParams })
+          axios.get('/transaction-prices/statistics/by-area', { params: statsParams }),
+          axios.get('/transaction-prices/trends', { params: trendParams }),
+          axios.get('/transaction-prices/trends-by-size', { params: sizeTrendsParams }),
+          axios.get('/transaction-prices/trends-by-age', { params: ageTrendsParams })
         ]);
 
         setAreaStats(statsRes.data);
@@ -186,7 +186,7 @@ const TransactionPricesPage: React.FC = () => {
         if (!selectedDistrict && !selectedArea) {
           const top5Districts = ['千代田区', '中央区', '港区', '新宿区', '渋谷区'];
           const districtPromises = top5Districts.map((district: string) =>
-            axios.get('/api/transaction-prices/trends', {
+            axios.get('/transaction-prices/trends', {
               params: { district, ...periodParams }
             })
           );
@@ -207,7 +207,7 @@ const TransactionPricesPage: React.FC = () => {
         if (statsRes.data.length > 0 && !selectedArea && selectedDistrict) {
           const topAreaNames = statsRes.data.slice(0, 5).map((s: AreaStatistics) => s.area_name);
           const areaPromises = topAreaNames.map((area: string) =>
-            axios.get('/api/transaction-prices/trends', { params: { area, ...periodParams } })
+            axios.get('/transaction-prices/trends', { params: { area, ...periodParams } })
           );
 
           const areaResults = await Promise.all(areaPromises);
@@ -251,7 +251,7 @@ const TransactionPricesPage: React.FC = () => {
         if (endYear) params.end_year = endYear;
         if (endQuarter) params.end_quarter = endQuarter;
 
-        const response = await axios.get('/api/transaction-prices/transactions', { params });
+        const response = await axios.get('/transaction-prices/transactions', { params });
 
         setTransactions(response.data.data || []);
         setTotalTransactions(response.data.total || 0);

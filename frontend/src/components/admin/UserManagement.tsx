@@ -152,7 +152,7 @@ export const UserManagement: React.FC = () => {
 
   const loadStats = async () => {
     try {
-      const response = await axios.get('/api/admin/users/stats');
+      const response = await axios.get('/admin/users/stats');
       setStats(response.data);
     } catch (error: any) {
       console.error('統計情報の取得エラー:', error);

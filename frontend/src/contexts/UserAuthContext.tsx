@@ -54,7 +54,7 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return;
       }
 
-      const response = await axios.get('/api/auth/me', {
+      const response = await axios.get('/auth/me', {
         headers: {
           'Authorization': `Bearer ${authToken}`
         }
@@ -86,7 +86,7 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
-      const response = await axios.post('/api/auth/login', {
+      const response = await axios.post('/auth/login', {
         email,
         password
       });
@@ -117,7 +117,7 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const register = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
     try {
-      const response = await axios.post('/api/auth/register', {
+      const response = await axios.post('/auth/register', {
         email,
         password
       });
@@ -147,7 +147,7 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const logout = async () => {
     try {
       // サーバーサイドでセッションを無効化
-      await axios.post('/api/auth/logout');
+      await axios.post('/auth/logout');
     } catch (error) {
       console.error('ログアウトエラー:', error);
     } finally {
@@ -157,7 +157,7 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const updateProfile = async (data: {}): Promise<{ success: boolean; error?: string }> => {
     try {
-      const response = await axios.put('/api/auth/me', data);
+      const response = await axios.put('/auth/me', data);
       
       if (response.status === 200) {
         setUser(response.data);
@@ -181,7 +181,7 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
       
       // ユーザー情報を取得
-      const response = await axios.get('/api/auth/me');
+      const response = await axios.get('/auth/me');
       if (response.status === 200) {
         setUser(response.data);
         setIsAuthenticated(true);

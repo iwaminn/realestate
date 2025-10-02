@@ -71,7 +71,7 @@ const PropertyMergeHistory: React.FC = () => {
   const fetchHistories = async () => {
     setLoading(true);
     try {
-      const response = await axios.get('/api/admin/property-merge-history', {
+      const response = await axios.get('/admin/property-merge-history', {
         params: {
           limit: pageSize,
           offset: (page - 1) * pageSize
@@ -128,7 +128,7 @@ const PropertyMergeHistory: React.FC = () => {
     }
 
     try {
-      const result = await axios.delete('/api/admin/property-merge-history/bulk');
+      const result = await axios.delete('/admin/property-merge-history/bulk');
       alert(result.data.message);
       setBulkDeleteDialogOpen(false);
       setBulkDeleteConfirmText('');

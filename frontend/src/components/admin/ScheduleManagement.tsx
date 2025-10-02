@@ -128,7 +128,7 @@ export const ScheduleManagement: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await axios.get('/api/admin/schedules');
+      const response = await axios.get('/admin/schedules');
       setSchedules(response.data.schedules);
     } catch (err: any) {
       setError('スケジュール一覧の取得に失敗しました: ' + (err.response?.data?.detail || err.message));
@@ -148,7 +148,7 @@ export const ScheduleManagement: React.FC = () => {
         })
       };
       
-      await axios.post('/api/admin/schedules', convertedFormData);
+      await axios.post('/admin/schedules', convertedFormData);
       setSuccess('スケジュールを作成しました');
       setCreateDialogOpen(false);
       resetForm();

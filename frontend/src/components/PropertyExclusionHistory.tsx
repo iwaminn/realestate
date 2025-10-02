@@ -100,7 +100,7 @@ const PropertyExclusionHistory: React.FC = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await axios.get('/api/admin/property-exclusions', {
+      const response = await axios.get('/admin/property-exclusions', {
         params: {
           limit: pageSize,
           offset: (page - 1) * pageSize
@@ -161,7 +161,7 @@ const PropertyExclusionHistory: React.FC = () => {
     }
 
     try {
-      const result = await axios.delete('/api/admin/property-exclusions/bulk');
+      const result = await axios.delete('/admin/property-exclusions/bulk');
       alert(result.data.message);
       setBulkDeleteDialogOpen(false);
       setBulkDeleteConfirmText('');

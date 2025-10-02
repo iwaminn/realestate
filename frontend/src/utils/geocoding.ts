@@ -36,7 +36,7 @@ export async function getCoordinatesFromBuilding(buildingId: number): Promise<{ 
 export async function getCoordinatesFromAddress(address: string): Promise<{ lat: number; lng: number } | null> {
   try {
     console.log('ジオコーディング開始:', address);
-    const response = await axios.post('/api/geocoding/geocode', { address });
+    const response = await axios.post('/geocoding/geocode', { address });
     const data = response.data;
     
     console.log('APIレスポンス:', data);
