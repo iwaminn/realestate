@@ -587,14 +587,24 @@ docker ps --format "table {{.Names}}\t{{.Image}}"
 # 注意: コンテナ名が異なる場合は上記で確認した名前を使用
 docker cp /home/ubuntu/realestate_backup.dump realestate-postgres:/tmp
 
-# データベースを削除して再作成（既存データが削除されるので注意！）
+# データベース接続を切断してから削除・再作成
+# 1. バックエンドを停止（データベース接続を切断）
+docker compose -f docker-compose.prod.yml stop backend
+
+# 2. すべてのセッションを強制終了
+docker exec realestate-postgres psql -U realestate -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'realestate' AND pid <> pg_backend_pid();"
+
+# 3. データベースを削除して再作成（既存データが削除されるので注意！）
 docker exec realestate-postgres psql -U realestate -d postgres -c "DROP DATABASE IF EXISTS realestate;"
 docker exec realestate-postgres psql -U realestate -d postgres -c "CREATE DATABASE realestate;"
 
-# バックアップを復元
+# 4. バックアップを復元
 docker exec realestate-postgres pg_restore -U realestate -d realestate -v /tmp/realestate_backup.dump
 
-# サイトマスターの初期化（まだ存在しない場合のみ）
+# 5. バックエンドを起動
+docker compose -f docker-compose.prod.yml start backend
+
+# 6. サイトマスターの初期化（まだ存在しない場合のみ）
 docker exec realestate-backend poetry run python backend/scripts/create_site_master.py
 ```
 
