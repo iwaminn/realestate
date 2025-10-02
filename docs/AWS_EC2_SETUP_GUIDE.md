@@ -404,6 +404,9 @@ nano .env
 # 本番環境用設定（必ず変更が必要）
 # ==============================================
 
+# フロントエンド設定
+VITE_API_URL=/api
+
 # データベース設定
 POSTGRES_DB=realestate
 POSTGRES_USER=realestate
