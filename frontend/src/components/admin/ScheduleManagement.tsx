@@ -171,7 +171,7 @@ export const ScheduleManagement: React.FC = () => {
         })
       };
       
-      await axios.put(`/api/admin/schedules/${editingSchedule.id}`, convertedFormData);
+      await axios.put(`/admin/schedules/${editingSchedule.id}`, convertedFormData);
       setSuccess('スケジュールを更新しました');
       setEditDialogOpen(false);
       resetForm();
@@ -185,7 +185,7 @@ export const ScheduleManagement: React.FC = () => {
     if (!editingSchedule) return;
     
     try {
-      await axios.delete(`/api/admin/schedules/${editingSchedule.id}`);
+      await axios.delete(`/admin/schedules/${editingSchedule.id}`);
       setSuccess('スケジュールを削除しました');
       setDeleteDialogOpen(false);
       setEditingSchedule(null);
@@ -197,7 +197,7 @@ export const ScheduleManagement: React.FC = () => {
 
   const handleRunNow = async (scheduleId: number) => {
     try {
-      await axios.post(`/api/admin/schedules/${scheduleId}/run`);
+      await axios.post(`/admin/schedules/${scheduleId}/run`);
       setSuccess('スケジュールの実行を開始しました');
       fetchSchedules();
     } catch (err: any) {
@@ -207,7 +207,7 @@ export const ScheduleManagement: React.FC = () => {
 
   const handleViewDetail = async (schedule: Schedule) => {
     try {
-      const response = await axios.get(`/api/admin/schedules/${schedule.id}`);
+      const response = await axios.get(`/admin/schedules/${schedule.id}`);
       setSelectedSchedule(response.data);
       setDetailDialogOpen(true);
     } catch (err: any) {
@@ -375,7 +375,7 @@ export const ScheduleManagement: React.FC = () => {
                       size="small"
                       onChange={async (e) => {
                         try {
-                          await axios.put(`/api/admin/schedules/${schedule.id}`, {
+                          await axios.put(`/admin/schedules/${schedule.id}`, {
                             is_active: e.target.checked
                           });
                           fetchSchedules();

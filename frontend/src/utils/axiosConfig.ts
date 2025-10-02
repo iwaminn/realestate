@@ -7,17 +7,24 @@ axios.defaults.baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 // Axiosのインターセプターを設定
 axios.interceptors.request.use(
   (config) => {
-    // ユーザー認証トークンを優先（Google OAuth用）
     const userToken = localStorage.getItem('auth_token');
     const adminAuth = localStorage.getItem('adminAuth');
     
     if (config.headers) {
-      if (userToken) {
-        // ユーザー認証トークンがあれば優先
-        config.headers['Authorization'] = `Bearer ${userToken}`;
-      } else if (adminAuth) {
-        // なければ管理画面のBasic認証を使用
-        config.headers['Authorization'] = adminAuth;
+      // 管理画面のエンドポイントではadminAuthを優先
+      if (config.url?.startsWith('/admin')) {
+        if (adminAuth) {
+          config.headers['Authorization'] = adminAuth;
+        } else if (userToken) {
+          config.headers['Authorization'] = `Bearer ${userToken}`;
+        }
+      } else {
+        // それ以外ではユーザー認証トークンを優先
+        if (userToken) {
+          config.headers['Authorization'] = `Bearer ${userToken}`;
+        } else if (adminAuth) {
+          config.headers['Authorization'] = adminAuth;
+        }
       }
     }
     return config;
