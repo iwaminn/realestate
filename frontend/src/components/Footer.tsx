@@ -14,6 +14,7 @@ import {
   Security,
   Description,
   Warning,
+  ContactMail,
 } from '@mui/icons-material';
 import { APP_CONFIG } from '../config/app';
 
@@ -58,7 +59,7 @@ const Footer: React.FC = () => {
 
           <Grid item xs={12} md={4}>
             <Typography variant="subtitle1" gutterBottom sx={{ fontWeight: 'bold' }}>
-              法的情報
+              サイト情報
             </Typography>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
               <Box
@@ -110,6 +111,23 @@ const Footer: React.FC = () => {
               >
                 <Security sx={{ mr: 1, fontSize: 18 }} />
                 <Typography variant="body2">プライバシーポリシー</Typography>
+              </Box>
+
+              <Box
+                component={Link}
+                to="/contact"
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  textDecoration: 'none',
+                  color: 'text.secondary',
+                  '&:hover': {
+                    color: 'primary.main',
+                  },
+                }}
+              >
+                <ContactMail sx={{ mr: 1, fontSize: 18 }} />
+                <Typography variant="body2">お問い合わせ</Typography>
               </Box>
             </Box>
           </Grid>

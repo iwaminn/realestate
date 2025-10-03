@@ -24,7 +24,7 @@ import MenuIcon from '@mui/icons-material/Menu';
 import UpdateIcon from '@mui/icons-material/Update';
 import SearchIcon from '@mui/icons-material/Search';
 import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-import ContactMailIcon from '@mui/icons-material/ContactMail';
+
 import { APP_CONFIG } from '../config/app';
 import { useUserAuth } from '../contexts/UserAuthContext';
 import { UserMenu } from './UserMenu';
@@ -52,7 +52,6 @@ const Header: React.FC = () => {
     { text: 'ブックマーク', icon: <BookmarkIcon />, path: '/bookmarks' },
     { text: '更新情報', icon: <UpdateIcon />, path: '/updates' },
     { text: '成約価格', icon: <TrendingUpIcon />, path: '/transaction-prices' },
-    { text: 'お問い合わせ', icon: <ContactMailIcon />, path: '/contact' },
   ];
 
   return (
@@ -91,9 +90,6 @@ const Header: React.FC = () => {
               </Button>
               <Button color="inherit" onClick={() => navigate('/transaction-prices')}>
                 成約価格
-              </Button>
-              <Button color="inherit" onClick={() => navigate('/contact')}>
-                お問い合わせ
               </Button>
 
               {/* ユーザー認証部分 */}
