@@ -274,8 +274,23 @@ async def verify_email(token: str, db: Session = Depends(get_db)):
     
     db.commit()
     db.refresh(user)
-    
-    return {"message": "メールアドレスが確認され、本登録が完了しました", "email": user.email}
+
+    # JWTトークンを生成してログイン状態にする
+    access_token = create_access_token(data={"sub": user.email, "user_id": user.id})
+
+    return {
+        "message": "メールアドレスが確認され、本登録が完了しました",
+        "email": user.email,
+        "access_token": access_token,
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "is_active": user.is_active,
+            "is_verified": True,
+            "created_at": user.created_at.isoformat() if user.created_at else None,
+            "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None
+        }
+    }
 
 @router.post("/resend-verification")
 async def resend_verification_email(

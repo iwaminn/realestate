@@ -11,10 +11,12 @@ import {
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { CheckCircle, Error as ErrorIcon } from '@mui/icons-material';
 import axios from 'axios';
+import { useUserAuth } from '../contexts/UserAuthContext';
 
 export const VerifyEmailPage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { handleGoogleCallback } = useUserAuth();
   const [verifying, setVerifying] = useState(true);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
@@ -32,10 +34,19 @@ export const VerifyEmailPage: React.FC = () => {
 
       try {
         const response = await axios.get(`/auth/verify-email?token=${token}`);
-        
+
         if (response.status === 200) {
           setSuccess(true);
           setEmail(response.data.email);
+
+          // トークンを保存してログイン状態にする
+          if (response.data.access_token) {
+            localStorage.setItem('userToken', response.data.access_token);
+            axios.defaults.headers.common['Authorization'] = `Bearer ${response.data.access_token}`;
+
+            // ユーザー情報をコンテキストに反映（handleGoogleCallbackを流用）
+            await handleGoogleCallback(response.data.access_token);
+          }
         }
       } catch (error: any) {
         console.error('メール確認エラー:', error);
@@ -85,7 +96,7 @@ export const VerifyEmailPage: React.FC = () => {
               </Typography>
               <Alert severity="success" sx={{ mt: 3, mb: 3 }}>
                 アカウントが正常に有効化されました。
-                ログインして全ての機能をご利用いただけます。
+                既にログイン状態になっています。すぐに全ての機能をご利用いただけます。
               </Alert>
               <Button
                 variant="contained"
@@ -94,7 +105,7 @@ export const VerifyEmailPage: React.FC = () => {
                 onClick={handleGoToLogin}
                 sx={{ mt: 2 }}
               >
-                ログインページへ
+                トップページへ
               </Button>
             </Box>
           )}
