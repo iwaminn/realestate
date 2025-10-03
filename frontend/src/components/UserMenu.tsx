@@ -59,7 +59,12 @@ export const UserMenu: React.FC = () => {
         aria-haspopup="true"
         aria-expanded={open ? 'true' : undefined}
       >
-        <Avatar sx={{ width: 32, height: 32, bgcolor: 'primary.main' }}>
+        <Avatar sx={{ 
+          width: 32, 
+          height: 32, 
+          bgcolor: 'white',
+          color: 'primary.main'
+        }}>
           {avatarText}
         </Avatar>
       </IconButton>
