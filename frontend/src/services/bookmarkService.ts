@@ -10,15 +10,15 @@ export class BookmarkService {
    * 認証ヘッダーを取得
    */
   private static getAuthHeaders(): Record<string, string> {
-    const token = localStorage.getItem('auth_token');
+    const token = localStorage.getItem('userToken');
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
     };
-    
+
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
     }
-    
+
     return headers;
   }
 
