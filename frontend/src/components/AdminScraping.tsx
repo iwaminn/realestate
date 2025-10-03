@@ -1278,7 +1278,7 @@ const AdminScraping: React.FC = () => {
 
   const resolveAlert = async (alertId: number) => {
     try {
-      await axios.put(`/api/admin/scraper-alerts/${alertId}/resolve`);
+      await axios.put(`/admin/scraper-alerts/${alertId}/resolve`);
       await fetchAlerts();
     } catch (error) {
       setError('アラートの解決に失敗しました');
@@ -1498,7 +1498,7 @@ const AdminScraping: React.FC = () => {
     setLoadingButtons(prev => ({ ...prev, [`pause-${taskId}`]: true }));
     try {
       // APIコールを実行（すべて並列動作）
-      const endpoint = `/api/admin/scraping/pause-parallel/${taskId}`;
+      const endpoint = `/admin/scraping/pause-parallel/${taskId}`;
       await axios.post(endpoint);
       
       // タスク状態が更新されるまでポーリング
@@ -1533,7 +1533,7 @@ const AdminScraping: React.FC = () => {
     setLoadingButtons(prev => ({ ...prev, [`resume-${taskId}`]: true }));
     try {
       // APIコールを実行（すべて並列動作）
-      const endpoint = `/api/admin/scraping/resume-parallel/${taskId}`;
+      const endpoint = `/admin/scraping/resume-parallel/${taskId}`;
       await axios.post(endpoint);
       
       // タスク状態が更新されるまでポーリング
@@ -1571,7 +1571,7 @@ const AdminScraping: React.FC = () => {
     setLoadingButtons(prev => ({ ...prev, [`cancel-${taskId}`]: true }));
     try {
       // APIコールを実行（すべて並列動作）
-      const endpoint = `/api/admin/scraping/cancel-parallel/${taskId}`;
+      const endpoint = `/admin/scraping/cancel-parallel/${taskId}`;
       await axios.post(endpoint);
       
       // タスク状態が更新されるまでポーリング
