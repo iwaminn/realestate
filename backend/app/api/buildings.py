@@ -224,36 +224,44 @@ async def get_building_properties(
     if not building:
         raise HTTPException(status_code=404, detail="建物が見つかりません")
     
-    # 価格の多数決を計算するサブクエリ（常に販売中掲載のみから計算）
+    # 価格の多数決を計算するサブクエリ
     from ..utils.price_queries import create_majority_price_subquery, create_price_stats_subquery, get_sold_property_final_price
 
-    majority_price_query = create_majority_price_subquery(db, False)  # 常に販売中掲載のみ
-    price_subquery = create_price_stats_subquery(db, majority_price_query, False)
+    # 販売中掲載のみから計算（統計用の基準価格）
+    majority_price_query_active = create_majority_price_subquery(db, False)
+    price_subquery_active = create_price_stats_subquery(db, majority_price_query_active, False)
+
+    # 全掲載から計算（アクティブな掲載がない物件用のフォールバック）
+    majority_price_query_all = create_majority_price_subquery(db, True)
+    price_subquery_all = create_price_stats_subquery(db, majority_price_query_all, True)
     
-    # 物件取得クエリ
+    # 物件取得クエリ（販売中掲載の価格と全掲載の価格の両方を取得）
     query = db.query(
         MasterProperty,
-        price_subquery.c.min_price,
-        price_subquery.c.max_price,
-        price_subquery.c.majority_price,
-        price_subquery.c.listing_count,
-        price_subquery.c.source_sites,
-        price_subquery.c.has_active_listing,
-        price_subquery.c.last_confirmed_at,
-        price_subquery.c.delisted_at,
-        price_subquery.c.station_info,
-        price_subquery.c.earliest_published_at
+        price_subquery_active.c.min_price,
+        price_subquery_active.c.max_price,
+        price_subquery_active.c.majority_price,
+        price_subquery_active.c.listing_count,
+        price_subquery_active.c.source_sites,
+        price_subquery_active.c.has_active_listing,
+        price_subquery_active.c.last_confirmed_at,
+        price_subquery_active.c.delisted_at,
+        price_subquery_active.c.station_info,
+        price_subquery_active.c.earliest_published_at,
+        price_subquery_all.c.majority_price.label('majority_price_all'),  # 全掲載の多数決価格
     ).filter(
         MasterProperty.building_id == building_id
     ).outerjoin(
-        price_subquery, MasterProperty.id == price_subquery.c.master_property_id
+        price_subquery_active, MasterProperty.id == price_subquery_active.c.master_property_id
+    ).outerjoin(
+        price_subquery_all, MasterProperty.id == price_subquery_all.c.master_property_id
     )
     
     # アクティブフィルタ
     if not include_inactive:
         query = query.filter(MasterProperty.sold_at.is_(None))
-        query = query.filter(price_subquery.c.master_property_id.isnot(None))
-        query = query.filter(price_subquery.c.has_active_listing == True)
+        query = query.filter(price_subquery_active.c.master_property_id.isnot(None))
+        query = query.filter(price_subquery_active.c.has_active_listing == True)
     
     # 階数でソート
     query = query.order_by(
@@ -293,13 +301,14 @@ async def get_building_properties(
     
     # 結果を整形
     properties = []
-    for mp, min_price, max_price, majority_price, listing_count, source_sites, has_active, last_confirmed, delisted, station_info, earliest_published_at in results:
+    for mp, min_price, max_price, majority_price, listing_count, source_sites, has_active, last_confirmed, delisted, station_info, earliest_published_at, majority_price_all in results:
         # 販売終了物件の価格を計算
         if mp.sold_at:
             final_price = get_sold_property_final_price(db, mp)
             display_price = final_price
         else:
-            display_price = majority_price
+            # アクティブな掲載の多数決価格を優先、なければ全掲載から
+            display_price = majority_price if majority_price else majority_price_all
             final_price = None
         
         # 価格変更情報を取得
