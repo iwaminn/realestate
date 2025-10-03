@@ -40,7 +40,7 @@ const Footer: React.FC = () => {
                 {APP_CONFIG.APP_NAME}
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                本サイトは東京都心部の新築・中古マンション情報を集約した検索サービスです。
+                本サイトは東京都心部の中古マンション情報を集約した検索サービスです。
                 物件情報は各不動産サイトから収集したものであり、最新の状況とは異なる場合があります。
               </Typography>
 
