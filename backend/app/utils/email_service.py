@@ -50,6 +50,9 @@ class EmailService:
 
     async def send_verification_email(self, email: str, user_name: str, verification_token: str) -> bool:
         """メールアドレス確認メールを送信"""
+        # アプリ名を取得
+        app_name = os.getenv('VITE_APP_NAME', '都心マンション価格チェッカー')
+        
         # 確認URL生成
         base_url = os.getenv('FRONTEND_URL', 'http://localhost:3001')
         verification_url = f"{base_url}/verify-email?token={verification_token}"
@@ -102,13 +105,13 @@ class EmailService:
             verification_url = f"{base_url}/verify-email?token={verification_token}"
             
             # HTMLテンプレート
-            html_content = self._create_verification_html(user_name, verification_url)
+            html_content = self._create_verification_html(user_name, verification_url, app_name)
             
             # テキスト版
             text_content = f"""
 こんにちは{user_name or ''}様、
 
-都心マンションDBにご登録いただき、ありがとうございます。
+{app_name}にご登録いただき、ありがとうございます。
 
 以下のリンクをクリックしてメールアドレスの確認を完了してください：
 {verification_url}
@@ -117,14 +120,13 @@ class EmailService:
 
 ※このメールに覚えがない場合は、このメールを無視してください。
 
-都心マンションDB運営チーム
+{app_name}運営チーム
             """.strip()
             
             message = MessageSchema(
-                subject="メールアドレスの確認 - 都心マンションDB",
+                subject=f"メールアドレスの確認 - {app_name}",
                 recipients=[email],
-                body=text_content,
-                html=html_content,
+                body=html_content,
                 subtype=MessageType.html
             )
             
@@ -136,7 +138,7 @@ class EmailService:
             error_logger.error(f"確認メール送信エラー: {e}")
             return False
 
-    def _create_verification_html(self, user_name: str, verification_url: str) -> str:
+    def _create_verification_html(self, user_name: str, verification_url: str, app_name: str = '都心マンション価格チェッカー') -> str:
         """確認メールのHTMLを生成"""
         return f"""
 <!DOCTYPE html>
@@ -176,6 +178,9 @@ class EmailService:
             color: #333;
             font-size: 16px;
         }}
+        .content p {{
+            margin: 16px 0;
+        }}
         .button {{
             display: inline-block;
             padding: 15px 30px;
@@ -209,13 +214,13 @@ class EmailService:
 <body>
     <div class="container">
         <div class="header">
-            <h1>都心マンションDB</h1>
+            <h1>{app_name}</h1>
         </div>
         
         <div class="content">
             <p>こんにちは{user_name or ''}様、</p>
             
-            <p>都心マンションDBにご登録いただき、ありがとうございます。</p>
+            <p>{app_name}にご登録いただき、ありがとうございます。</p>
             
             <p>以下のボタンをクリックしてメールアドレスの確認を完了してください：</p>
             
@@ -233,7 +238,7 @@ class EmailService:
         
         <div class="footer">
             <p><strong>※このメールに覚えがない場合は、このメールを無視してください。</strong></p>
-            <p>都心マンションDB運営チーム</p>
+            <p>{app_name}運営チーム</p>
         </div>
     </div>
 </body>
