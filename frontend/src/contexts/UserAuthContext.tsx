@@ -174,9 +174,6 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const handleGoogleCallback = async (token: string): Promise<boolean> => {
     try {
-      // 古いBasic認証ヘッダーをクリア
-      delete axios.defaults.headers.common['Authorization'];
-
       console.log('handleGoogleCallback: Starting with token:', typeof token === 'string' ? token.substring(0, 20) + '...' : token);
 
       // トークンをローカルストレージに保存（userTokenに統一）
