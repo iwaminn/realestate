@@ -5,6 +5,7 @@
 import hashlib
 import secrets
 import jwt
+import os
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 from passlib.context import CryptContext
@@ -17,7 +18,7 @@ import uuid
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # JWT設定
-SECRET_KEY = "realestate_secret_key_change_in_production"  # 本番環境では環境変数から取得
+SECRET_KEY = os.getenv("JWT_SECRET_KEY", "realestate_secret_key_change_in_production")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30 * 24 * 60  # 30日間
 
