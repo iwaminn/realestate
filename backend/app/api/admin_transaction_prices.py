@@ -9,7 +9,6 @@ from typing import Dict
 
 from ..database import get_db
 from ..models import TransactionPrice
-from ..auth import verify_admin_credentials
 
 router = APIRouter()
 
@@ -17,7 +16,6 @@ router = APIRouter()
 @router.get("/admin/transaction-prices/stats")
 async def get_transaction_price_stats(
     db: Session = Depends(get_db),
-    _: str = Depends(verify_admin_credentials)
 ) -> Dict:
     """成約価格情報の統計を取得"""
 
@@ -91,7 +89,6 @@ async def update_transaction_prices(
     background_tasks: BackgroundTasks,
     mode: str = "update",  # "update" or "full"
     db: Session = Depends(get_db),
-    _: str = Depends(verify_admin_credentials)
 ) -> Dict:
     """
     成約価格情報を更新

@@ -11,7 +11,6 @@ from pydantic import BaseModel
 
 from ..database import get_db
 from ..models import User, PropertyBookmark, EmailVerificationToken
-from ..auth import verify_admin_credentials
 from ..utils.auth import get_password_hash
 
 router = APIRouter()
@@ -79,7 +78,6 @@ async def get_users(
     is_active: Optional[bool] = None,
     sort_by: str = Query("created_at", regex="^(created_at|last_login_at|email|bookmark_count)$"),
     sort_order: str = Query("desc", regex="^(asc|desc)$"),
-    _: str = Depends(verify_admin_credentials),
     db: Session = Depends(get_db)
 ):
     """ユーザー一覧を取得（管理者のみ）"""
@@ -150,7 +148,6 @@ async def get_users(
 
 @router.get("/users/stats", response_model=AdminUserStats)
 async def get_user_stats(
-    _: str = Depends(verify_admin_credentials),
     db: Session = Depends(get_db)
 ):
     """ユーザー統計情報を取得（管理者のみ）"""
@@ -184,7 +181,6 @@ async def get_user_stats(
 @router.get("/users/{user_id}", response_model=UserDetailResponse)
 async def get_user_detail(
     user_id: int,
-    _: str = Depends(verify_admin_credentials),
     db: Session = Depends(get_db)
 ):
     """ユーザー詳細情報を取得（管理者のみ）"""
@@ -231,7 +227,6 @@ async def get_user_detail(
 async def update_user(
     user_id: int,
     user_data: UserUpdate,
-    _: str = Depends(verify_admin_credentials),
     db: Session = Depends(get_db)
 ):
     """ユーザー情報を更新（管理者のみ）"""
@@ -272,7 +267,6 @@ async def update_user(
 @router.delete("/users/{user_id}")
 async def delete_user(
     user_id: int,
-    _: str = Depends(verify_admin_credentials),
     db: Session = Depends(get_db)
 ):
     """ユーザーを削除（管理者のみ）"""

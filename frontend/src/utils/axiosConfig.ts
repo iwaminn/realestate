@@ -12,6 +12,7 @@ axios.interceptors.request.use(
     
     if (config.headers) {
       // 管理画面のエンドポイントではadminAuthを優先
+      // baseURLに既に/apiが含まれているため、/adminで始まるURLをチェック
       if (config.url?.startsWith('/admin')) {
         if (adminAuth) {
           config.headers['Authorization'] = adminAuth;

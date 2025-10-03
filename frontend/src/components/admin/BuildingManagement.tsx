@@ -172,7 +172,7 @@ export const BuildingManagement: React.FC = () => {
       if (searchParams.maxTotalFloors) params.append('max_total_floors', searchParams.maxTotalFloors);
       if (searchParams.hasActiveListings) params.append('has_active_listings', searchParams.hasActiveListings);
 
-      const response = await axios.get(`/api/admin/buildings?${params}`);
+      const response = await axios.get(`/admin/buildings?${params}`);
       setBuildings(response.data.items);
       setTotalCount(response.data.total);
     } catch (error) {
@@ -186,7 +186,7 @@ export const BuildingManagement: React.FC = () => {
   const fetchBuildingDetail = async (buildingId: number) => {
     setDetailLoading(true);
     try {
-      const response = await axios.get(`/api/admin/buildings/${buildingId}`);
+      const response = await axios.get(`/admin/buildings/${buildingId}`);
       setSelectedBuilding(response.data);
       setDetailDialogOpen(true);
     } catch (error) {
@@ -218,7 +218,7 @@ export const BuildingManagement: React.FC = () => {
         data.built_year = editForm.built_year ? Number(editForm.built_year) : null;
       }
 
-      await axios.patch(`/api/admin/buildings/${selectedBuilding.id}`, data);
+      await axios.patch(`/admin/buildings/${selectedBuilding.id}`, data);
       setEditDialogOpen(false);
       fetchBuildingDetail(selectedBuilding.id); // 詳細を再取得
       fetchBuildings(); // 一覧も更新
@@ -270,7 +270,7 @@ export const BuildingManagement: React.FC = () => {
     }
 
     try {
-      const response = await axios.delete(`/api/admin/buildings/${buildingId}`);
+      const response = await axios.delete(`/admin/buildings/${buildingId}`);
       console.log('Delete response:', response);
       
       // 削除成功（axiosのtryブロック内なら成功）
@@ -323,7 +323,7 @@ export const BuildingManagement: React.FC = () => {
     setDetachingPropertyId(propertyId);
     setDetachTargetPropertyId(propertyId);  // 分離対象の物件IDを保存
     try {
-      const response = await axios.post(`/api/admin/properties/${propertyId}/detach-candidates`);
+      const response = await axios.post(`/admin/properties/${propertyId}/detach-candidates`);
       setDetachCandidates(response.data);
       setDetachDialogOpen(true);
       
@@ -389,7 +389,7 @@ export const BuildingManagement: React.FC = () => {
       }
       
       const response = await axios.post(
-        `/api/admin/properties/${propertyId}/attach-to-building`,
+        `/admin/properties/${propertyId}/attach-to-building`,
         requestData
       );
       

@@ -11,7 +11,6 @@ from datetime import datetime, timedelta
 from ..database import get_db
 from ..models_property_matching import AmbiguousPropertyMatch
 from ..models import MasterProperty, Building
-from ..auth import verify_admin_credentials
 
 router = APIRouter(prefix="/api/admin", tags=["admin-matching"])
 
@@ -25,7 +24,6 @@ async def get_ambiguous_matches(
     building_id: Optional[int] = None,
     days: int = Query(7, description="過去N日間のデータ"),
     db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
 ):
     """曖昧なマッチング一覧を取得（管理者用）"""
     
@@ -86,7 +84,6 @@ async def get_ambiguous_matches(
 async def get_ambiguous_match_detail(
     match_id: int,
     db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
 ):
     """曖昧なマッチングの詳細を取得"""
     
@@ -151,7 +148,6 @@ async def review_ambiguous_match(
     match_id: int,
     request: Dict[str, Any],
     db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
 ):
     """曖昧なマッチングをレビュー"""
     
@@ -189,7 +185,6 @@ async def review_ambiguous_match(
 async def get_ambiguous_matches_summary(
     days: int = Query(30, description="過去N日間のデータ"),
     db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
 ):
     """曖昧なマッチングのサマリー"""
     

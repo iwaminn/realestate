@@ -295,7 +295,7 @@ export const PropertyManagement: React.FC = () => {
       if (searchParams.directions.length > 0) params.append('directions', searchParams.directions.join(','));
       if (searchParams.hasActiveListings) params.append('has_active_listings', searchParams.hasActiveListings);
 
-      const response = await axios.get(`/api/admin/properties?${params}`);
+      const response = await axios.get(`/admin/properties?${params}`);
       setProperties(response.data.items);
       setTotalCount(response.data.total);
     } catch (error) {
@@ -313,7 +313,7 @@ export const PropertyManagement: React.FC = () => {
   const fetchPropertyDetail = async (propertyId: number) => {
     setDetailLoading(true);
     try {
-      const response = await axios.get(`/api/admin/properties/${propertyId}`);
+      const response = await axios.get(`/admin/properties/${propertyId}`);
       setSelectedProperty(response.data);
       setDetailDialogOpen(true);
     } catch (error) {
@@ -352,7 +352,7 @@ export const PropertyManagement: React.FC = () => {
         data.direction = editForm.direction || null;
       }
 
-      await axios.patch(`/api/admin/properties/${selectedProperty.id}`, data);
+      await axios.patch(`/admin/properties/${selectedProperty.id}`, data);
       setEditDialogOpen(false);
       fetchPropertyDetail(selectedProperty.id); // 詳細を再取得
       fetchProperties(); // 一覧も更新
@@ -404,7 +404,7 @@ export const PropertyManagement: React.FC = () => {
     }
 
     try {
-      const response = await axios.delete(`/api/admin/properties/${propertyId}`);
+      const response = await axios.delete(`/admin/properties/${propertyId}`);
       console.log('Delete response:', response);
       
       // 削除成功（axiosのtryブロック内なら成功）
@@ -435,7 +435,7 @@ export const PropertyManagement: React.FC = () => {
   // 掲載情報分離の候補を取得
   const fetchDetachCandidates = async (listingId: number) => {
     try {
-      const response = await axios.post(`/api/admin/listings/${listingId}/detach-candidates`);
+      const response = await axios.post(`/admin/listings/${listingId}/detach-candidates`);
       setDetachCandidates(response.data);
       setDetachingListingId(listingId);
       setDetachListingDialogOpen(true);
@@ -504,7 +504,7 @@ export const PropertyManagement: React.FC = () => {
       }
 
       const response = await axios.post(
-        `/api/admin/listings/${detachingListingId}/attach-to-property`,
+        `/admin/listings/${detachingListingId}/attach-to-property`,
         requestData
       );
       

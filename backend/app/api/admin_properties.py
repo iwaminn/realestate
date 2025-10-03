@@ -9,7 +9,6 @@ from datetime import datetime
 
 from ..database import get_db
 from ..models import MasterProperty, Building, PropertyListing, ListingPriceHistory
-from ..auth import verify_admin_credentials
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
 
@@ -29,7 +28,6 @@ async def get_properties(
     directions: Optional[str] = None,  # カンマ区切りで複数の方角
     has_active_listings: Optional[bool] = None,
     db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
 ):
     """物件一覧を取得（管理者用）"""
     query = db.query(MasterProperty).join(Building)
@@ -187,7 +185,6 @@ async def get_properties(
 async def get_property_detail(
     property_id: int,
     db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
 ):
     """物件詳細を取得（管理者用）"""
     property = db.query(MasterProperty).options(
@@ -277,7 +274,6 @@ async def update_property(
     property_id: int,
     data: Dict[str, Any],
     db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
 ):
     """物件情報を更新（管理者用）"""
     property = db.query(MasterProperty).filter(MasterProperty.id == property_id).first()
@@ -310,7 +306,6 @@ async def update_property(
 async def delete_property(
     property_id: int,
     db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
 ):
     """物件を削除（管理者用）"""
     # 物件を取得

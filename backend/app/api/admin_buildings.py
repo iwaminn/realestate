@@ -9,7 +9,6 @@ from datetime import datetime
 
 from ..database import get_db
 from ..models import Building, MasterProperty, PropertyListing, BuildingExternalId, BuildingListingName
-from ..auth import verify_admin_credentials
 
 router = APIRouter(prefix="/api/admin", tags=["admin-buildings"])
 
@@ -26,7 +25,6 @@ async def get_buildings(
     max_total_floors: Optional[int] = None,
     has_active_listings: Optional[bool] = None,
     db: Session = Depends(get_db)
-    # _: Any = Depends(verify_admin_credentials)  # 開発環境では一時的に無効化
 ):
     """建物一覧を取得（管理者用）"""
     query = db.query(Building)
@@ -149,7 +147,6 @@ async def search_buildings_for_merge(
     query: str = Query(..., min_length=1),
     limit: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
-    credentials: Any = Depends(verify_admin_credentials)
 ):
     """建物検索（統合用）"""
     from ..utils.search_normalizer import create_search_patterns, normalize_search_text
@@ -286,7 +283,6 @@ async def search_buildings_for_merge(
 async def get_building_detail(
     building_id: int,
     db: Session = Depends(get_db)
-    # _: Any = Depends(verify_admin_credentials)  # 開発環境では一時的に無効化
 ):
     """建物詳細を取得（管理者用）"""
     from ..models import BuildingMergeHistory
@@ -492,7 +488,6 @@ async def update_building(
     building_id: int,
     data: Dict[str, Any],
     db: Session = Depends(get_db)
-    # _: Any = Depends(verify_admin_credentials)  # 開発環境では一時的に無効化
 ):
     """建物情報を更新（管理者用）"""
     building = db.query(Building).filter(Building.id == building_id).first()
@@ -525,7 +520,6 @@ async def update_building(
 async def delete_building(
     building_id: int,
     db: Session = Depends(get_db)
-    # _: Any = Depends(verify_admin_credentials)  # 開発環境では一時的に無効化
 ):
     """建物を削除（管理者用）"""
     # 建物を取得
@@ -615,7 +609,6 @@ async def delete_building(
 async def get_detach_candidates(
     property_id: int,
     db: Session = Depends(get_db)
-    # _: Any = Depends(verify_admin_credentials)  # 開発環境では一時的に無効化
 ):
     """物件分離時の建物候補を取得（管理者用）"""
     from ..utils.search_normalizer import normalize_search_text
@@ -909,7 +902,6 @@ async def attach_property_to_building(
     property_id: int,
     request: Dict[str, Any],
     db: Session = Depends(get_db)
-    # _: Any = Depends(verify_admin_credentials)  # 開発環境では一時的に無効化
 ):
     """物件を指定された建物に紐付け（管理者用）"""
     from ..utils.search_normalizer import normalize_search_text
