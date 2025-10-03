@@ -31,7 +31,7 @@ export const VerifyEmailPage: React.FC = () => {
       }
 
       try {
-        const response = await axios.get(`/api/auth/verify-email?token=${token}`);
+        const response = await axios.get(`/auth/verify-email?token=${token}`);
         
         if (response.status === 200) {
           setSuccess(true);
