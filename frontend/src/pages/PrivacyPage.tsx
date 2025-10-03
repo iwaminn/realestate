@@ -30,7 +30,7 @@ const PrivacyPage: React.FC = () => {
   }, []);
 
   return (
-    <Container maxWidth="md" sx={{ py: 4 }}>
+    <Container maxWidth="md" sx={{ py: 4, px: { xs: 0.5, sm: 2, md: 3 } }}>
       <Button
         component={Link}
         to="/"

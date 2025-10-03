@@ -53,7 +53,7 @@ const ContactPage: React.FC = () => {
   };
 
   return (
-    <Container maxWidth="md" sx={{ py: 4 }}>
+    <Container maxWidth="md" sx={{ py: 4, px: { xs: 0.5, sm: 2, md: 3 } }}>
       <Typography variant="h4" gutterBottom>
         お問い合わせ
       </Typography>
