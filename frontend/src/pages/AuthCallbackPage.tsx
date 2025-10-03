@@ -11,8 +11,7 @@ export const AuthCallbackPage: React.FC = () => {
   useEffect(() => {
     const processCallback = async () => {
       const token = searchParams.get('token');
-      console.log('AuthCallback: Received token:', token ? (typeof token === 'string' ? token.substring(0, 20) + '...' : token) : 'null');
-      
+
       if (token) {
         // Googleログイン成功
         const success = await handleGoogleCallback(token);

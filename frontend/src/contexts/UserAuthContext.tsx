@@ -174,17 +174,12 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const handleGoogleCallback = async (token: string): Promise<boolean> => {
     try {
-      console.log('handleGoogleCallback: Starting with token:', typeof token === 'string' ? token.substring(0, 20) + '...' : token);
-
       // トークンをローカルストレージに保存（userTokenに統一）
       localStorage.setItem('userToken', token);
 
       // axiosのデフォルトヘッダーに設定
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-      const authHeader = axios.defaults.headers.common['Authorization'];
-      console.log('handleGoogleCallback: Authorization header set:', typeof authHeader === 'string' ? authHeader.substring(0, 30) + '...' : authHeader);
-      
-      console.log('handleGoogleCallback: Calling /auth/me');
+
       // ユーザー情報を取得（明示的にヘッダーを渡す）
       const response = await axios.get('/auth/me', {
         headers: {

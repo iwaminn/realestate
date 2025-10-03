@@ -224,11 +224,11 @@ async def get_building_properties(
     if not building:
         raise HTTPException(status_code=404, detail="建物が見つかりません")
     
-    # 価格の多数決を計算するサブクエリ
+    # 価格の多数決を計算するサブクエリ（常に販売中掲載のみから計算）
     from ..utils.price_queries import create_majority_price_subquery, create_price_stats_subquery, get_sold_property_final_price
-    
-    majority_price_query = create_majority_price_subquery(db, include_inactive)
-    price_subquery = create_price_stats_subquery(db, majority_price_query, include_inactive)
+
+    majority_price_query = create_majority_price_subquery(db, False)  # 常に販売中掲載のみ
+    price_subquery = create_price_stats_subquery(db, majority_price_query, False)
     
     # 物件取得クエリ
     query = db.query(

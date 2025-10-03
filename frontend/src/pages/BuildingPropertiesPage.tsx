@@ -176,6 +176,7 @@ const BuildingPropertiesPage: React.FC = () => {
   const [building, setBuilding] = useState<any | null>(null);
   const [stats, setStats] = useState<BuildingStats | null>(null);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [maxFloorFromProperties, setMaxFloorFromProperties] = useState<number | null>(null);
   const [hazardMapUrl, setHazardMapUrl] = useState<string>('https://disaportal.gsi.go.jp/hazardmap/maps/index.html');
@@ -226,23 +227,28 @@ const BuildingPropertiesPage: React.FC = () => {
   };
 
   useEffect(() => {
-  if (buildingId) {
+    if (buildingId) {
       fetchBuildingProperties();
     }
   }, [buildingId, includeInactive]);
 
-  // URLパラメータが変更された時の処理
+  // URLパラメータが変更された時の処理（初期ロード時のみ）
   useEffect(() => {
     const params = getParamsFromUrl();
     setIncludeInactive(params.includeInactive);
     setViewMode(params.viewMode);
     setOrderBy(params.orderBy);
     setOrder(params.order);
-  }, [location.search]);
+  }, []);
 
   const fetchBuildingProperties = async () => {
     try {
-      setLoading(true);
+      // 初回ロードか更新かを判定
+      if (properties.length === 0) {
+        setLoading(true);
+      } else {
+        setIsRefreshing(true);
+      }
       // 建物IDで物件を取得
       const response = await propertyApi.getBuildingProperties(parseInt(buildingId!), includeInactive);
       
@@ -264,48 +270,44 @@ const BuildingPropertiesPage: React.FC = () => {
         });
       }
       
-      // 統計情報を計算
+      // 統計情報を計算（常に販売中の物件のみを対象）
       if (response.properties.length > 0) {
-        const prices = response.properties
+        // 販売中の物件のみをフィルタ
+        const activeProperties = response.properties.filter(p => !p.sold_at && p.has_active_listing);
+
+        const prices = activeProperties
           .map(p => p.min_price)
           .filter((p): p is number => p !== undefined && p !== null);
-        const areas = response.properties
+        const areas = activeProperties
           .map(p => p.area)
           .filter((a): a is number => a !== undefined && a !== null);
-        
-        // 物件の階数情報から最大階数を計算
+
+        // 全物件の階数情報から最大階数を計算（販売終了物件も含む）
         const floors = response.properties
           .map(p => p.floor_number)
           .filter((f): f is number => f !== undefined && f !== null);
         const maxFloor = floors.length > 0 ? Math.max(...floors) : null;
         setMaxFloorFromProperties(maxFloor);
-        
+
       if (prices.length > 0 && areas.length > 0) {
-          // 各物件の坪単価を計算
-          const pricePerTsubos = response.properties
+          // 各販売中物件の坪単価を計算
+          const pricePerTsubos = activeProperties
             .filter(p => {
-              const price = p.sold_at && p.last_sale_price 
-                ? p.last_sale_price 
-                : (p.majority_price || p.min_price);
+              const price = p.majority_price || p.min_price;
               return price && p.area;
             })
             .map(p => {
-              const price = p.sold_at && p.last_sale_price 
-                ? p.last_sale_price 
-                : (p.majority_price || p.min_price);
+              const price = p.majority_price || p.min_price;
               const tsubo = (p.area || 0) / 3.30578;
               return tsubo > 0 && price ? price / tsubo : 0;
             });
-          
+
           const avgPricePerTsubo = pricePerTsubos.length > 0
             ? pricePerTsubos.reduce((a, b) => a + b, 0) / pricePerTsubos.length
             : 0;
 
-          // 販売中の物件数をカウント（sold_atがnullかつhas_active_listingがtrueの物件のみ）
-          const activeUnitsCount = response.properties.filter(p => !p.sold_at && p.has_active_listing).length;
-
           setStats({
-            total_units: activeUnitsCount,
+            total_units: activeProperties.length,
             price_range: {
               min: Math.min(...prices),
               max: Math.max(...prices),
@@ -319,12 +321,9 @@ const BuildingPropertiesPage: React.FC = () => {
             avg_price_per_tsubo: avgPricePerTsubo
           });
         } else {
-          // 価格や面積情報がない場合でも建物情報は表示
-          // 販売中の物件数をカウント（sold_atがnullかつhas_active_listingがtrueの物件のみ）
-          const activeUnitsCount = response.properties.filter(p => !p.sold_at && p.has_active_listing).length;
-
+          // 販売中物件がない、または価格や面積情報がない場合
           setStats({
-            total_units: activeUnitsCount,
+            total_units: activeProperties.length,
             price_range: {
               min: 0,
               max: 0,
@@ -344,6 +343,7 @@ const BuildingPropertiesPage: React.FC = () => {
       setError(errorMessage);
     } finally {
       setLoading(false);
+      setIsRefreshing(false);
     }
   };
 
@@ -645,9 +645,7 @@ const BuildingPropertiesPage: React.FC = () => {
               <Checkbox
                 checked={includeInactive}
                 onChange={(e) => {
-                  const newValue = e.target.checked;
-                  setIncludeInactive(newValue);
-                  updateUrlParams({ includeInactive: newValue });
+                  setIncludeInactive(e.target.checked);
                 }}
               />
             }
@@ -867,9 +865,14 @@ const BuildingPropertiesPage: React.FC = () => {
           gap: { xs: 1, sm: 0 },
           mb: isMobile ? 1 : 2 
         }}>
-          <Typography variant="h5">
-            {includeInactive ? '全物件' : '販売中の物件'} ({properties.length}件)
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Typography variant="h5">
+              {includeInactive ? '全物件' : '販売中の物件'} ({properties.length}件)
+            </Typography>
+            {isRefreshing && (
+              <CircularProgress size={20} thickness={4} />
+            )}
+          </Box>
           <ToggleButtonGroup
             value={viewMode}
             exclusive
@@ -906,9 +909,7 @@ const BuildingPropertiesPage: React.FC = () => {
             <Checkbox
               checked={includeInactive}
               onChange={(e) => {
-                const newValue = e.target.checked;
-                setIncludeInactive(newValue);
-                updateUrlParams({ includeInactive: newValue });
+                setIncludeInactive(e.target.checked);
               }}
             />
           }
