@@ -19,6 +19,7 @@ import { BookmarksPage } from './pages/BookmarksPage';
 import { VerifyEmailPage } from './pages/VerifyEmailPage';
 import { AuthCallbackPage } from './pages/AuthCallbackPage';
 import Footer from './components/Footer';
+import ScrollToTop from './components/ScrollToTop';
 import DisclaimerPage from './pages/DisclaimerPage';
 import TermsPage from './pages/TermsPage';
 import PrivacyPage from './pages/PrivacyPage';
@@ -63,6 +64,7 @@ function App() {
       <AuthProvider>
         <UserAuthProvider>
           <Router>
+            <ScrollToTop />
             <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
               <Header />
               <Container maxWidth="lg" sx={{ mt: 4, mb: 4, flex: 1 }}>

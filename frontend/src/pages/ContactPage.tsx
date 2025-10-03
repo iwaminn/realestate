@@ -10,9 +10,7 @@ import {
   CircularProgress,
 } from '@mui/material';
 import { Send as SendIcon } from '@mui/icons-material';
-import axios from 'axios';
-
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api';
+import axios from '../utils/axiosConfig';
 
 const ContactPage: React.FC = () => {
   const [formData, setFormData] = useState({
@@ -39,7 +37,7 @@ const ContactPage: React.FC = () => {
     setSuccess(false);
 
     try {
-      await axios.post(`${API_URL}/contact`, formData);
+      await axios.post('/contact', formData);
       setSuccess(true);
       setFormData({
         name: '',
