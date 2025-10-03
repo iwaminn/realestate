@@ -18,7 +18,7 @@ export const BookmarkButton: React.FC<BookmarkButtonProps> = ({
   size = 'medium',
   onBookmarkChange
 }) => {
-  const { isAuthenticated } = useUserAuth();
+  const { isAuthenticated, isLoading: authLoading } = useUserAuth();
   const [isBookmarked, setIsBookmarked] = useState(initialBookmarked);
   const [isLoading, setIsLoading] = useState(false);
   const [isInitialized, setIsInitialized] = useState(false);
@@ -27,6 +27,11 @@ export const BookmarkButton: React.FC<BookmarkButtonProps> = ({
   // 初期化時にブックマーク状態をチェック
   useEffect(() => {
     const checkInitialStatus = async () => {
+      // 認証状態の読み込み中は待機
+      if (authLoading) {
+        return;
+      }
+
       // 未認証の場合は状態チェックをスキップ
       if (!isAuthenticated) {
         setIsBookmarked(false);
@@ -46,19 +51,28 @@ export const BookmarkButton: React.FC<BookmarkButtonProps> = ({
     };
 
     checkInitialStatus();
-  }, [propertyId, isAuthenticated]);
+  }, [propertyId, isAuthenticated, authLoading]);
 
   const handleToggleBookmark = async (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation(); // 親要素のクリックイベントを防止
-    
+
     if (isLoading) return;
+
+    // 認証状態の読み込み中は何もしない
+    if (authLoading) {
+      console.log('[BookmarkButton] 認証状態読み込み中のため処理をスキップ');
+      return;
+    }
 
     // 未認証の場合はログインモーダルを表示
     if (!isAuthenticated) {
+      console.log('[BookmarkButton] 未認証のためログインモーダルを表示');
       setShowLoginModal(true);
       return;
     }
+
+    console.log('[BookmarkButton] ブックマーク操作を実行');
 
     setIsLoading(true);
     try {

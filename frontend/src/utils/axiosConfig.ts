@@ -43,11 +43,16 @@ axios.interceptors.response.use(
   (error) => {
     // 401エラーの場合、認証情報をクリア
     if (error.response?.status === 401) {
-      // 管理画面のパスの場合のみ認証情報をクリア
       if (window.location.pathname.startsWith('/admin')) {
+        // 管理画面の場合
         localStorage.removeItem('adminAuth');
         localStorage.removeItem('adminUsername');
         window.location.href = '/admin/login';
+      } else {
+        // 一般ユーザーの場合
+        // UserAuthContextのclearAuth()が呼ばれるようにエラーを返すだけ
+        // トークンのクリアはUserAuthContext側で行う
+        console.log('[axiosConfig] 401エラー: 認証が必要です');
       }
     }
     return Promise.reject(error);

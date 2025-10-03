@@ -49,6 +49,7 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const checkAuth = async (token?: string) => {
     try {
       const authToken = token || localStorage.getItem('userToken');
+      console.log('[UserAuth] checkAuth開始:', { hasToken: !!authToken });
       if (!authToken) {
         setIsLoading(false);
         return;
@@ -61,15 +62,22 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       });
 
       if (response.status === 200) {
+        console.log('[UserAuth] 認証成功:', response.data.email);
         setUser(response.data);
         setIsAuthenticated(true);
         // axiosのデフォルトヘッダーに設定
         axios.defaults.headers.common['Authorization'] = `Bearer ${authToken}`;
       }
     } catch (error: any) {
-      console.error('認証確認エラー:', error);
+      console.error('[UserAuth] 認証確認エラー:', error);
+      console.error('[UserAuth] エラー詳細:', {
+        status: error.response?.status,
+        message: error.message,
+        url: error.config?.url
+      });
       // 認証エラーの場合は認証情報をクリア
       if (error.response?.status === 401) {
+        console.log('[UserAuth] 401エラーのため認証情報をクリア');
         clearAuth();
       }
     } finally {
