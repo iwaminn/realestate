@@ -83,18 +83,56 @@ realestate/
    - `.env` ファイルの更新
 
 #### 再起動コマンド：
+
+**開発環境**：
 ```bash
 # バックエンドのみ再起動
-docker restart realestate-backend
+docker compose restart backend
+
+# フロントエンドのみ再起動
+docker compose restart frontend
 
 # 全コンテナ再起動
-docker-compose restart
+docker compose restart
 
 # または
 make restart
 ```
 
-**注意**: コンテナを再起動しないと、変更が反映されずに古いコードが実行され続けます！
+**本番環境**：
+```bash
+# 最新コードを取得
+git pull origin master
+
+# バックエンドのみ再ビルド＆再起動
+docker compose -f docker-compose.prod.yml build backend
+docker compose -f docker-compose.prod.yml up -d --force-recreate backend
+
+# フロントエンドのみ再ビルド＆再起動
+docker compose -f docker-compose.prod.yml build frontend
+docker compose -f docker-compose.prod.yml up -d --force-recreate frontend
+
+# 全コンテナ再ビルド＆再起動
+docker compose -f docker-compose.prod.yml down
+docker compose -f docker-compose.prod.yml up -d --build
+
+# 起動状態確認
+docker compose -f docker-compose.prod.yml ps
+
+# ログ確認
+docker compose -f docker-compose.prod.yml logs frontend --tail 50
+docker compose -f docker-compose.prod.yml logs backend --tail 50
+
+# nginxも再起動（backend/frontendを再作成した場合は必須）
+docker compose -f docker-compose.prod.yml restart nginx
+```
+
+**重要な注意事項**：
+- 本番環境では必ず `-f docker-compose.prod.yml` オプションを付けること
+- 本番環境ではボリュームマウントしていないため、コード変更時は `--build` での再ビルドが必須
+- **backend/frontendを`--force-recreate`で再作成した場合、nginxも必ず再起動すること**（コンテナIPが変わるため）
+- Docker Compose V2 (`docker compose`) を使用（V1の`docker-compose`ハイフンありは使用不可）
+- コンテナを再起動しないと、変更が反映されずに古いコードが実行され続けます！
 
 ### 🚨 base_scraper.py 変更時の重要な注意事項
 

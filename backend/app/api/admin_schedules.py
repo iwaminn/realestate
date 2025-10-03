@@ -4,14 +4,13 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 from datetime import datetime, timedelta
 from pydantic import BaseModel
 
 from ..database import get_db
 from ..models import ScrapingSchedule, ScrapingScheduleHistory
 # スケジューラーサービスは遅延インポートで使用
-from ..auth import verify_admin_credentials
 
 router = APIRouter(prefix="/api/admin", tags=["admin-schedules"])
 
@@ -88,8 +87,7 @@ def convert_areas_to_codes(areas, strict=False):
 
 @router.get("/schedules")
 async def get_schedules(
-    db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
+    db: Session = Depends(get_db)
 ):
     """スケジュール一覧を取得"""
     # まず、running状態のスケジュール履歴で対応するタスクが完了している場合は自動更新
@@ -212,8 +210,7 @@ async def _update_running_schedule_histories(db: Session):
 @router.post("/schedules")
 async def create_schedule(
     request: ScheduleCreateRequest,
-    db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
+    db: Session = Depends(get_db)
 ):
     """新しいスケジュールを作成"""
     from ..utils.datetime_utils import get_utc_now
@@ -295,8 +292,7 @@ async def create_schedule(
 @router.get("/schedules/{schedule_id}")
 async def get_schedule(
     schedule_id: int,
-    db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
+    db: Session = Depends(get_db)
 ):
     """スケジュール詳細を取得"""
     schedule = db.query(ScrapingSchedule).filter(ScrapingSchedule.id == schedule_id).first()
@@ -344,8 +340,7 @@ async def get_schedule(
 async def update_schedule(
     schedule_id: int,
     request: ScheduleUpdateRequest,
-    db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
+    db: Session = Depends(get_db)
 ):
     """スケジュールを更新"""
     from ..utils.datetime_utils import get_utc_now
@@ -424,8 +419,7 @@ async def update_schedule(
 @router.delete("/schedules/{schedule_id}")
 async def delete_schedule(
     schedule_id: int,
-    db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
+    db: Session = Depends(get_db)
 ):
     """スケジュールを削除"""
     schedule = db.query(ScrapingSchedule).filter(ScrapingSchedule.id == schedule_id).first()
@@ -461,8 +455,7 @@ async def delete_schedule(
 async def run_schedule_now(
     schedule_id: int,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
+    db: Session = Depends(get_db)
 ):
     """スケジュールを即座に実行"""
     schedule = db.query(ScrapingSchedule).filter(ScrapingSchedule.id == schedule_id).first()
@@ -714,8 +707,7 @@ async def execute_scheduled_scraping(schedule_id: int, db: Session):
 
 @router.get("/schedules/due")
 async def get_due_schedules(
-    db: Session = Depends(get_db),
-    _: Any = Depends(verify_admin_credentials)
+    db: Session = Depends(get_db)
 ):
     """実行予定のスケジュールを取得（スケジューラー用）"""
     from ..utils.datetime_utils import get_utc_now
