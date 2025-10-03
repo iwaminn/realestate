@@ -51,11 +51,26 @@ export const GoogleLoginButton: React.FC<GoogleLoginButtonProps> = ({
     </svg>
   );
 
+  const handleClick = () => {
+    if (onClick) {
+      onClick();
+    } else {
+      // 現在のURLを保存（ログイン後に戻るため）
+      const currentPath = window.location.pathname + window.location.search;
+      console.log('[GoogleLogin] 現在のURLを保存:', currentPath);
+      localStorage.setItem('redirectAfterLogin', currentPath);
+      console.log('[GoogleLogin] localStorageに保存完了:', localStorage.getItem('redirectAfterLogin'));
+
+      // Googleログインページへ
+      window.location.href = '/api/oauth/google/login';
+    }
+  };
+
   return (
     <Button
       fullWidth
       variant="outlined"
-      onClick={onClick || (() => window.location.href = '/api/oauth/google/login')}
+      onClick={handleClick}
       sx={{
         textTransform: 'none',
         fontSize: 14,

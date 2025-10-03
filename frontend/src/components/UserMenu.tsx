@@ -35,8 +35,8 @@ export const UserMenu: React.FC = () => {
   const handleLogout = async () => {
     await logout();
     handleClose();
-    // ログアウト後はホームページに遷移
-    navigate('/');
+    // ログアウト後は現在のページに留まる（ページをリロード）
+    window.location.reload();
   };
 
   const handleBookmarks = () => {
