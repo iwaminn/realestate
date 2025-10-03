@@ -179,8 +179,8 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       
       console.log('handleGoogleCallback: Starting with token:', token.substring(0, 20) + '...');
       
-      // トークンをローカルストレージに保存
-      localStorage.setItem('auth_token', token);
+      // トークンをローカルストレージに保存（userTokenに統一）
+      localStorage.setItem('userToken', token);
       
       // axiosのデフォルトヘッダーに設定
       axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
