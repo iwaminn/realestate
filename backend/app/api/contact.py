@@ -7,6 +7,8 @@ from typing import Optional
 import logging
 import os
 
+from ..utils.mail import send_contact_email
+
 router = APIRouter(prefix="/api", tags=["contact"])
 
 logger = logging.getLogger(__name__)
@@ -23,12 +25,19 @@ class ContactRequest(BaseModel):
 async def submit_contact(request: ContactRequest):
     """
     お問い合わせフォームを送信
-
-    現在はログに記録するのみ。
-    将来的にはメール送信機能を追加予定。
+    
+    送信内容をinfo@mscan.jpにメール送信します。
     """
     try:
-        # お問い合わせ内容をログに記録
+        # メール送信
+        await send_contact_email(
+            name=request.name,
+            email=request.email,
+            subject=request.subject,
+            message=request.message
+        )
+        
+        # バックアップとしてログにも記録
         logger.info(
             f"お問い合わせ受付: "
             f"名前={request.name}, "
@@ -36,9 +45,6 @@ async def submit_contact(request: ContactRequest):
             f"件名={request.subject}"
         )
         logger.info(f"内容: {request.message}")
-
-        # TODO: 将来的にメール送信機能を追加
-        # 現在はログに記録するのみ
 
         return {
             "message": "お問い合わせを受け付けました",
