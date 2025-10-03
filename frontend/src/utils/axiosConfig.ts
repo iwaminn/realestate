@@ -7,7 +7,7 @@ axios.defaults.baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 // Axiosのインターセプターを設定
 axios.interceptors.request.use(
   (config) => {
-    const userToken = localStorage.getItem('auth_token');
+    const userToken = localStorage.getItem('userToken');
     const adminAuth = localStorage.getItem('adminAuth');
     
     if (config.headers) {
