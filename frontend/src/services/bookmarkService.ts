@@ -3,96 +3,40 @@
  */
 
 import { Bookmark, BookmarkCreate, BookmarkStatus } from '../types/property';
-import { API_CONFIG } from '../config/api';
+import axios from '../utils/axiosConfig';
 
 export class BookmarkService {
-  /**
-   * Cookie認証でfetchリクエストを送信
-   */
-  private static async fetchWithCredentials(url: string, options: RequestInit = {}): Promise<Response> {
-    return fetch(url, {
-      ...options,
-      credentials: 'include',  // Cookieを自動送信
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-    });
-  }
-
   /**
    * 物件をブックマークに追加
    */
   static async addBookmark(propertyId: number): Promise<Bookmark> {
-    const response = await this.fetchWithCredentials(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/`, {
-      method: 'POST',
-      body: JSON.stringify({
-        master_property_id: propertyId
-      }),
+    const response = await axios.post('/bookmarks/', {
+      master_property_id: propertyId
     });
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        throw new Error('ログインが必要です');
-      }
-      if (response.status === 409) {
-        throw new Error('既にブックマークされています');
-      }
-      if (response.status === 404) {
-        throw new Error('物件が見つかりません');
-      }
-      throw new Error('ブックマークの追加に失敗しました');
-    }
-
-    return response.json();
+    return response.data;
   }
 
   /**
    * 物件をブックマークから削除
    */
   static async removeBookmark(propertyId: number): Promise<void> {
-    const response = await this.fetchWithCredentials(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/${propertyId}`, {
-      method: 'DELETE',
-    });
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        throw new Error('ログインが必要です');
-      }
-      if (response.status === 404) {
-        throw new Error('ブックマークが見つかりません');
-      }
-      throw new Error('ブックマークの削除に失敗しました');
-    }
+    await axios.delete(`/bookmarks/${propertyId}`);
   }
 
   /**
    * ブックマーク一覧を取得
    */
   static async getBookmarks(): Promise<Bookmark[]> {
-    const response = await this.fetchWithCredentials(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/`);
-
-    if (!response.ok) {
-      if (response.status === 401) {
-        throw new Error('ログインが必要です');
-      }
-      throw new Error('ブックマーク一覧の取得に失敗しました');
-    }
-
-    return response.json();
+    const response = await axios.get('/bookmarks/');
+    return response.data;
   }
 
   /**
    * 物件のブックマーク状態をチェック
    */
   static async checkBookmarkStatus(propertyId: number): Promise<BookmarkStatus> {
-    const response = await this.fetchWithCredentials(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/check/${propertyId}`);
-
-    if (!response.ok) {
-      throw new Error('ブックマーク状態の確認に失敗しました');
-    }
-
-    return response.json();
+    const response = await axios.get(`/bookmarks/check/${propertyId}`);
+    return response.data;
   }
 
   /**
