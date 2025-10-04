@@ -78,7 +78,7 @@ const PropertyUpdatesPage: React.FC = () => {
   const [priceChanges, setPriceChanges] = useState<RecentUpdate[]>([]);
   const [newListings, setNewListings] = useState<RecentUpdate[]>([]);
   const [loading, setLoading] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [lastScraperCompleted, setLastScraperCompleted] = useState<string | null>(null);
   const [wards, setWards] = useState<string[]>([]);
   const [viewMode, setViewMode] = useState<'table' | 'card'>('table');
   
@@ -139,9 +139,8 @@ const PropertyUpdatesPage: React.FC = () => {
       setPriceChanges(allPriceChanges);
       setNewListings(allNewListings);
       setWards(sortWardNamesByLandPrice(Array.from(wardSet)));
-      setLastUpdated(new Date());
+      setLastScraperCompleted(response.last_scraper_completed_at);
     } catch (error) {
-      console.error('Failed to fetch updates:', error);
     }
     setLoading(false);
   };
@@ -363,7 +362,11 @@ const PropertyUpdatesPage: React.FC = () => {
           <Grid item xs={12} sm={6} md={3}>
             <FormControl fullWidth size="small">
               <InputLabel>エリア</InputLabel>
-              <Select value={selectedWard} onChange={handleWardChange} label="エリア">
+              <Select 
+                value={selectedWard !== 'all' && !wards.includes(selectedWard) ? 'all' : selectedWard} 
+                onChange={handleWardChange} 
+                label="エリア"
+              >
                 <MenuItem value="all">すべて</MenuItem>
                 {wards.map(ward => (
                   <MenuItem key={ward} value={ward}>{ward}</MenuItem>
@@ -400,10 +403,15 @@ const PropertyUpdatesPage: React.FC = () => {
               </ToggleButton>
             </ToggleButtonGroup>
           </Grid>
-          <Grid item xs={12} sm={6} md={2}>
-            {lastUpdated && (
-              <Typography variant="caption" color="text.secondary">
-                最終更新: {lastUpdated.toLocaleTimeString('ja-JP')}
+          <Grid item xs={12} sm={6} md={2} sx={{ display: 'flex', alignItems: 'center' }}>
+            {lastScraperCompleted && (
+              <Typography variant="caption" color="text.secondary" sx={{ ml: { md: 2 } }}>
+                最終更新: {new Date(lastScraperCompleted).toLocaleString('ja-JP', {
+                  month: 'numeric',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit'
+                })}
               </Typography>
             )}
           </Grid>

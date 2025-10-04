@@ -63,7 +63,7 @@ function App() {
       <CssBaseline />
       <AuthProvider>
         <UserAuthProvider>
-          <Router>
+          <Router future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
             <ScrollToTop />
             <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
               <Header />

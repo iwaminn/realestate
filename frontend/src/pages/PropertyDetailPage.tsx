@@ -359,6 +359,9 @@ const PropertyDetailPage: React.FC = () => {
                 <LocationOn sx={{ mr: 2 }} />
                 <ListItemText 
                   primary="住所" 
+                  secondaryTypographyProps={{
+                    component: 'div'
+                  }}
                   secondary={
                     <Box sx={{ 
                       display: 'flex', 
@@ -485,11 +488,11 @@ const PropertyDetailPage: React.FC = () => {
                   <Train sx={{ mr: 2 }} />
                   <ListItemText 
                     primary="交通" 
-                    secondary={
-                      <Box component="div" style={{ whiteSpace: 'pre-line' }}>
-                        {property.station_info}
-                      </Box>
-                    }
+                    secondary={property.station_info}
+                    secondaryTypographyProps={{ 
+                      component: 'div',
+                      style: { whiteSpace: 'pre-line' }
+                    }}
                   />
                 </ListItem>
               )}

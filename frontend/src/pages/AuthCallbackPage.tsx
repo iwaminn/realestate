@@ -1,12 +1,11 @@
 import React, { useEffect, useRef } from 'react';
-import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { CircularProgress, Box, Typography } from '@mui/material';
 import { useUserAuth } from '../contexts/UserAuthContext';
 
 export const AuthCallbackPage: React.FC = () => {
-  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
-  const { handleGoogleCallback } = useUserAuth();
+  const { checkAuth } = useUserAuth();
   const hasProcessedRef = useRef(false);
 
   useEffect(() => {
@@ -17,33 +16,26 @@ export const AuthCallbackPage: React.FC = () => {
     }
 
     const processCallback = async () => {
-      const token = searchParams.get('token');
+      // 処理開始をマーク
+      hasProcessedRef.current = true;
 
-      if (token) {
-        // 処理開始をマーク
-        hasProcessedRef.current = true;
+      // Cookieに保存されたトークンで認証チェック
+      const success = await checkAuth();
 
-        // Googleログイン成功
-        const success = await handleGoogleCallback(token);
-        if (success) {
-          // ログイン前のURLに戻る（なければトップページ）
-          const redirectPath = localStorage.getItem('redirectAfterLogin') || '/';
-          console.log('[AuthCallback] localStorageから取得したパス:', redirectPath);
-          localStorage.removeItem('redirectAfterLogin');
-          console.log('[AuthCallback] リダイレクト先:', redirectPath);
-          navigate(redirectPath);
-        } else {
-          navigate('/?error=google_login_failed');
-        }
+      if (success) {
+        // ログイン前のURLに戻る（なければトップページ）
+        const redirectPath = localStorage.getItem('redirectAfterLogin') || '/';
+        console.log('[AuthCallback] localStorageから取得したパス:', redirectPath);
+        localStorage.removeItem('redirectAfterLogin');
+        console.log('[AuthCallback] リダイレクト先:', redirectPath);
+        navigate(redirectPath);
       } else {
-        // エラー
-        hasProcessedRef.current = true;
-        navigate('/?error=no_token');
+        navigate('/?error=google_login_failed');
       }
     };
 
     processCallback();
-  }, [searchParams, navigate, handleGoogleCallback]);
+  }, [navigate, checkAuth]);
 
   return (
     <Box

@@ -68,10 +68,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.removeItem('adminUsername');
       } else if (error.code === 'ECONNABORTED') {
         // タイムアウトエラーの場合は認証状態を維持
-        console.warn('Auth check timeout - maintaining current auth state');
       }
       // その他のエラー（ネットワークエラー等）は無視
-      console.error('Auth check error:', error);
     } finally {
       // ローディング完了
       setIsLoading(false);
@@ -96,7 +94,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return true;
       }
     } catch (error) {
-      console.error('Login failed:', error);
     }
 
     return false;
@@ -109,7 +106,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         withCredentials: true
       });
     } catch (error) {
-      console.error('Logout API error:', error);
     }
 
     // クライアント側の状態をクリア

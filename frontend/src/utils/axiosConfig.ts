@@ -41,13 +41,11 @@ axios.interceptors.response.use(
         if (window.location.pathname !== '/admin/login') {
           localStorage.removeItem('adminUsername');
           // AuthContextに処理を任せる（リダイレクトループを防ぐ）
-          console.log('[axiosConfig] 401エラー: 管理画面認証が必要です');
         }
       } else {
         // 一般ユーザーの場合
         // UserAuthContextのclearAuth()が呼ばれるようにエラーを返すだけ
         // トークンのクリアはUserAuthContext側で行う
-        console.log('[axiosConfig] 401エラー: 認証が必要です');
       }
     }
     return Promise.reject(error);

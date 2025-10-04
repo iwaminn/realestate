@@ -160,9 +160,8 @@ async def google_callback(
     user.last_login_at = datetime.utcnow()
     db.commit()
     
-    # HttpOnly Cookieにトークンを設定
-    # フロントエンドがlocalStorageで管理するため、URLパラメータでもトークンを渡す
-    redirect_response = RedirectResponse(url=f"{FRONTEND_URL}/auth/callback?token={access_token}")
+    # HttpOnly Cookieにトークンを設定（URLパラメータでは渡さない）
+    redirect_response = RedirectResponse(url=f"{FRONTEND_URL}/auth/callback")
     
     redirect_response.set_cookie(
         key="access_token",

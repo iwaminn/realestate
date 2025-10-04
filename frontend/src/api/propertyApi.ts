@@ -78,6 +78,7 @@ export interface RecentUpdatesResponse {
   total_price_changes: number;
   total_new_listings: number;
   updates_by_ward: WardUpdates[];
+  last_scraper_completed_at: string | null;
 }
 
 export const propertyApi = {

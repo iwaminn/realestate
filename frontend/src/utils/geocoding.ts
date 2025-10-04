@@ -16,14 +16,10 @@ export async function getCoordinatesFromBuilding(buildingId: number): Promise<{ 
     const data = response.data;
     
     if (data && data.latitude !== undefined && data.longitude !== undefined) {
-      console.log(`座標取得成功 (${data.cached ? 'キャッシュ' : 'API'}): 建物ID ${buildingId} -> lat: ${data.latitude}, lng: ${data.longitude}`);
       return { lat: data.latitude, lng: data.longitude };
     }
-    
-    console.warn('建物の座標を取得できませんでした:', buildingId);
     return null;
   } catch (error) {
-    console.error('座標取得エラー:', error);
     return null;
   }
 }
@@ -35,21 +31,14 @@ export async function getCoordinatesFromBuilding(buildingId: number): Promise<{ 
  */
 export async function getCoordinatesFromAddress(address: string): Promise<{ lat: number; lng: number } | null> {
   try {
-    console.log('ジオコーディング開始:', address);
     const response = await axios.post('/geocoding/geocode', { address });
     const data = response.data;
     
-    console.log('APIレスポンス:', data);
-    
     if (data && data.latitude !== undefined && data.longitude !== undefined) {
-      console.log(`座標取得成功: ${address} -> lat: ${data.latitude}, lng: ${data.longitude}`);
       return { lat: data.latitude, lng: data.longitude };
     }
-    
-    console.warn('住所から座標を取得できませんでした:', address, data);
     return null;
   } catch (error) {
-    console.error('ジオコーディングエラー:', error);
     return null;
   }
 }
@@ -68,11 +57,9 @@ export async function getHazardMapUrlFromBuilding(buildingId: number): Promise<s
     try {
       const response = await axios.get(`/api/buildings/${buildingId}`);
       if (response.data && response.data.address) {
-        console.log(`建物ID ${buildingId} の座標がないため、住所からジオコーディング: ${response.data.address}`);
         coords = await getCoordinatesFromAddress(response.data.address);
       }
     } catch (error) {
-      console.error('建物情報の取得エラー:', error);
     }
   }
   
@@ -85,7 +72,6 @@ export async function getHazardMapUrlFromBuilding(buildingId: number): Promise<s
     // - disid_doseki: 土砂災害警戒区域
     // - disid_tsunami: 津波浸水想定区域
     const hazardMapUrl = `https://disaportal.gsi.go.jp/maps/index.html?ll=${coords.lat},${coords.lng}&z=15&base=pale&ls=disid_kouzui%2C0.8%7Cdisid_takashio%2C0.8%7Cdisid_doseki%2C0.8%7Cdisid_tsunami%2C0.8&disp=11111&lcd=disid_kouzui&vs=c1j0h0k0l0u0t0z0r0s0m0f1&d=l`;
-    console.log(`ハザードマップURL生成: ${hazardMapUrl}`);
     return hazardMapUrl;
   }
 
@@ -95,15 +81,12 @@ export async function getHazardMapUrlFromBuilding(buildingId: number): Promise<s
     if (response.data && response.data.address) {
       const encodedAddress = encodeURIComponent(response.data.address);
       const hazardMapUrlWithAddress = `https://disaportal.gsi.go.jp/maps/index.html?base=pale&ls=disid_kouzui%2C0.8%7Cdisid_takashio%2C0.8%7Cdisid_doseki%2C0.8%7Cdisid_tsunami%2C0.8&disp=11111&lcd=disid_kouzui&vs=c1j0h0k0l0u0t0z0r0s0m0f1&d=l#address=${encodedAddress}`;
-      console.log(`座標取得失敗、住所パラメータ付きURL生成: ${hazardMapUrlWithAddress}`);
       return hazardMapUrlWithAddress;
     }
   } catch (error) {
-    console.error('建物住所の取得エラー:', error);
   }
 
   // 座標も住所も取得できない場合は、デフォルトのハザードマップURLを返す
-  console.warn('座標・住所が取得できなかったため、デフォルトURLを使用');
   return 'https://disaportal.gsi.go.jp/hazardmap/maps/index.html';
 }
 
@@ -118,7 +101,6 @@ export async function getHazardMapUrl(address: string): Promise<string> {
   if (coords) {
     // 座標が取得できた場合は、その位置を中心としたハザードマップURLを生成
     const hazardMapUrl = `https://disaportal.gsi.go.jp/maps/index.html?ll=${coords.lat},${coords.lng}&z=15&base=pale&ls=disid_kouzui%2C0.8%7Cdisid_takashio%2C0.8%7Cdisid_doseki%2C0.8%7Cdisid_tsunami%2C0.8&disp=11111&lcd=disid_kouzui&vs=c1j0h0k0l0u0t0z0r0s0m0f1&d=l`;
-    console.log(`ハザードマップURL生成: ${hazardMapUrl}`);
     return hazardMapUrl;
   }
 
@@ -126,6 +108,5 @@ export async function getHazardMapUrl(address: string): Promise<string> {
   // 住所をエンコードして検索パラメータとして渡す
   const encodedAddress = encodeURIComponent(address);
   const hazardMapUrlWithAddress = `https://disaportal.gsi.go.jp/maps/index.html?base=pale&ls=disid_kouzui%2C0.8%7Cdisid_takashio%2C0.8%7Cdisid_doseki%2C0.8%7Cdisid_tsunami%2C0.8&disp=11111&lcd=disid_kouzui&vs=c1j0h0k0l0u0t0z0r0s0m0f1&d=l#address=${encodedAddress}`;
-  console.log(`座標取得失敗、住所パラメータ付きURL生成: ${hazardMapUrlWithAddress}`);
   return hazardMapUrlWithAddress;
 }

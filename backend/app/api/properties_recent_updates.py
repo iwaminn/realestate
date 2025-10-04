@@ -15,6 +15,7 @@ from ..models import (
     PropertyListing,
     Building
 )
+from ..models_scraping_task import ScrapingTask
 
 router = APIRouter(prefix="/api", tags=["properties"])
 
@@ -198,12 +199,22 @@ async def get_recent_updates_cached(
     total_price_changes = sum(len(w['price_changes']) for w in sorted_updates)
     total_new_listings = sum(len(w['new_listings']) for w in sorted_updates)
     
+    # 最後に完了したスクレイパーの実行時刻を取得
+    last_scraping_task = (
+        db.query(ScrapingTask)
+        .filter(ScrapingTask.status == 'completed')
+        .order_by(ScrapingTask.completed_at.desc())
+        .first()
+    )
+    last_scraper_completed_at = last_scraping_task.completed_at if last_scraping_task else None
+    
     return {
         'period_hours': hours,
         'cutoff_time': cutoff_time.isoformat(),
         'total_price_changes': total_price_changes,
         'total_new_listings': total_new_listings,
         'updates_by_ward': sorted_updates,
+        'last_scraper_completed_at': last_scraper_completed_at.isoformat() if last_scraper_completed_at else None,
         'cache_info': {
             'using_cache': True,
             'cache_updated_at': db.query(func.max(PropertyPriceChange.updated_at)).scalar()

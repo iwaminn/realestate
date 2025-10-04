@@ -1,5 +1,5 @@
 /**
- * ブックマーク機能のAPIサービス
+ * ブックマーク機能のAPIサービス（Cookie認証）
  */
 
 import { Bookmark, BookmarkCreate, BookmarkStatus } from '../types/property';
@@ -7,28 +7,25 @@ import { API_CONFIG } from '../config/api';
 
 export class BookmarkService {
   /**
-   * 認証ヘッダーを取得
+   * Cookie認証でfetchリクエストを送信
    */
-  private static getAuthHeaders(): Record<string, string> {
-    const token = localStorage.getItem('userToken');
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
-    }
-
-    return headers;
+  private static async fetchWithCredentials(url: string, options: RequestInit = {}): Promise<Response> {
+    return fetch(url, {
+      ...options,
+      credentials: 'include',  // Cookieを自動送信
+      headers: {
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
   }
 
   /**
    * 物件をブックマークに追加
    */
   static async addBookmark(propertyId: number): Promise<Bookmark> {
-    const response = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/`, {
+    const response = await this.fetchWithCredentials(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/`, {
       method: 'POST',
-      headers: this.getAuthHeaders(),
       body: JSON.stringify({
         master_property_id: propertyId
       }),
@@ -54,9 +51,8 @@ export class BookmarkService {
    * 物件をブックマークから削除
    */
   static async removeBookmark(propertyId: number): Promise<void> {
-    const response = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/${propertyId}`, {
+    const response = await this.fetchWithCredentials(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/${propertyId}`, {
       method: 'DELETE',
-      headers: this.getAuthHeaders(),
     });
 
     if (!response.ok) {
@@ -74,9 +70,7 @@ export class BookmarkService {
    * ブックマーク一覧を取得
    */
   static async getBookmarks(): Promise<Bookmark[]> {
-    const response = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/`, {
-      headers: this.getAuthHeaders(),
-    });
+    const response = await this.fetchWithCredentials(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/`);
 
     if (!response.ok) {
       if (response.status === 401) {
@@ -92,9 +86,7 @@ export class BookmarkService {
    * 物件のブックマーク状態をチェック
    */
   static async checkBookmarkStatus(propertyId: number): Promise<BookmarkStatus> {
-    const response = await fetch(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/check/${propertyId}`, {
-      headers: this.getAuthHeaders(),
-    });
+    const response = await this.fetchWithCredentials(`${API_CONFIG.BASE_URL}${API_CONFIG.PATHS.BOOKMARKS}/check/${propertyId}`);
 
     if (!response.ok) {
       throw new Error('ブックマーク状態の確認に失敗しました');
@@ -110,7 +102,7 @@ export class BookmarkService {
     try {
       // まず現在の状態をチェック
       const status = await this.checkBookmarkStatus(propertyId);
-      
+
       if (status.is_bookmarked) {
         // ブックマークされている場合は削除
         await this.removeBookmark(propertyId);
@@ -121,7 +113,6 @@ export class BookmarkService {
         return { action: 'added', bookmark };
       }
     } catch (error) {
-      console.error('ブックマークのトグル操作に失敗:', error);
       throw error;
     }
   }

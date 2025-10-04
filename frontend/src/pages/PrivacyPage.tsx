@@ -167,23 +167,22 @@ const PrivacyPage: React.FC = () => {
               </TableHead>
               <TableBody>
                 <TableRow>
-                  <TableCell>セッションCookie</TableCell>
-                  <TableCell>一時的な情報の保存</TableCell>
-                  <TableCell>ブラウザ終了時まで</TableCell>
+                  <TableCell>access_token（HttpOnly）</TableCell>
+                  <TableCell>ユーザー認証情報（アクセストークン）</TableCell>
+                  <TableCell>15分</TableCell>
                 </TableRow>
                 <TableRow>
-                  <TableCell>設定Cookie</TableCell>
-                  <TableCell>表示設定、並び順の保存</TableCell>
-                  <TableCell>1年間</TableCell>
-                </TableRow>
-                <TableRow>
-                  <TableCell>分析Cookie</TableCell>
-                  <TableCell>利用状況の分析</TableCell>
-                  <TableCell>2年間</TableCell>
+                  <TableCell>refresh_token（HttpOnly）</TableCell>
+                  <TableCell>ユーザー認証情報（リフレッシュトークン）</TableCell>
+                  <TableCell>7日間</TableCell>
                 </TableRow>
               </TableBody>
             </Table>
           </TableContainer>
+          <Typography variant="body2" sx={{ lineHeight: 1.8, mb: 2, pl: 2, pr: 2, py: 1, backgroundColor: '#fff3e0', borderRadius: 1 }}>
+            <strong>HttpOnly Cookieとは：</strong>JavaScriptからアクセスできないCookieで、XSS（クロスサイトスクリプティング）攻撃から認証情報を保護します。
+            また、SameSite属性によりCSRF（クロスサイトリクエストフォージェリ）攻撃からも保護されています。
+          </Typography>
           <Typography variant="body2" sx={{ lineHeight: 1.8 }}>
             ※ブラウザの設定により、Cookieの受け入れを拒否することができますが、
             その場合、一部の機能が正常に動作しない可能性があります。
@@ -203,21 +202,18 @@ const PrivacyPage: React.FC = () => {
           <List>
             <ListItem>
               <ListItemText
-                primary="認証トークン"
-                secondary="ログイン状態を維持するため"
-                sx={{ pl: 2 }}
-              />
-            </ListItem>
-            <ListItem>
-              <ListItemText
-                primary="表示設定・並び順"
-                secondary="次回訪問時の利便性向上のため"
+                primary="ログイン後のリダイレクト先"
+                secondary="ログイン完了後に元のページに戻るための一時的な情報（ログイン完了後に自動削除）"
                 sx={{ pl: 2 }}
               />
             </ListItem>
           </List>
           <Typography variant="body2" sx={{ lineHeight: 1.8, mb: 1 }}>
-            これらの情報は利用者のブラウザにのみ保存されます。
+            これらの情報は利用者のブラウザにのみ保存され、個人を特定できる情報は含まれません。
+          </Typography>
+          <Typography variant="body2" sx={{ lineHeight: 1.8, mb: 2, pl: 2, pr: 2, py: 1, backgroundColor: '#e3f2fd', borderRadius: 1 }}>
+            <strong>重要：</strong>認証情報（JWT トークン）はローカルストレージに保存されません。
+            セキュリティ保護のため、認証情報はHttpOnly Cookieに保存されています。
           </Typography>
           <Typography variant="body2" sx={{ lineHeight: 1.8, fontWeight: 'bold' }}>
             ※ブックマーク情報や物件データは、ローカルストレージではなくサーバーのデータベースに安全に保管されます。
@@ -304,23 +300,44 @@ const PrivacyPage: React.FC = () => {
           <List>
             <ListItem>
               <ListItemText
-                primary="SSL/TLSによる通信の暗号化"
+                primary="HttpOnly Cookie による認証情報の保護"
+                secondary="JavaScriptからアクセスできないCookieで、XSS（クロスサイトスクリプティング）攻撃から認証情報を保護"
+                sx={{ pl: 2 }}
+              />
+            </ListItem>
+            <ListItem>
+              <ListItemText
+                primary="SameSite 属性による CSRF 対策"
+                secondary="クロスサイトリクエストフォージェリ攻撃を防止"
+                sx={{ pl: 2 }}
+              />
+            </ListItem>
+            <ListItem>
+              <ListItemText
+                primary="SSL/TLS による通信の暗号化"
+                secondary="すべての通信を暗号化し、第三者による盗聴を防止"
                 sx={{ pl: 2 }}
               />
             </ListItem>
             <ListItem>
               <ListItemText
                 primary="アクセス権限の適切な管理"
+                secondary="適切な権限管理により、不正アクセスを防止"
                 sx={{ pl: 2 }}
               />
             </ListItem>
             <ListItem>
               <ListItemText
                 primary="定期的なセキュリティ更新"
+                secondary="最新のセキュリティパッチを適用し、脆弱性に対応"
                 sx={{ pl: 2 }}
               />
             </ListItem>
           </List>
+          <Typography variant="body2" sx={{ lineHeight: 1.8, mt: 2, pl: 2, pr: 2, py: 1, backgroundColor: '#f3e5f5', borderRadius: 1 }}>
+            <strong>共用PCをご利用の場合の注意：</strong>必ずログアウトしてからブラウザを閉じてください。
+            HttpOnly Cookieは7日間有効なため、ログアウトせずに離席すると第三者にアクセスされる可能性があります。
+          </Typography>
         </Box>
 
         <Typography variant="h5" sx={{ mb: 2, fontWeight: 'bold' }}>
@@ -361,7 +378,7 @@ const PrivacyPage: React.FC = () => {
         <Box sx={{ mt: 4, pt: 3, borderTop: '1px solid #e0e0e0' }}>
           <Typography variant="body2" color="text.secondary" align="center">
             制定日: 2025年1月24日<br />
-            最終更新日: 2025年10月1日
+            最終更新日: 2025年10月4日
           </Typography>
         </Box>
       </Paper>

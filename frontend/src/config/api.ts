@@ -20,7 +20,3 @@ export const API_CONFIG = {
   }
 };
 
-// 開発環境でのデバッグ用
-if (import.meta.env.DEV) {
-  console.log('API Base URL:', API_CONFIG.BASE_URL);
-}

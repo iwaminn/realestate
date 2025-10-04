@@ -18,7 +18,7 @@ interface UserAuthContextType {
   register: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   updateProfile: (data: {}) => Promise<{ success: boolean; error?: string }>;
-  handleGoogleCallback: (token: string) => Promise<boolean>;
+  checkAuth: () => Promise<boolean>;
 }
 
 const UserAuthContext = createContext<UserAuthContextType | undefined>(undefined);
@@ -42,60 +42,39 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       setIsLoading(false);
       return;
     }
-    
-    // 既存の認証情報をチェック
-    const token = localStorage.getItem('userToken');
-    if (token) {
-      checkAuth(token);
-    } else {
-      setIsLoading(false);
-    }
+
+    // 既存の認証情報をチェック（Cookieベース）
+    checkAuth();
   }, []);
 
-  const checkAuth = async (token?: string) => {
+  const checkAuth = async (): Promise<boolean> => {
     try {
-      const authToken = token || localStorage.getItem('userToken');
-      console.log('[UserAuth] checkAuth開始:', { hasToken: !!authToken });
-      if (!authToken) {
-        setIsLoading(false);
-        return;
-      }
-
+      // Cookieは自動的に送信される
       const response = await axios.get('/auth/me', {
-        headers: {
-          'Authorization': `Bearer ${authToken}`
-        }
+        withCredentials: true  // Cookieを送信
       });
 
       if (response.status === 200) {
-        console.log('[UserAuth] 認証成功:', response.data.email);
         setUser(response.data);
         setIsAuthenticated(true);
-        // axiosのデフォルトヘッダーに設定
-        axios.defaults.headers.common['Authorization'] = `Bearer ${authToken}`;
+        setIsLoading(false);
+        return true;
       }
     } catch (error: any) {
-      console.error('[UserAuth] 認証確認エラー:', error);
-      console.error('[UserAuth] エラー詳細:', {
-        status: error.response?.status,
-        message: error.message,
-        url: error.config?.url
-      });
       // 認証エラーの場合は認証情報をクリア
       if (error.response?.status === 401) {
-        console.log('[UserAuth] 401エラーのため認証情報をクリア');
         clearAuth();
       }
     } finally {
       setIsLoading(false);
     }
+
+    return false;
   };
 
   const clearAuth = () => {
     setUser(null);
     setIsAuthenticated(false);
-    localStorage.removeItem('userToken');
-    delete axios.defaults.headers.common['Authorization'];
   };
 
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
@@ -103,29 +82,24 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       const response = await axios.post('/auth/login', {
         email,
         password
+      }, {
+        withCredentials: true  // Cookieを受信
       });
 
       if (response.status === 200) {
-        const { access_token, user: userData } = response.data;
-        
-        // トークンを保存
-        localStorage.setItem('userToken', access_token);
-        
-        // ユーザー情報を設定
+        const { user: userData } = response.data;
+
+        // ユーザー情報を設定（トークンはCookieに保存済み）
         setUser(userData);
         setIsAuthenticated(true);
-        
-        // axiosのデフォルトヘッダーに設定
-        axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`;
-        
+
         return { success: true };
       }
     } catch (error: any) {
-      console.error('ログインエラー:', error);
       const errorMessage = error.response?.data?.detail || 'ログインに失敗しました';
       return { success: false, error: errorMessage };
     }
-    
+
     return { success: false, error: 'ログインに失敗しました' };
   };
 
@@ -141,8 +115,7 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         return { success: true };
       }
     } catch (error: any) {
-      console.error('ユーザー登録エラー:', error);
-      
+
       // バリデーションエラーの処理
       if (error.response?.data?.detail) {
         if (Array.isArray(error.response.data.detail)) {
@@ -151,19 +124,20 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         }
         return { success: false, error: error.response.data.detail };
       }
-      
+
       return { success: false, error: 'ユーザー登録に失敗しました' };
     }
-    
+
     return { success: false, error: 'ユーザー登録に失敗しました' };
   };
 
   const logout = async () => {
     try {
-      // サーバーサイドでセッションを無効化
-      await axios.post('/auth/logout');
+      // サーバーサイドでセッションを無効化（Cookieを削除）
+      await axios.post('/auth/logout', {}, {
+        withCredentials: true
+      });
     } catch (error) {
-      console.error('ログアウトエラー:', error);
     } finally {
       clearAuth();
     }
@@ -171,46 +145,20 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const updateProfile = async (data: {}): Promise<{ success: boolean; error?: string }> => {
     try {
-      const response = await axios.put('/auth/me', data);
-      
+      const response = await axios.put('/auth/me', data, {
+        withCredentials: true
+      });
+
       if (response.status === 200) {
         setUser(response.data);
         return { success: true };
       }
     } catch (error: any) {
-      console.error('プロフィール更新エラー:', error);
       const errorMessage = error.response?.data?.detail || 'プロフィール更新に失敗しました';
       return { success: false, error: errorMessage };
     }
-    
+
     return { success: false, error: 'プロフィール更新に失敗しました' };
-  };
-
-  const handleGoogleCallback = async (token: string): Promise<boolean> => {
-    try {
-      // トークンをローカルストレージに保存（userTokenに統一）
-      localStorage.setItem('userToken', token);
-
-      // axiosのデフォルトヘッダーに設定
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
-
-      // ユーザー情報を取得（明示的にヘッダーを渡す）
-      const response = await axios.get('/auth/me', {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-      if (response.status === 200) {
-        setUser(response.data);
-        setIsAuthenticated(true);
-        return true;
-      }
-    } catch (error) {
-      console.error('Google認証エラー:', error);
-      clearAuth();
-    }
-    
-    return false;
   };
 
   const value: UserAuthContextType = {
@@ -221,7 +169,7 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     register,
     logout,
     updateProfile,
-    handleGoogleCallback
+    checkAuth
   };
 
   return (
