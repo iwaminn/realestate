@@ -70,6 +70,7 @@ async def admin_login(
         httponly=True,
         secure=COOKIE_SECURE,
         samesite=COOKIE_SAMESITE,
+        path="/",
         max_age=60 * 60  # 1時間
     )
 
@@ -79,6 +80,7 @@ async def admin_login(
         httponly=True,
         secure=COOKIE_SECURE,
         samesite=COOKIE_SAMESITE,
+        path="/",
         max_age=7 * 24 * 60 * 60  # 7日
     )
 
@@ -96,8 +98,8 @@ async def admin_logout(
 ):
     """管理者ログアウト"""
     # Cookieを削除
-    response.delete_cookie(key="admin_access_token", samesite=COOKIE_SAMESITE)
-    response.delete_cookie(key="admin_refresh_token", samesite=COOKIE_SAMESITE)
+    response.delete_cookie(key="admin_access_token", path="/", samesite=COOKIE_SAMESITE)
+    response.delete_cookie(key="admin_refresh_token", path="/", samesite=COOKIE_SAMESITE)
 
     return {"message": "ログアウトしました"}
 
@@ -136,6 +138,7 @@ async def admin_refresh_token(
         httponly=True,
         secure=COOKIE_SECURE,
         samesite=COOKIE_SAMESITE,
+        path="/",
         max_age=60 * 60  # 1時間
     )
 
