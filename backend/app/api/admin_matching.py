@@ -9,10 +9,15 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime, timedelta
 
 from ..database import get_db
+from ..api.auth import get_admin_user
 from ..models_property_matching import AmbiguousPropertyMatch
 from ..models import MasterProperty, Building
 
-router = APIRouter(prefix="/api/admin", tags=["admin-matching"])
+router = APIRouter(
+    prefix="/api/admin",
+    tags=["admin-matching"],
+    dependencies=[Depends(get_admin_user)]
+)
 
 
 @router.get("/ambiguous-matches")

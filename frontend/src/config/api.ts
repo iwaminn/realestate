@@ -12,11 +12,11 @@ export const API_CONFIG = {
   
   // APIパス（bookmarkServiceなどfetch APIで使用）
   PATHS: {
-    PROPERTIES_GROUPED: '/properties-grouped-by-buildings',
-    BOOKMARKS: '/bookmarks',
-    AUTH: '/auth',
-    GEOCODING: '/geocoding',
-    ADMIN: '/admin',
+    PROPERTIES_GROUPED: '/api/properties-grouped-by-buildings',
+    BOOKMARKS: '/api/bookmarks',
+    AUTH: '/api/auth',
+    GEOCODING: '/api/geocoding',
+    ADMIN: '/api/admin',
   }
 };
 

@@ -9,8 +9,12 @@ from datetime import datetime
 
 from ..database import get_db
 from ..models import Building, MasterProperty, PropertyListing, BuildingExternalId, BuildingListingName
+from ..api.auth import get_admin_user
 
-router = APIRouter(prefix="/api/admin", tags=["admin-buildings"])
+router = APIRouter(
+    tags=["admin-buildings"],
+    dependencies=[Depends(get_admin_user)]
+)
 
 
 @router.get("/buildings")

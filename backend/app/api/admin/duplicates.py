@@ -12,6 +12,7 @@ from datetime import datetime
 import json
 
 from ...database import get_db
+from ...api.auth import get_admin_user
 from ...models import (
     Building, MasterProperty, PropertyListing,
     BuildingMergeHistory, PropertyMergeHistory,
@@ -27,7 +28,10 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(tags=["admin-duplicates"])
+router = APIRouter(
+    tags=["admin-duplicates"],
+    dependencies=[Depends(get_admin_user)]
+)
 
 def clear_duplicate_buildings_cache():
     """重複建物キャッシュをクリア（無効化）"""

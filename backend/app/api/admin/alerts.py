@@ -10,8 +10,12 @@ from datetime import datetime, timedelta
 from pydantic import BaseModel
 
 from ...database import get_db
+from ...api.auth import get_admin_user
 
-router = APIRouter(tags=["admin-alerts"])
+router = APIRouter(
+    tags=["admin-alerts"],
+    dependencies=[Depends(get_admin_user)]
+)
 
 # メモリ内でアラートの解決状態を管理（開発用の簡易実装）
 # 本番では実際のデータベースを使用すべき

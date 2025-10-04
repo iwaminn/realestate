@@ -37,6 +37,12 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    // 管理画面ではユーザー認証をスキップ
+    if (window.location.pathname.startsWith('/admin')) {
+      setIsLoading(false);
+      return;
+    }
+    
     // 既存の認証情報をチェック
     const token = localStorage.getItem('userToken');
     if (token) {

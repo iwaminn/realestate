@@ -10,10 +10,13 @@ from datetime import datetime, timedelta
 from pydantic import BaseModel
 
 from ..database import get_db
+from ..api.auth import get_admin_user
 from ..models import User, PropertyBookmark, EmailVerificationToken
 from ..utils.auth import get_password_hash
 
-router = APIRouter()
+router = APIRouter(
+    dependencies=[Depends(get_admin_user)]
+)
 
 # Pydanticモデル
 class UserStats(BaseModel):

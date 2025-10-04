@@ -249,6 +249,7 @@ async def get_building_properties(
         price_subquery_active.c.station_info,
         price_subquery_active.c.earliest_published_at,
         price_subquery_all.c.majority_price.label('majority_price_all'),  # 全掲載の多数決価格
+        price_subquery_all.c.earliest_published_at.label('earliest_published_at_all'),  # 全掲載の最初の掲載日
     ).filter(
         MasterProperty.building_id == building_id
     ).outerjoin(
@@ -301,7 +302,7 @@ async def get_building_properties(
     
     # 結果を整形
     properties = []
-    for mp, min_price, max_price, majority_price, listing_count, source_sites, has_active, last_confirmed, delisted, station_info, earliest_published_at, majority_price_all in results:
+    for mp, min_price, max_price, majority_price, listing_count, source_sites, has_active, last_confirmed, delisted, station_info, earliest_published_at, majority_price_all, earliest_published_at_all in results:
         # 販売終了物件の価格を計算
         if mp.sold_at:
             final_price = get_sold_property_final_price(db, mp)
@@ -323,6 +324,9 @@ async def get_building_properties(
                 "change_rate": round(pc.price_diff_rate, 1) if pc.price_diff_rate else 0
             }
         
+        # 販売終了物件の場合は全掲載から earliest_published_at を取得
+        display_earliest_published_at = earliest_published_at if earliest_published_at else earliest_published_at_all
+
         properties.append({
             "id": mp.id,
             "room_number": mp.room_number,
@@ -342,7 +346,7 @@ async def get_building_properties(
             "station_info": mp.station_info if mp.station_info else station_info,
             "management_fee": mp.management_fee,
             "repair_fund": mp.repair_fund,
-            "earliest_published_at": earliest_published_at,
+            "earliest_published_at": display_earliest_published_at,
             "sold_at": mp.sold_at.isoformat() if mp.sold_at else None,
             "final_price": mp.final_price,
             "latest_price_update": mp.latest_price_change_at.isoformat() if mp.latest_price_change_at else None,

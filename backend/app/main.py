@@ -8,6 +8,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import time
+import os
 
 from .database import init_db
 from .utils.logger import api_logger, error_logger
@@ -34,13 +35,19 @@ from .api import oauth
 from .api import geocoding
 from .api import transaction_prices
 from .api import contact
+from .api import admin_auth
 
 app = FastAPI(title="不動産横断検索API", version="1.0.0")
 
 # CORS設定
+allowed_origins = ["http://localhost:3000", "http://localhost:3001"]
+# 本番環境のoriginを追加
+if os.getenv("FRONTEND_URL"):
+    allowed_origins.append(os.getenv("FRONTEND_URL"))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -99,15 +106,16 @@ async def log_requests(request, call_next):
         raise
 
 # ルーターの登録
+app.include_router(admin_auth.router, prefix="/api", tags=["admin-auth"])
 app.include_router(admin_router)
-app.include_router(admin_listings.router)
-app.include_router(admin_properties.router)
-app.include_router(admin_buildings.router)
-app.include_router(admin_matching.router)
-app.include_router(admin_schedules.router)
+app.include_router(admin_listings.router, prefix="/api/admin", tags=["admin-listings"])
+app.include_router(admin_properties.router, prefix="/api/admin", tags=["admin-properties"])
+app.include_router(admin_buildings.router, prefix="/api/admin", tags=["admin-buildings"])
+app.include_router(admin_matching.router, prefix="/api/admin", tags=["admin-matching"])
+app.include_router(admin_schedules.router, prefix="/api/admin", tags=["admin-schedules"])
 app.include_router(admin_users.router, prefix="/api/admin", tags=["admin-users"])
-app.include_router(admin_transaction_prices.router, prefix="/api", tags=["admin-transaction-prices"])
-app.include_router(admin_price_changes.router, prefix="/api", tags=["admin-price-changes"])
+app.include_router(admin_transaction_prices.router, prefix="/api/admin", tags=["admin-transaction-prices"])
+app.include_router(admin_price_changes.router, prefix="/api/admin", tags=["admin-price-changes"])
 app.include_router(properties_recent_updates.router)  # より具体的なパスを先に登録
 app.include_router(properties.router)
 app.include_router(buildings.router)

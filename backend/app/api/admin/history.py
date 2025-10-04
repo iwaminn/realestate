@@ -10,6 +10,7 @@ from pydantic import BaseModel
 import logging
 
 from ...database import get_db
+from ...api.auth import get_admin_user
 from ...models import (
     Building, MasterProperty, PropertyListing,
     BuildingMergeHistory, PropertyMergeHistory,
@@ -19,7 +20,10 @@ from ...utils.majority_vote_updater import MajorityVoteUpdater
 from ...utils.building_listing_name_manager import BuildingListingNameManager
 
 logger = logging.getLogger(__name__)
-router = APIRouter(tags=["admin-history"])
+router = APIRouter(
+    tags=["admin-history"],
+    dependencies=[Depends(get_admin_user)]
+)
 
 
 class BuildingMergeHistoryResponse(BaseModel):
@@ -527,6 +531,7 @@ async def delete_property_merge_history(
 
 @router.delete("/building-merge-history/bulk")
 async def bulk_delete_building_merge_history(
+    current_user: dict = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
     """建物統合履歴を一括削除"""
@@ -541,6 +546,7 @@ async def bulk_delete_building_merge_history(
 
 @router.delete("/property-merge-history/bulk")
 async def bulk_delete_property_merge_history(
+    current_user: dict = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
     """物件統合履歴を一括削除"""

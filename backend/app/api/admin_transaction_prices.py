@@ -8,12 +8,15 @@ import os
 from typing import Dict
 
 from ..database import get_db
+from ..api.auth import get_admin_user
 from ..models import TransactionPrice
 
-router = APIRouter()
+router = APIRouter(
+    dependencies=[Depends(get_admin_user)]
+)
 
 
-@router.get("/admin/transaction-prices/stats")
+@router.get("/transaction-prices/stats")
 async def get_transaction_price_stats(
     db: Session = Depends(get_db),
 ) -> Dict:
@@ -84,7 +87,7 @@ async def run_update_script(mode: str = "update"):
         return {"success": False, "message": f"更新処理の開始に失敗しました: {str(e)}"}
 
 
-@router.post("/admin/transaction-prices/update")
+@router.post("/transaction-prices/update")
 async def update_transaction_prices(
     background_tasks: BackgroundTasks,
     mode: str = "update",  # "update" or "full"

@@ -732,6 +732,7 @@ const TaskProgress = React.memo(({ task }: any) => {
               <ListItem>
                 <ListItemText
                   primary="ステータス"
+                  secondaryTypographyProps={{ component: 'div' }}
                   secondary={
                     <Chip
                       label={
@@ -757,6 +758,7 @@ const TaskProgress = React.memo(({ task }: any) => {
               <ListItem>
                 <ListItemText
                   primary="処理進捗"
+                  secondaryTypographyProps={{ component: 'div' }}
                   secondary={
                     <Box>
                       <Box color="text.secondary">
@@ -786,6 +788,7 @@ const TaskProgress = React.memo(({ task }: any) => {
               <ListItem>
                 <ListItemText
                   primary="詳細取得した物件の内訳"
+                  secondaryTypographyProps={{ component: 'div' }}
                   secondary={
                     <Box>
                       <Box sx={{ pl: 2 }}>
@@ -810,6 +813,7 @@ const TaskProgress = React.memo(({ task }: any) => {
                 <ListItem>
                   <ListItemText
                     primary="エラー"
+                    secondaryTypographyProps={{ component: 'div' }}
                     secondary={
                       <Typography variant="caption" color="error">
                         {progress.error}
@@ -882,6 +886,7 @@ const TaskLogs = React.memo(({ task, logPage, setLogPage }: any) => {
               borderColor: 'grey.200'
             }}>
               <ListItemText
+                secondaryTypographyProps={{ component: 'div' }}
                 primary={
                   <Box display="flex" alignItems="center" gap={1}>
                     <Typography variant="caption" color="text.secondary">
@@ -991,6 +996,7 @@ const TaskErrorLogs = React.memo(({ task }: any) => {
             }}>
               <ListItemText
                 sx={{ overflow: 'hidden' }}
+                secondaryTypographyProps={{ component: 'div' }}
                 primary={
                   <Box>
                     <Box display="flex" alignItems="center" gap={1} sx={{ mb: 0.5 }}>
@@ -1125,6 +1131,7 @@ const TaskWarningLogs = React.memo(({ task }: any) => {
               bgcolor: 'warning.50'
             }}>
               <ListItemText 
+                secondaryTypographyProps={{ component: 'div' }}
                 primary={
                   <Box>
                     <Typography variant="body2" component="span" fontWeight="medium">

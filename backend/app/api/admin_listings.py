@@ -10,8 +10,12 @@ import logging
 
 from ..database import get_db
 from ..models import PropertyListing, MasterProperty, Building, ListingPriceHistory
+from ..api.auth import get_admin_user
 
-router = APIRouter(prefix="/api/admin", tags=["admin-listings"])
+router = APIRouter(
+    tags=["admin-listings"],
+    dependencies=[Depends(get_admin_user)]
+)
 
 
 @router.get("/listings")

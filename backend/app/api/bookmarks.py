@@ -9,7 +9,7 @@ from datetime import datetime
 
 from ..database import get_db
 from ..models import PropertyBookmark, MasterProperty, User, PropertyListing
-from ..api.auth import get_current_user, require_auth
+from ..api.auth import get_current_user_from_cookie, require_auth_cookie, require_auth_flexible, get_current_user_flexible
 from ..utils.price_queries import create_majority_price_subquery, create_price_stats_subquery
 from pydantic import BaseModel
 from sqlalchemy import func
@@ -42,7 +42,7 @@ class BookmarkWithPropertyResponse(BaseModel):
 @router.post("/", response_model=BookmarkResponse)
 async def add_bookmark(
     bookmark_data: BookmarkCreate,
-    current_user: User = Depends(require_auth),
+    current_user: User = Depends(require_auth_flexible),
     db: Session = Depends(get_db)
 ):
     """物件をブックマークに追加"""
@@ -79,7 +79,7 @@ async def add_bookmark(
 @router.delete("/{master_property_id}")
 async def remove_bookmark(
     master_property_id: int,
-    current_user: User = Depends(require_auth),
+    current_user: User = Depends(require_auth_flexible),
     db: Session = Depends(get_db)
 ):
     """物件をブックマークから削除"""
@@ -100,7 +100,7 @@ async def remove_bookmark(
 
 @router.get("/", response_model=List[BookmarkWithPropertyResponse])
 async def get_bookmarks(
-    current_user: User = Depends(require_auth),
+    current_user: User = Depends(require_auth_flexible),
     db: Session = Depends(get_db)
 ):
     """ブックマーク一覧を取得"""
@@ -186,7 +186,7 @@ async def get_bookmarks(
 @router.get("/check/{master_property_id}")
 async def check_bookmark_status(
     master_property_id: int,
-    current_user: Optional[User] = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_current_user_flexible),
     db: Session = Depends(get_db)
 ):
     """物件がブックマークされているかチェック（認証オプショナル）"""

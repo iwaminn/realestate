@@ -10,12 +10,16 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from ...database import get_db
+from ...api.auth import get_admin_user
 from ...models import (
     PropertyMergeExclusion, BuildingMergeExclusion,
     MasterProperty, Building
 )
 
-router = APIRouter(tags=["admin-exclusions"])
+router = APIRouter(
+    tags=["admin-exclusions"],
+    dependencies=[Depends(get_admin_user)]
+)
 
 
 class PropertyExclusionRequest(BaseModel):
@@ -333,6 +337,7 @@ async def get_building_exclusions(
 
 @router.delete("/building-exclusions/bulk")
 async def bulk_delete_building_exclusions(
+    current_user: dict = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
     """建物除外履歴を一括削除"""
@@ -351,6 +356,7 @@ async def bulk_delete_building_exclusions(
 
 @router.delete("/property-exclusions/bulk")
 async def bulk_delete_property_exclusions(
+    current_user: dict = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
     """物件除外履歴を一括削除"""

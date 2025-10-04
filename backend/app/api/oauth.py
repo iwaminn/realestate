@@ -2,7 +2,7 @@
 Google OAuth認証API
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status, Request, Response
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 import httpx
@@ -16,9 +16,13 @@ logger = logging.getLogger(__name__)
 
 from ..database import get_db
 from ..models import User
-from ..utils.auth import create_access_token, create_user_session
+from ..utils.auth import create_access_token, create_refresh_token, create_user_session
 
 router = APIRouter()
+
+# Cookie設定（環境変数で制御）
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
+COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "none")  # 開発環境: none, 本番環境: lax
 
 # Google OAuth設定
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
@@ -63,6 +67,7 @@ async def google_login():
 async def google_callback(
     code: str,
     state: str,
+    response: Response,
     db: Session = Depends(get_db)
 ):
     """Googleからのコールバック処理"""
@@ -137,16 +142,46 @@ async def google_callback(
             user.google_id = google_user.get("id")
             db.commit()
     
-    # JWTトークンを作成
-    jwt_token, jti, expires_at = create_access_token(
+    # アクセストークン作成（15分）
+    access_token, access_jti, access_expires_at = create_access_token(
         data={"sub": str(user.id), "email": user.email}
     )
     
-    # セッションを作成（トークンを有効化）
-    create_user_session(db, user.id, jti, expires_at)
+    # リフレッシュトークン作成（7日）
+    refresh_token, refresh_jti, refresh_expires_at = create_refresh_token(
+        data={"sub": str(user.id), "email": user.email}
+    )
     
-    # フロントエンドにリダイレクト（トークン付き）
-    redirect_url = f"{FRONTEND_URL}/auth/callback?token={jwt_token}"
-    print(f"[OAuth] Created session for user {user.id}, jti={jti}, redirect to {redirect_url[:80]}...")
+    # セッション記録（両方のトークン）
+    create_user_session(db, user.id, access_jti, access_expires_at)
+    create_user_session(db, user.id, refresh_jti, refresh_expires_at)
     
-    return RedirectResponse(url=redirect_url)
+    # 最終ログイン時刻を更新
+    user.last_login_at = datetime.utcnow()
+    db.commit()
+    
+    # HttpOnly Cookieにトークンを設定
+    # フロントエンドがlocalStorageで管理するため、URLパラメータでもトークンを渡す
+    redirect_response = RedirectResponse(url=f"{FRONTEND_URL}/auth/callback?token={access_token}")
+    
+    redirect_response.set_cookie(
+        key="access_token",
+        value=access_token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        max_age=15 * 60  # 15分
+    )
+    
+    redirect_response.set_cookie(
+        key="refresh_token",
+        value=refresh_token,
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        max_age=7 * 24 * 60 * 60  # 7日
+    )
+    
+    print(f"[OAuth] Created session for user {user.id}, access_jti={access_jti}, refresh_jti={refresh_jti}")
+    
+    return redirect_response

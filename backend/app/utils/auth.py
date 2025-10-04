@@ -20,7 +20,8 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # JWT設定
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "realestate_secret_key_change_in_production")
 ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30 * 24 * 60  # 30日間
+ACCESS_TOKEN_EXPIRE_MINUTES = 15  # 15分（短期間）
+REFRESH_TOKEN_EXPIRE_DAYS = 7  # 7日間
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """パスワードを検証"""
@@ -41,6 +42,17 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     # JTI (JWT ID) を追加
     jti = str(uuid.uuid4())
     to_encode.update({"exp": expire, "jti": jti})
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    return encoded_jwt, jti, expire
+
+def create_refresh_token(data: dict) -> tuple[str, str, datetime]:
+    """リフレッシュトークンを作成"""
+    to_encode = data.copy()
+    expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    
+    # JTI (JWT ID) を追加
+    jti = str(uuid.uuid4())
+    to_encode.update({"exp": expire, "jti": jti, "type": "refresh"})
     encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
     return encoded_jwt, jti, expire
 

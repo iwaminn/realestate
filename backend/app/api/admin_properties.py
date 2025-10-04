@@ -8,9 +8,13 @@ from typing import Optional, List, Dict, Any
 from datetime import datetime
 
 from ..database import get_db
+from ..api.auth import get_admin_user
 from ..models import MasterProperty, Building, PropertyListing, ListingPriceHistory
 
-router = APIRouter(prefix="/api/admin", tags=["admin"])
+router = APIRouter(
+    tags=["admin"],
+    dependencies=[Depends(get_admin_user)]
+)
 
 
 @router.get("/properties")

@@ -59,6 +59,9 @@ services:
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
       - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
       - GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
+      # Cookie設定（開発環境用）
+      - COOKIE_SECURE=true
+      - COOKIE_SAMESITE=none
     command: poetry run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
     depends_on:
       - postgres
@@ -74,10 +77,11 @@ services:
       - "3001:3001"
     volumes:
       - ./frontend:/app
+      - ./certs:/app/certs:ro
       - /app/node_modules
       - /etc/localtime:/etc/localtime:ro
     environment:
-      - VITE_API_URL=http://localhost:8000/api
+      # VITE_API_URL を削除してプロキシを使用
       - TZ=Asia/Tokyo
     command: npm run dev -- --host 0.0.0.0 --port 3001
     depends_on:

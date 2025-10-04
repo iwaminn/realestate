@@ -10,9 +10,13 @@ from pydantic import BaseModel
 
 from ..database import get_db
 from ..models import ScrapingSchedule, ScrapingScheduleHistory
+from ..api.auth import get_admin_user
 # スケジューラーサービスは遅延インポートで使用
 
-router = APIRouter(prefix="/api/admin", tags=["admin-schedules"])
+router = APIRouter(
+    tags=["admin-schedules"],
+    dependencies=[Depends(get_admin_user)]
+)
 
 
 class ScheduleCreateRequest(BaseModel):
@@ -87,6 +91,7 @@ def convert_areas_to_codes(areas, strict=False):
 
 @router.get("/schedules")
 async def get_schedules(
+    current_user: dict = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
     """スケジュール一覧を取得"""

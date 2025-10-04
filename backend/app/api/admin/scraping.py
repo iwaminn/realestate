@@ -15,6 +15,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 
 from ...database import get_db, SessionLocal
+from ...api.auth import get_admin_user
 from ...utils.exceptions import TaskPausedException, TaskCancelledException
 from ...models_scraping_task import ScrapingTask, ScrapingTaskLog
 
@@ -1640,7 +1641,8 @@ def execute_scraping_strategy(
 @router.post("/scraping/start", response_model=ScrapingTaskStatus)
 def start_scraping(
     request: ScrapingRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
 ):
     """スクレイピングを開始"""
     task_id = str(uuid.uuid4())
@@ -1690,7 +1692,9 @@ def start_scraping(
 
 
 @router.get("/scraping/status/{task_id}", response_model=ScrapingTaskStatus)
-def get_scraping_status(task_id: str, db: Session = Depends(get_db)):
+def get_scraping_status(task_id: str, db: Session = Depends(get_db),
+current_user: dict = Depends(get_admin_user)
+):
     """スクレイピングタスクの状態を取得"""
     db_task = db.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
     if not db_task:
@@ -1775,7 +1779,8 @@ def cleanup_stale_tasks(db: Session):
 @router.get("/scraping/tasks", response_model=List[ScrapingTaskStatus])
 def get_all_scraping_tasks(
     active_only: bool = False,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
 ):
     """全スクレイピングタスクの一覧を取得（データベースから）"""
     from ...models_scraping_task import ScrapingTask
@@ -1847,7 +1852,8 @@ def get_all_scraping_tasks(
 def get_task_logs_diff(
     task_id: str,
     last_log_timestamp: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
 ):
     """タスクのログ差分を取得（最後に取得したタイムスタンプ以降のログのみ）"""
     from ...models_scraping_task import ScrapingTaskLog
@@ -1925,7 +1931,9 @@ def get_task_logs_diff(
 
 
 @router.post("/scraping/pause/{task_id}")
-def pause_scraping(task_id: str, db: Session = Depends(get_db)):
+def pause_scraping(task_id: str, db: Session = Depends(get_db),
+current_user: dict = Depends(get_admin_user)
+):
     """スクレイピングタスクを一時停止"""
     from ...models_scraping_task import ScrapingTask
     
@@ -1947,7 +1955,9 @@ def pause_scraping(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/scraping/resume/{task_id}")
-def resume_scraping(task_id: str, db: Session = Depends(get_db)):
+def resume_scraping(task_id: str, db: Session = Depends(get_db),
+current_user: dict = Depends(get_admin_user)
+):
     """スクレイピングタスクを再開"""
     from ...models_scraping_task import ScrapingTask
     
@@ -1969,7 +1979,9 @@ def resume_scraping(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.post("/scraping/cancel/{task_id}")
-def cancel_scraping(task_id: str, db: Session = Depends(get_db)):
+def cancel_scraping(task_id: str, db: Session = Depends(get_db),
+current_user: dict = Depends(get_admin_user)
+):
     """スクレイピングタスクをキャンセル"""
     from ...models_scraping_task import ScrapingTask
     from sqlalchemy.orm.attributes import flag_modified
@@ -2007,7 +2019,9 @@ def cancel_scraping(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/scraping/tasks/{task_id}")
-def delete_scraping_task(task_id: str, db: Session = Depends(get_db)):
+def delete_scraping_task(task_id: str, db: Session = Depends(get_db),
+current_user: dict = Depends(get_admin_user)
+):
     """スクレイピングタスクを削除"""
     from ...models_scraping_task import ScrapingTaskLog
     
@@ -2033,7 +2047,9 @@ def delete_scraping_task(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/scraping/tasks/{task_id}")
-def get_single_task(task_id: str, db: Session = Depends(get_db)):
+def get_single_task(task_id: str, db: Session = Depends(get_db),
+current_user: dict = Depends(get_admin_user)
+):
     """特定のタスクの詳細を取得"""
     db_task = db.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
     if not db_task:
@@ -2108,7 +2124,9 @@ def get_single_task(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/scraping/task/{task_id}/logs")
-def get_task_logs(task_id: str, db: Session = Depends(get_db)):
+def get_task_logs(task_id: str, db: Session = Depends(get_db),
+current_user: dict = Depends(get_admin_user)
+):
     """タスクのログを取得"""
     # データベースからタスクを確認
     db_task = db.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
@@ -2139,7 +2157,9 @@ def get_task_logs(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.get("/scraping/tasks/{task_id}/debug")
-def get_task_debug_info(task_id: str, db: Session = Depends(get_db)):
+def get_task_debug_info(task_id: str, db: Session = Depends(get_db),
+current_user: dict = Depends(get_admin_user)
+):
     """タスクのデバッグ情報を取得"""
     db_task = db.query(ScrapingTask).filter(ScrapingTask.task_id == task_id).first()
     if not db_task:
@@ -2170,7 +2190,9 @@ def get_task_debug_info(task_id: str, db: Session = Depends(get_db)):
 
 
 @router.delete("/scraping/all-tasks")
-def delete_all_scraping_tasks(db: Session = Depends(get_db)):
+def delete_all_scraping_tasks(db: Session = Depends(get_db),
+current_user: dict = Depends(get_admin_user)
+):
     """全スクレイピングタスクを削除（実行中のタスクは除く）"""
     from ...models_scraping_task import ScrapingTask, ScrapingTaskLog
     
@@ -2212,7 +2234,8 @@ def delete_all_scraping_tasks(db: Session = Depends(get_db)):
 @router.post("/scraping/start-parallel")
 def start_parallel_scraping(
     request: ParallelScrapingRequest,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_admin_user)
 ):
     """並列スクレイピングを開始"""
     # 現在は通常のスクレイピングとして処理
@@ -2259,31 +2282,41 @@ def start_parallel_scraping(
 
 
 @router.get("/scraping/parallel-status/{task_id}")
-def get_parallel_scraping_status(task_id: str):
+def get_parallel_scraping_status(task_id: str,
+current_user: dict = Depends(get_admin_user)
+):
     """並列スクレイピングタスクの状態を取得"""
     return get_scraping_status(task_id)
 
 
 @router.post("/scraping/pause-parallel/{task_id}")
-def pause_parallel_scraping(task_id: str, db: Session = Depends(get_db)):
+def pause_parallel_scraping(task_id: str, db: Session = Depends(get_db),
+current_user: dict = Depends(get_admin_user)
+):
     """並列スクレイピングタスクを一時停止"""
     return pause_scraping(task_id, db)
 
 
 @router.post("/scraping/resume-parallel/{task_id}")
-def resume_parallel_scraping(task_id: str, db: Session = Depends(get_db)):
+def resume_parallel_scraping(task_id: str, db: Session = Depends(get_db),
+current_user: dict = Depends(get_admin_user)
+):
     """並列スクレイピングタスクを再開"""
     return resume_scraping(task_id, db)
 
 
 @router.post("/scraping/cancel-parallel/{task_id}")
-def cancel_parallel_scraping(task_id: str, db: Session = Depends(get_db)):
+def cancel_parallel_scraping(task_id: str, db: Session = Depends(get_db),
+current_user: dict = Depends(get_admin_user)
+):
     """並列スクレイピングタスクをキャンセル"""
     return cancel_scraping(task_id, db)
 
 
 @router.post("/scraping/force-cleanup")
-def force_cleanup_tasks(db: Session = Depends(get_db)):
+def force_cleanup_tasks(db: Session = Depends(get_db),
+current_user: dict = Depends(get_admin_user)
+):
     """停滞したタスクを強制的にクリーンアップ"""
     from ...models_scraping_task import ScrapingTask
     

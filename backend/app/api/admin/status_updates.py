@@ -10,13 +10,17 @@ from datetime import datetime, timedelta
 from pydantic import BaseModel
 
 from ...database import get_db
+from ...api.auth import get_admin_user
 from ...models import (
     PropertyListing, MasterProperty,
     ListingPriceHistory, Building
 )
 from ...utils.majority_vote_updater import MajorityVoteUpdater
 
-router = APIRouter(tags=["admin-status"])
+router = APIRouter(
+    tags=["admin-status"],
+    dependencies=[Depends(get_admin_user)]
+)
 
 
 class SoldPriceUpdateResult(BaseModel):
@@ -32,6 +36,7 @@ class SoldPriceUpdateResult(BaseModel):
 
 @router.get("/listing-status-stats")
 async def get_listing_status_stats(
+    current_user: dict = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
     """掲載状態の統計情報を取得"""
@@ -87,6 +92,7 @@ async def get_listing_status_stats(
 
 @router.post("/update-listing-status")
 async def update_listing_status(
+    current_user: dict = Depends(get_admin_user),
     db: Session = Depends(get_db)
 ):
     """掲載状態を一括更新（24時間以上確認されていない掲載を終了）"""

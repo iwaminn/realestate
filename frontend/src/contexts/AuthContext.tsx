@@ -25,16 +25,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    // 既存の認証情報をチェック
-    const authHeader = localStorage.getItem('adminAuth');
-    if (authHeader) {
-      // テスト用のAPIリクエストを送信して認証を確認
-      axios.defaults.headers.common['Authorization'] = authHeader;
-      checkAuth();
-    } else {
-      // 認証情報がない場合はローディングを終了
-      setIsLoading(false);
-    }
+    // Cookie認証の場合、常に認証状態を確認
+    checkAuth();
   }, []);
 
   // 定期的に認証状態を確認（10分ごと）
@@ -49,19 +41,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [isAuthenticated]);
 
   const checkAuth = async () => {
+    // ログインページの場合は認証チェックをスキップ
+    if (window.location.pathname === '/admin/login') {
+      setIsAuthenticated(false);
+      setIsLoading(false);
+      return;
+    }
+
     try {
-      // 管理APIにアクセスして認証を確認
-      await axios.get('/admin/areas', { timeout: 10000 }); // 10秒のタイムアウト
-      setIsAuthenticated(true);
-      const storedUsername = localStorage.getItem('adminUsername');
-      setUsername(storedUsername);
+      // Cookie認証を使用して管理者情報を取得
+      const response = await axios.get('/admin/me', {
+        timeout: 10000,  // 10秒のタイムアウト
+        withCredentials: true  // Cookieを送信
+      });
+
+      if (response.status === 200) {
+        setIsAuthenticated(true);
+        const storedUsername = localStorage.getItem('adminUsername');
+        setUsername(storedUsername || response.data.username);
+      }
     } catch (error: any) {
       // 401エラーの場合のみ認証情報をクリア
       if (error.response?.status === 401) {
         setIsAuthenticated(false);
         setUsername(null);
-        delete axios.defaults.headers.common['Authorization'];
-        localStorage.removeItem('adminAuth');
         localStorage.removeItem('adminUsername');
       } else if (error.code === 'ECONNABORTED') {
         // タイムアウトエラーの場合は認証状態を維持
@@ -77,20 +80,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const login = async (username: string, password: string): Promise<boolean> => {
     try {
-      // Basic認証ヘッダーを作成
-      const authHeader = 'Basic ' + btoa(username + ':' + password);
-      
-      // テスト用のAPIリクエストを送信
-      const response = await axios.get('/admin/areas', {
-        headers: {
-          'Authorization': authHeader
-        }
+      // Cookie認証を使用（管理者ログインエンドポイントを呼び出す）
+      const response = await axios.post('/admin/login', {
+        username,
+        password
+      }, {
+        withCredentials: true  // Cookieを送受信
       });
 
       if (response.status === 200) {
         // 認証成功
-        axios.defaults.headers.common['Authorization'] = authHeader;
-        localStorage.setItem('adminAuth', authHeader);
         localStorage.setItem('adminUsername', username);
         setIsAuthenticated(true);
         setUsername(username);
@@ -103,11 +102,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return false;
   };
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      // サーバー側でログアウト処理（Cookieを削除）
+      await axios.post('/admin/logout', {}, {
+        withCredentials: true
+      });
+    } catch (error) {
+      console.error('Logout API error:', error);
+    }
+
+    // クライアント側の状態をクリア
     setIsAuthenticated(false);
     setUsername(null);
-    delete axios.defaults.headers.common['Authorization'];
-    localStorage.removeItem('adminAuth');
     localStorage.removeItem('adminUsername');
   };
 

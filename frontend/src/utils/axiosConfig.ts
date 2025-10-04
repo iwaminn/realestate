@@ -1,31 +1,23 @@
 import axios from 'axios';
 
-// APIのベースURL（本番環境では相対パス、開発環境ではlocalhost）
-// Viteの環境変数を使用
-axios.defaults.baseURL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// APIのベースURL
+// Viteのproxyが /api を http://realestate-backend:8000 に転送するため、
+// フロントエンドは /api をベースURLとして使用
+axios.defaults.baseURL = '/api';
+
+// Cookie認証を使用するために withCredentials を有効化
+axios.defaults.withCredentials = true;
 
 // Axiosのインターセプターを設定
 axios.interceptors.request.use(
   (config) => {
     const userToken = localStorage.getItem('userToken');
-    const adminAuth = localStorage.getItem('adminAuth');
-    
+
     if (config.headers) {
-      // 管理画面のエンドポイントではadminAuthを優先
-      // baseURLに既に/apiが含まれているため、/adminで始まるURLをチェック
-      if (config.url?.startsWith('/admin')) {
-        if (adminAuth) {
-          config.headers['Authorization'] = adminAuth;
-        } else if (userToken) {
-          config.headers['Authorization'] = `Bearer ${userToken}`;
-        }
-      } else {
-        // それ以外ではユーザー認証トークンを優先
-        if (userToken) {
-          config.headers['Authorization'] = `Bearer ${userToken}`;
-        } else if (adminAuth) {
-          config.headers['Authorization'] = adminAuth;
-        }
+      // 管理画面はCookie認証を使用（Authorizationヘッダー不要）
+      // ユーザー向けAPIでBearerトークンがある場合のみ設定
+      if (userToken && !config.url?.startsWith('/admin')) {
+        config.headers['Authorization'] = `Bearer ${userToken}`;
       }
     }
     return config;
@@ -44,10 +36,13 @@ axios.interceptors.response.use(
     // 401エラーの場合、認証情報をクリア
     if (error.response?.status === 401) {
       if (window.location.pathname.startsWith('/admin')) {
-        // 管理画面の場合
-        localStorage.removeItem('adminAuth');
-        localStorage.removeItem('adminUsername');
-        window.location.href = '/admin/login';
+        // 管理画面の場合（Cookie認証）
+        // /admin/loginページ自体では401エラーでリダイレクトしない
+        if (window.location.pathname !== '/admin/login') {
+          localStorage.removeItem('adminUsername');
+          // AuthContextに処理を任せる（リダイレクトループを防ぐ）
+          console.log('[axiosConfig] 401エラー: 管理画面認証が必要です');
+        }
       } else {
         // 一般ユーザーの場合
         // UserAuthContextのclearAuth()が呼ばれるようにエラーを返すだけ

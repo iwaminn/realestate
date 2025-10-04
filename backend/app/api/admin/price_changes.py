@@ -10,15 +10,19 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from ...database import get_db
+from ...api.auth import get_admin_user
 from ...models import PropertyPriceChangeQueue, PropertyPriceChange, MasterProperty
 from ...utils.price_change_calculator import PriceChangeCalculator
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/admin/price-changes", tags=["admin-price-changes"])
+router = APIRouter(
+    tags=["admin-price-changes"],
+    dependencies=[Depends(get_admin_user)]
+)
 
 
-@router.post("/refresh-all", response_model=Dict[str, Any])
+@router.post("/price-changes/refresh-all", response_model=Dict[str, Any])
 async def refresh_all_price_changes(
     background_tasks: BackgroundTasks,
     days: int = Query(90, description="更新対象期間（日数）"),
@@ -46,7 +50,7 @@ async def refresh_all_price_changes(
     }
 
 
-@router.post("/refresh-immediate", response_model=Dict[str, Any])
+@router.post("/price-changes/refresh-immediate", response_model=Dict[str, Any])
 async def refresh_price_changes_immediate(
     days: int = Query(90, description="更新対象期間（日数）"),
     limit: int = Query(1000, description="処理する最大件数"),
@@ -83,8 +87,11 @@ async def refresh_price_changes_immediate(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/queue-status", response_model=Dict[str, Any])
-async def get_queue_status(db: Session = Depends(get_db)):
+@router.get("/price-changes/queue-status", response_model=Dict[str, Any])
+async def get_queue_status(
+    current_user: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
     """
     価格改定キューの状態を取得
     """
@@ -132,7 +139,7 @@ async def get_queue_status(db: Session = Depends(get_db)):
     }
 
 
-@router.post("/process-queue", response_model=Dict[str, Any])
+@router.post("/price-changes/process-queue", response_model=Dict[str, Any])
 async def process_queue(
     limit: int = Query(1000, description="処理する最大件数"),
     db: Session = Depends(get_db)
@@ -156,7 +163,7 @@ async def process_queue(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/queue/{queue_id}", response_model=Dict[str, Any])
+@router.delete("/price-changes/queue/{queue_id}", response_model=Dict[str, Any])
 async def delete_queue_item(
     queue_id: int,
     db: Session = Depends(get_db)
@@ -180,7 +187,7 @@ async def delete_queue_item(
     }
 
 
-@router.post("/add-to-queue/{master_property_id}", response_model=Dict[str, Any])
+@router.post("/price-changes/add-to-queue/{master_property_id}", response_model=Dict[str, Any])
 async def add_property_to_queue(
     master_property_id: int,
     reason: str = Query("manual", description="キューに追加する理由"),
@@ -210,8 +217,11 @@ async def add_property_to_queue(
         raise HTTPException(status_code=500, detail="キューへの追加に失敗しました")
 
 
-@router.get("/cache-stats", response_model=Dict[str, Any])
-async def get_cache_statistics(db: Session = Depends(get_db)):
+@router.get("/price-changes/cache-stats", response_model=Dict[str, Any])
+async def get_cache_statistics(
+    current_user: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
     """
     価格改定キャッシュの統計情報を取得
     """
