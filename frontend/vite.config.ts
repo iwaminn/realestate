@@ -3,9 +3,9 @@ import react from '@vitejs/plugin-react'
 import fs from 'fs'
 import path from 'path'
 
-export default defineConfig({
-  plugins: [react()],
-  server: {
+export default defineConfig(({ command }) => {
+  // 開発サーバー起動時のみHTTPS証明書を読み込む
+  const serverConfig = command === 'serve' ? {
     port: 3001,
     host: '0.0.0.0',
     https: {
@@ -19,5 +19,14 @@ export default defineConfig({
         secure: false,
       }
     }
-  }
+  } : {
+    // ビルド時は証明書不要
+    port: 3001,
+    host: '0.0.0.0',
+  };
+
+  return {
+    plugins: [react()],
+    server: serverConfig
+  };
 })
