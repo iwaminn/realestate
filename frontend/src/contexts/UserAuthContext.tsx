@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import axios from 'axios';
 
 interface User {
@@ -35,17 +36,18 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [user, setUser] = useState<User | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const location = useLocation();
 
   useEffect(() => {
     // 管理画面ではユーザー認証をスキップ
-    if (window.location.pathname.startsWith('/admin')) {
+    if (location.pathname.startsWith('/admin')) {
       setIsLoading(false);
       return;
     }
 
     // 既存の認証情報をチェック（Cookieベース）
     checkAuth();
-  }, []);
+  }, [location.pathname]);
 
   const checkAuth = async (): Promise<boolean> => {
     try {

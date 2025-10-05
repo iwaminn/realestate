@@ -95,9 +95,9 @@ const Admin: React.FC = () => {
           <Button
             variant="outlined"
             startIcon={<LogoutIcon />}
-            onClick={() => {
-              logout();
-              navigate('/');
+            onClick={async () => {
+              await logout();
+              navigate('/admin/login');
             }}
           >
             ログアウト

@@ -62,8 +62,8 @@ function App() {
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <AuthProvider>
-        <UserAuthProvider>
-          <Router future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+        <Router future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
+          <UserAuthProvider>
             <ScrollToTop />
             <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
               <Header />
@@ -92,8 +92,8 @@ function App() {
               </Container>
               <Footer />
             </div>
-          </Router>
-        </UserAuthProvider>
+          </UserAuthProvider>
+        </Router>
       </AuthProvider>
     </ThemeProvider>
   );

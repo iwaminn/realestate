@@ -97,9 +97,19 @@ async def admin_logout(
     response: Response
 ):
     """管理者ログアウト"""
-    # Cookieを削除
-    response.delete_cookie(key="admin_access_token", path="/", samesite=COOKIE_SAMESITE)
-    response.delete_cookie(key="admin_refresh_token", path="/", samesite=COOKIE_SAMESITE)
+    # Cookieを削除（set_cookieと同じパラメータを指定する必要がある）
+    response.delete_cookie(
+        key="admin_access_token",
+        path="/",
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE
+    )
+    response.delete_cookie(
+        key="admin_refresh_token",
+        path="/",
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE
+    )
 
     return {"message": "ログアウトしました"}
 
