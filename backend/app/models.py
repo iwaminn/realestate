@@ -87,6 +87,7 @@ class MasterProperty(Base):
     display_building_name = Column(String(200))               # 表示用建物名（多数決で決定）
     
     # 販売情報
+    current_price = Column(Integer)                           # 現在価格（多数決で決定、販売中物件用）
     sold_at = Column(DateTime)                                # 販売終了日（全掲載が終了した時点）
     final_price = Column(Integer)                             # 最終販売価格（販売終了前の最頻値）
     earliest_listing_date = Column(DateTime)                  # 最初の掲載日（アクティブな掲載の中で最古）

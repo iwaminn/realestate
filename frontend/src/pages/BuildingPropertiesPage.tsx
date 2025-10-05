@@ -276,7 +276,7 @@ const BuildingPropertiesPage: React.FC = () => {
         const activeProperties = response.properties.filter(p => !p.sold_at && p.has_active_listing);
 
         const prices = activeProperties
-          .map(p => p.min_price)
+          .map(p => p.current_price)
           .filter((p): p is number => p !== undefined && p !== null);
         const areas = activeProperties
           .map(p => p.area)
@@ -293,11 +293,11 @@ const BuildingPropertiesPage: React.FC = () => {
           // 各販売中物件の坪単価を計算
           const pricePerTsubos = activeProperties
             .filter(p => {
-              const price = p.majority_price || p.min_price;
+              const price = p.current_price;
               return price && p.area;
             })
             .map(p => {
-              const price = p.majority_price || p.min_price;
+              const price = p.current_price;
               const tsubo = (p.area || 0) / 3.30578;
               return tsubo > 0 && price ? price / tsubo : 0;
             });
@@ -490,8 +490,8 @@ const BuildingPropertiesPage: React.FC = () => {
           break;
         case 'price_per_tsubo':
           // 坪単価を計算（価格 / (面積 / 3.30578)）
-          const aPrice = a.majority_price || a.min_price || 0;
-          const bPrice = b.majority_price || b.min_price || 0;
+          const aPrice = a.current_price || 0;
+          const bPrice = b.current_price || 0;
           aValue = (a.area && aPrice) ? aPrice / (a.area / 3.30578) : 0;
           bValue = (b.area && bPrice) ? bPrice / (b.area / 3.30578) : 0;
           break;
@@ -1108,7 +1108,7 @@ const BuildingPropertiesPage: React.FC = () => {
                     <Box sx={{ whiteSpace: 'nowrap' }}>
                       {property.sold_at && property.last_sale_price
                         ? formatPrice(property.last_sale_price, isSmallScreen)
-                        : formatPrice(property.majority_price || property.min_price, isSmallScreen)}
+                        : formatPrice(property.current_price, isSmallScreen)}
                     </Box>
                     {property.sold_at && property.last_sale_price && (
                       <Box sx={{ fontSize: '0.7rem', color: 'text.secondary', display: { xs: 'none', sm: 'block' } }}>
@@ -1119,7 +1119,7 @@ const BuildingPropertiesPage: React.FC = () => {
                   <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, whiteSpace: 'nowrap' }}>
                     {property.sold_at && property.last_sale_price
                       ? calculatePricePerTsubo(property.last_sale_price, property.area, isSmallScreen)
-                      : calculatePricePerTsubo(property.majority_price || property.min_price, property.area, isSmallScreen)}
+                      : calculatePricePerTsubo(property.current_price, property.area, isSmallScreen)}
                   </TableCell>
                   <TableCell sx={{ px: { xs: 1, sm: 2 }, whiteSpace: 'nowrap' }}>{property.layout || '-'}</TableCell>
                   <TableCell sx={{ px: { xs: 1, sm: 2 }, whiteSpace: 'nowrap' }}>
@@ -1302,7 +1302,7 @@ const BuildingPropertiesPage: React.FC = () => {
                     <Typography variant="h5" color={property.sold_at ? "text.secondary" : "primary"}>
                       {property.sold_at && property.last_sale_price
                         ? formatPrice(property.last_sale_price)
-                        : formatPrice(property.majority_price || property.min_price)}
+                        : formatPrice(property.current_price)}
                     </Typography>
                     {property.sold_at && property.last_sale_price && (
                       <Typography variant="body2" color="text.secondary">
@@ -1312,7 +1312,7 @@ const BuildingPropertiesPage: React.FC = () => {
                     <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
                       坪単価: {property.sold_at && property.last_sale_price
                         ? calculatePricePerTsubo(property.last_sale_price, property.area)
-                        : calculatePricePerTsubo(property.majority_price || property.min_price, property.area)}
+                        : calculatePricePerTsubo(property.current_price, property.area)}
                     </Typography>
                   </Box>
 

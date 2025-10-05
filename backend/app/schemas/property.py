@@ -44,9 +44,7 @@ class MasterPropertySchema(BaseModel):
     balcony_area: Optional[float]
     layout: Optional[str]
     direction: Optional[str]
-    majority_price: Optional[int]
-    min_price: Optional[int]
-    max_price: Optional[int]
+    current_price: Optional[int]
     listing_count: int
     source_sites: List[str]
     station_info: Optional[str]

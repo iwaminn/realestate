@@ -82,25 +82,38 @@ async def get_recent_updates_cached(
         .subquery()
     )
     
-    # 指定期間内に初めて掲載された物件を取得（広告文建物を除外）
+    # 新着物件用のアクティブ掲載情報サブクエリ（価格を含む）
+    new_listing_active_subq = (
+        db.query(
+            PropertyListing.master_property_id,
+            func.max(PropertyListing.title).label('title'),
+            func.max(PropertyListing.url).label('url'),
+            func.max(PropertyListing.source_site).label('source_site'),
+            func.max(PropertyListing.current_price).label('listing_price')  # 掲載価格を取得
+        )
+        .filter(PropertyListing.is_active == True)
+        .group_by(PropertyListing.master_property_id)
+        .subquery()
+    )
+    
+    # 指定期間内に初めて掲載された物件を取得（既存のロジックを使用）
     new_listings_query = (
         db.query(
             MasterProperty,
             Building,
-            PropertyListing.current_price,
-            PropertyListing.title,
-            PropertyListing.url,
-            PropertyListing.source_site,
+            new_listing_active_subq.c.title,
+            new_listing_active_subq.c.url,
+            new_listing_active_subq.c.source_site,
+            new_listing_active_subq.c.listing_price,  # 掲載価格を取得
             first_listing_subq.c.first_created_at.label('created_at')
         )
-        .join(PropertyListing, PropertyListing.master_property_id == MasterProperty.id)
+        .join(new_listing_active_subq, new_listing_active_subq.c.master_property_id == MasterProperty.id)
         .join(Building, MasterProperty.building_id == Building.id)
         .join(
             first_listing_subq,
             first_listing_subq.c.master_property_id == MasterProperty.id
         )
         .filter(
-            PropertyListing.is_active == True,
             first_listing_subq.c.first_created_at >= cutoff_time,
             MasterProperty.sold_at.is_(None),
             Building.is_valid_name == True  # 広告文のみの建物を除外
@@ -163,7 +176,7 @@ async def get_recent_updates_cached(
         })
     
     # 新着物件を処理
-    for master_property, building, price, title, url, source, created_at in new_listings_query:
+    for master_property, building, title, url, source, listing_price, created_at in new_listings_query:
         ward = get_ward(building.address)
         
         if ward not in updates_by_ward:
@@ -173,6 +186,9 @@ async def get_recent_updates_cached(
                 'new_listings': []
             }
         
+        # 価格の優先順位: current_price → listing_price
+        display_price = master_property.current_price or listing_price
+        
         updates_by_ward[ward]['new_listings'].append({
             'id': master_property.id,
             'building_name': building.normalized_name,
@@ -181,7 +197,7 @@ async def get_recent_updates_cached(
             'area': master_property.area,
             'layout': master_property.layout,
             'direction': master_property.direction,
-            'price': price,
+            'price': display_price,
             'title': title,
             'url': url,
             'source_site': source,

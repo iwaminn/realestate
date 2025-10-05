@@ -109,41 +109,23 @@ async def get_bookmarks(
     bookmarks = db.query(PropertyBookmark).filter(
         PropertyBookmark.user_id == current_user.id
     ).order_by(PropertyBookmark.created_at.desc()).all()
-    
-    # 価格情報を計算するためのサブクエリを作成
-    include_inactive = False  # 非アクティブな掲載を含むかどうか
-    majority_price_query = create_majority_price_subquery(db, include_inactive)
-    price_subquery = create_price_stats_subquery(db, majority_price_query, include_inactive)
-    
+
     # レスポンスデータを構築
     result = []
     for bookmark in bookmarks:
-        # 物件情報と価格情報を取得
+        # 物件情報を取得
         property_data = db.query(MasterProperty).filter(
             MasterProperty.id == bookmark.master_property_id
         ).first()
-        
+
         if property_data:
-            # 価格情報を取得
-            price_info = db.query(
-                price_subquery.c.min_price,
-                price_subquery.c.max_price,
-                price_subquery.c.majority_price
-            ).filter(
-                price_subquery.c.master_property_id == property_data.id
-            ).first()
-            
-            # 価格情報が存在しない場合はNoneを設定
-            min_price = price_info.min_price if price_info else None
-            max_price = price_info.max_price if price_info else None
-            majority_price = price_info.majority_price if price_info else None
-            
-            # 販売終了物件の場合は final_price を使用
+            # 価格を決定
             if property_data.sold_at:
-                display_price = property_data.final_price
-                min_price = display_price
-                max_price = display_price
-                majority_price = display_price
+                # 販売終了物件はfinal_priceを使用
+                current_price = property_data.final_price
+            else:
+                # 販売中物件はcurrent_priceを使用
+                current_price = property_data.current_price
             
             # 建物情報を含む物件データを構築
             master_property_dict = {
@@ -161,9 +143,7 @@ async def get_bookmarks(
                 "display_building_name": property_data.display_building_name,
                 "sold_at": property_data.sold_at,
                 "final_price": property_data.final_price,
-                "min_price": min_price,
-                "max_price": max_price,
-                "majority_price": majority_price,
+                "current_price": current_price,
                 "building": {
                     "id": property_data.building.id,
                     "normalized_name": property_data.building.normalized_name,

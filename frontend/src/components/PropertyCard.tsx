@@ -64,8 +64,8 @@ const PropertyCard: React.FC<PropertyCardProps> = ({ property }) => {
     navigate(`/properties/${property.id}`);
   };
 
-  // 価格表示を決定（多数決価格を優先）
-  const priceDisplay = formatPrice(property.majority_price || property.min_price);
+  // 価格表示を決定
+  const priceDisplay = formatPrice(property.current_price);
 
   return (
     <Card

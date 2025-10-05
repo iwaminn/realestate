@@ -295,6 +295,36 @@ class MajorityVoteUpdater:
         candidates.sort(key=lambda x: x[1])
         
         return candidates[0][0]
+
+    def get_majority_price(self, prices: List[int], current_price: Any = None) -> Optional[int]:
+        """
+        価格の最頻値を取得する。同数の場合は安い方を優先
+        
+        Args:
+            prices: 価格のリスト
+            current_price: 現在の価格
+            
+        Returns:
+            最頻価格（Noneの場合もある）
+        """
+        # Noneや空文字を除外
+        valid_prices = [p for p in prices if p is not None and p != '']
+        if not valid_prices:
+            return current_price
+        
+        # 価格の出現回数をカウント
+        price_counter = Counter(valid_prices)
+        max_count = max(price_counter.values())
+        
+        # 最頻価格を取得
+        most_common_prices = [price for price, count in price_counter.items() if count == max_count]
+        
+        if len(most_common_prices) == 1:
+            # 最頻価格が1つだけの場合
+            return most_common_prices[0]
+        
+        # 最頻価格が複数ある場合、安い方を優先
+        return min(most_common_prices)
     
     def get_price_range(self, prices_with_source: List[tuple]) -> Optional[Tuple[int, int]]:
         """
@@ -441,6 +471,15 @@ class MajorityVoteUpdater:
             )
             if majority_direction != master_property.direction:
                 new_direction = majority_direction
+        
+        # 価格の多数決（販売中物件のみ、アクティブな掲載のみ）
+        if not master_property.sold_at and info['prices']:
+            # 価格のみを抽出（ソース情報は不要）
+            prices = [price for price, _ in info['prices']]
+            majority_price = self.get_majority_price(prices, master_property.current_price)
+            if majority_price != master_property.current_price:
+                master_property.current_price = majority_price
+                updated = True
         
         # ユニーク制約違反をチェック
         if (new_floor_number != master_property.floor_number or 
@@ -1185,29 +1224,6 @@ class MajorityVoteUpdater:
         
         return {price: count for price, count in price_counts}
     
-    def get_majority_price_for_sold_property(self, price_votes: Dict[int, int]) -> Optional[int]:
-        """
-        多数決で最も多い価格を決定
-        同数の場合は高い方の価格を採用（より保守的な価格設定）
-        
-        Args:
-            price_votes: 価格とその出現回数の辞書
-        
-        Returns:
-            多数決で決定した価格
-        """
-        if not price_votes:
-            return None
-        
-        # 出現回数でソート（同数の場合は価格が高い方を優先）
-        sorted_prices = sorted(
-            price_votes.items(), 
-            key=lambda x: (x[1], x[0]), 
-            reverse=True
-        )
-        
-        return sorted_prices[0][0]
-    
     def update_sold_property_price(self, property_id: int) -> Optional[Tuple[int, int]]:
         """
         特定の販売終了物件の価格を多数決で更新
@@ -1237,8 +1253,11 @@ class MajorityVoteUpdater:
             logger.warning(f"No price history found for property {property_id} in the 7 days before sold_at")
             return None
         
-        # 多数決で価格を決定
-        majority_price = self.get_majority_price_for_sold_property(price_votes)
+        # 多数決で価格を決定（辞書を価格のリストに変換）
+        prices = []
+        for price, count in price_votes.items():
+            prices.extend([price] * count)
+        majority_price = self.get_majority_price(prices, None)
         
         if majority_price and majority_price != property.last_sale_price:
             old_price = property.last_sale_price

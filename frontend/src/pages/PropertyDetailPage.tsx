@@ -305,7 +305,7 @@ const PropertyDetailPage: React.FC = () => {
                   </Box>
                 </>
               ) : (
-                formatPrice(property.majority_price || property.min_price)
+                formatPrice(property.current_price)
               )}
             </Typography>
             

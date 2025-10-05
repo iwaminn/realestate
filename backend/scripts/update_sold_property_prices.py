@@ -67,7 +67,11 @@ def main():
                 
                 if price_votes:
                     logger.info(f"価格の投票状況: {price_votes}")
-                    majority_price = updater.get_majority_price_for_sold_property(price_votes)
+                    # 辞書を価格のリストに変換（出現回数分だけ繰り返す）
+                    prices = []
+                    for price, count in price_votes.items():
+                        prices.extend([price] * count)
+                    majority_price = updater.get_majority_price(prices, None)
                     logger.info(f"多数決による価格: {majority_price}万円")
                     logger.info(f"現在の最終価格: {property.last_sale_price}万円")
                     
@@ -102,7 +106,11 @@ def main():
                     )
                     
                     if price_votes:
-                        majority_price = updater.get_majority_price_for_sold_property(price_votes)
+                        # 辞書を価格のリストに変換（出現回数分だけ繰り返す）
+                        prices = []
+                        for price, count in price_votes.items():
+                            prices.extend([price] * count)
+                        majority_price = updater.get_majority_price(prices, None)
                         if majority_price and majority_price != property.last_sale_price:
                             updates_needed.append((
                                 property.id,

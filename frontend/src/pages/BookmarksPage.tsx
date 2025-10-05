@@ -238,7 +238,7 @@ export const BookmarksPage: React.FC = () => {
                     {/* 価格情報 */}
                     <Box mb={2}>
                       <Typography variant="h6" color="primary">
-                        {formatPrice(property.final_price || property.majority_price || property.min_price)}
+                        {formatPrice(property.final_price || property.current_price)}
                       </Typography>
                       {property.management_fee && (
                         <Typography variant="caption" color="text.secondary">
