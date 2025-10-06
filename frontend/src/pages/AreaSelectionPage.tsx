@@ -159,14 +159,12 @@ const AreaSelectionPage: React.FC = () => {
             display: 'flex',
             alignItems: 'center',
             maxWidth: 600,
+            width: '100%',
             mx: 'auto',
             boxShadow: 3,
-            minHeight: 56,  // 高さを固定して垂直中央揃えを確実に
+            minHeight: 56,
           }}
         >
-          <InputAdornment position="start" sx={{ ml: 2 }}>
-            <SearchIcon color="action" />
-          </InputAdornment>
           <Autocomplete
             freeSolo
             options={buildingOptions}
@@ -179,6 +177,34 @@ const AreaSelectionPage: React.FC = () => {
             onClose={() => setAutocompleteOpen(false)}
             filterOptions={(x) => x}  // 入力遅延を防ぐため、フィルタリングを無効化
             disableCloseOnSelect={false}
+            // サジェストリストの幅を検索バー全体に合わせる
+            slotProps={{
+              popper: {
+                modifiers: [
+                  {
+                    name: 'offset',
+                    options: {
+                      offset: [0, 8],  // 検索バーとの間隔
+                    },
+                  },
+                ],
+                sx: {
+                  // Popperの幅を親要素（Paper）より少し狭く（左右に余白）
+                  width: 'calc(100% - 24px) !important',
+                  marginLeft: '12px',
+                  '& .MuiAutocomplete-listbox': {
+                    maxHeight: '60vh',
+                  },
+                },
+              },
+              paper: {
+                sx: {
+                  // Paperの幅を100%に（Popperの幅を継承）
+                  width: '100%',
+                  boxShadow: 3,
+                },
+              },
+            }}
             onInputChange={(_, newInputValue, reason) => {
               // refのみ更新（状態更新しない = レンダリングを防ぐ）
               if (reason === 'input') {
@@ -228,11 +254,17 @@ const AreaSelectionPage: React.FC = () => {
                 InputProps={{
                   ...params.InputProps,
                   disableUnderline: true,
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <SearchIcon color="action" />
+                    </InputAdornment>
+                  ),
                   sx: { 
-                    px: 2, 
+                    pl: 1, 
+                    pr: 2,
                     py: 0,
                     '& input': {
-                      padding: '12px 0',  // 上下のパディングを均等に
+                      padding: '12px 0',
                       textAlign: 'left',
                     }
                   },
@@ -246,9 +278,6 @@ const AreaSelectionPage: React.FC = () => {
               />
             )}
           />
-          <IconButton type="submit" sx={{ p: '10px' }} aria-label="search">
-            <SearchIcon />
-          </IconButton>
         </Paper>
       </Box>
 
