@@ -1127,7 +1127,6 @@ async def reset_password(
                 "has_password": True,
                 "is_google_user": user.google_id is not None,
                 "is_active": user.is_active,
-                "is_verified": user.is_verified,
                 "created_at": user.created_at.isoformat() if user.created_at else None,
                 "last_login_at": user.last_login_at.isoformat() if user.last_login_at else None
             }

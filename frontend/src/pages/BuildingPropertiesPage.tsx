@@ -546,7 +546,7 @@ const BuildingPropertiesPage: React.FC = () => {
           startIcon={<ArrowBackIcon />}
           sx={{ mt: 2 }}
         >
-          物件一覧に戻る
+          物件一覧を見る
         </Button>
       </Container>
     );
@@ -683,7 +683,7 @@ const BuildingPropertiesPage: React.FC = () => {
         startIcon={<ArrowBackIcon />}
         sx={{ mb: isMobile ? 1 : 2 }}
       >
-        {ward ? `${ward}の物件一覧に戻る` : '物件一覧に戻る'}
+        {ward ? `${ward}の物件一覧を見る` : '物件一覧を見る'}
       </Button>
 
       <Typography variant="h4" gutterBottom>

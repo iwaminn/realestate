@@ -144,7 +144,7 @@ const PropertyDetailPage: React.FC = () => {
           startIcon={<ArrowBack />}
           sx={{ mt: 2 }}
         >
-          物件一覧に戻る
+          物件一覧を見る
         </Button>
       </Box>
     );
@@ -229,7 +229,7 @@ const PropertyDetailPage: React.FC = () => {
         startIcon={<ArrowBack />}
         sx={{ mb: 2 }}
       >
-        {ward ? `${ward}の物件一覧に戻る` : '物件一覧に戻る'}
+        {ward ? `${ward}の物件一覧を見る` : '物件一覧を見る'}
       </Button>
 
       <Paper elevation={1} sx={{ 
