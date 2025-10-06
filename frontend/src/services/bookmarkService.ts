@@ -26,8 +26,9 @@ export class BookmarkService {
   /**
    * ブックマーク一覧を取得
    */
-  static async getBookmarks(): Promise<Bookmark[]> {
-    const response = await axios.get('/bookmarks/');
+  static async getBookmarks(groupBy?: 'ward' | 'building'): Promise<any> {
+    const params = groupBy ? { group_by: groupBy } : {};
+    const response = await axios.get('/bookmarks/', { params });
     return response.data;
   }
 

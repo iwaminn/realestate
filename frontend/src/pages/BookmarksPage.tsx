@@ -9,23 +9,48 @@ import {
   Alert,
   CircularProgress,
   Chip,
-  Button
+  Button,
+  ToggleButtonGroup,
+  ToggleButton,
+  Accordion,
+  AccordionSummary,
+  AccordionDetails,
+  Divider,
+  Stack,
+  Select,
+  MenuItem,
+  FormControl,
+  InputLabel
 } from '@mui/material';
-import { BookmarkBorder, Bookmark as BookmarkIcon, Login as LoginIcon } from '@mui/icons-material';
+import { 
+  BookmarkBorder, 
+  Bookmark as BookmarkIcon, 
+  Login as LoginIcon,
+  ViewList,
+  LocationOn,
+  Apartment,
+  ExpandMore
+} from '@mui/icons-material';
 import { BookmarkService } from '../services/bookmarkService';
 import { Bookmark } from '../types/property';
 import { BookmarkButton } from '../components/BookmarkButton';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useUserAuth } from '../contexts/UserAuthContext';
 import { LoginModal } from '../components/LoginModal';
 
 export const BookmarksPage: React.FC = () => {
   const [bookmarks, setBookmarks] = useState<Bookmark[]>([]);
+  const [groupedData, setGroupedData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { isAuthenticated, isLoading: authLoading } = useUserAuth();
+  
+  // URLパラメータから表示モードと並び順を取得
+  const viewMode = (searchParams.get('view') as 'all' | 'ward' | 'building') || 'all';
+  const sortBy = (searchParams.get('sort') as 'price_asc' | 'price_desc' | 'area_asc' | 'area_desc' | 'age_asc' | 'age_desc' | 'default') || 'default';
 
   useEffect(() => {
     if (!authLoading) {
@@ -35,14 +60,23 @@ export const BookmarksPage: React.FC = () => {
         setLoading(false);
       }
     }
-  }, [isAuthenticated, authLoading]);
+  }, [isAuthenticated, authLoading, viewMode]); // viewModeが変更されたら再読み込み
 
   const loadBookmarks = async () => {
     try {
       setLoading(true);
       setError(null);
-      const data = await BookmarkService.getBookmarks();
-      setBookmarks(data);
+      
+      // viewModeに応じてAPIを呼び出し
+      if (viewMode === 'all') {
+        const data = await BookmarkService.getBookmarks();
+        setBookmarks(data);
+        setGroupedData(null);
+      } else {
+        const data = await BookmarkService.getBookmarks(viewMode);
+        setGroupedData(data);
+        setBookmarks([]);
+      }
     } catch (err: any) {
       if (err.message === 'ログインが必要です') {
         setError(null); // エラーメッセージは表示しない
@@ -141,6 +175,327 @@ export const BookmarksPage: React.FC = () => {
     );
   }
 
+  // ブックマークを並び替え
+  const sortBookmarks = (bookmarksToSort: Bookmark[]) => {
+    const sorted = [...bookmarksToSort];
+    
+    switch (sortBy) {
+      case 'price_asc':
+        return sorted.sort((a, b) => {
+          const priceA = a.master_property?.current_price || a.master_property?.final_price || 0;
+          const priceB = b.master_property?.current_price || b.master_property?.final_price || 0;
+          return priceA - priceB;
+        });
+      case 'price_desc':
+        return sorted.sort((a, b) => {
+          const priceA = a.master_property?.current_price || a.master_property?.final_price || 0;
+          const priceB = b.master_property?.current_price || b.master_property?.final_price || 0;
+          return priceB - priceA;
+        });
+      case 'area_asc':
+        return sorted.sort((a, b) => {
+          const areaA = a.master_property?.area || 0;
+          const areaB = b.master_property?.area || 0;
+          return areaA - areaB;
+        });
+      case 'area_desc':
+        return sorted.sort((a, b) => {
+          const areaA = a.master_property?.area || 0;
+          const areaB = b.master_property?.area || 0;
+          return areaB - areaA;
+        });
+      case 'age_asc':
+        return sorted.sort((a, b) => {
+          const yearA = a.master_property?.building?.built_year || 0;
+          const yearB = b.master_property?.building?.built_year || 0;
+          return yearB - yearA; // 新しい順（築年数が浅い順）
+        });
+      case 'age_desc':
+        return sorted.sort((a, b) => {
+          const yearA = a.master_property?.building?.built_year || 0;
+          const yearB = b.master_property?.building?.built_year || 0;
+          return yearA - yearB; // 古い順（築年数が深い順）
+        });
+      default:
+        return sorted;
+    }
+  };
+
+  // グループ内の物件を並び替え
+  const sortGroupedProperties = (properties: any[]) => {
+    const sorted = [...properties];
+    
+    switch (sortBy) {
+      case 'price_asc':
+        return sorted.sort((a, b) => {
+          const priceA = a.master_property?.current_price || 0;
+          const priceB = b.master_property?.current_price || 0;
+          return priceA - priceB;
+        });
+      case 'price_desc':
+        return sorted.sort((a, b) => {
+          const priceA = a.master_property?.current_price || 0;
+          const priceB = b.master_property?.current_price || 0;
+          return priceB - priceA;
+        });
+      case 'area_asc':
+        return sorted.sort((a, b) => {
+          const areaA = a.master_property?.area || 0;
+          const areaB = b.master_property?.area || 0;
+          return areaA - areaB;
+        });
+      case 'area_desc':
+        return sorted.sort((a, b) => {
+          const areaA = a.master_property?.area || 0;
+          const areaB = b.master_property?.area || 0;
+          return areaB - areaA;
+        });
+      case 'age_asc':
+        return sorted.sort((a, b) => {
+          const yearA = a.master_property?.building?.built_year || 0;
+          const yearB = b.master_property?.building?.built_year || 0;
+          return yearB - yearA;
+        });
+      case 'age_desc':
+        return sorted.sort((a, b) => {
+          const yearA = a.master_property?.building?.built_year || 0;
+          const yearB = b.master_property?.building?.built_year || 0;
+          return yearA - yearB;
+        });
+      default:
+        return sorted;
+    }
+  };
+
+  // 総件数を計算
+  const getTotalCount = () => {
+    if (viewMode === 'all') {
+      return bookmarks.length;
+    } else if (groupedData?.grouped_bookmarks) {
+      return Object.values(groupedData.grouped_bookmarks).reduce(
+        (sum: number, group: any) => sum + group.count, 
+        0
+      );
+    }
+    return 0;
+  };
+
+  // グループ表示用のレンダリング関数
+  const renderGroupedView = () => {
+    if (!groupedData?.grouped_bookmarks) return null;
+
+    const groups = Object.entries(groupedData.grouped_bookmarks);
+    
+    if (groups.length === 0) {
+      return (
+        <Card sx={{ p: 4, textAlign: 'center' }}>
+          <BookmarkBorder sx={{ fontSize: 64, color: 'text.disabled', mb: 2 }} />
+          <Typography variant="h6" color="text.secondary">
+            ブックマークされた物件がありません
+          </Typography>
+        </Card>
+      );
+    }
+
+    return (
+      <Box>
+        {groups.map(([key, groupData]: [string, any]) => (
+          <Accordion key={key} defaultExpanded={false} sx={{ mb: 2 }}>
+            <AccordionSummary expandIcon={<ExpandMore />}>
+              <Box sx={{ 
+                display: 'flex', 
+                flexDirection: { xs: 'column', sm: 'row' },
+                alignItems: { xs: 'flex-start', sm: 'center' },
+                width: '100%', 
+                pr: { xs: 1, sm: 2 },
+                gap: { xs: 0.5, sm: 0 }
+              }}>
+                {/* 建物名/エリア名の行 */}
+                <Box sx={{ display: 'flex', alignItems: 'center', flex: 1, width: { xs: '100%', sm: 'auto' } }}>
+                  {viewMode === 'ward' ? (
+                    <LocationOn color="primary" sx={{ mr: 1, fontSize: { xs: 20, sm: 24 } }} />
+                  ) : (
+                    <Apartment color="primary" sx={{ mr: 1, fontSize: { xs: 20, sm: 24 } }} />
+                  )}
+                  <Typography 
+                    variant="h6" 
+                    sx={{ 
+                      fontSize: { xs: '0.95rem', sm: '1.25rem' },
+                      flex: 1,
+                      lineHeight: 1.3,
+                      wordBreak: 'break-word'
+                    }}
+                  >
+                    {viewMode === 'ward' ? groupData.ward : groupData.building_name}
+                  </Typography>
+                </Box>
+                
+                {/* 件数の行 */}
+                <Box sx={{ 
+                  display: 'flex', 
+                  alignItems: 'center',
+                  ml: { xs: 4, sm: 0 }
+                }}>
+                  <Chip 
+                    label={`${groupData.count}件`} 
+                    color="primary" 
+                    size="small"
+                    sx={{ height: { xs: 20, sm: 24 } }}
+                  />
+                </Box>
+              </Box>
+            </AccordionSummary>
+            <AccordionDetails>
+              {/* 建物統計情報 */}
+              {viewMode === 'building' && groupData.building_info && (
+                <Box sx={{ mb: 2 }}>
+                  {/* 全物件を見るリンク */}
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    fullWidth
+                    startIcon={<Apartment />}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/buildings/${groupData.building_id}/properties`);
+                    }}
+                    sx={{ 
+                      fontSize: { xs: '0.85rem', sm: '0.9rem' },
+                      py: 1,
+                      mb: 1.5
+                    }}
+                  >
+                    全{groupData.building_stats?.active_count || 0}件の物件を見る
+                  </Button>
+
+                  {/* 平均坪単価 */}
+                  {groupData.building_stats?.avg_price_per_tsubo && (
+                    <Box sx={{ textAlign: 'center', py: 1 }}>
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        平均坪単価
+                      </Typography>
+                      <Typography 
+                        variant="h6" 
+                        color="primary"
+                        sx={{ fontSize: { xs: '1.1rem', sm: '1.2rem' }, fontWeight: 600 }}
+                      >
+                        {groupData.building_stats.avg_price_per_tsubo.toLocaleString()}万円
+                      </Typography>
+                    </Box>
+                  )}
+                </Box>
+              )}
+              
+              {viewMode === 'ward' && (
+                <Box sx={{ mb: 2 }}>
+                  {/* エリア物件一覧へのリンク */}
+                  <Button
+                    variant="outlined"
+                    size="small"
+                    fullWidth
+                    startIcon={<LocationOn />}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      navigate(`/properties?wards=${encodeURIComponent(groupData.ward)}`);
+                    }}
+                    sx={{ 
+                      fontSize: { xs: '0.85rem', sm: '0.9rem' },
+                      py: 1
+                    }}
+                  >
+                    {groupData.ward}の物件一覧を見る
+                  </Button>
+                </Box>
+              )}
+
+              <Divider sx={{ mb: 2 }} />
+              
+              {/* 物件一覧 */}
+              <Grid container spacing={{ xs: 1.5, sm: 2 }}>
+                {sortGroupedProperties(groupData.properties).map((bookmark: any) => {
+                  const property = bookmark.master_property;
+                  if (!property) return null;
+
+                  return (
+                    <Grid item xs={12} sm={6} md={6} key={bookmark.id}>
+                      <Card 
+                        sx={{ 
+                          cursor: 'pointer',
+                          transition: 'all 0.2s',
+                          '&:hover': {
+                            transform: 'translateY(-2px)',
+                            boxShadow: 3
+                          }
+                        }}
+                        onClick={() => handlePropertyClick(property.id)}
+                      >
+                        <CardContent sx={{ p: { xs: 1.5, sm: 2 }, '&:last-child': { pb: { xs: 1.5, sm: 2 } } }}>
+                          <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={{ xs: 0.5, sm: 1 }}>
+                            <Typography 
+                              variant="subtitle1" 
+                              sx={{ 
+                                flex: 1, 
+                                mr: 1,
+                                fontSize: { xs: '0.9rem', sm: '1rem' },
+                                lineHeight: 1.3,
+                                fontWeight: 500
+                              }}
+                            >
+                              {property.display_building_name || property.building?.normalized_name || '建物名不明'}
+                            </Typography>
+                            <BookmarkButton
+                              propertyId={property.id}
+                              initialBookmarked={true}
+                              size="small"
+                              onBookmarkChange={(isBookmarked) => 
+                                !isBookmarked && loadBookmarks()
+                              }
+                            />
+                          </Box>
+                          
+                          {property.room_number && (
+                            <Typography 
+                              variant="body2" 
+                              color="text.secondary"
+                              sx={{ fontSize: { xs: '0.8rem', sm: '0.875rem' } }}
+                            >
+                              {property.room_number}
+                            </Typography>
+                          )}
+                          
+                          <Typography 
+                            variant="body2" 
+                            color="text.secondary"
+                            sx={{ fontSize: { xs: '0.8rem', sm: '0.875rem' } }}
+                          >
+                            {formatFloor(property.floor_number, property.building?.total_floors)}
+                            {property.layout && ` • ${property.layout}`}
+                            {property.area && ` • ${formatArea(property.area)}`}
+                          </Typography>
+                          
+                          <Typography 
+                            variant="h6" 
+                            color="primary" 
+                            sx={{ 
+                              mt: { xs: 0.5, sm: 1 },
+                              fontSize: { xs: '1rem', sm: '1.25rem' }
+                            }}
+                          >
+                            {formatPrice(property.current_price)}
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Grid>
+                  );
+                })}
+              </Grid>
+            </AccordionDetails>
+          </Accordion>
+        ))}
+      </Box>
+    );
+  };
+
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
       <Box display="flex" alignItems="center" mb={4}>
@@ -149,10 +504,67 @@ export const BookmarksPage: React.FC = () => {
           ブックマーク
         </Typography>
         <Chip 
-          label={`${bookmarks.length}件`} 
+          label={`${getTotalCount()}件`} 
           color="primary" 
           sx={{ ml: 2 }}
         />
+      </Box>
+
+      {/* 表示切り替えボタンと並び替え */}
+      <Box sx={{ mb: 3, display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 2, alignItems: 'center', justifyContent: 'center' }}>
+        <ToggleButtonGroup
+          value={viewMode}
+          exclusive
+          onChange={(_, newMode) => {
+            if (newMode) {
+              const params: any = { view: newMode };
+              if (sortBy !== 'default') {
+                params.sort = sortBy;
+              }
+              setSearchParams(params);
+            }
+          }}
+          aria-label="表示モード"
+        >
+          <ToggleButton value="all" aria-label="すべて">
+            <ViewList sx={{ mr: 1 }} />
+            すべて
+          </ToggleButton>
+          <ToggleButton value="ward" aria-label="エリア別">
+            <LocationOn sx={{ mr: 1 }} />
+            エリア別
+          </ToggleButton>
+          <ToggleButton value="building" aria-label="建物別">
+            <Apartment sx={{ mr: 1 }} />
+            建物別
+          </ToggleButton>
+        </ToggleButtonGroup>
+
+        <FormControl size="small" sx={{ minWidth: 200 }}>
+          <InputLabel>並び替え</InputLabel>
+          <Select
+            value={sortBy}
+            label="並び替え"
+            onChange={(e) => {
+              const params: any = {};
+              if (viewMode !== 'all') {
+                params.view = viewMode;
+              }
+              if (e.target.value !== 'default') {
+                params.sort = e.target.value;
+              }
+              setSearchParams(params);
+            }}
+          >
+            <MenuItem value="default">デフォルト</MenuItem>
+            <MenuItem value="price_asc">価格が安い順</MenuItem>
+            <MenuItem value="price_desc">価格が高い順</MenuItem>
+            <MenuItem value="area_asc">専有面積が狭い順</MenuItem>
+            <MenuItem value="area_desc">専有面積が広い順</MenuItem>
+            <MenuItem value="age_asc">築年数（新しい順）</MenuItem>
+            <MenuItem value="age_desc">築年数（古い順）</MenuItem>
+          </Select>
+        </FormControl>
       </Box>
 
       {error && (
@@ -164,7 +576,10 @@ export const BookmarksPage: React.FC = () => {
         </Alert>
       )}
 
-      {bookmarks.length === 0 ? (
+      {/* グループ表示モード */}
+      {viewMode !== 'all' ? (
+        renderGroupedView()
+      ) : bookmarks.length === 0 ? (
         <Card sx={{ p: 4, textAlign: 'center' }}>
           <BookmarkBorder sx={{ fontSize: 64, color: 'text.disabled', mb: 2 }} />
           <Typography variant="h6" color="text.secondary" gutterBottom>
@@ -182,7 +597,7 @@ export const BookmarksPage: React.FC = () => {
         </Card>
       ) : (
         <Grid container spacing={3}>
-          {bookmarks.map((bookmark) => {
+          {sortBookmarks(bookmarks).map((bookmark) => {
             const property = bookmark.master_property;
             if (!property) return null;
 
@@ -240,9 +655,11 @@ export const BookmarksPage: React.FC = () => {
                       <Typography variant="h6" color="primary">
                         {formatPrice(property.final_price || property.current_price)}
                       </Typography>
-                      {property.management_fee && (
-                        <Typography variant="caption" color="text.secondary">
-                          管理費: {property.management_fee.toLocaleString()}円/月
+                      {(property.management_fee || property.repair_fund) && (
+                        <Typography variant="caption" color="text.secondary" display="block">
+                          {property.management_fee && `管理費: ${property.management_fee.toLocaleString()}円/月`}
+                          {property.management_fee && property.repair_fund && ' / '}
+                          {property.repair_fund && `修繕積立金: ${property.repair_fund.toLocaleString()}円/月`}
                         </Typography>
                       )}
                     </Box>
