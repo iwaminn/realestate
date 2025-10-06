@@ -317,11 +317,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                 }
               }}
               onClose={() => setAutocompleteOpen(false)}
-              componentsProps={{
-                popper: {
-                  style: { width: 'fit-content', maxWidth: '600px' }
-                }
-              }}
               getOptionLabel={(option) => {
                 // オプションがオブジェクトの場合はvalueを、文字列の場合はそのまま返す
                 if (typeof option === 'object' && 'value' in option) {
