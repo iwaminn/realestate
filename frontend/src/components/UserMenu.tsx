@@ -13,7 +13,8 @@ import {
 import {
   Person as PersonIcon,
   Logout as LogoutIcon,
-  BookmarkBorder as BookmarkIcon
+  BookmarkBorder as BookmarkIcon,
+  Settings as SettingsIcon
 } from '@mui/icons-material';
 import { useUserAuth } from '../contexts/UserAuthContext';
 import { useNavigate } from 'react-router-dom';
@@ -42,6 +43,11 @@ export const UserMenu: React.FC = () => {
   const handleBookmarks = () => {
     handleClose();
     navigate('/bookmarks');
+  };
+
+  const handleSettings = () => {
+    handleClose();
+    navigate('/account/settings');
   };
 
   if (!user) return null;
@@ -120,6 +126,14 @@ export const UserMenu: React.FC = () => {
             <BookmarkIcon fontSize="small" />
           </ListItemIcon>
           <ListItemText>ブックマーク</ListItemText>
+        </MenuItem>
+        
+        {/* アカウント設定 */}
+        <MenuItem onClick={handleSettings}>
+          <ListItemIcon>
+            <SettingsIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText>アカウント設定</ListItemText>
         </MenuItem>
         
         <Divider />

@@ -18,6 +18,11 @@ import RedirectToUpdates from './components/RedirectToUpdates';
 import { BookmarksPage } from './pages/BookmarksPage';
 import { VerifyEmailPage } from './pages/VerifyEmailPage';
 import { AuthCallbackPage } from './pages/AuthCallbackPage';
+import { AccountSettingsPage } from './pages/AccountSettingsPage';
+import { VerifyPasswordSetPage } from './pages/VerifyPasswordSetPage';
+import { RequestPasswordResetPage } from './pages/RequestPasswordResetPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
+import { VerifyEmailChangePage } from './pages/VerifyEmailChangePage';
 import Footer from './components/Footer';
 import ScrollToTop from './components/ScrollToTop';
 import DisclaimerPage from './pages/DisclaimerPage';
@@ -74,6 +79,11 @@ function App() {
                   <Route path="/properties/:id" element={<PropertyDetailPage />} />
                   <Route path="/buildings/:buildingId/properties" element={<BuildingPropertiesPage />} />
                   <Route path="/bookmarks" element={<BookmarksPage />} />
+                  <Route path="/account/settings" element={<AccountSettingsPage />} />
+                  <Route path="/verify-password-set" element={<VerifyPasswordSetPage />} />
+                  <Route path="/request-password-reset" element={<RequestPasswordResetPage />} />
+                  <Route path="/reset-password" element={<ResetPasswordPage />} />
+                  <Route path="/verify-email-change" element={<VerifyEmailChangePage />} />
                   <Route path="/updates" element={<PropertyUpdatesPage />} />
                   <Route path="/verify-email" element={<VerifyEmailPage />} />
                   <Route path="/auth/callback" element={<AuthCallbackPage />} />

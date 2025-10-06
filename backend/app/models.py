@@ -625,6 +625,71 @@ class PendingUser(Base):
     )
 
 
+class PendingPasswordSet(Base):
+    """パスワード設定リクエストテーブル（メール確認用）"""
+    __tablename__ = "pending_password_sets"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    hashed_password = Column(String(255), nullable=False)  # 設定予定のパスワード（ハッシュ化済み）
+    verification_token = Column(String(255), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)  # 有効期限（24時間）
+    created_at = Column(DateTime, server_default=func.now())
+    
+    # リレーション
+    user = relationship("User")
+    
+    # インデックス
+    __table_args__ = (
+        Index('idx_pending_password_sets_user', 'user_id'),
+        Index('idx_pending_password_sets_token', 'verification_token'),
+        Index('idx_pending_password_sets_expires', 'expires_at'),
+    )
+
+
+class PendingPasswordReset(Base):
+    """パスワードリセットリクエストテーブル（メール確認用）"""
+    __tablename__ = "pending_password_resets"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    reset_token = Column(String(255), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)  # 有効期限（24時間）
+    created_at = Column(DateTime, server_default=func.now())
+    used_at = Column(DateTime, nullable=True)  # 使用済みフラグ
+    
+    # リレーション
+    user = relationship("User")
+    
+    # インデックス
+    __table_args__ = (
+        Index('idx_pending_password_resets_user', 'user_id'),
+        Index('idx_pending_password_resets_token', 'reset_token'),
+    )
+
+
+class PendingEmailChange(Base):
+    """メールアドレス変更リクエストテーブル（メール確認用）"""
+    __tablename__ = "pending_email_changes"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    new_email = Column(String(255), nullable=False)  # 変更先のメールアドレス
+    verification_token = Column(String(255), unique=True, nullable=False, index=True)
+    expires_at = Column(DateTime, nullable=False)  # 有効期限（24時間）
+    created_at = Column(DateTime, server_default=func.now())
+    used_at = Column(DateTime, nullable=True)  # 使用済みフラグ
+    
+    # リレーション
+    user = relationship("User")
+    
+    # インデックス
+    __table_args__ = (
+        Index('idx_pending_email_changes_user', 'user_id'),
+        Index('idx_pending_email_changes_token', 'verification_token'),
+    )
+
+
 class PropertyPriceChange(Base):
     """価格改定履歴キャッシュテーブル（多数決ベースの価格変更を事前計算）"""
     __tablename__ = "property_price_changes"

@@ -7,6 +7,8 @@ interface User {
   email: string;
   is_active: boolean;
   is_verified: boolean;
+  google_id?: string | null;
+  has_password: boolean;
   created_at: string;
   last_login_at: string | null;
 }
@@ -15,6 +17,9 @@ interface UserAuthContextType {
   user: User | null;
   isAuthenticated: boolean;
   isLoading: boolean;
+  showLoginModal: boolean;
+  openLoginModal: () => void;
+  closeLoginModal: () => void;
   login: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   register: (email: string, password: string) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
@@ -36,6 +41,7 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [user, setUser] = useState<User | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const [showLoginModal, setShowLoginModal] = useState(false);
   const location = useLocation();
 
   useEffect(() => {
@@ -163,10 +169,16 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     return { success: false, error: 'プロフィール更新に失敗しました' };
   };
 
+  const openLoginModal = () => setShowLoginModal(true);
+  const closeLoginModal = () => setShowLoginModal(false);
+
   const value: UserAuthContextType = {
     user,
     isAuthenticated,
     isLoading,
+    showLoginModal,
+    openLoginModal,
+    closeLoginModal,
     login,
     register,
     logout,

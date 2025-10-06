@@ -275,6 +275,21 @@ export const LoginModal: React.FC<LoginModalProps> = ({ open, onClose, onSuccess
               {loading ? <CircularProgress size={24} /> : 'ログイン'}
             </Button>
             
+            <Box sx={{ textAlign: 'center', mb: 2 }}>
+              <Link
+                component="button"
+                type="button"
+                variant="body2"
+                onClick={(e) => {
+                  e.preventDefault();
+                  handleClose();
+                  window.location.href = '/request-password-reset';
+                }}
+              >
+                パスワードを忘れた場合
+              </Link>
+            </Box>
+            
             <Divider sx={{ my: 2 }}>または</Divider>
             
             <GoogleLoginButton text="signin" />

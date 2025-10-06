@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Container, 
   Typography, 
@@ -51,6 +51,19 @@ export const BookmarksPage: React.FC = () => {
   // URLパラメータから表示モードと並び順を取得
   const viewMode = (searchParams.get('view') as 'all' | 'ward' | 'building') || 'all';
   const sortBy = (searchParams.get('sort') as 'price_asc' | 'price_desc' | 'area_asc' | 'area_desc' | 'age_asc' | 'age_desc' | 'default') || 'default';
+
+  // アコーディオンの展開状態を管理（エリア別・建物別の場合のみ）
+  const [expandedAccordions, setExpandedAccordions] = useState<Set<string>>(new Set());
+  const [hasInteracted, setHasInteracted] = useState(false);
+
+  // viewModeが変更されたら、すべて展開した状態に初期化
+  useEffect(() => {
+    if (viewMode !== 'all' && groupedData?.grouped_bookmarks) {
+      const allKeys = Object.keys(groupedData.grouped_bookmarks);
+      setExpandedAccordions(new Set(allKeys));
+      setHasInteracted(false); // 初回表示状態にリセット
+    }
+  }, [viewMode, groupedData]);
 
   useEffect(() => {
     if (!authLoading) {
@@ -280,6 +293,34 @@ export const BookmarksPage: React.FC = () => {
     return 0;
   };
 
+  // すべて開く/閉じるボタンのハンドラ
+  const handleExpandAll = () => {
+    if (groupedData?.grouped_bookmarks) {
+      const allKeys = Object.keys(groupedData.grouped_bookmarks);
+      setExpandedAccordions(new Set(allKeys));
+      setHasInteracted(true);
+    }
+  };
+
+  const handleCollapseAll = () => {
+    setExpandedAccordions(new Set());
+    setHasInteracted(true);
+  };
+
+  // アコーディオンの開閉ハンドラ
+  const handleAccordionChange = (key: string) => (event: React.SyntheticEvent, isExpanded: boolean) => {
+    setExpandedAccordions(prev => {
+      const newSet = new Set(prev);
+      if (isExpanded) {
+        newSet.add(key);
+      } else {
+        newSet.delete(key);
+      }
+      return newSet;
+    });
+    setHasInteracted(true);
+  };
+
   // グループ表示用のレンダリング関数
   const renderGroupedView = () => {
     if (!groupedData?.grouped_bookmarks) return null;
@@ -299,8 +340,15 @@ export const BookmarksPage: React.FC = () => {
 
     return (
       <Box>
-        {groups.map(([key, groupData]: [string, any]) => (
-          <Accordion key={key} defaultExpanded={false} sx={{ mb: 2 }}>
+        {groups.map(([key, groupData]: [string, any]) => {
+          return (
+            <Accordion 
+              key={key}
+              expanded={expandedAccordions.has(key)}
+              onChange={handleAccordionChange(key)}
+              sx={{ mb: 2 }}
+              TransitionProps={{ timeout: hasInteracted ? undefined : 0 }}
+            >
             <AccordionSummary expandIcon={<ExpandMore />}>
               <Box sx={{ 
                 display: 'flex', 
@@ -491,7 +539,8 @@ export const BookmarksPage: React.FC = () => {
               </Grid>
             </AccordionDetails>
           </Accordion>
-        ))}
+          );
+        })}
       </Box>
     );
   };
@@ -510,8 +559,8 @@ export const BookmarksPage: React.FC = () => {
         />
       </Box>
 
-      {/* 表示切り替えボタンと並び替え */}
-      <Box sx={{ mb: 3, display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 2, alignItems: 'center', justifyContent: 'center' }}>
+      {/* 表示切り替えボタン */}
+      <Box sx={{ mb: 3, display: 'flex', justifyContent: 'center' }}>
         <ToggleButtonGroup
           value={viewMode}
           exclusive
@@ -539,33 +588,66 @@ export const BookmarksPage: React.FC = () => {
             建物別
           </ToggleButton>
         </ToggleButtonGroup>
-
-        <FormControl size="small" sx={{ minWidth: 200 }}>
-          <InputLabel>並び替え</InputLabel>
-          <Select
-            value={sortBy}
-            label="並び替え"
-            onChange={(e) => {
-              const params: any = {};
-              if (viewMode !== 'all') {
-                params.view = viewMode;
-              }
-              if (e.target.value !== 'default') {
-                params.sort = e.target.value;
-              }
-              setSearchParams(params);
-            }}
-          >
-            <MenuItem value="default">デフォルト</MenuItem>
-            <MenuItem value="price_asc">価格が安い順</MenuItem>
-            <MenuItem value="price_desc">価格が高い順</MenuItem>
-            <MenuItem value="area_asc">専有面積が狭い順</MenuItem>
-            <MenuItem value="area_desc">専有面積が広い順</MenuItem>
-            <MenuItem value="age_asc">築年数（新しい順）</MenuItem>
-            <MenuItem value="age_desc">築年数（古い順）</MenuItem>
-          </Select>
-        </FormControl>
       </Box>
+
+      {/* 並び替えとアコーディオン操作 */}
+      {(viewMode !== 'all' || bookmarks.length > 0) && (
+        <Box sx={{ 
+          mb: 2, 
+          display: 'flex', 
+          flexDirection: { xs: 'column', sm: 'row' },
+          gap: 2, 
+          alignItems: { xs: 'stretch', sm: 'center' },
+          justifyContent: 'space-between'
+        }}>
+          {/* 並び替え */}
+          <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 200 } }}>
+            <InputLabel>並び替え</InputLabel>
+            <Select
+              value={sortBy}
+              label="並び替え"
+              onChange={(e) => {
+                const params: any = {};
+                if (viewMode !== 'all') {
+                  params.view = viewMode;
+                }
+                if (e.target.value !== 'default') {
+                  params.sort = e.target.value;
+                }
+                setSearchParams(params);
+              }}
+            >
+              <MenuItem value="default">デフォルト</MenuItem>
+              <MenuItem value="price_asc">価格が安い順</MenuItem>
+              <MenuItem value="price_desc">価格が高い順</MenuItem>
+              <MenuItem value="area_asc">専有面積が狭い順</MenuItem>
+              <MenuItem value="area_desc">専有面積が広い順</MenuItem>
+              <MenuItem value="age_asc">築年数（新しい順）</MenuItem>
+              <MenuItem value="age_desc">築年数（古い順）</MenuItem>
+            </Select>
+          </FormControl>
+
+          {/* すべて開く/閉じるボタン（グループ表示時のみ） */}
+          {viewMode !== 'all' && groupedData?.grouped_bookmarks && Object.keys(groupedData.grouped_bookmarks).length > 0 && (
+            <Box sx={{ display: 'flex', gap: 1, justifyContent: { xs: 'center', sm: 'flex-end' } }}>
+              <Button 
+                size="small" 
+                variant="outlined"
+                onClick={handleExpandAll}
+              >
+                すべて開く
+              </Button>
+              <Button 
+                size="small" 
+                variant="outlined"
+                onClick={handleCollapseAll}
+              >
+                すべて閉じる
+              </Button>
+            </Box>
+          )}
+        </Box>
+      )}
 
       {error && (
         <Alert severity="error" sx={{ mb: 3 }}>

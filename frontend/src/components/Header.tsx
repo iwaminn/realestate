@@ -34,8 +34,7 @@ const Header: React.FC = () => {
   const navigate = useNavigate();
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-  const { isAuthenticated, user } = useUserAuth();
-  const [showLoginModal, setShowLoginModal] = useState(false);
+  const { isAuthenticated, user, showLoginModal, openLoginModal, closeLoginModal } = useUserAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const handleMobileMenuToggle = () => {
@@ -97,9 +96,9 @@ const Header: React.FC = () => {
                 {isAuthenticated ? (
                   <UserMenu />
                 ) : (
-                  <Button 
-                    color="inherit" 
-                    onClick={() => setShowLoginModal(true)}
+                  <Button
+                    color="inherit"
+                    onClick={openLoginModal}
                     startIcon={<LoginIcon />}
                   >
                     ログイン
@@ -118,7 +117,7 @@ const Header: React.FC = () => {
               ) : (
                 <IconButton
                   color="inherit"
-                  onClick={() => setShowLoginModal(true)}
+                  onClick={openLoginModal}
                   sx={{ mr: 1 }}
                 >
                   <LoginIcon />
@@ -165,7 +164,7 @@ const Header: React.FC = () => {
               <List>
                 <ListItem disablePadding>
                   <ListItemButton onClick={() => {
-                    setShowLoginModal(true);
+                    openLoginModal();
                     setMobileMenuOpen(false);
                   }}>
                     <ListItemIcon>
@@ -180,9 +179,9 @@ const Header: React.FC = () => {
         </Box>
       </Drawer>
       
-      <LoginModal 
-        open={showLoginModal} 
-        onClose={() => setShowLoginModal(false)} 
+      <LoginModal
+        open={showLoginModal}
+        onClose={closeLoginModal}
       />
     </>
   );

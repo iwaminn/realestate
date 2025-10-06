@@ -176,7 +176,7 @@ psql -U realestate -d realestate
 #### よく使うDockerコマンド：
 - スクリプト実行: `docker exec realestate-backend poetry run python /app/backend/scripts/スクリプト名.py`
 - DB接続: `docker exec realestate-postgres psql -U realestate -d realestate`
-- マイグレーション: `docker exec realestate-backend poetry run python /app/backend/scripts/init_v2_schema.py`
+- マイグレーション: `docker exec realestate-backend poetry run python /app/backend/scripts/init_schema.py`
 
 **注意**: ローカル環境で実行するとデータの不整合が発生し、「データベースに保存されているはずのデータが見つからない」などの問題が起きます。
 
@@ -447,7 +447,7 @@ docker exec -it realestate-postgres psql -U realestate -d realestate
 ### データベース初期化
 ```bash
 # スキーマの初期化
-docker compose exec backend poetry run python backend/scripts/init_v2_schema.py
+docker compose exec backend poetry run python backend/scripts/init_schema.py
 ```
 
 ### 特徴
@@ -628,8 +628,8 @@ if not all_tables:
 2. データベースを再作成:
    ```bash
    export DATABASE_URL="postgresql://realestate:realestate_pass@localhost:5432/realestate"
-   poetry run python backend/scripts/init_v2_schema.py --drop  # 既存テーブル削除
-   poetry run python backend/scripts/init_v2_schema.py        # テーブル再作成
+   poetry run python backend/scripts/init_schema.py --drop  # 既存テーブル削除
+   poetry run python backend/scripts/init_schema.py        # テーブル再作成
    ```
 3. 必要に応じてテストデータを再投入
 
