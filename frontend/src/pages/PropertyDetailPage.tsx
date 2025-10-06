@@ -140,7 +140,7 @@ const PropertyDetailPage: React.FC = () => {
         <Alert severity="error">{error || '物件が見つかりません'}</Alert>
         <Button
           component={Link}
-          to="/"
+          to="/properties"
           startIcon={<ArrowBack />}
           sx={{ mt: 2 }}
         >
@@ -211,15 +211,25 @@ const PropertyDetailPage: React.FC = () => {
     });
   }
 
+  // 住所から区を抽出
+  const extractWard = (address: string | undefined): string | null => {
+    if (!address) return null;
+    const match = address.match(/(.*?[都道府県])(.+?区)/);
+    return match ? match[2] : null;
+  };
+
+  const ward = extractWard(building?.address);
+  const backToListUrl = ward ? `/properties?wards=${encodeURIComponent(ward)}` : '/properties';
+
   return (
     <Box>
       <Button
         component={Link}
-        to="/"
+        to={backToListUrl}
         startIcon={<ArrowBack />}
         sx={{ mb: 2 }}
       >
-        物件一覧に戻る
+        {ward ? `${ward}の物件一覧に戻る` : '物件一覧に戻る'}
       </Button>
 
       <Paper elevation={1} sx={{ 
