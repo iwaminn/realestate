@@ -51,6 +51,8 @@ export interface Property {
   is_bookmarked?: boolean;  // ブックマーク状態
   display_building_name?: string;  // 物件レベルの建物名
   price_change_info?: PriceChangeInfo;  // 価格変更情報
+  price_per_tsubo?: number;  // 坪単価
+  earliest_published_at?: string;  // 売出確認日
 }
 
 export interface Listing {

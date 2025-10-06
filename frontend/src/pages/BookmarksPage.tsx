@@ -119,6 +119,51 @@ export const BookmarksPage: React.FC = () => {
     return `${area}㎡`;
   };
 
+  const formatDate = (dateString: string | undefined) => {
+    if (!dateString) return '-';
+    const date = new Date(dateString);
+    return date.toLocaleDateString('ja-JP', {
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    });
+  };
+
+  const calculateDaysFromPublished = (dateString: string | undefined): string => {
+    if (!dateString) return '-';
+    
+    const publishedDate = new Date(dateString);
+    const today = new Date();
+    
+    // 日付のみで比較（時刻を00:00:00にリセット）
+    publishedDate.setHours(0, 0, 0, 0);
+    today.setHours(0, 0, 0, 0);
+    
+    const diffTime = Math.abs(today.getTime() - publishedDate.getTime());
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+    
+    if (diffDays === 0) {
+      return '本日';
+    } else if (diffDays === 1) {
+      return '1日前';
+    } else if (diffDays < 7) {
+      return `${diffDays}日前`;
+    } else if (diffDays < 30) {
+      const weeks = Math.floor(diffDays / 7);
+      return `${weeks}週間前`;
+    } else if (diffDays < 365) {
+      const months = Math.floor(diffDays / 30);
+      return `${months}ヶ月前`;
+    } else {
+      const years = Math.floor(diffDays / 365);
+      const remainingMonths = Math.floor((diffDays % 365) / 30);
+      if (remainingMonths > 0) {
+        return `${years}年${remainingMonths}ヶ月前`;
+      }
+      return `${years}年前`;
+    }
+  };
+
   const formatFloor = (floor?: number, totalFloors?: number) => {
     if (!floor) return '';
     const floorStr = `${floor}階`;
@@ -558,6 +603,8 @@ export const BookmarksPage: React.FC = () => {
                         sx={{ 
                           cursor: 'pointer',
                           transition: 'all 0.2s',
+                          backgroundColor: !property.has_active_listing ? 'grey.50' : 'background.paper',
+                          opacity: !property.has_active_listing ? 0.85 : 1,
                           '&:hover': {
                             transform: 'translateY(-2px)',
                             boxShadow: 3
@@ -567,22 +614,36 @@ export const BookmarksPage: React.FC = () => {
                       >
                         <CardContent sx={{ p: { xs: 1.5, sm: 2 }, '&:last-child': { pb: { xs: 1.5, sm: 2 } } }}>
                           <Box display="flex" justifyContent="space-between" alignItems="flex-start" mb={{ xs: 0.5, sm: 1 }}>
-                            <Typography 
-                              variant="subtitle1" 
-                              sx={{ 
-                                flex: 1, 
-                                mr: 1,
-                                fontSize: { xs: '0.9rem', sm: '1rem' },
-                                lineHeight: 1.3,
-                                fontWeight: 500
-                              }}
-                            >
-                              {property.display_building_name || property.building?.normalized_name || '建物名不明'}
-                            </Typography>
+                            <Box sx={{ flex: 1, mr: 1 }}>
+                              <Typography 
+                                variant="subtitle1" 
+                                sx={{ 
+                                  fontSize: { xs: '0.9rem', sm: '1rem' },
+                                  lineHeight: 1.3,
+                                  fontWeight: 500
+                                }}
+                              >
+                                {property.display_building_name || property.building?.normalized_name || '建物名不明'}
+                              </Typography>
+                              {!property.has_active_listing && (
+                                <Chip 
+                                  label="販売終了" 
+                                  size="small" 
+                                  color="default"
+                                  sx={{ 
+                                    mt: 0.5,
+                                    height: 20,
+                                    fontSize: '0.7rem',
+                                    backgroundColor: 'grey.300'
+                                  }}
+                                />
+                              )}
+                            </Box>
                             <BookmarkButton
                               propertyId={property.id}
                               initialBookmarked={true}
                               size="small"
+                              skipInitialCheck={true}
                               onBookmarkChange={(isBookmarked) => 
                                 !isBookmarked && loadBookmarks()
                               }
@@ -607,18 +668,61 @@ export const BookmarksPage: React.FC = () => {
                             {formatFloor(property.floor_number, property.building?.total_floors)}
                             {property.layout && ` • ${property.layout}`}
                             {property.area && ` • ${formatArea(property.area)}`}
+                            {property.direction && ` • ${property.direction}向き`}
                           </Typography>
                           
-                          <Typography 
-                            variant="h6" 
-                            color="primary" 
-                            sx={{ 
-                              mt: { xs: 0.5, sm: 1 },
-                              fontSize: { xs: '1rem', sm: '1.25rem' }
-                            }}
-                          >
-                            {formatPrice(property.current_price)}
-                          </Typography>
+                          <Box sx={{ mt: { xs: 0.5, sm: 1 } }}>
+                            <Typography 
+                              variant="h6" 
+                              color={!property.has_active_listing ? "text.secondary" : "primary"}
+                              sx={{ 
+                                fontSize: { xs: '1rem', sm: '1.25rem' }
+                              }}
+                            >
+                              {formatPrice(property.has_active_listing ? property.current_price : property.final_price)}
+                            </Typography>
+                            
+                            {/* 坪単価 */}
+                            <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
+                              坪単価: {property.price_per_tsubo ? `${Math.round(property.price_per_tsubo).toLocaleString()}万円/坪` : '-'}
+                            </Typography>
+                            
+                            {/* 売出確認日・価格改定・販売終了日 */}
+                            <Box sx={{ mt: 1, p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
+                              <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
+                                売出確認日: {formatDate(property.earliest_published_at)}
+                                {property.earliest_published_at && (
+                                  <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 0.5, fontSize: '0.8rem' }}>
+                                    ({calculateDaysFromPublished(property.earliest_published_at)})
+                                  </Typography>
+                                )}
+                              </Typography>
+                              {property.price_change_info && (
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
+                                  <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
+                                    価格改定: {formatDate(property.price_change_info.date)}
+                                  </Typography>
+                                  <Typography 
+                                    variant="body2" 
+                                    sx={{ 
+                                      fontSize: '0.8rem',
+                                      color: property.price_change_info.change_amount > 0 ? 'error.main' : 'success.main',
+                                      fontWeight: 'bold'
+                                    }}
+                                  >
+                                    {property.price_change_info.change_amount > 0 ? '↑' : '↓'}
+                                    {Math.abs(property.price_change_info.change_amount).toLocaleString()}万円
+                                    ({property.price_change_info.change_rate > 0 ? '+' : ''}{property.price_change_info.change_rate}%)
+                                  </Typography>
+                                </Box>
+                              )}
+                              {!property.has_active_listing && property.delisted_at && (
+                                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontSize: '0.8rem' }}>
+                                  販売終了日: {formatDate(property.delisted_at)}
+                                </Typography>
+                              )}
+                            </Box>
+                          </Box>
                         </CardContent>
                       </Card>
                     </Grid>
@@ -784,6 +888,8 @@ export const BookmarksPage: React.FC = () => {
                     height: '100%',
                     cursor: 'pointer',
                     transition: 'all 0.2s ease-in-out',
+                    backgroundColor: !property.has_active_listing ? 'grey.50' : 'background.paper',
+                    opacity: !property.has_active_listing ? 0.85 : 1,
                     '&:hover': {
                       transform: 'translateY(-2px)',
                       boxShadow: 3
@@ -794,13 +900,29 @@ export const BookmarksPage: React.FC = () => {
                   <CardContent>
                     {/* ヘッダー部分 */}
                     <Box display="flex" justifyContent="between" alignItems="flex-start" mb={2}>
-                      <Typography variant="h6" component="div" sx={{ flex: 1, mr: 1 }}>
-                        {property.display_building_name || property.building?.normalized_name || '建物名不明'}
-                      </Typography>
+                      <Box sx={{ flex: 1, mr: 1 }}>
+                        <Typography variant="h6" component="div">
+                          {property.display_building_name || property.building?.normalized_name || '建物名不明'}
+                        </Typography>
+                        {!property.has_active_listing && (
+                          <Chip 
+                            label="販売終了" 
+                            size="small" 
+                            color="default"
+                            sx={{ 
+                              mt: 0.5,
+                              height: 20,
+                              fontSize: '0.7rem',
+                              backgroundColor: 'grey.300'
+                            }}
+                          />
+                        )}
+                      </Box>
                       <BookmarkButton
                         propertyId={property.id}
                         initialBookmarked={true}
                         size="small"
+                        skipInitialCheck={true}
                         onBookmarkChange={(isBookmarked) => 
                           handleBookmarkChange(property.id, isBookmarked)
                         }
@@ -818,6 +940,7 @@ export const BookmarksPage: React.FC = () => {
                         {formatFloor(property.floor_number, property.building?.total_floors)} 
                         {property.layout && ` • ${property.layout}`}
                         {property.area && ` • ${formatArea(property.area)}`}
+                        {property.direction && ` • ${property.direction}向き`}
                       </Typography>
                       {property.building?.address && (
                         <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
@@ -828,16 +951,50 @@ export const BookmarksPage: React.FC = () => {
 
                     {/* 価格情報 */}
                     <Box mb={2}>
-                      <Typography variant="h6" color="primary">
-                        {formatPrice(property.final_price || property.current_price)}
+                      <Typography variant="h6" color={!property.has_active_listing ? "text.secondary" : "primary"}>
+                        {formatPrice(property.has_active_listing ? property.current_price : property.final_price)}
                       </Typography>
-                      {(property.management_fee || property.repair_fund) && (
-                        <Typography variant="caption" color="text.secondary" display="block">
-                          {property.management_fee && `管理費: ${property.management_fee.toLocaleString()}円/月`}
-                          {property.management_fee && property.repair_fund && ' / '}
-                          {property.repair_fund && `修繕積立金: ${property.repair_fund.toLocaleString()}円/月`}
+                      
+                      {/* 坪単価 */}
+                      <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
+                        坪単価: {property.price_per_tsubo ? `${property.price_per_tsubo.toLocaleString()}万円/坪` : '-'}
+                      </Typography>
+                      
+                      {/* 売出確認日・価格改定・販売終了日 */}
+                      <Box sx={{ mt: 1, p: 1, bgcolor: 'grey.50', borderRadius: 1 }}>
+                        <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
+                          売出確認日: {formatDate(property.earliest_published_at)}
+                          {property.earliest_published_at && (
+                            <Typography component="span" variant="body2" color="text.secondary" sx={{ ml: 0.5, fontSize: '0.8rem' }}>
+                              ({calculateDaysFromPublished(property.earliest_published_at)})
+                            </Typography>
+                          )}
                         </Typography>
-                      )}
+                        {property.price_change_info && (
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mt: 0.5 }}>
+                            <Typography variant="body2" color="text.secondary" sx={{ fontSize: '0.8rem' }}>
+                              価格改定: {formatDate(property.price_change_info.date)}
+                            </Typography>
+                            <Typography 
+                              variant="body2" 
+                              sx={{ 
+                                fontSize: '0.8rem',
+                                color: property.price_change_info.change_amount > 0 ? 'error.main' : 'success.main',
+                                fontWeight: 'bold'
+                              }}
+                            >
+                              {property.price_change_info.change_amount > 0 ? '↑' : '↓'}
+                              {Math.abs(property.price_change_info.change_amount).toLocaleString()}万円
+                              ({property.price_change_info.change_rate > 0 ? '+' : ''}{property.price_change_info.change_rate}%)
+                            </Typography>
+                          </Box>
+                        )}
+                        {!property.has_active_listing && property.delisted_at && (
+                          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, fontSize: '0.8rem' }}>
+                            販売終了日: {formatDate(property.delisted_at)}
+                          </Typography>
+                        )}
+                      </Box>
                     </Box>
 
                     {/* ブックマーク日時 */}

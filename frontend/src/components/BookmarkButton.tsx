@@ -10,13 +10,15 @@ interface BookmarkButtonProps {
   initialBookmarked?: boolean;
   size?: 'small' | 'medium' | 'large';
   onBookmarkChange?: (isBookmarked: boolean) => void;
+  skipInitialCheck?: boolean;  // 初期チェックをスキップ（ブックマーク一覧ページなど）
 }
 
 export const BookmarkButton: React.FC<BookmarkButtonProps> = ({
   propertyId,
   initialBookmarked = false,
   size = 'medium',
-  onBookmarkChange
+  onBookmarkChange,
+  skipInitialCheck = false
 }) => {
   const { isAuthenticated, isLoading: authLoading } = useUserAuth();
   const [isBookmarked, setIsBookmarked] = useState(initialBookmarked);
@@ -27,6 +29,13 @@ export const BookmarkButton: React.FC<BookmarkButtonProps> = ({
   // 初期化時にブックマーク状態をチェック
   useEffect(() => {
     const checkInitialStatus = async () => {
+      // skipInitialCheckがtrueの場合は初期状態を使用してすぐに初期化完了
+      if (skipInitialCheck) {
+        setIsBookmarked(initialBookmarked);
+        setIsInitialized(true);
+        return;
+      }
+
       // 認証状態の読み込み中は待機
       if (authLoading) {
         return;
@@ -51,7 +60,7 @@ export const BookmarkButton: React.FC<BookmarkButtonProps> = ({
     };
 
     checkInitialStatus();
-  }, [propertyId, isAuthenticated, authLoading]);
+  }, [propertyId, isAuthenticated, authLoading, skipInitialCheck, initialBookmarked]);
 
   const handleToggleBookmark = async (e: React.MouseEvent) => {
     e.preventDefault();
