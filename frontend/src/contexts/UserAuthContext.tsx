@@ -83,6 +83,8 @@ export const UserAuthProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const clearAuth = () => {
     setUser(null);
     setIsAuthenticated(false);
+    // localStorageのBearerトークンも削除
+    localStorage.removeItem('userToken');
   };
 
   const login = async (email: string, password: string): Promise<{ success: boolean; error?: string }> => {
