@@ -12,3 +12,14 @@ body {
   -moz-osx-font-smoothing: grayscale;
   background-color: #f5f5f5;
 }
+
+/* Autocomplete ポップアップの幅を制限 */
+.MuiAutocomplete-popper {
+  width: auto !important;
+  max-width: 600px !important;
+}
+
+.MuiAutocomplete-paper {
+  width: auto !important;
+  max-width: 600px !important;
+}
