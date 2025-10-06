@@ -27,14 +27,32 @@ axios.interceptors.request.use(
   }
 );
 
+// リフレッシュ処理中かどうかのフラグ
+let isRefreshing = false;
+let failedQueue: any[] = [];
+
+const processQueue = (error: any, token: string | null = null) => {
+  failedQueue.forEach(prom => {
+    if (error) {
+      prom.reject(error);
+    } else {
+      prom.resolve(token);
+    }
+  });
+
+  failedQueue = [];
+};
+
 // レスポンスインターセプター
 axios.interceptors.response.use(
   (response) => {
     return response;
   },
-  (error) => {
-    // 401エラーの場合、認証情報をクリア
-    if (error.response?.status === 401) {
+  async (error) => {
+    const originalRequest = error.config;
+
+    // 401エラーの場合
+    if (error.response?.status === 401 && !originalRequest._retry) {
       if (window.location.pathname.startsWith('/admin')) {
         // 管理画面の場合（Cookie認証）
         // /admin/loginページ自体では401エラーでリダイレクトしない
@@ -42,12 +60,48 @@ axios.interceptors.response.use(
           localStorage.removeItem('adminUsername');
           // AuthContextに処理を任せる（リダイレクトループを防ぐ）
         }
+        return Promise.reject(error);
       } else {
-        // 一般ユーザーの場合
-        // UserAuthContextのclearAuth()が呼ばれるようにエラーを返すだけ
-        // トークンのクリアはUserAuthContext側で行う
+        // 一般ユーザーの場合 - リフレッシュトークンで自動更新を試みる
+        if (originalRequest.url?.includes('/refresh') || originalRequest.url?.includes('/logout')) {
+          // リフレッシュAPIやログアウトAPIのエラーは再試行しない
+          return Promise.reject(error);
+        }
+
+        if (isRefreshing) {
+          // リフレッシュ処理中の場合、キューに追加
+          return new Promise((resolve, reject) => {
+            failedQueue.push({ resolve, reject });
+          }).then(() => {
+            return axios(originalRequest);
+          }).catch(err => {
+            return Promise.reject(err);
+          });
+        }
+
+        originalRequest._retry = true;
+        isRefreshing = true;
+
+        try {
+          // リフレッシュトークンでアクセストークンを更新
+          await axios.post('/api/refresh');
+
+          processQueue(null);
+          isRefreshing = false;
+
+          // 元のリクエストを再試行
+          return axios(originalRequest);
+        } catch (refreshError) {
+          // リフレッシュ失敗 - ログアウト状態にする
+          processQueue(refreshError, null);
+          isRefreshing = false;
+
+          // UserAuthContextのclearAuth()が呼ばれるようにエラーを返す
+          return Promise.reject(refreshError);
+        }
       }
     }
+
     return Promise.reject(error);
   }
 );
