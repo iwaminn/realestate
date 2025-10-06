@@ -151,6 +151,7 @@ async def get_bookmarks(
                     "sold_at": property_data.sold_at,
                     "final_price": property_data.final_price,
                     "current_price": current_price,
+                    "updated_at": property_data.updated_at,
                     "building": {
                         "id": property_data.building.id,
                         "normalized_name": property_data.building.normalized_name,
@@ -243,6 +244,7 @@ async def get_bookmarks(
                     "sold_at": property_data.sold_at,
                     "final_price": property_data.final_price,
                     "current_price": current_price,
+                    "updated_at": property_data.updated_at,
                     "building": {
                         "id": building.id,
                         "normalized_name": building.normalized_name,
@@ -339,6 +341,7 @@ async def get_bookmarks(
                     "sold_at": property_data.sold_at,
                     "final_price": property_data.final_price,
                     "current_price": current_price,
+                    "updated_at": property_data.updated_at,
                     "building": {
                         "id": building.id,
                         "normalized_name": building.normalized_name,

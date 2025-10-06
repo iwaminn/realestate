@@ -50,7 +50,7 @@ export const BookmarksPage: React.FC = () => {
   
   // URLパラメータから表示モードと並び順を取得
   const viewMode = (searchParams.get('view') as 'all' | 'ward' | 'building') || 'all';
-  const sortBy = (searchParams.get('sort') as 'price_asc' | 'price_desc' | 'area_asc' | 'area_desc' | 'age_asc' | 'age_desc' | 'default') || 'default';
+  const sortBy = (searchParams.get('sort') as 'bookmark_date_desc' | 'bookmark_date_asc' | 'updated_at_desc' | 'updated_at_asc' | 'price_asc' | 'price_desc' | 'area_asc' | 'area_desc' | 'built_year_asc' | 'built_year_desc' | 'tsubo_price_asc' | 'tsubo_price_desc') || 'bookmark_date_desc';
 
   // アコーディオンの展開状態を管理（エリア別・建物別の場合のみ）
   const [expandedAccordions, setExpandedAccordions] = useState<Set<string>>(new Set());
@@ -191,8 +191,32 @@ export const BookmarksPage: React.FC = () => {
   // ブックマークを並び替え
   const sortBookmarks = (bookmarksToSort: Bookmark[]) => {
     const sorted = [...bookmarksToSort];
-    
+
     switch (sortBy) {
+      case 'bookmark_date_desc':
+        return sorted.sort((a, b) => {
+          const dateA = new Date(a.created_at).getTime();
+          const dateB = new Date(b.created_at).getTime();
+          return dateB - dateA; // 新しい順
+        });
+      case 'bookmark_date_asc':
+        return sorted.sort((a, b) => {
+          const dateA = new Date(a.created_at).getTime();
+          const dateB = new Date(b.created_at).getTime();
+          return dateA - dateB; // 古い順
+        });
+      case 'updated_at_desc':
+        return sorted.sort((a, b) => {
+          const dateA = new Date(a.master_property?.updated_at || 0).getTime();
+          const dateB = new Date(b.master_property?.updated_at || 0).getTime();
+          return dateB - dateA;
+        });
+      case 'updated_at_asc':
+        return sorted.sort((a, b) => {
+          const dateA = new Date(a.master_property?.updated_at || 0).getTime();
+          const dateB = new Date(b.master_property?.updated_at || 0).getTime();
+          return dateA - dateB;
+        });
       case 'price_asc':
         return sorted.sort((a, b) => {
           const priceA = a.master_property?.current_price || a.master_property?.final_price || 0;
@@ -217,17 +241,37 @@ export const BookmarksPage: React.FC = () => {
           const areaB = b.master_property?.area || 0;
           return areaB - areaA;
         });
-      case 'age_asc':
+      case 'built_year_desc':
         return sorted.sort((a, b) => {
           const yearA = a.master_property?.building?.built_year || 0;
           const yearB = b.master_property?.building?.built_year || 0;
           return yearB - yearA; // 新しい順（築年数が浅い順）
         });
-      case 'age_desc':
+      case 'built_year_asc':
         return sorted.sort((a, b) => {
           const yearA = a.master_property?.building?.built_year || 0;
           const yearB = b.master_property?.building?.built_year || 0;
           return yearA - yearB; // 古い順（築年数が深い順）
+        });
+      case 'tsubo_price_asc':
+        return sorted.sort((a, b) => {
+          const priceA = a.master_property?.current_price || a.master_property?.final_price || 0;
+          const priceB = b.master_property?.current_price || b.master_property?.final_price || 0;
+          const areaA = a.master_property?.area || 1;
+          const areaB = b.master_property?.area || 1;
+          const tsuboPriceA = (priceA / areaA) * 3.30579; // 坪単価
+          const tsuboPriceB = (priceB / areaB) * 3.30579;
+          return tsuboPriceA - tsuboPriceB;
+        });
+      case 'tsubo_price_desc':
+        return sorted.sort((a, b) => {
+          const priceA = a.master_property?.current_price || a.master_property?.final_price || 0;
+          const priceB = b.master_property?.current_price || b.master_property?.final_price || 0;
+          const areaA = a.master_property?.area || 1;
+          const areaB = b.master_property?.area || 1;
+          const tsuboPriceA = (priceA / areaA) * 3.30579; // 坪単価
+          const tsuboPriceB = (priceB / areaB) * 3.30579;
+          return tsuboPriceB - tsuboPriceA;
         });
       default:
         return sorted;
@@ -237,8 +281,32 @@ export const BookmarksPage: React.FC = () => {
   // グループ内の物件を並び替え
   const sortGroupedProperties = (properties: any[]) => {
     const sorted = [...properties];
-    
+
     switch (sortBy) {
+      case 'bookmark_date_desc':
+        return sorted.sort((a, b) => {
+          const dateA = new Date(a.created_at).getTime();
+          const dateB = new Date(b.created_at).getTime();
+          return dateB - dateA; // 新しい順
+        });
+      case 'bookmark_date_asc':
+        return sorted.sort((a, b) => {
+          const dateA = new Date(a.created_at).getTime();
+          const dateB = new Date(b.created_at).getTime();
+          return dateA - dateB; // 古い順
+        });
+      case 'updated_at_desc':
+        return sorted.sort((a, b) => {
+          const dateA = new Date(a.master_property?.updated_at || 0).getTime();
+          const dateB = new Date(b.master_property?.updated_at || 0).getTime();
+          return dateB - dateA;
+        });
+      case 'updated_at_asc':
+        return sorted.sort((a, b) => {
+          const dateA = new Date(a.master_property?.updated_at || 0).getTime();
+          const dateB = new Date(b.master_property?.updated_at || 0).getTime();
+          return dateA - dateB;
+        });
       case 'price_asc':
         return sorted.sort((a, b) => {
           const priceA = a.master_property?.current_price || 0;
@@ -263,17 +331,37 @@ export const BookmarksPage: React.FC = () => {
           const areaB = b.master_property?.area || 0;
           return areaB - areaA;
         });
-      case 'age_asc':
+      case 'built_year_desc':
         return sorted.sort((a, b) => {
           const yearA = a.master_property?.building?.built_year || 0;
           const yearB = b.master_property?.building?.built_year || 0;
           return yearB - yearA;
         });
-      case 'age_desc':
+      case 'built_year_asc':
         return sorted.sort((a, b) => {
           const yearA = a.master_property?.building?.built_year || 0;
           const yearB = b.master_property?.building?.built_year || 0;
           return yearA - yearB;
+        });
+      case 'tsubo_price_asc':
+        return sorted.sort((a, b) => {
+          const priceA = a.master_property?.current_price || 0;
+          const priceB = b.master_property?.current_price || 0;
+          const areaA = a.master_property?.area || 1;
+          const areaB = b.master_property?.area || 1;
+          const tsuboPriceA = (priceA / areaA) * 3.30579;
+          const tsuboPriceB = (priceB / areaB) * 3.30579;
+          return tsuboPriceA - tsuboPriceB;
+        });
+      case 'tsubo_price_desc':
+        return sorted.sort((a, b) => {
+          const priceA = a.master_property?.current_price || 0;
+          const priceB = b.master_property?.current_price || 0;
+          const areaA = a.master_property?.area || 1;
+          const areaB = b.master_property?.area || 1;
+          const tsuboPriceA = (priceA / areaA) * 3.30579;
+          const tsuboPriceB = (priceB / areaB) * 3.30579;
+          return tsuboPriceB - tsuboPriceA;
         });
       default:
         return sorted;
@@ -611,19 +699,25 @@ export const BookmarksPage: React.FC = () => {
                 if (viewMode !== 'all') {
                   params.view = viewMode;
                 }
-                if (e.target.value !== 'default') {
+                // デフォルト以外の場合のみsortパラメータを設定
+                if (e.target.value !== 'bookmark_date_desc') {
                   params.sort = e.target.value;
                 }
                 setSearchParams(params);
               }}
             >
-              <MenuItem value="default">デフォルト</MenuItem>
-              <MenuItem value="price_asc">価格が安い順</MenuItem>
-              <MenuItem value="price_desc">価格が高い順</MenuItem>
-              <MenuItem value="area_asc">専有面積が狭い順</MenuItem>
-              <MenuItem value="area_desc">専有面積が広い順</MenuItem>
-              <MenuItem value="age_asc">築年数（新しい順）</MenuItem>
-              <MenuItem value="age_desc">築年数（古い順）</MenuItem>
+              <MenuItem value="bookmark_date_desc">ブックマーク登録日（新しい順）</MenuItem>
+              <MenuItem value="bookmark_date_asc">ブックマーク登録日（古い順）</MenuItem>
+              <MenuItem value="updated_at_desc">物件更新日（新しい順）</MenuItem>
+              <MenuItem value="updated_at_asc">物件更新日（古い順）</MenuItem>
+              <MenuItem value="price_desc">価格（高い順）</MenuItem>
+              <MenuItem value="price_asc">価格（安い順）</MenuItem>
+              <MenuItem value="area_desc">面積（広い順）</MenuItem>
+              <MenuItem value="area_asc">面積（狭い順）</MenuItem>
+              <MenuItem value="built_year_desc">築年数（新しい順）</MenuItem>
+              <MenuItem value="built_year_asc">築年数（古い順）</MenuItem>
+              <MenuItem value="tsubo_price_desc">坪単価（高い順）</MenuItem>
+              <MenuItem value="tsubo_price_asc">坪単価（安い順）</MenuItem>
             </Select>
           </FormControl>
 
