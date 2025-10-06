@@ -399,20 +399,25 @@ async def logout_user(
             if jti:
                 revoke_user_session(db, jti)
     
-    # Cookieを削除（設定時と同じパラメータで削除）
-    response.delete_cookie(
+    # Cookieを削除（Max-Age=0で即座に削除）
+    # 本番環境でも確実に削除されるように、全てのパラメータを明示的に指定
+    response.set_cookie(
         key="access_token",
+        value="",
         httponly=True,
         secure=COOKIE_SECURE,
         samesite=COOKIE_SAMESITE,
-        path="/"
+        path="/",
+        max_age=0  # 即座に削除
     )
-    response.delete_cookie(
+    response.set_cookie(
         key="refresh_token",
+        value="",
         httponly=True,
         secure=COOKIE_SECURE,
         samesite=COOKIE_SAMESITE,
-        path="/"
+        path="/",
+        max_age=0  # 即座に削除
     )
     
     return {"message": "ログアウトしました"}
