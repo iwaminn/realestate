@@ -20,7 +20,9 @@ import {
   Select,
   MenuItem,
   FormControl,
-  InputLabel
+  InputLabel,
+  Snackbar,
+  IconButton
 } from '@mui/material';
 import { 
   BookmarkBorder, 
@@ -29,7 +31,8 @@ import {
   ViewList,
   LocationOn,
   Apartment,
-  ExpandMore
+  ExpandMore,
+  Close as CloseIcon
 } from '@mui/icons-material';
 import { BookmarkService } from '../services/bookmarkService';
 import { Bookmark } from '../types/property';
@@ -55,6 +58,10 @@ export const BookmarksPage: React.FC = () => {
   // アコーディオンの展開状態を管理（エリア別・建物別の場合のみ）
   const [expandedAccordions, setExpandedAccordions] = useState<Set<string>>(new Set());
   const [hasInteracted, setHasInteracted] = useState(false);
+
+  // Undo機能用のstate
+  const [undoSnackbarOpen, setUndoSnackbarOpen] = useState(false);
+  const [deletedBookmark, setDeletedBookmark] = useState<{ propertyId: number; propertyName: string } | null>(null);
 
   // viewModeが変更されたら、すべて展開した状態に初期化
   useEffect(() => {
@@ -104,9 +111,37 @@ export const BookmarksPage: React.FC = () => {
 
   const handleBookmarkChange = (propertyId: number, isBookmarked: boolean) => {
     if (!isBookmarked) {
-      // ブックマークが削除された場合、一覧から除外
+      // 削除された物件の情報を保存（undo用）
+      const deletedProperty = bookmarks.find(b => b.master_property_id === propertyId)?.master_property;
+      const propertyName = deletedProperty?.display_building_name || deletedProperty?.building?.normalized_name || '物件';
+      
+      setDeletedBookmark({ propertyId, propertyName });
+      setUndoSnackbarOpen(true);
+      
+      // UIから即座に削除
       setBookmarks(prev => prev.filter(bookmark => bookmark.master_property_id !== propertyId));
     }
+  };
+
+  // Undo: ブックマークを再追加
+  const handleUndo = async () => {
+    if (!deletedBookmark) return;
+    
+    try {
+      await BookmarkService.addBookmark(deletedBookmark.propertyId);
+      setUndoSnackbarOpen(false);
+      setDeletedBookmark(null);
+      // ブックマークを再読み込み
+      loadBookmarks();
+    } catch (error) {
+      console.error('ブックマークの復元に失敗:', error);
+    }
+  };
+
+  // Snackbarを閉じる
+  const handleCloseSnackbar = () => {
+    setUndoSnackbarOpen(false);
+    setDeletedBookmark(null);
   };
 
   const formatPrice = (price?: number) => {
@@ -644,8 +679,8 @@ export const BookmarksPage: React.FC = () => {
                               initialBookmarked={true}
                               size="small"
                               skipInitialCheck={true}
-                              onBookmarkChange={(isBookmarked) => 
-                                !isBookmarked && loadBookmarks()
+                              onBookmarkChange={(isBookmarked) =>
+                                handleBookmarkChange(property.id, isBookmarked)
                               }
                             />
                           </Box>
@@ -1008,6 +1043,34 @@ export const BookmarksPage: React.FC = () => {
           })}
         </Grid>
       )}
+
+      {/* Undo Snackbar */}
+      <Snackbar
+        open={undoSnackbarOpen}
+        autoHideDuration={6000}
+        onClose={handleCloseSnackbar}
+        message={deletedBookmark ? `「${deletedBookmark.propertyName}」をブックマークから削除しました` : ''}
+        action={
+          <>
+            <Button
+              size="small"
+              onClick={handleUndo}
+              sx={{
+                color: '#fff',
+                fontWeight: 'bold',
+                '&:hover': {
+                  backgroundColor: 'rgba(255, 255, 255, 0.1)'
+                }
+              }}
+            >
+              元に戻す
+            </Button>
+            <IconButton size="small" color="inherit" onClick={handleCloseSnackbar}>
+              <CloseIcon fontSize="small" />
+            </IconButton>
+          </>
+        }
+      />
     </Container>
   );
 };
