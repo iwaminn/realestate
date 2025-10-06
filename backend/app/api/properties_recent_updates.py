@@ -255,3 +255,137 @@ async def get_recent_updates_cached(
     cache.set(cache_key, response_data, ttl_seconds=1800)
     
     return response_data
+
+
+@router.get("/properties/recent-updates/counts", response_model=Dict[str, Any])
+async def get_recent_updates_counts(
+    hours: int = Query(24, ge=1, le=168, description="過去N時間以内の更新"),
+    db: Session = Depends(get_db)
+):
+    """
+    価格改定・新規掲載の件数のみを取得（トップページ用・軽量版）
+    """
+    
+    # サーバーサイドキャッシュをチェック
+    cache = get_cache()
+    cache_key = f"recent_updates_counts_{hours}h"
+    cached_data = cache.get(cache_key)
+    
+    if cached_data:
+        cached_data['cache_hit'] = True
+        return cached_data
+    
+    # キャッシュミス - データベースから件数を集計
+    from ..utils.datetime_utils import get_utc_now
+    jst_now = get_utc_now()
+    cutoff_date = jst_now.date() - timedelta(days=hours/24)
+    cutoff_time = datetime.now() - timedelta(hours=hours)
+    
+    # 価格改定件数を集計
+    price_changes_count = (
+        db.query(func.count(PropertyPriceChange.id))
+        .join(MasterProperty, MasterProperty.id == PropertyPriceChange.master_property_id)
+        .join(Building, Building.id == MasterProperty.building_id)
+        .filter(
+            PropertyPriceChange.change_date >= cutoff_date,
+            MasterProperty.sold_at.is_(None),
+            Building.is_valid_name == True
+        )
+        .scalar() or 0
+    )
+    
+    # 新規掲載件数を集計
+    first_listing_subq = (
+        db.query(
+            PropertyListing.master_property_id,
+            func.min(PropertyListing.created_at).label('first_created_at')
+        )
+        .group_by(PropertyListing.master_property_id)
+        .subquery()
+    )
+    
+    new_listings_count = (
+        db.query(func.count(MasterProperty.id.distinct()))
+        .join(Building, MasterProperty.building_id == Building.id)
+        .join(
+            first_listing_subq,
+            first_listing_subq.c.master_property_id == MasterProperty.id
+        )
+        .filter(
+            first_listing_subq.c.first_created_at >= cutoff_time,
+            MasterProperty.sold_at.is_(None),
+            Building.is_valid_name == True
+        )
+        .scalar() or 0
+    )
+    
+    # 区ごとの件数を集計
+    ward_counts = {}
+    
+    # 価格改定の区ごと件数
+    price_changes_by_ward = (
+        db.query(
+            Building.address,
+            func.count(PropertyPriceChange.id).label('count')
+        )
+        .join(MasterProperty, MasterProperty.id == PropertyPriceChange.master_property_id)
+        .join(Building, Building.id == MasterProperty.building_id)
+        .filter(
+            PropertyPriceChange.change_date >= cutoff_date,
+            MasterProperty.sold_at.is_(None),
+            Building.is_valid_name == True
+        )
+        .group_by(Building.address)
+        .all()
+    )
+    
+    for address, count in price_changes_by_ward:
+        import re
+        match = re.search(r'(.*?[区市町村])', address or '')
+        if match:
+            ward = re.sub(r'^東京都', '', match.group(1))
+            if ward not in ward_counts:
+                ward_counts[ward] = {'price_changes': 0, 'new_listings': 0}
+            ward_counts[ward]['price_changes'] += count
+    
+    # 新規掲載の区ごと件数
+    new_listings_by_ward = (
+        db.query(
+            Building.address,
+            func.count(MasterProperty.id.distinct()).label('count')
+        )
+        .join(Building, MasterProperty.building_id == Building.id)
+        .join(
+            first_listing_subq,
+            first_listing_subq.c.master_property_id == MasterProperty.id
+        )
+        .filter(
+            first_listing_subq.c.first_created_at >= cutoff_time,
+            MasterProperty.sold_at.is_(None),
+            Building.is_valid_name == True
+        )
+        .group_by(Building.address)
+        .all()
+    )
+    
+    for address, count in new_listings_by_ward:
+        import re
+        match = re.search(r'(.*?[区市町村])', address or '')
+        if match:
+            ward = re.sub(r'^東京都', '', match.group(1))
+            if ward not in ward_counts:
+                ward_counts[ward] = {'price_changes': 0, 'new_listings': 0}
+            ward_counts[ward]['new_listings'] += count
+    
+    # レスポンスデータを作成
+    response_data = {
+        'total_price_changes': price_changes_count,
+        'total_new_listings': new_listings_count,
+        'ward_counts': ward_counts,
+        'cache_hit': False
+    }
+    
+    # サーバーサイドキャッシュに保存（30分間有効）
+    cache.set(cache_key, response_data, ttl_seconds=1800)
+    
+    return response_data

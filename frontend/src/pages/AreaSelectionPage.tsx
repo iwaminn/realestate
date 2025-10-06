@@ -16,48 +16,25 @@ import {
   Paper,
   Divider,
   useTheme,
-  useMediaQuery,
   alpha,
-  List,
-  ListItem,
-  ListItemText,
-  Badge,
-  Link,
   Skeleton,
   Button,
-  Tabs,
-  Tab,
-  TabScrollButton,
   Autocomplete,
   CircularProgress,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import LocationOnIcon from '@mui/icons-material/LocationOn';
 import LocationCityIcon from '@mui/icons-material/LocationCity';
-import ApartmentIcon from '@mui/icons-material/Apartment';
-import TrendingUpIcon from '@mui/icons-material/TrendingUp';
-import TrendingDownIcon from '@mui/icons-material/TrendingDown';
 import UpdateIcon from '@mui/icons-material/Update';
 import NewReleasesIcon from '@mui/icons-material/NewReleases';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
-import RefreshIcon from '@mui/icons-material/Refresh';
-import AccessTimeIcon from '@mui/icons-material/AccessTime';
 import { propertyApi } from '../api/propertyApi';
 import { getPopularWards } from '../constants/wardOrder';
 import { debounce } from 'lodash';
 
-interface AreaStat {
-  ward: string;
-  count: number;
-}
-
 const AreaSelectionPage: React.FC = () => {
   const navigate = useNavigate();
   const theme = useTheme();
-  const isMobile = useMediaQuery(theme.breakpoints.down('md'));
-  const [areaStats, setAreaStats] = useState<{[key: string]: number}>({});
-  const [loading, setLoading] = useState(false);
-  const [totalCount, setTotalCount] = useState(0);
   const [updatesCounts, setUpdatesCounts] = useState<{
     total_price_changes: number;
     total_new_listings: number;
@@ -66,69 +43,25 @@ const AreaSelectionPage: React.FC = () => {
     [key: string]: { price_changes: number; new_listings: number };
   }>({});
   const [updatesLoading, setUpdatesLoading] = useState(true);
-  const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
-  const [, forceUpdate] = useState({});
   const [buildingOptions, setBuildingOptions] = useState<Array<string | { value: string; label: string }>>([]);
   const [loadingBuildings, setLoadingBuildings] = useState(false);
   const [autocompleteOpen, setAutocompleteOpen] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const searchValueRef = useRef<string>('');  // 検索値をrefで管理（レンダリングを減らす）
 
-
-  // 全体の物件数を取得（初回のみ）
-  useEffect(() => {
-    const fetchTotalStats = async () => {
-      setLoading(true);
-      try {
-        const response = await propertyApi.searchProperties({
-          page: 1,
-          per_page: 1,
-        });
-        
-        if (response) {
-          setTotalCount(response.total || 0);
-        }
-      } catch (error) {
-        console.error('Failed to fetch total stats:', error);
-      }
-      setLoading(false);
-    };
-
-    fetchTotalStats();
-  }, []);
-
-  // 価格改定・新着物件の件数を取得する関数（サーバーサイドキャッシュを利用）
+  // 価格改定・新着物件の件数を取得する関数（サーバーサイドキャッシュを利用・軽量版）
   const fetchUpdatesCounts = useCallback(async () => {
       setUpdatesLoading(true);
       try {
-        // 1回のAPIリクエストで全データを取得
-        const details = await propertyApi.getRecentUpdates(24);
-        
-        // 全体の合計を計算
-        let totalPriceChanges = 0;
-        let totalNewListings = 0;
-        const wardCountsMap: { [key: string]: { price_changes: number; new_listings: number } } = {};
-        
-        details.updates_by_ward.forEach(ward => {
-          const priceChangeCount = ward.price_changes.length;
-          const newListingCount = ward.new_listings.length;
-          
-          totalPriceChanges += priceChangeCount;
-          totalNewListings += newListingCount;
-          
-          wardCountsMap[ward.ward] = {
-            price_changes: priceChangeCount,
-            new_listings: newListingCount
-          };
-        });
+        // 件数のみを取得する軽量APIを使用
+        const data = await propertyApi.getRecentUpdatesCount(24);
         
         // 状態を更新
         setUpdatesCounts({
-          total_price_changes: totalPriceChanges,
-          total_new_listings: totalNewListings
+          total_price_changes: data.total_price_changes,
+          total_new_listings: data.total_new_listings
         });
-        setWardCounts(wardCountsMap);
-        setLastFetchTime(new Date());
+        setWardCounts(data.ward_counts);
         
       } catch (error) {
         console.error('Failed to fetch updates counts:', error);
@@ -320,211 +253,209 @@ const AreaSelectionPage: React.FC = () => {
       </Box>
 
       {/* 価格改定・新着物件セクション */}
-      {updatesCounts && (updatesCounts.total_price_changes > 0 || updatesCounts.total_new_listings > 0) && (
-        <Box sx={{ mb: 6 }}>
-          <Box sx={{ mb: 3 }}>
-            <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
-              <UpdateIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
-              直近24時間の更新情報
-            </Typography>
-          </Box>
-          
-          <Grid container spacing={2} sx={{ mb: 2 }}>
-            <Grid item xs={12} md={6}>
-              <Paper 
-                sx={{ 
-                  p: 2, 
-                  bgcolor: alpha(theme.palette.error.main, 0.05),
-                  cursor: 'pointer',
-                  transition: 'all 0.3s',
-                  '&:hover': {
-                    transform: 'translateY(-2px)',
-                    boxShadow: 3,
-                  }
-                }}
-                onClick={() => navigate('/updates?tab=0')}
-              >
-                <Box sx={{ 
-                  display: 'flex', 
-                  flexDirection: { xs: 'column', sm: 'row' },
-                  justifyContent: 'space-between', 
-                  alignItems: { xs: 'flex-start', sm: 'center' },
-                  gap: { xs: 1, sm: 0 }
-                }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                    <UpdateIcon color="error" />
-                    <Typography variant="h6">
-                      価格改定物件
-                    </Typography>
+      <Box sx={{ mb: 6 }}>
+        <Box sx={{ mb: 3 }}>
+          <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
+            <UpdateIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
+            直近24時間の更新情報
+          </Typography>
+        </Box>
+        
+        <Grid container spacing={2} sx={{ mb: 2 }}>
+          <Grid item xs={12} md={6}>
+            <Paper 
+              sx={{ 
+                p: 2, 
+                bgcolor: alpha(theme.palette.error.main, 0.05),
+                cursor: updatesLoading ? 'default' : 'pointer',
+                transition: 'all 0.3s',
+                '&:hover': updatesLoading ? {} : {
+                  transform: 'translateY(-2px)',
+                  boxShadow: 3,
+                }
+              }}
+              onClick={updatesLoading ? undefined : () => navigate('/updates?tab=0')}
+            >
+              <Box sx={{ 
+                display: 'flex', 
+                flexDirection: { xs: 'column', sm: 'row' },
+                justifyContent: 'space-between', 
+                alignItems: { xs: 'flex-start', sm: 'center' },
+                gap: { xs: 1, sm: 0 }
+              }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                  <UpdateIcon color="error" />
+                  <Typography variant="h6">
+                    価格改定物件
+                  </Typography>
+                  {updatesLoading ? (
+                    <Skeleton variant="rectangular" width={40} height={24} sx={{ borderRadius: 3 }} />
+                  ) : (
                     <Chip 
-                      label={updatesCounts.total_price_changes} 
+                      label={updatesCounts?.total_price_changes || 0} 
                       color="error" 
                       size="small"
                       sx={{ fontWeight: 'bold' }}
                     />
-                  </Box>
-                  <Button size="small" color="error" endIcon={<ArrowForwardIcon />}>
-                    一覧を見る
-                  </Button>
+                  )}
                 </Box>
-                {/* エリア別ショートカット */}
-                <Divider sx={{ my: 1.5 }} />
-                <Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <LocationCityIcon sx={{ fontSize: 16 }} />
-                    エリア別に見る：
+                <Button size="small" color="error" endIcon={<ArrowForwardIcon />} disabled={updatesLoading}>
+                  一覧を見る
+                </Button>
+              </Box>
+              {/* エリア別ショートカット */}
+              <Divider sx={{ my: 1.5 }} />
+              <Box>
+                <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <LocationCityIcon sx={{ fontSize: 16 }} />
+                  エリア別に見る：
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
+                  {popularWards.map((ward) => (
+                    <Button
+                      key={ward.id}
+                      size="small"
+                      variant="contained"
+                      color="error"
+                      disabled={updatesLoading}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/updates?tab=0&ward=${encodeURIComponent(ward.name)}`);
+                      }}
+                      sx={{ 
+                        minWidth: 'auto',
+                        px: 1.5,
+                        py: 0.5,
+                        fontSize: '0.8rem',
+                        fontWeight: 'medium',
+                        bgcolor: alpha(theme.palette.error.main, 0.9),
+                        '&:hover': {
+                          bgcolor: theme.palette.error.main,
+                          transform: 'scale(1.05)',
+                        }
+                      }}
+                    >
+                      {ward.name}
+                      {updatesLoading ? (
+                        <Skeleton variant="circular" width={16} height={16} sx={{ ml: 0.5 }} />
+                      ) : wardCounts[ward.name]?.price_changes > 0 ? (
+                        <Chip 
+                          label={wardCounts[ward.name].price_changes} 
+                          size="small" 
+                          sx={{ 
+                            ml: 0.5, 
+                            height: 16,
+                            fontSize: '0.7rem',
+                            bgcolor: 'white',
+                            color: theme.palette.error.main,
+                            '& .MuiChip-label': { px: 0.5 }
+                          }} 
+                        />
+                      ) : null}
+                    </Button>
+                  ))}
+                </Box>
+              </Box>
+            </Paper>
+          </Grid>
+          <Grid item xs={12} md={6}>
+            <Paper 
+              sx={{ 
+                p: 2, 
+                bgcolor: alpha(theme.palette.success.main, 0.05),
+                cursor: updatesLoading ? 'default' : 'pointer',
+                transition: 'all 0.3s',
+                '&:hover': updatesLoading ? {} : {
+                  transform: 'translateY(-2px)',
+                  boxShadow: 3,
+                }
+              }}
+              onClick={updatesLoading ? undefined : () => navigate('/updates?tab=1')}
+            >
+              <Box sx={{ 
+                display: 'flex', 
+                flexDirection: { xs: 'column', sm: 'row' },
+                justifyContent: 'space-between', 
+                alignItems: { xs: 'flex-start', sm: 'center' },
+                gap: { xs: 1, sm: 0 }
+              }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+                  <NewReleasesIcon color="success" />
+                  <Typography variant="h6">
+                    新着物件
                   </Typography>
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
-                    {popularWards.map((ward) => (
-                      <Button
-                        key={ward.id}
-                        size="small"
-                        variant="contained"
-                        color="error"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/updates?tab=0&ward=${encodeURIComponent(ward.name)}`);
-                        }}
-                        sx={{ 
-                          minWidth: 'auto',
-                          px: 1.5,
-                          py: 0.5,
-                          fontSize: '0.8rem',
-                          fontWeight: 'medium',
-                          bgcolor: alpha(theme.palette.error.main, 0.9),
-                          '&:hover': {
-                            bgcolor: theme.palette.error.main,
-                            transform: 'scale(1.05)',
-                          }
-                        }}
-                      >
-                        {ward.name}
-                        {wardCounts[ward.name]?.price_changes > 0 && (
-                          <Chip 
-                            label={wardCounts[ward.name].price_changes} 
-                            size="small" 
-                            sx={{ 
-                              ml: 0.5, 
-                              height: 16,
-                              fontSize: '0.7rem',
-                              bgcolor: 'white',
-                              color: theme.palette.error.main,
-                              '& .MuiChip-label': { px: 0.5 }
-                            }} 
-                          />
-                        )}
-                      </Button>
-                    ))}
-                  </Box>
-                </Box>
-              </Paper>
-            </Grid>
-            <Grid item xs={12} md={6}>
-              <Paper 
-                sx={{ 
-                  p: 2, 
-                  bgcolor: alpha(theme.palette.success.main, 0.05),
-                  cursor: 'pointer',
-                  transition: 'all 0.3s',
-                  '&:hover': {
-                    transform: 'translateY(-2px)',
-                    boxShadow: 3,
-                  }
-                }}
-                onClick={() => navigate('/updates?tab=1')}
-              >
-                <Box sx={{ 
-                  display: 'flex', 
-                  flexDirection: { xs: 'column', sm: 'row' },
-                  justifyContent: 'space-between', 
-                  alignItems: { xs: 'flex-start', sm: 'center' },
-                  gap: { xs: 1, sm: 0 }
-                }}>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
-                    <NewReleasesIcon color="success" />
-                    <Typography variant="h6">
-                      新着物件
-                    </Typography>
+                  {updatesLoading ? (
+                    <Skeleton variant="rectangular" width={40} height={24} sx={{ borderRadius: 3 }} />
+                  ) : (
                     <Chip 
-                      label={updatesCounts.total_new_listings} 
+                      label={updatesCounts?.total_new_listings || 0} 
                       color="success" 
                       size="small"
                       sx={{ fontWeight: 'bold' }}
                     />
-                  </Box>
-                  <Button size="small" color="success" endIcon={<ArrowForwardIcon />}>
-                    一覧を見る
-                  </Button>
+                  )}
                 </Box>
-                {/* エリア別ショートカット */}
-                <Divider sx={{ my: 1.5 }} />
-                <Box>
-                  <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                    <LocationCityIcon sx={{ fontSize: 16 }} />
-                    エリア別に見る：
-                  </Typography>
-                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
-                    {popularWards.map((ward) => (
-                      <Button
-                        key={ward.id}
-                        size="small"
-                        variant="contained"
-                        color="success"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          navigate(`/updates?tab=1&ward=${encodeURIComponent(ward.name)}`);
-                        }}
-                        sx={{ 
-                          minWidth: 'auto',
-                          px: 1.5,
-                          py: 0.5,
-                          fontSize: '0.8rem',
-                          fontWeight: 'medium',
-                          bgcolor: alpha(theme.palette.success.main, 0.9),
-                          '&:hover': {
-                            bgcolor: theme.palette.success.main,
-                            transform: 'scale(1.05)',
-                          }
-                        }}
-                      >
-                        {ward.name}
-                        {wardCounts[ward.name]?.new_listings > 0 && (
-                          <Chip 
-                            label={wardCounts[ward.name].new_listings} 
-                            size="small" 
-                            sx={{ 
-                              ml: 0.5, 
-                              height: 16,
-                              fontSize: '0.7rem',
-                              bgcolor: 'white',
-                              color: theme.palette.success.main,
-                              '& .MuiChip-label': { px: 0.5 }
-                            }} 
-                          />
-                        )}
-                      </Button>
-                    ))}
-                  </Box>
+                <Button size="small" color="success" endIcon={<ArrowForwardIcon />} disabled={updatesLoading}>
+                  一覧を見る
+                </Button>
+              </Box>
+              {/* エリア別ショートカット */}
+              <Divider sx={{ my: 1.5 }} />
+              <Box>
+                <Typography variant="caption" color="text.secondary" sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <LocationCityIcon sx={{ fontSize: 16 }} />
+                  エリア別に見る：
+                </Typography>
+                <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mt: 1 }}>
+                  {popularWards.map((ward) => (
+                    <Button
+                      key={ward.id}
+                      size="small"
+                      variant="contained"
+                      color="success"
+                      disabled={updatesLoading}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigate(`/updates?tab=1&ward=${encodeURIComponent(ward.name)}`);
+                      }}
+                      sx={{ 
+                        minWidth: 'auto',
+                        px: 1.5,
+                        py: 0.5,
+                        fontSize: '0.8rem',
+                        fontWeight: 'medium',
+                        bgcolor: alpha(theme.palette.success.main, 0.9),
+                        '&:hover': {
+                          bgcolor: theme.palette.success.main,
+                          transform: 'scale(1.05)',
+                        }
+                      }}
+                    >
+                      {ward.name}
+                      {updatesLoading ? (
+                        <Skeleton variant="circular" width={16} height={16} sx={{ ml: 0.5 }} />
+                      ) : wardCounts[ward.name]?.new_listings > 0 ? (
+                        <Chip 
+                          label={wardCounts[ward.name].new_listings} 
+                          size="small" 
+                          sx={{ 
+                            ml: 0.5, 
+                            height: 16,
+                            fontSize: '0.7rem',
+                            bgcolor: 'white',
+                            color: theme.palette.success.main,
+                            '& .MuiChip-label': { px: 0.5 }
+                          }} 
+                        />
+                      ) : null}
+                    </Button>
+                  ))}
                 </Box>
-              </Paper>
-            </Grid>
+              </Box>
+            </Paper>
           </Grid>
-        </Box>
-      )}
-
-      {/* ローディング表示 */}
-      {updatesLoading && (
-        <Box sx={{ mb: 6 }}>
-          <Skeleton variant="text" width={200} height={40} />
-          <Grid container spacing={2}>
-            {[1, 2].map((i) => (
-              <Grid item xs={12} md={6} key={i}>
-                <Skeleton variant="rectangular" height={80} />
-              </Grid>
-            ))}
-          </Grid>
-        </Box>
-      )}
+        </Grid>
+      </Box>
 
       {/* エリア選択 */}
       <>
@@ -555,14 +486,6 @@ const AreaSelectionPage: React.FC = () => {
                         <Typography variant="body2" color="text.secondary">
                           クリックして物件を検索
                         </Typography>
-                        {areaStats[ward.name] && (
-                          <Chip
-                            label={`${areaStats[ward.name]}件`}
-                            size="small"
-                            color="primary"
-                            sx={{ mt: 1 }}
-                          />
-                        )}
                       </CardContent>
                     </CardActionArea>
                   </Card>
