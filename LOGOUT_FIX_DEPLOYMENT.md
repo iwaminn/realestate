@@ -16,6 +16,29 @@
 
 ## 本番環境デプロイ手順
 
+### ステップ0: 環境変数の設定（重要）
+
+本番環境の`.env`ファイルに`COOKIE_DOMAIN`を追加してください：
+
+```bash
+# 本番サーバーにSSH接続
+cd /home/ubuntu/realestate
+
+# .envファイルを編集
+nano .env
+```
+
+以下を追加：
+```bash
+# Cookie設定（本番環境用）
+COOKIE_DOMAIN=.your-domain.com  # 例: .mansion-checker.com
+```
+
+**重要**：
+- ドメイン名の前に`.`（ドット）を付けてください（例：`.mansion-checker.com`）
+- これにより、サブドメインでもCookieが共有されます
+- ドメインが`https://mansion-checker.com`の場合は`.mansion-checker.com`と設定
+
 ### ステップ1: 最新コードを取得
 
 ```bash

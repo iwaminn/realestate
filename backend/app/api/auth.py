@@ -33,7 +33,24 @@ router = APIRouter()
 import os
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
 COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "none")  # 開発環境: none, 本番環境: lax
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)  # 本番環境: .your-domain.com
 security = HTTPBearer(auto_error=False)
+
+# Cookie設定のヘルパー関数
+def set_auth_cookie(response: Response, key: str, value: str, max_age: int):
+    """認証Cookieを設定（環境に応じてパラメータを調整）"""
+    cookie_params = {
+        "key": key,
+        "value": value,
+        "httponly": True,
+        "secure": COOKIE_SECURE,
+        "samesite": COOKIE_SAMESITE,
+        "path": "/",
+        "max_age": max_age
+    }
+    if COOKIE_DOMAIN:
+        cookie_params["domain"] = COOKIE_DOMAIN
+    response.set_cookie(**cookie_params)
 
 # Pydanticモデル
 class UserCreate(BaseModel):
@@ -342,23 +359,8 @@ async def login_user(user_data: UserLogin, response: Response, db: Session = Dep
     db.commit()
     
     # HttpOnly Cookieにトークンを設定
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=True,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
-        max_age=15 * 60  # 15分
-    )
-    
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
-        max_age=7 * 24 * 60 * 60  # 7日
-    )
+    set_auth_cookie(response, "access_token", access_token, 15 * 60)  # 15分
+    set_auth_cookie(response, "refresh_token", refresh_token, 7 * 24 * 60 * 60)  # 7日
     
     return {
         "message": "ログインしました",
@@ -378,6 +380,11 @@ async def logout_user(
     db: Session = Depends(get_db)
 ):
     """ユーザーログアウト"""
+    from ..utils.logger import api_logger
+    
+    # デバッグ: リクエストCookieを確認
+    api_logger.info(f"ログアウト開始 - Cookies: {request.cookies}")
+    
     # Cookieからトークンを取得
     access_token = request.cookies.get("access_token")
     refresh_token = request.cookies.get("refresh_token")
@@ -390,6 +397,7 @@ async def logout_user(
             jti = payload.get("jti")
             if jti:
                 revoke_user_session(db, jti)
+                api_logger.info(f"アクセストークンのセッションを無効化: {jti}")
     
     if refresh_token:
         from ..utils.auth import verify_token
@@ -398,27 +406,13 @@ async def logout_user(
             jti = payload.get("jti")
             if jti:
                 revoke_user_session(db, jti)
+                api_logger.info(f"リフレッシュトークンのセッションを無効化: {jti}")
     
-    # Cookieを削除（Max-Age=0で即座に削除）
-    # 本番環境でも確実に削除されるように、全てのパラメータを明示的に指定
-    response.set_cookie(
-        key="access_token",
-        value="",
-        httponly=True,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
-        path="/",
-        max_age=0  # 即座に削除
-    )
-    response.set_cookie(
-        key="refresh_token",
-        value="",
-        httponly=True,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
-        path="/",
-        max_age=0  # 即座に削除
-    )
+    # Cookieを削除（ヘルパー関数を使用してmax_age=0で削除）
+    set_auth_cookie(response, "access_token", "", 0)
+    set_auth_cookie(response, "refresh_token", "", 0)
+    
+    api_logger.info(f"Cookieを削除 - secure={COOKIE_SECURE}, samesite={COOKIE_SAMESITE}, domain={COOKIE_DOMAIN}")
     
     return {"message": "ログアウトしました"}
 
@@ -464,14 +458,7 @@ async def refresh_token(
     create_user_session(db, user.id, access_jti, access_expires_at)
     
     # HttpOnly Cookieに新しいアクセストークンを設定
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=True,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
-        max_age=15 * 60  # 15分
-    )
+    set_auth_cookie(response, "access_token", access_token, 15 * 60)  # 15分
     
     return {"message": "トークンをリフレッシュしました"}
 
@@ -573,23 +560,8 @@ async def verify_email(token: str, response: Response, db: Session = Depends(get
     db.commit()
     
     # HttpOnly Cookieにトークンを設定
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=True,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
-        max_age=15 * 60  # 15分
-    )
-    
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
-        max_age=7 * 24 * 60 * 60  # 7日
-    )
+    set_auth_cookie(response, "access_token", access_token, 15 * 60)  # 15分
+    set_auth_cookie(response, "refresh_token", refresh_token, 7 * 24 * 60 * 60)  # 7日
     
     return {
         "message": "メールアドレスが確認され、本登録が完了しました",
@@ -868,8 +840,8 @@ async def delete_account(
     db.commit()
     
     # Cookieを削除
-    response.delete_cookie(key="access_token", samesite=COOKIE_SAMESITE)
-    response.delete_cookie(key="refresh_token", samesite=COOKIE_SAMESITE)
+    set_auth_cookie(response, "access_token", "", 0)
+    set_auth_cookie(response, "refresh_token", "", 0)
     
     return {"message": "アカウントを削除しました"}
 
@@ -999,23 +971,8 @@ async def verify_password_set(token: str, response: Response, db: Session = Depe
     create_user_session(db, user.id, refresh_jti, refresh_expires_at)
     
     # HttpOnly Cookieにトークンを設定
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=True,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
-        max_age=15 * 60  # 15分
-    )
-    
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
-        max_age=7 * 24 * 60 * 60  # 7日
-    )
+    set_auth_cookie(response, "access_token", access_token, 15 * 60)  # 15分
+    set_auth_cookie(response, "refresh_token", refresh_token, 7 * 24 * 60 * 60)  # 7日
     
     return {
         "message": "パスワードが設定されました。次回からメールアドレスとパスワードでもログインできます。",
@@ -1159,22 +1116,8 @@ async def reset_password(
         create_user_session(db, user.id, access_jti, access_expires_at)
 
         # Cookieにトークンを設定（ログインと同じ処理）
-        response.set_cookie(
-            key="access_token",
-            value=access_token,
-            httponly=True,
-            secure=True,
-            samesite="lax",
-            max_age=60 * 60 * 24 * 365  # 1年
-        )
-        response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
-            httponly=True,
-            secure=True,
-            samesite="lax",
-            max_age=60 * 60 * 24 * 7  # 7日
-        )
+        set_auth_cookie(response, "access_token", access_token, 15 * 60)  # 15分
+        set_auth_cookie(response, "refresh_token", refresh_token, 7 * 24 * 60 * 60)  # 7日
 
         return {
             "message": "パスワードをリセットしました",

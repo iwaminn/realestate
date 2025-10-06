@@ -23,6 +23,23 @@ router = APIRouter()
 # Cookie設定（環境変数で制御）
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "false").lower() == "true"
 COOKIE_SAMESITE = os.getenv("COOKIE_SAMESITE", "none")  # 開発環境: none, 本番環境: lax
+COOKIE_DOMAIN = os.getenv("COOKIE_DOMAIN", None)  # 本番環境: .your-domain.com
+
+# Cookie設定のヘルパー関数
+def set_auth_cookie(response: Response, key: str, value: str, max_age: int):
+    """認証Cookieを設定（環境に応じてパラメータを調整）"""
+    cookie_params = {
+        "key": key,
+        "value": value,
+        "httponly": True,
+        "secure": COOKIE_SECURE,
+        "samesite": COOKIE_SAMESITE,
+        "path": "/",
+        "max_age": max_age
+    }
+    if COOKIE_DOMAIN:
+        cookie_params["domain"] = COOKIE_DOMAIN
+    response.set_cookie(**cookie_params)
 
 # Google OAuth設定
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
@@ -163,23 +180,8 @@ async def google_callback(
     # HttpOnly Cookieにトークンを設定（URLパラメータでは渡さない）
     redirect_response = RedirectResponse(url=f"{FRONTEND_URL}/auth/callback")
     
-    redirect_response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=True,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
-        max_age=15 * 60  # 15分
-    )
-    
-    redirect_response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        secure=COOKIE_SECURE,
-        samesite=COOKIE_SAMESITE,
-        max_age=7 * 24 * 60 * 60  # 7日
-    )
+    set_auth_cookie(redirect_response, "access_token", access_token, 15 * 60)  # 15分
+    set_auth_cookie(redirect_response, "refresh_token", refresh_token, 7 * 24 * 60 * 60)  # 7日
     
     print(f"[OAuth] Created session for user {user.id}, access_jti={access_jti}, refresh_jti={refresh_jti}")
     
