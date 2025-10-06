@@ -97,39 +97,8 @@ const AreaSelectionPage: React.FC = () => {
     fetchTotalStats();
   }, []);
 
-  // キャッシュ設定
-  const CACHE_KEY = 'recentUpdatesCache';
-  const CACHE_DURATION = 30 * 60 * 1000; // 30分（リクエスト頻度を削減）
-
-  // 価格改定・新着物件の件数を取得する関数
-  const fetchUpdatesCounts = useCallback(async (forceRefresh = false) => {
-      // キャッシュをチェック
-      if (!forceRefresh) {
-        const cachedData = localStorage.getItem(CACHE_KEY);
-        if (cachedData) {
-          try {
-            const parsed = JSON.parse(cachedData);
-            const cacheAge = Date.now() - parsed.timestamp;
-            
-            // キャッシュが有効期限内なら使用
-            if (cacheAge < CACHE_DURATION) {
-              setUpdatesCounts({
-                total_price_changes: parsed.totalPriceChanges,
-                total_new_listings: parsed.totalNewListings
-              });
-              setWardCounts(parsed.wardCounts);
-              setLastFetchTime(new Date(parsed.timestamp));
-              setUpdatesLoading(false);
-              
-              // バックグラウンド更新は削除（無限ループの原因）
-              return;
-            }
-          } catch (e) {
-            console.error('Failed to parse cache:', e);
-          }
-        }
-      }
-
+  // 価格改定・新着物件の件数を取得する関数（サーバーサイドキャッシュを利用）
+  const fetchUpdatesCounts = useCallback(async () => {
       setUpdatesLoading(true);
       try {
         // 1回のAPIリクエストで全データを取得
@@ -161,56 +130,16 @@ const AreaSelectionPage: React.FC = () => {
         setWardCounts(wardCountsMap);
         setLastFetchTime(new Date());
         
-        // キャッシュに保存
-        const cacheData = {
-          timestamp: Date.now(),
-          totalPriceChanges,
-          totalNewListings,
-          wardCounts: wardCountsMap
-        };
-        localStorage.setItem(CACHE_KEY, JSON.stringify(cacheData));
-        
       } catch (error) {
         console.error('Failed to fetch updates counts:', error);
       }
       setUpdatesLoading(false);
-  }, [CACHE_KEY, CACHE_DURATION]);
+  }, []);
 
-  // 価格改定・新着物件の件数を取得（初回とイベント時）
+  // 価格改定・新着物件の件数を取得（初回のみ）
   useEffect(() => {
     fetchUpdatesCounts();
-    
-    // 10分ごとにキャッシュを更新
-    const interval = setInterval(() => fetchUpdatesCounts(true), CACHE_DURATION);
-    
-    // 1分ごとに「○分前」の表示を更新
-    const updateTimeInterval = setInterval(() => {
-      if (lastFetchTime) {
-        forceUpdate({});
-      }
-    }, 60000); // 1分ごと
-    
-    // ページがフォーカスされた時にキャッシュの古さをチェック
-    const handleFocus = () => {
-      const cachedData = localStorage.getItem(CACHE_KEY);
-      if (cachedData) {
-        const parsed = JSON.parse(cachedData);
-        const cacheAge = Date.now() - parsed.timestamp;
-        // キャッシュが10分以上古い場合は更新
-        if (cacheAge >= CACHE_DURATION) {
-          fetchUpdatesCounts(true);
-        }
-      }
-    };
-    
-    window.addEventListener('focus', handleFocus);
-    
-    return () => {
-      clearInterval(interval);
-      clearInterval(updateTimeInterval);
-      window.removeEventListener('focus', handleFocus);
-    };
-  }, [fetchUpdatesCounts, CACHE_KEY, CACHE_DURATION]);
+  }, [fetchUpdatesCounts]);
 
   // 建物名候補を取得する関数（デバウンス付き）- SearchFormと同じ処理
   const fetchBuildingSuggestions = useCallback(

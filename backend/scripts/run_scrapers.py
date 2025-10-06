@@ -119,6 +119,11 @@ def run_all_scrapers(area: str = "minato", max_properties: int = 100, force_deta
     if final_status == 'completed':
         logger.info("スクレイピング完了。価格改定履歴キューの処理を開始します...")
         process_price_change_queue()
+        
+        # サーバーサイドキャッシュをクリア
+        from backend.app.utils.cache import clear_recent_updates_cache
+        clear_recent_updates_cache()
+        logger.info("サーバーサイドキャッシュをクリアしました")
     
     return results
 
@@ -189,6 +194,11 @@ def run_single_scraper(scraper_name: str, area: str = "minato", max_properties: 
         # スクレイピング完了後に価格改定履歴キューを自動処理
         logger.info("スクレイピング完了。価格改定履歴キューの処理を開始します...")
         process_price_change_queue()
+        
+        # サーバーサイドキャッシュをクリア
+        from backend.app.utils.cache import clear_recent_updates_cache
+        clear_recent_updates_cache()
+        logger.info("サーバーサイドキャッシュをクリアしました")
         
     except Exception as e:
         logger.error(f"{scraper_name} scraper failed: {e}", exc_info=True)
@@ -437,6 +447,11 @@ def process_price_change_queue(limit: int = 1000):
                 f"失敗={stats['failed']}件, "
                 f"変更={stats['changes_found']}件"
             )
+            
+            # サーバーサイドキャッシュをクリア
+            from backend.app.utils.cache import clear_recent_updates_cache
+            clear_recent_updates_cache()
+            logger.info("価格改定履歴キュー処理完了後: サーバーサイドキャッシュをクリアしました")
             
             return stats
             

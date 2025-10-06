@@ -178,14 +178,6 @@ export const DataUpdateManagement: React.FC = () => {
       // ステータスを再取得
       await fetchQueueStatus();
       await fetchCacheStats();
-      
-      // フロントエンドのキャッシュをクリア
-      try {
-        localStorage.removeItem('recentUpdatesCache');
-        console.log('フロントエンドキャッシュをクリアしました');
-      } catch (e) {
-        console.error('キャッシュクリアに失敗:', e);
-      }
     } catch (error) {
       setMessage({
         type: 'error',
@@ -220,14 +212,6 @@ export const DataUpdateManagement: React.FC = () => {
       });
       // 統計を再取得
       await fetchListingStats();
-
-      // フロントエンドのキャッシュをクリア
-      try {
-        localStorage.removeItem('recentUpdatesCache');
-        console.log('掲載状態更新後: フロントエンドキャッシュをクリアしました');
-      } catch (e) {
-        console.error('キャッシュクリアに失敗:', e);
-      }
     } catch (error) {
       setListingUpdateResult({
         success: false,
@@ -289,14 +273,6 @@ export const DataUpdateManagement: React.FC = () => {
       // キューステータスとキャッシュ統計を更新
       await fetchQueueStatus();
       await fetchCacheStats();
-
-      // フロントエンドのキャッシュをクリア
-      try {
-        localStorage.removeItem('recentUpdatesCache');
-        console.log('処理キュー実行後: フロントエンドキャッシュをクリアしました');
-      } catch (e) {
-        console.error('キャッシュクリアに失敗:', e);
-      }
     } catch (error) {
       setMessage({
         type: 'error',

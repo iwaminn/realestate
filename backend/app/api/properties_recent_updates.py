@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, and_
 
 from ..database import get_db
+from ..utils.cache import get_cache
 from ..models import (
     PropertyPriceChange,
     MasterProperty,
@@ -26,9 +27,20 @@ async def get_recent_updates_cached(
     db: Session = Depends(get_db)
 ):
     """
-    キャッシュテーブルから価格改定情報を取得（高速版）
+    キャッシュテーブルから価格改定情報を取得（高速版・サーバーサイドキャッシュ対応）
     """
     
+    # サーバーサイドキャッシュをチェック
+    cache = get_cache()
+    cache_key = f"recent_updates_{hours}h"
+    cached_data = cache.get(cache_key)
+    
+    if cached_data:
+        # キャッシュヒット
+        cached_data['cache_info']['cache_hit'] = True
+        return cached_data
+    
+    # キャッシュミス - データベースから取得
     # 対象期間の開始日
     from ..utils.datetime_utils import get_utc_now
     # 日本時間での計算
@@ -224,7 +236,8 @@ async def get_recent_updates_cached(
     )
     last_scraper_completed_at = last_scraping_task.completed_at if last_scraping_task else None
     
-    return {
+    # レスポンスデータを作成
+    response_data = {
         'period_hours': hours,
         'cutoff_time': cutoff_time.isoformat(),
         'total_price_changes': total_price_changes,
@@ -233,6 +246,12 @@ async def get_recent_updates_cached(
         'last_scraper_completed_at': last_scraper_completed_at.isoformat() if last_scraper_completed_at else None,
         'cache_info': {
             'using_cache': True,
-            'cache_updated_at': db.query(func.max(PropertyPriceChange.updated_at)).scalar()
+            'cache_updated_at': db.query(func.max(PropertyPriceChange.updated_at)).scalar(),
+            'cache_hit': False
         }
     }
+    
+    # サーバーサイドキャッシュに保存（30分間有効）
+    cache.set(cache_key, response_data, ttl_seconds=1800)
+    
+    return response_data
