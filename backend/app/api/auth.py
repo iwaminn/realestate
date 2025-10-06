@@ -399,9 +399,21 @@ async def logout_user(
             if jti:
                 revoke_user_session(db, jti)
     
-    # Cookieを削除
-    response.delete_cookie(key="access_token", samesite=COOKIE_SAMESITE)
-    response.delete_cookie(key="refresh_token", samesite=COOKIE_SAMESITE)
+    # Cookieを削除（設定時と同じパラメータで削除）
+    response.delete_cookie(
+        key="access_token",
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        path="/"
+    )
+    response.delete_cookie(
+        key="refresh_token",
+        httponly=True,
+        secure=COOKIE_SECURE,
+        samesite=COOKIE_SAMESITE,
+        path="/"
+    )
     
     return {"message": "ログアウトしました"}
 
