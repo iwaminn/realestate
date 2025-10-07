@@ -55,12 +55,42 @@ axios.interceptors.response.use(
     if (error.response?.status === 401 && !originalRequest._retry) {
       if (window.location.pathname.startsWith('/admin')) {
         // 管理画面の場合（Cookie認証）
-        // /admin/loginページ自体では401エラーでリダイレクトしない
-        if (window.location.pathname !== '/admin/login') {
-          localStorage.removeItem('adminUsername');
-          // AuthContextに処理を任せる（リダイレクトループを防ぐ）
+        // /admin/loginやリフレッシュAPIのエラーは再試行しない
+        if (originalRequest.url?.includes('/admin/login') || originalRequest.url?.includes('/admin/refresh') || originalRequest.url?.includes('/admin/logout')) {
+          return Promise.reject(error);
         }
-        return Promise.reject(error);
+
+        if (isRefreshing) {
+          // リフレッシュ処理中の場合、キューに追加
+          return new Promise((resolve, reject) => {
+            failedQueue.push({ resolve, reject });
+          }).then(() => {
+            return axios(originalRequest);
+          }).catch(err => {
+            return Promise.reject(err);
+          });
+        }
+
+        originalRequest._retry = true;
+        isRefreshing = true;
+
+        try {
+          // 管理者用リフレッシュトークンでアクセストークンを更新
+          await axios.post('/admin/refresh');
+
+          processQueue(null);
+          isRefreshing = false;
+
+          // 元のリクエストを再試行
+          return axios(originalRequest);
+        } catch (refreshError) {
+          // リフレッシュ失敗 - ログアウト状態にする
+          processQueue(refreshError, null);
+          isRefreshing = false;
+          localStorage.removeItem('adminUsername');
+
+          return Promise.reject(refreshError);
+        }
       } else {
         // 一般ユーザーの場合 - リフレッシュトークンで自動更新を試みる
         if (originalRequest.url?.includes('/refresh') || originalRequest.url?.includes('/logout')) {
