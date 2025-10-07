@@ -94,7 +94,7 @@ class PriceChangeCalculator:
         
         主な改善点：
         1. 連続した日付範囲を生成して、記録がない日も含める
-        2. アクティブな掲載のみを対象とする
+        2. すべての掲載を対象とする（非掲載も含む）
         3. 最新の状態（今日）も含めて価格変更を検出
         
         Args:
@@ -116,7 +116,6 @@ class PriceChangeCalculator:
                 CURRENT_DATE as end_date
             FROM property_listings pl
             WHERE pl.master_property_id = :master_property_id
-              AND pl.is_active = true
         """)
         
         period = self.db.execute(period_query, {'master_property_id': master_property_id}).fetchone()
@@ -138,14 +137,13 @@ class PriceChangeCalculator:
                     '1 day'::interval
                 )::date as price_date
             ),
-            active_listings AS (
-                -- アクティブな掲載のみを対象とする
+            all_listings AS (
+                -- すべての掲載を対象とする（非掲載も含む）
                 SELECT * FROM property_listings
                 WHERE master_property_id = :master_property_id
-                  AND is_active = true
             ),
             listing_prices_expanded AS (
-                -- 各掲載の価格を日付ごとに展開
+                -- 各掲載の価格を日付ごとに展開（掲載の有効期間のみ）
                 SELECT DISTINCT
                     al.master_property_id,
                     al.id as listing_id,
@@ -166,8 +164,15 @@ class PriceChangeCalculator:
                         -- それもなければ現在価格（最新の状態）
                         al.current_price
                     ) as price
-                FROM active_listings al
+                FROM all_listings al
                 CROSS JOIN date_range dr
+                WHERE 
+                    -- 掲載の有効期間内のみ
+                    dr.price_date >= DATE(COALESCE(al.first_published_at, al.first_seen_at, al.created_at))
+                    AND (
+                        al.is_active = true  -- アクティブな掲載は現在まで有効
+                        OR dr.price_date <= DATE(COALESCE(al.delisted_at, al.last_confirmed_at))  -- 非アクティブな掲載は終了日まで
+                    )
             ),
             daily_majority_prices AS (
                 -- 各日付の多数決価格を計算

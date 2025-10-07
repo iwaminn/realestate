@@ -284,7 +284,7 @@ async def get_building_properties(
     
     # アクティブフィルタ
     if not include_inactive:
-        query = query.filter(MasterProperty.sold_at.is_(None))
+        # sold_atではなくhas_active_listingで判定（販売終了でも新しいアクティブな掲載がある場合は表示）
         query = query.filter(price_subquery_active.c.master_property_id.isnot(None))
         query = query.filter(price_subquery_active.c.has_active_listing == True)
     
@@ -296,7 +296,7 @@ async def get_building_properties(
     
     results = query.all()
     
-    # 価格変更履歴を一括取得（パフォーマンス最適化）
+    # 価格変更履歴を一括取得（PropertyPriceChangeテーブルから）
     from ..models import PropertyPriceChange
     from sqlalchemy import and_
     
@@ -327,14 +327,14 @@ async def get_building_properties(
     # 結果を整形
     properties = []
     for mp, min_price, max_price, listing_count, source_sites, has_active, last_confirmed, delisted, station_info, earliest_published_at, earliest_published_at_all in results:
-        # 価格を決定
-        if mp.sold_at:
-            # 販売終了物件はfinal_priceを使用
-            final_price = get_sold_property_final_price(db, mp)
-            display_price = final_price
+        # 価格を決定：アクティブな掲載がない場合のみfinal_priceを使用
+        if not has_active and mp.sold_at and mp.final_price:
+            # 販売終了物件でアクティブな掲載がない場合
+            display_price = mp.final_price
+            final_price = mp.final_price
         else:
-            # 販売中物件はcurrent_priceを使用
-            display_price = mp.current_price
+            # アクティブな掲載がある場合は、多数決価格（min_priceまたはcurrent_price）を使用
+            display_price = min_price if min_price else mp.current_price
             final_price = None
         
         # 価格変更情報を取得
@@ -349,8 +349,8 @@ async def get_building_properties(
                 "change_rate": round(pc.price_diff_rate, 1) if pc.price_diff_rate else 0
             }
         
-        # 販売終了物件の場合は全掲載から earliest_published_at を取得
-        display_earliest_published_at = earliest_published_at if earliest_published_at else earliest_published_at_all
+        # 全掲載から最も古い earliest_published_at を取得（非アクティブな掲載も含む）
+        display_earliest_published_at = earliest_published_at_all if earliest_published_at_all else earliest_published_at
 
         properties.append({
             "id": mp.id,

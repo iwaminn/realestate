@@ -35,6 +35,7 @@ interface Property {
   direction: string | null;
   current_price: number | null;
   sold_at: string | null;
+  has_active_listing: boolean;
 }
 
 interface Building {
@@ -338,7 +339,7 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
                       p: 2,
                       cursor: 'pointer',
                       '&:hover': { bgcolor: 'action.hover' },
-                      opacity: property.sold_at ? 0.7 : 1,
+                      opacity: !property.has_active_listing ? 0.7 : 1,
                     }}
                     onClick={() => handlePropertyClick(property.id)}
                   >
@@ -346,7 +347,7 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
                       <Typography variant="body2" fontWeight="bold">
                         {property.room_number || `${property.floor_number}F`}
                       </Typography>
-                      {property.sold_at && (
+                      {!property.has_active_listing && (
                         <Chip label="販売終了" size="small" color="error" />
                       )}
                     </Box>

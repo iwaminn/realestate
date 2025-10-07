@@ -54,9 +54,9 @@ async def get_recent_updates_cached(
             PropertyListing.master_property_id,
             func.max(PropertyListing.title).label('title'),
             func.max(PropertyListing.url).label('url'),
-            func.max(PropertyListing.source_site).label('source_site')
+            func.max(PropertyListing.source_site).label('source_site'),
+            func.bool_or(PropertyListing.is_active).label('has_active_listing')
         )
-        .filter(PropertyListing.is_active == True)
         .group_by(PropertyListing.master_property_id)
         .subquery()
     )
@@ -75,7 +75,7 @@ async def get_recent_updates_cached(
         .join(active_listing_subq, active_listing_subq.c.master_property_id == MasterProperty.id)
         .filter(
             PropertyPriceChange.change_date >= cutoff_date,
-            MasterProperty.sold_at.is_(None),  # 販売終了物件を除外
+            active_listing_subq.c.has_active_listing == True,  # 販売中物件のみ
             Building.is_valid_name == True  # 広告文のみの建物を除外
         )
         .order_by(PropertyPriceChange.change_date.desc())
@@ -101,9 +101,9 @@ async def get_recent_updates_cached(
             func.max(PropertyListing.title).label('title'),
             func.max(PropertyListing.url).label('url'),
             func.max(PropertyListing.source_site).label('source_site'),
-            func.max(PropertyListing.current_price).label('listing_price')  # 掲載価格を取得
+            func.max(PropertyListing.current_price).label('listing_price'),  # 掲載価格を取得
+            func.bool_or(PropertyListing.is_active).label('has_active_listing')
         )
-        .filter(PropertyListing.is_active == True)
         .group_by(PropertyListing.master_property_id)
         .subquery()
     )
@@ -127,7 +127,7 @@ async def get_recent_updates_cached(
         )
         .filter(
             first_listing_subq.c.first_created_at >= cutoff_time,
-            MasterProperty.sold_at.is_(None),
+            new_listing_active_subq.c.has_active_listing == True,  # 販売中物件のみ
             Building.is_valid_name == True  # 広告文のみの建物を除外
         )
         .distinct(MasterProperty.id)
@@ -281,14 +281,25 @@ async def get_recent_updates_counts(
     cutoff_date = jst_now.date() - timedelta(days=hours/24)
     cutoff_time = datetime.now() - timedelta(hours=hours)
     
+    # has_active_listingサブクエリ
+    active_listing_check = (
+        db.query(
+            PropertyListing.master_property_id,
+            func.bool_or(PropertyListing.is_active).label('has_active_listing')
+        )
+        .group_by(PropertyListing.master_property_id)
+        .subquery()
+    )
+    
     # 価格改定件数を集計
     price_changes_count = (
         db.query(func.count(PropertyPriceChange.id))
         .join(MasterProperty, MasterProperty.id == PropertyPriceChange.master_property_id)
         .join(Building, Building.id == MasterProperty.building_id)
+        .join(active_listing_check, active_listing_check.c.master_property_id == MasterProperty.id)
         .filter(
             PropertyPriceChange.change_date >= cutoff_date,
-            MasterProperty.sold_at.is_(None),
+            active_listing_check.c.has_active_listing == True,
             Building.is_valid_name == True
         )
         .scalar() or 0
@@ -307,13 +318,14 @@ async def get_recent_updates_counts(
     new_listings_count = (
         db.query(func.count(MasterProperty.id.distinct()))
         .join(Building, MasterProperty.building_id == Building.id)
+        .join(active_listing_check, active_listing_check.c.master_property_id == MasterProperty.id)
         .join(
             first_listing_subq,
             first_listing_subq.c.master_property_id == MasterProperty.id
         )
         .filter(
             first_listing_subq.c.first_created_at >= cutoff_time,
-            MasterProperty.sold_at.is_(None),
+            active_listing_check.c.has_active_listing == True,
             Building.is_valid_name == True
         )
         .scalar() or 0
@@ -330,9 +342,10 @@ async def get_recent_updates_counts(
         )
         .join(MasterProperty, MasterProperty.id == PropertyPriceChange.master_property_id)
         .join(Building, Building.id == MasterProperty.building_id)
+        .join(active_listing_check, active_listing_check.c.master_property_id == MasterProperty.id)
         .filter(
             PropertyPriceChange.change_date >= cutoff_date,
-            MasterProperty.sold_at.is_(None),
+            active_listing_check.c.has_active_listing == True,
             Building.is_valid_name == True
         )
         .group_by(Building.address)
@@ -355,13 +368,14 @@ async def get_recent_updates_counts(
             func.count(MasterProperty.id.distinct()).label('count')
         )
         .join(Building, MasterProperty.building_id == Building.id)
+        .join(active_listing_check, active_listing_check.c.master_property_id == MasterProperty.id)
         .join(
             first_listing_subq,
             first_listing_subq.c.master_property_id == MasterProperty.id
         )
         .filter(
             first_listing_subq.c.first_created_at >= cutoff_time,
-            MasterProperty.sold_at.is_(None),
+            active_listing_check.c.has_active_listing == True,
             Building.is_valid_name == True
         )
         .group_by(Building.address)

@@ -39,14 +39,27 @@ def update_listing_status():
             listing.delisted_at = listing.last_confirmed_at  # 最終確認日を掲載終了日とする
             print(f"  - {listing.title} (最終確認: {listing.last_confirmed_at})")
         
-        # 2. 各物件について、全掲載が非アクティブになったものに販売終了日を設定
-        # アクティブな掲載がない物件を取得
-        subquery = db.query(PropertyListing.master_property_id).filter(
+        # 2. 販売終了していた物件が再び販売開始された場合、sold_atをクリア
+        active_listings_subquery = db.query(PropertyListing.master_property_id).filter(
             PropertyListing.is_active == True
         ).subquery()
         
+        properties_with_active_listings = db.query(MasterProperty).filter(
+            MasterProperty.id.in_(active_listings_subquery),
+            MasterProperty.sold_at.isnot(None)  # 販売終了日が設定されている
+        ).all()
+
+        print(f"\n販売再開となる物件: {len(properties_with_active_listings)}件")
+        
+        for property in properties_with_active_listings:
+            print(f"  - 物件ID: {property.id}, 販売終了日をクリア（販売再開）")
+            property.sold_at = None
+            property.current_price = None  # スクレイパーが次回更新
+        
+        # 3. 各物件について、全掲載が非アクティブになったものに販売終了日を設定
+        # アクティブな掲載がない物件を取得
         properties_without_active_listings = db.query(MasterProperty).filter(
-            ~MasterProperty.id.in_(subquery),
+            ~MasterProperty.id.in_(active_listings_subquery),
             MasterProperty.sold_at.is_(None)  # まだ販売終了日が設定されていない
         ).all()
         

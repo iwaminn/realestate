@@ -45,21 +45,22 @@ def create_unified_price_timeline(price_records: List[Dict[str, Any]]) -> Dict[s
     # まず、現在価格を収集
     current_date = date.today()
     for record in price_records:
-        if record.get('is_active', True):
-            listing_id = record.get('listing_id')
-            if listing_id and 'current_price' in record and record['current_price']:
-                listing_price_history[listing_id]['current_price'] = record['current_price']
-                listing_price_history[listing_id]['source'] = record['source_site']
-                # 掲載開始日を記録
-                if 'listing_start_date' in record and record['listing_start_date']:
-                    start_date = record['listing_start_date']
-                    if isinstance(start_date, datetime):
-                        start_date = start_date.date()
-                    listing_price_history[listing_id]['start_date'] = start_date
+        # すべての掲載（アクティブ・非アクティブ両方）を含める
+        listing_id = record.get('listing_id')
+        if listing_id and 'current_price' in record and record['current_price']:
+            listing_price_history[listing_id]['current_price'] = record['current_price']
+            listing_price_history[listing_id]['source'] = record['source_site']
+            # 掲載開始日を記録
+            if 'listing_start_date' in record and record['listing_start_date']:
+                start_date = record['listing_start_date']
+                if isinstance(start_date, datetime):
+                    start_date = start_date.date()
+                listing_price_history[listing_id]['start_date'] = start_date
     
     # 価格履歴を追加
     for record in price_records:
-        if record.get('is_active', True) and record.get('price'):
+        # すべての掲載（アクティブ・非アクティブ両方）を含める
+        if record.get('price'):
             date_key = record['recorded_at'].date() if isinstance(record['recorded_at'], datetime) else record['recorded_at']
             listing_id = record.get('listing_id')
             source = record['source_site']

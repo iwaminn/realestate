@@ -1052,19 +1052,23 @@ const BuildingPropertiesPage: React.FC = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {sortedProperties.map((property) => (
+              {sortedProperties.map((property) => {
+                // 販売終了判定：アクティブな掲載の有無で判定
+                const isSold = !property.has_active_listing;
+                
+                return (
                 <TableRow 
                   key={property.id} 
                   hover 
                   sx={{ 
-                    opacity: property.sold_at ? 0.7 : 1,
+                    opacity: isSold ? 0.7 : 1,
                     cursor: 'pointer'
                   }}
                   onClick={() => navigate(`/properties/${property.id}`)}
                 >
                   <TableCell align="right" sx={{ pl: { xs: 0, sm: 2 }, pr: { xs: 0.5, sm: 2 } }}>
                     <Box display="flex" alignItems="center" justifyContent="flex-end" flexWrap="nowrap">
-                      {property.sold_at && (
+                      {isSold && (
                         <Chip
                           label="終"
                           size="small"
@@ -1080,8 +1084,8 @@ const BuildingPropertiesPage: React.FC = () => {
                           }}
                         />
                       )}
-                      {property.sold_at && (
-                        <Chip
+                      {isSold && (
+                  <Chip
                           label="販売終了"
                           size="small"
                           sx={{ 
@@ -1116,18 +1120,18 @@ const BuildingPropertiesPage: React.FC = () => {
                   </TableCell>
                   <TableCell align="right" sx={{ px: { xs: 1, sm: 2 } }}>
                     <Box sx={{ whiteSpace: 'nowrap' }}>
-                      {property.sold_at && property.last_sale_price
+                      {isSold && property.last_sale_price
                         ? formatPrice(property.last_sale_price, isSmallScreen)
                         : formatPrice(property.current_price, isSmallScreen)}
                     </Box>
-                    {property.sold_at && property.last_sale_price && (
+                    {isSold && property.last_sale_price && (
                       <Box sx={{ fontSize: '0.7rem', color: 'text.secondary', display: { xs: 'none', sm: 'block' } }}>
                         （販売終了時）
                       </Box>
                     )}
                   </TableCell>
                   <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, whiteSpace: 'nowrap' }}>
-                    {property.sold_at && property.last_sale_price
+                    {isSold && property.last_sale_price
                       ? calculatePricePerTsubo(property.last_sale_price, property.area, isSmallScreen)
                       : calculatePricePerTsubo(property.current_price, property.area, isSmallScreen)}
                   </TableCell>
@@ -1226,7 +1230,7 @@ const BuildingPropertiesPage: React.FC = () => {
                   </TableCell>
                   {includeInactive && (
                     <TableCell sx={{ px: { xs: 1, sm: 2 }, whiteSpace: 'nowrap' }}>
-                      {property.sold_at ? (
+                      {isSold ? (
                         <>
                           <Box sx={{ display: { xs: 'none', sm: 'inline' } }}>{formatDate(property.sold_at)}</Box>
                           <Box sx={{ display: { xs: 'inline', sm: 'none' } }}>{property.sold_at ? calculateDaysFromPublished(property.sold_at) : '-'}</Box>
@@ -1235,14 +1239,19 @@ const BuildingPropertiesPage: React.FC = () => {
                     </TableCell>
                   )}
                 </TableRow>
-              ))}
+                );
+              })}
             </TableBody>
           </Table>
         </TableContainer>
         </>
       ) : (
         <Grid container spacing={3}>
-          {sortedProperties.map((property) => (
+          {sortedProperties.map((property) => {
+            // 販売終了判定：アクティブな掲載の有無で判定
+            const isSold = !property.has_active_listing;
+
+            return (
             <Grid item xs={12} md={6} key={property.id}>
               <Card 
                 sx={{ 
@@ -1259,8 +1268,8 @@ const BuildingPropertiesPage: React.FC = () => {
                       <Typography variant="h6" component="div">
                         {property.floor_number ? `${property.floor_number}階` : '物件'}
                       </Typography>
-                      {property.sold_at && (
-                        <Chip
+                      {isSold && (
+                  <Chip
                           label="販売終了"
                           size="small"
                           color="error"
@@ -1309,18 +1318,18 @@ const BuildingPropertiesPage: React.FC = () => {
                   </Box>
 
                   <Box sx={{ mt: 2, mb: 2 }}>
-                    <Typography variant="h5" color={property.sold_at ? "text.secondary" : "primary"}>
-                      {property.sold_at && property.last_sale_price
+                    <Typography variant="h5" color={isSold ? "text.secondary" : "primary"}>
+                      {isSold && property.last_sale_price
                         ? formatPrice(property.last_sale_price)
                         : formatPrice(property.current_price)}
                     </Typography>
-                    {property.sold_at && property.last_sale_price && (
+                    {isSold && property.last_sale_price && (
                       <Typography variant="body2" color="text.secondary">
                         （販売終了時）
                       </Typography>
                     )}
                     <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
-                      坪単価: {property.sold_at && property.last_sale_price
+                      坪単価: {isSold && property.last_sale_price
                         ? calculatePricePerTsubo(property.last_sale_price, property.area)
                         : calculatePricePerTsubo(property.current_price, property.area)}
                     </Typography>
@@ -1424,7 +1433,8 @@ const BuildingPropertiesPage: React.FC = () => {
                 </CardContent>
               </Card>
             </Grid>
-          ))}
+            );
+          })}
         </Grid>
       )}
     </Container>

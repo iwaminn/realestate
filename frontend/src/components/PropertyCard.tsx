@@ -28,6 +28,9 @@ interface PropertyCardProps {
 const PropertyCard: React.FC<PropertyCardProps> = ({ property, initialBookmarked }) => {
   const navigate = useNavigate();
 
+  // 販売終了判定：アクティブな掲載の有無で判定（sold_atは履歴情報として保持）
+  const isSold = !property.has_active_listing;
+
   // 販売終了からの経過日数を計算
   const getDaysSinceSold = () => {
     if (!property.sold_at) return null;
@@ -76,20 +79,20 @@ const PropertyCard: React.FC<PropertyCardProps> = ({ property, initialBookmarked
         flexDirection: 'column',
         cursor: 'pointer',
         position: 'relative',
-        backgroundColor: property.sold_at ? '#f5f5f5' : 'background.paper',
-        border: property.sold_at ? '2px solid #e0e0e0' : '1px solid rgba(0, 0, 0, 0.12)',
-        opacity: property.sold_at ? 0.85 : (property.has_active_listing === false ? 0.7 : 1),
+        backgroundColor: isSold ? '#f5f5f5' : 'background.paper',
+        border: isSold ? '2px solid #e0e0e0' : '1px solid rgba(0, 0, 0, 0.12)',
+        opacity: isSold ? 0.85 : 1,
         transition: 'all 0.3s ease',
         '&:hover': {
-          boxShadow: property.sold_at ? 3 : 6,
-          opacity: property.sold_at ? 0.95 : 1,
+          boxShadow: isSold ? 3 : 6,
+          opacity: isSold ? 0.95 : 1,
         },
       }}
       onClick={handleClick}
     >
       <CardContent sx={{ flexGrow: 1 }}>
         {/* 販売終了バッジと経過日数 */}
-        {property.sold_at && (
+        {isSold && property.sold_at && (
           <Box sx={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: 0.5, flexDirection: 'column', alignItems: 'flex-end' }}>
             <Chip
               label="販売終了"
@@ -140,14 +143,14 @@ const PropertyCard: React.FC<PropertyCardProps> = ({ property, initialBookmarked
             color="warning"
             sx={{ 
               position: 'absolute', 
-              top: (property.sold_at || property.has_active_listing === false) ? 40 : 8, 
+              top: isSold ? 40 : 8, 
               right: 8 
             }}
           />
         )}
         
         {/* ブックマークボタン（右上） */}
-        <Box sx={{ position: 'absolute', top: 8, right: property.sold_at || property.has_active_listing === false || property.is_resale ? 72 : 8, zIndex: 1 }}>
+        <Box sx={{ position: 'absolute', top: 8, right: isSold || property.is_resale ? 72 : 8, zIndex: 1 }}>
           <BookmarkButton
             propertyId={property.id}
             size="small"
@@ -167,24 +170,13 @@ const PropertyCard: React.FC<PropertyCardProps> = ({ property, initialBookmarked
           </Box>
         )}
 
-        <Typography gutterBottom variant="h6" component="h2" sx={{ color: property.sold_at ? 'text.secondary' : 'text.primary' }}>
+        <Typography gutterBottom variant="h6" component="h2" sx={{ color: isSold ? 'text.secondary' : 'text.primary' }}>
           {property.display_building_name || property.building.normalized_name}
           {property.room_number && ` ${property.room_number}`}
         </Typography>
 
-        <Typography variant="h5" color={property.sold_at ? "text.secondary" : "primary"} gutterBottom>
-          {property.sold_at && property.last_sale_price 
-            ? (
-              <>
-                <Box component="span" sx={{ textDecoration: 'line-through', opacity: 0.6, fontSize: '0.9em' }}>
-                  {formatPrice(property.last_sale_price)}
-                </Box>
-                <Box component="span" sx={{ ml: 1, fontSize: '0.85em', color: 'text.secondary' }}>
-                  販売終了
-                </Box>
-              </>
-            )
-            : priceDisplay}
+        <Typography variant="h5" color={isSold ? "text.secondary" : "primary"} gutterBottom>
+          {priceDisplay}
         </Typography>
 
         <Grid container spacing={1} sx={{ mb: 2 }}>
@@ -243,9 +235,9 @@ const PropertyCard: React.FC<PropertyCardProps> = ({ property, initialBookmarked
           <Box sx={{ mt: 1, pt: 1, borderTop: '1px solid #e0e0e0' }}>
             <Typography variant="caption" color="text.secondary">
               売出確認日: {format(new Date(property.earliest_published_at), 'yyyy年MM月dd日', { locale: ja })}
-              {property.sold_at ? (
+              {isSold && property.sold_at ? (
                 <>　販売終了日: {format(new Date(property.sold_at), 'yyyy年MM月dd日', { locale: ja })}</>
-              ) : property.has_active_listing !== false ? (
+              ) : !isSold ? (
                 <>（販売開始から{Math.floor((new Date().getTime() - new Date(property.earliest_published_at).getTime()) / (1000 * 60 * 60 * 24))}日経過）</>
               ) : property.delisted_at ? (
                 <>（{format(new Date(property.delisted_at), 'yyyy年MM月dd日', { locale: ja })}掲載終了）</>

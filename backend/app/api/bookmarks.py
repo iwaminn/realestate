@@ -100,62 +100,79 @@ async def remove_bookmark(
 
 def _get_property_details(db: Session, property_data, current_price):
     """物件の詳細情報を取得するヘルパー関数"""
-    from ..models import ListingPriceHistory
+    from ..models import PropertyPriceChange
     
-    # 販売中の掲載があるかチェック
-    active_listing = db.query(PropertyListing).filter(
-        PropertyListing.master_property_id == property_data.id,
-        PropertyListing.is_active == True
-    ).first()
+    # 全掲載を取得
+    all_listings = property_data.listings
     
-    has_active = active_listing is not None
+    # アクティブな掲載のみフィルタ
+    active_listings = [l for l in all_listings if l.is_active]
+    has_active = len(active_listings) > 0
+    
+    # 価格の多数決を計算（アクティブな掲載のみ）
+    majority_price = None
+    if active_listings:
+        price_votes = {}
+        for listing in active_listings:
+            if listing.current_price:
+                price = listing.current_price
+                if price not in price_votes:
+                    price_votes[price] = 0
+                price_votes[price] += 1
+        
+        if price_votes:
+            sorted_prices = sorted(price_votes.items(), key=lambda x: (-x[1], x[0]))
+            majority_price = sorted_prices[0][0]
     
     # 最終確認日、販売終了日、売出確認日を取得
     last_confirmed_at = None
     delisted_at = None
     earliest_published_at = None
     
-    if has_active and active_listing:
-        last_confirmed_at = active_listing.last_confirmed_at
-        earliest_published_at = active_listing.first_published_at
-    else:
-        # 販売終了の場合、最後に見つかった掲載から終了日を取得
+    if has_active and active_listings:
+        last_confirmed_at = active_listings[0].last_confirmed_at
+    
+    # 売出確認日は全掲載から最も古いものを取得
+    if all_listings:
+        earliest_dates = [
+            l.first_published_at or l.published_at or l.first_seen_at 
+            for l in all_listings 
+            if l.first_published_at or l.published_at or l.first_seen_at
+        ]
+        if earliest_dates:
+            earliest_published_at = min(earliest_dates)
+    
+    # 販売終了の場合、最後に見つかった掲載から終了日を取得
+    if not has_active:
         last_listing = db.query(PropertyListing).filter(
             PropertyListing.master_property_id == property_data.id
         ).order_by(PropertyListing.last_scraped_at.desc()).first()
         if last_listing:
             delisted_at = last_listing.delisted_at
-            earliest_published_at = last_listing.first_published_at
     
     # 坪単価を計算（万円/坪）
     price_per_tsubo = None
     if property_data.area and property_data.area > 0 and current_price:
         price_per_tsubo = int(round(current_price / (property_data.area / 3.30578)))
     
-    # 価格変更情報を取得
+    # 価格変更情報を取得（PropertyPriceChangeテーブルから）
     price_change_info = None
-    if active_listing:
-        # 最新の価格変更を取得
-        latest_price_change = db.query(ListingPriceHistory).filter(
-            ListingPriceHistory.property_listing_id == active_listing.id
-        ).order_by(ListingPriceHistory.recorded_at.desc()).limit(2).all()
-        
-        if len(latest_price_change) >= 2:
-            current = latest_price_change[0]
-            previous = latest_price_change[1]
-            change_amount = current.price - previous.price
-            change_rate = (change_amount / previous.price * 100) if previous.price else 0
-            
-            price_change_info = {
-                "date": current.recorded_at.isoformat() if current.recorded_at else None,
-                "previous_price": previous.price,
-                "current_price": current.price,
-                "change_amount": change_amount,
-                "change_rate": round(change_rate, 2)
-            }
+    latest_price_change = db.query(PropertyPriceChange).filter(
+        PropertyPriceChange.master_property_id == property_data.id
+    ).order_by(PropertyPriceChange.change_date.desc()).first()
+    
+    if latest_price_change:
+        price_change_info = {
+            "date": latest_price_change.change_date.isoformat(),
+            "previous_price": latest_price_change.old_price,
+            "current_price": latest_price_change.new_price,
+            "change_amount": latest_price_change.price_diff,
+            "change_rate": round(latest_price_change.price_diff_rate, 2) if latest_price_change.price_diff_rate else 0
+        }
     
     return {
         "has_active_listing": has_active,
+        "majority_price": majority_price,
         "price_per_tsubo": price_per_tsubo,
         "price_change_info": price_change_info,
         "last_confirmed_at": last_confirmed_at,
@@ -193,14 +210,19 @@ async def get_bookmarks(
             ).first()
 
             if property_data:
-                # 価格を決定
-                if property_data.sold_at:
+                # 詳細情報を取得（仮の価格で呼び出し）
+                details = _get_property_details(db, property_data, None)
+                
+                # 価格を決定：アクティブな掲載がない場合のみfinal_priceを使用
+                if not details["has_active_listing"] and property_data.sold_at and property_data.final_price:
                     current_price = property_data.final_price
                 else:
-                    current_price = property_data.current_price
+                    # アクティブな掲載がある場合は、多数決価格を使用
+                    current_price = details.get("majority_price")
                 
-                # 詳細情報を取得
-                details = _get_property_details(db, property_data, current_price)
+                # 坪単価を再計算
+                if property_data.area and property_data.area > 0 and current_price:
+                    details["price_per_tsubo"] = int(round(current_price / (property_data.area / 3.30578)))
                 
                 # 建物情報を含む物件データを構築
                 master_property_dict = {
@@ -283,11 +305,19 @@ async def get_bookmarks(
                     "price_sum": 0
                 }
             
-            # 価格を決定
-            if property_data.sold_at:
+            # 詳細情報を取得（仮の価格で呼び出し）
+            details = _get_property_details(db, property_data, None)
+            
+            # 価格を決定：アクティブな掲載がない場合のみfinal_priceを使用
+            if not details["has_active_listing"] and property_data.sold_at and property_data.final_price:
                 current_price = property_data.final_price
             else:
-                current_price = property_data.current_price
+                # アクティブな掲載がある場合は、多数決価格を使用
+                current_price = details.get("majority_price")
+            
+            # 坪単価を再計算
+            if property_data.area and property_data.area > 0 and current_price:
+                details["price_per_tsubo"] = int(round(current_price / (property_data.area / 3.30578)))
             
             # 統計情報を更新
             if current_price:
@@ -296,9 +326,6 @@ async def get_bookmarks(
                     grouped[ward]["min_price"] = current_price
                 if grouped[ward]["max_price"] is None or current_price > grouped[ward]["max_price"]:
                     grouped[ward]["max_price"] = current_price
-            
-            # 詳細情報を取得
-            details = _get_property_details(db, property_data, current_price)
             
             grouped[ward]["count"] += 1
             grouped[ward]["properties"].append({
@@ -387,11 +414,19 @@ async def get_bookmarks(
                     }
                 }
             
-            # 価格を決定
-            if property_data.sold_at:
+            # 詳細情報を取得（仮の価格で呼び出し）
+            details = _get_property_details(db, property_data, None)
+            
+            # 価格を決定：アクティブな掲載がない場合のみfinal_priceを使用
+            if not details["has_active_listing"] and property_data.sold_at and property_data.final_price:
                 current_price = property_data.final_price
             else:
-                current_price = property_data.current_price
+                # アクティブな掲載がある場合は、多数決価格を使用
+                current_price = details.get("majority_price")
+            
+            # 坪単価を再計算
+            if property_data.area and property_data.area > 0 and current_price:
+                details["price_per_tsubo"] = int(round(current_price / (property_data.area / 3.30578)))
             
             # 統計情報を更新
             if current_price:
@@ -403,9 +438,6 @@ async def get_bookmarks(
             
             if property_data.area:
                 grouped[building_key]["area_sum"] += property_data.area
-            
-            # 詳細情報を取得
-            details = _get_property_details(db, property_data, current_price)
             
             grouped[building_key]["count"] += 1
             grouped[building_key]["properties"].append({

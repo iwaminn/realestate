@@ -41,16 +41,14 @@ def initialize_price_changes(batch_size: int = 100, days_back: int = None):
     calculator = PriceChangeCalculator(session)
     
     try:
-        # アクティブな物件を取得
-        logger.info("アクティブな物件を取得中...")
-        active_properties = session.query(MasterProperty.id).join(
+        # すべての物件を取得（アクティブ・非アクティブ問わず）
+        logger.info("物件を取得中...")
+        all_properties = session.query(MasterProperty.id).join(
             PropertyListing,
             PropertyListing.master_property_id == MasterProperty.id
-        ).filter(
-            PropertyListing.is_active == True
         ).distinct().all()
         
-        total = len(active_properties)
+        total = len(all_properties)
         logger.info(f"処理対象物件数: {total}")
         
         # 既存のキャッシュをクリア
@@ -65,7 +63,7 @@ def initialize_price_changes(batch_size: int = 100, days_back: int = None):
         errors = 0
         
         for i in range(0, total, batch_size):
-            batch = active_properties[i:i+batch_size]
+            batch = all_properties[i:i+batch_size]
             batch_changes = 0
             
             for (property_id,) in batch:

@@ -160,8 +160,8 @@ const PropertyListPage: React.FC = () => {
       setTotalCount(response.total);
       setCurrentPage(page);
       
-      // 販売終了物件の数をカウント
-      const soldPropertiesCount = response.properties.filter((p: Property) => p.sold_at).length;
+      // 販売終了物件の数をカウント（アクティブな掲載がない物件）
+      const soldPropertiesCount = response.properties.filter((p: Property) => !p.has_active_listing).length;
       setSoldCount(soldPropertiesCount);
       
       // URLパラメータを更新（フラグがtrueの場合のみ）

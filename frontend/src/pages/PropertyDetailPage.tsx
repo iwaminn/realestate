@@ -157,6 +157,9 @@ const PropertyDetailPage: React.FC = () => {
   // 掲載情報を分類
   const all_listings = listings || [];
   const active_listings = all_listings.filter(l => l.is_active);
+  
+  // 販売終了判定：アクティブな掲載の有無で判定（sold_atは履歴情報として保持）
+  const isSold = !property.has_active_listing;
 
   // 統合価格履歴データの準備（物件単位）
   const priceChartData: any[] = [];
@@ -235,9 +238,9 @@ const PropertyDetailPage: React.FC = () => {
       <Paper elevation={1} sx={{ 
         p: 3, 
         mb: 3, 
-        opacity: property.sold_at ? 0.85 : (property.has_active_listing === false ? 0.8 : 1),
-        backgroundColor: property.sold_at ? '#f5f5f5' : 'background.paper',
-        border: property.sold_at ? '2px solid #e0e0e0' : '1px solid rgba(0, 0, 0, 0.12)'
+        opacity: isSold ? 0.85 : 1,
+        backgroundColor: isSold ? '#f5f5f5' : 'background.paper',
+        border: isSold ? '2px solid #e0e0e0' : '1px solid rgba(0, 0, 0, 0.12)'
       }}>
         <Grid container spacing={3}>
           <Grid item xs={12}>
@@ -253,7 +256,7 @@ const PropertyDetailPage: React.FC = () => {
                 variant={isMobile ? "h5" : "h4"} 
                 component="h1" 
                 sx={{ 
-                  color: property.sold_at ? 'text.secondary' : 'text.primary',
+                  color: isSold ? 'text.secondary' : 'text.primary',
                   wordBreak: 'break-word',
                   hyphens: 'auto',
                   lineHeight: { xs: 1.3, md: 1.2 },
@@ -269,7 +272,7 @@ const PropertyDetailPage: React.FC = () => {
                 gap: 1, 
                 alignSelf: { xs: 'flex-start', md: 'center' } 
               }}>
-                {property.sold_at && (
+                {isSold && (
                   <Chip 
                     label="販売終了" 
                     sx={{ 
@@ -280,9 +283,7 @@ const PropertyDetailPage: React.FC = () => {
                     }} 
                   />
                 )}
-                {!property.sold_at && property.has_active_listing === false && (
-                  <Chip label="掲載終了" color="error" sx={{ mr: 1 }} />
-                )}
+
                 {property.is_resale && (
                   <Chip 
                     icon={<Cached />} 
@@ -304,19 +305,8 @@ const PropertyDetailPage: React.FC = () => {
           </Grid>
 
           <Grid item xs={12}>
-            <Typography variant="h3" color={property.sold_at ? "text.secondary" : "primary"} gutterBottom>
-              {property.sold_at && property.last_sale_price ? (
-                <>
-                  <Box component="span" sx={{ textDecoration: 'line-through', opacity: 0.7 }}>
-                    {formatPrice(property.last_sale_price)}
-                  </Box>
-                  <Box component="span" sx={{ ml: 2, fontSize: '0.8em' }}>
-                    販売終了
-                  </Box>
-                </>
-              ) : (
-                formatPrice(property.current_price)
-              )}
+            <Typography variant="h3" color={isSold ? "text.secondary" : "primary"} gutterBottom>
+              {formatPrice(property.current_price)}
             </Typography>
             
             {/* 売出確認日と販売終了日の表示 */}
@@ -325,7 +315,7 @@ const PropertyDetailPage: React.FC = () => {
                 <Typography variant="body1" color="text.secondary">
                   売出確認日: {format(new Date(property.earliest_published_at), 'yyyy年MM月dd日', { locale: ja })}
                 </Typography>
-                {property.sold_at ? (
+                {isSold && property.sold_at ? (
                   <>
                     <Typography variant="body1" color="text.secondary">
                       販売終了日: {format(new Date(property.sold_at), 'yyyy年MM月dd日', { locale: ja })}
@@ -343,7 +333,7 @@ const PropertyDetailPage: React.FC = () => {
             )}
             
             {/* 販売終了からの経過日数 */}
-            {property.sold_at && (
+            {isSold && property.sold_at && (
               <Alert severity="info" sx={{ mb: 2 }}>
                 <Typography variant="body2">
                   この物件は販売終了しています。
@@ -610,7 +600,7 @@ const PropertyDetailPage: React.FC = () => {
             startIcon={<Apartment />}
             onClick={() => {
               const url = `/buildings/${building.id}/properties`;
-              if (property.sold_at || property.has_active_listing === false) {
+              if (isSold) {
                 navigate(`${url}?includeInactive=true`);
               } else {
                 navigate(url);
@@ -743,7 +733,7 @@ const PropertyDetailPage: React.FC = () => {
       )}
       
       {/* 販売終了物件の場合、過去の掲載情報を表示 */}
-      {property.sold_at && active_listings.length === 0 && all_listings.length > 0 && (
+      {isSold && all_listings.length > 0 && (
         <Paper elevation={1} sx={{ p: 3, mb: 3, backgroundColor: '#f5f5f5' }}>
           <Typography variant="h5" gutterBottom color="text.secondary">
             過去の掲載情報
