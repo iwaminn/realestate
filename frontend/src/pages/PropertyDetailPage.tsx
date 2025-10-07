@@ -308,9 +308,9 @@ const PropertyDetailPage: React.FC = () => {
 
           <Grid item xs={12}>
             <Typography variant="h3" color={isSold ? "text.secondary" : "primary"} gutterBottom>
-              {formatPrice(property.current_price)}
+              {formatPrice(isSold ? (property.final_price || price_timeline?.summary?.current_price) : property.current_price)}
             </Typography>
-            
+
             {/* 売出確認日と販売終了日の表示 */}
             {property.earliest_published_at && (
               <Box sx={{ mb: 2 }}>

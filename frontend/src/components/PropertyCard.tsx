@@ -68,8 +68,8 @@ const PropertyCard: React.FC<PropertyCardProps> = ({ property, initialBookmarked
     navigate(`/properties/${property.id}`);
   };
 
-  // 価格表示を決定
-  const priceDisplay = formatPrice(property.current_price);
+  // 価格表示を決定（販売終了ならfinal_price、販売中ならcurrent_price）
+  const priceDisplay = formatPrice(isSold ? property.final_price : property.current_price);
 
   return (
     <Card

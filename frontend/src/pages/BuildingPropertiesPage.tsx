@@ -490,8 +490,8 @@ const BuildingPropertiesPage: React.FC = () => {
           break;
         case 'price_per_tsubo':
           // 坪単価を計算（価格 / (面積 / 3.30578)）
-          const aPrice = a.current_price || 0;
-          const bPrice = b.current_price || 0;
+          const aPrice = (!a.has_active_listing ? a.final_price : a.current_price) || 0;
+          const bPrice = (!b.has_active_listing ? b.final_price : b.current_price) || 0;
           aValue = (a.area && aPrice) ? aPrice / (a.area / 3.30578) : 0;
           bValue = (b.area && bPrice) ? bPrice / (b.area / 3.30578) : 0;
           break;
@@ -1120,19 +1120,19 @@ const BuildingPropertiesPage: React.FC = () => {
                   </TableCell>
                   <TableCell align="right" sx={{ px: { xs: 1, sm: 2 } }}>
                     <Box sx={{ whiteSpace: 'nowrap' }}>
-                      {isSold && property.last_sale_price
-                        ? formatPrice(property.last_sale_price, isSmallScreen)
+                      {isSold
+                        ? formatPrice(property.final_price, isSmallScreen)
                         : formatPrice(property.current_price, isSmallScreen)}
                     </Box>
-                    {isSold && property.last_sale_price && (
+                    {isSold && property.final_price && (
                       <Box sx={{ fontSize: '0.7rem', color: 'text.secondary', display: { xs: 'none', sm: 'block' } }}>
                         （販売終了時）
                       </Box>
                     )}
                   </TableCell>
                   <TableCell align="right" sx={{ px: { xs: 1, sm: 2 }, whiteSpace: 'nowrap' }}>
-                    {isSold && property.last_sale_price
-                      ? calculatePricePerTsubo(property.last_sale_price, property.area, isSmallScreen)
+                    {isSold
+                      ? calculatePricePerTsubo(property.final_price, property.area, isSmallScreen)
                       : calculatePricePerTsubo(property.current_price, property.area, isSmallScreen)}
                   </TableCell>
                   <TableCell sx={{ px: { xs: 1, sm: 2 }, whiteSpace: 'nowrap' }}>{property.layout || '-'}</TableCell>
@@ -1319,18 +1319,18 @@ const BuildingPropertiesPage: React.FC = () => {
 
                   <Box sx={{ mt: 2, mb: 2 }}>
                     <Typography variant="h5" color={isSold ? "text.secondary" : "primary"}>
-                      {isSold && property.last_sale_price
-                        ? formatPrice(property.last_sale_price)
+                      {isSold
+                        ? formatPrice(property.final_price)
                         : formatPrice(property.current_price)}
                     </Typography>
-                    {isSold && property.last_sale_price && (
+                    {isSold && property.final_price && (
                       <Typography variant="body2" color="text.secondary">
                         （販売終了時）
                       </Typography>
                     )}
                     <Typography variant="body1" color="text.secondary" sx={{ mt: 0.5 }}>
-                      坪単価: {isSold && property.last_sale_price
-                        ? calculatePricePerTsubo(property.last_sale_price, property.area)
+                      坪単価: {isSold
+                        ? calculatePricePerTsubo(property.final_price, property.area)
                         : calculatePricePerTsubo(property.current_price, property.area)}
                     </Typography>
                   </Box>

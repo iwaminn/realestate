@@ -300,14 +300,14 @@ export const BookmarksPage: React.FC = () => {
         });
       case 'price_asc':
         return sorted.sort((a, b) => {
-          const priceA = a.master_property?.current_price || a.master_property?.final_price || 0;
-          const priceB = b.master_property?.current_price || b.master_property?.final_price || 0;
+          const priceA = (a.master_property?.has_active_listing ? a.master_property?.current_price : a.master_property?.final_price) || 0;
+          const priceB = (b.master_property?.has_active_listing ? b.master_property?.current_price : b.master_property?.final_price) || 0;
           return priceA - priceB;
         });
       case 'price_desc':
         return sorted.sort((a, b) => {
-          const priceA = a.master_property?.current_price || a.master_property?.final_price || 0;
-          const priceB = b.master_property?.current_price || b.master_property?.final_price || 0;
+          const priceA = (a.master_property?.has_active_listing ? a.master_property?.current_price : a.master_property?.final_price) || 0;
+          const priceB = (b.master_property?.has_active_listing ? b.master_property?.current_price : b.master_property?.final_price) || 0;
           return priceB - priceA;
         });
       case 'area_asc':
@@ -336,8 +336,8 @@ export const BookmarksPage: React.FC = () => {
         });
       case 'tsubo_price_asc':
         return sorted.sort((a, b) => {
-          const priceA = a.master_property?.current_price || a.master_property?.final_price || 0;
-          const priceB = b.master_property?.current_price || b.master_property?.final_price || 0;
+          const priceA = (a.master_property?.has_active_listing ? a.master_property?.current_price : a.master_property?.final_price) || 0;
+          const priceB = (b.master_property?.has_active_listing ? b.master_property?.current_price : b.master_property?.final_price) || 0;
           const areaA = a.master_property?.area || 1;
           const areaB = b.master_property?.area || 1;
           const tsuboPriceA = (priceA / areaA) * 3.30579; // 坪単価
@@ -346,8 +346,8 @@ export const BookmarksPage: React.FC = () => {
         });
       case 'tsubo_price_desc':
         return sorted.sort((a, b) => {
-          const priceA = a.master_property?.current_price || a.master_property?.final_price || 0;
-          const priceB = b.master_property?.current_price || b.master_property?.final_price || 0;
+          const priceA = (a.master_property?.has_active_listing ? a.master_property?.current_price : a.master_property?.final_price) || 0;
+          const priceB = (b.master_property?.has_active_listing ? b.master_property?.current_price : b.master_property?.final_price) || 0;
           const areaA = a.master_property?.area || 1;
           const areaB = b.master_property?.area || 1;
           const tsuboPriceA = (priceA / areaA) * 3.30579; // 坪単価
@@ -398,8 +398,8 @@ export const BookmarksPage: React.FC = () => {
         });
       case 'price_asc':
         return sorted.sort((a, b) => {
-          const priceA = a.master_property?.current_price || 0;
-          const priceB = b.master_property?.current_price || 0;
+          const priceA = (a.master_property?.has_active_listing ? a.master_property?.current_price : a.master_property?.final_price) || 0;
+          const priceB = (b.master_property?.has_active_listing ? b.master_property?.current_price : b.master_property?.final_price) || 0;
           if (priceA !== priceB) return priceA - priceB;
           // 第二ソート：ブックマーク登録日（新しい順）
           const bookmarkDateA = new Date(a.created_at).getTime();
@@ -408,8 +408,8 @@ export const BookmarksPage: React.FC = () => {
         });
       case 'price_desc':
         return sorted.sort((a, b) => {
-          const priceA = a.master_property?.current_price || 0;
-          const priceB = b.master_property?.current_price || 0;
+          const priceA = (a.master_property?.has_active_listing ? a.master_property?.current_price : a.master_property?.final_price) || 0;
+          const priceB = (b.master_property?.has_active_listing ? b.master_property?.current_price : b.master_property?.final_price) || 0;
           if (priceB !== priceA) return priceB - priceA;
           // 第二ソート：ブックマーク登録日（新しい順）
           const bookmarkDateA = new Date(a.created_at).getTime();
@@ -446,8 +446,8 @@ export const BookmarksPage: React.FC = () => {
         });
       case 'tsubo_price_asc':
         return sorted.sort((a, b) => {
-          const priceA = a.master_property?.current_price || 0;
-          const priceB = b.master_property?.current_price || 0;
+          const priceA = (a.master_property?.has_active_listing ? a.master_property?.current_price : a.master_property?.final_price) || 0;
+          const priceB = (b.master_property?.has_active_listing ? b.master_property?.current_price : b.master_property?.final_price) || 0;
           const areaA = a.master_property?.area || 1;
           const areaB = b.master_property?.area || 1;
           const tsuboPriceA = (priceA / areaA) * 3.30579;
@@ -460,8 +460,8 @@ export const BookmarksPage: React.FC = () => {
         });
       case 'tsubo_price_desc':
         return sorted.sort((a, b) => {
-          const priceA = a.master_property?.current_price || 0;
-          const priceB = b.master_property?.current_price || 0;
+          const priceA = (a.master_property?.has_active_listing ? a.master_property?.current_price : a.master_property?.final_price) || 0;
+          const priceB = (b.master_property?.has_active_listing ? b.master_property?.current_price : b.master_property?.final_price) || 0;
           const areaA = a.master_property?.area || 1;
           const areaB = b.master_property?.area || 1;
           const tsuboPriceA = (priceA / areaA) * 3.30579;
@@ -521,15 +521,15 @@ export const BookmarksPage: React.FC = () => {
       case 'price_asc':
         return sorted.sort((a, b) => {
           // 各建物の最低価格で比較
-          const priceA = Math.min(...a[1].properties.map((p: any) => p.master_property?.current_price || Infinity));
-          const priceB = Math.min(...b[1].properties.map((p: any) => p.master_property?.current_price || Infinity));
+          const priceA = Math.min(...a[1].properties.map((p: any) => (p.master_property?.has_active_listing ? p.master_property?.current_price : p.master_property?.final_price) || Infinity));
+          const priceB = Math.min(...b[1].properties.map((p: any) => (p.master_property?.has_active_listing ? p.master_property?.current_price : p.master_property?.final_price) || Infinity));
           return priceA - priceB;
         });
       case 'price_desc':
         return sorted.sort((a, b) => {
           // 各建物の最高価格で比較
-          const priceA = Math.max(...a[1].properties.map((p: any) => p.master_property?.current_price || 0));
-          const priceB = Math.max(...b[1].properties.map((p: any) => p.master_property?.current_price || 0));
+          const priceA = Math.max(...a[1].properties.map((p: any) => (p.master_property?.has_active_listing ? p.master_property?.current_price : p.master_property?.final_price) || 0));
+          const priceB = Math.max(...b[1].properties.map((p: any) => (p.master_property?.has_active_listing ? p.master_property?.current_price : p.master_property?.final_price) || 0));
           return priceB - priceA;
         });
       case 'area_asc':
@@ -563,12 +563,12 @@ export const BookmarksPage: React.FC = () => {
         return sorted.sort((a, b) => {
           // 各建物の最低坪単価で比較
           const tsuboPriceA = Math.min(...a[1].properties.map((p: any) => {
-            const price = p.master_property?.current_price || Infinity;
+            const price = (p.master_property?.has_active_listing ? p.master_property?.current_price : p.master_property?.final_price) || Infinity;
             const area = p.master_property?.area || 1;
             return (price / area) * 3.30579;
           }));
           const tsuboPriceB = Math.min(...b[1].properties.map((p: any) => {
-            const price = p.master_property?.current_price || Infinity;
+            const price = (p.master_property?.has_active_listing ? p.master_property?.current_price : p.master_property?.final_price) || Infinity;
             const area = p.master_property?.area || 1;
             return (price / area) * 3.30579;
           }));
@@ -578,12 +578,12 @@ export const BookmarksPage: React.FC = () => {
         return sorted.sort((a, b) => {
           // 各建物の最高坪単価で比較
           const tsuboPriceA = Math.max(...a[1].properties.map((p: any) => {
-            const price = p.master_property?.current_price || 0;
+            const price = (p.master_property?.has_active_listing ? p.master_property?.current_price : p.master_property?.final_price) || 0;
             const area = p.master_property?.area || 1;
             return (price / area) * 3.30579;
           }));
           const tsuboPriceB = Math.max(...b[1].properties.map((p: any) => {
-            const price = p.master_property?.current_price || 0;
+            const price = (p.master_property?.has_active_listing ? p.master_property?.current_price : p.master_property?.final_price) || 0;
             const area = p.master_property?.area || 1;
             return (price / area) * 3.30579;
           }));
