@@ -152,12 +152,12 @@ export const DataUpdateManagement: React.FC = () => {
   const updatePriceChanges = async (immediate: boolean = false) => {
     setLoading(true);
     setMessage(null);
-    
+
     try {
-      const endpoint = immediate 
-        ? '/api/admin/price-changes/refresh-immediate'
-        : '/api/admin/price-changes/refresh-all';
-        
+      const endpoint = immediate
+        ? '/admin/price-changes/refresh-immediate'
+        : '/admin/price-changes/refresh-all';
+
       const response = await axios.post(endpoint, null, {
         params: { days: updateDays }
       });
