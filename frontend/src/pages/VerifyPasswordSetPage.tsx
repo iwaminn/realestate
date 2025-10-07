@@ -22,9 +22,14 @@ export const VerifyPasswordSetPage: React.FC = () => {
   const [verifying, setVerifying] = useState(true);
   const [success, setSuccess] = useState(false);
   const [error, setError] = useState('');
+  const executedRef = React.useRef(false); // 実行済みフラグ
 
   useEffect(() => {
     const verifyPasswordSet = async () => {
+      // 既に実行済みの場合はスキップ
+      if (executedRef.current) return;
+      executedRef.current = true;
+
       const token = searchParams.get('token');
 
       if (!token) {
@@ -36,6 +41,7 @@ export const VerifyPasswordSetPage: React.FC = () => {
       try {
         const response = await axios.get(`/auth/verify-password-set?token=${token}`);
         setSuccess(true);
+        setError(''); // エラーをクリア
         setVerifying(false);
 
         // 3秒後にアカウント設定ページへリダイレクト
@@ -49,7 +55,8 @@ export const VerifyPasswordSetPage: React.FC = () => {
     };
 
     verifyPasswordSet();
-  }, [searchParams, navigate]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // 初回のみ実行
 
   return (
     <Container maxWidth="sm" sx={{ py: 8 }}>
@@ -67,7 +74,7 @@ export const VerifyPasswordSetPage: React.FC = () => {
             </>
           )}
 
-          {!verifying && success && (
+          {!verifying && success && !error && (
             <>
               <CheckCircleIcon
                 sx={{ fontSize: 80, color: 'success.main', mb: 3 }}
@@ -84,7 +91,7 @@ export const VerifyPasswordSetPage: React.FC = () => {
             </>
           )}
 
-          {!verifying && error && (
+          {!verifying && !success && error && (
             <>
               <ErrorIcon
                 sx={{ fontSize: 80, color: 'error.main', mb: 3 }}
