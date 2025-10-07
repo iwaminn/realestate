@@ -114,7 +114,7 @@ axios.interceptors.response.use(
 
         try {
           // リフレッシュトークンでアクセストークンを更新
-          await axios.post('/api/refresh');
+          await axios.post('/auth/refresh');
 
           processQueue(null);
           isRefreshing = false;

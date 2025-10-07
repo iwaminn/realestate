@@ -149,6 +149,17 @@ const PropertyUpdatesPage: React.FC = () => {
     fetchUpdates();
   }, [selectedHours]);
 
+  // ページ番号が範囲外の場合は自動的に修正
+  useEffect(() => {
+    const currentData = tabValue === 0 ? filteredPriceChanges : filteredNewListings;
+    const sortedData = sortData(currentData, sortField, sortOrder);
+    const maxPage = Math.max(0, Math.ceil(sortedData.length / rowsPerPage) - 1);
+
+    if (page > maxPage) {
+      updateSearchParams({ page: maxPage.toString() });
+    }
+  }, [page, tabValue, selectedWard, sortField, sortOrder, priceChanges, newListings, rowsPerPage]);
+
   // URLパラメータを更新するヘルパー関数
   const updateSearchParams = (updates: Record<string, string>) => {
     const newParams = new URLSearchParams(searchParams);
