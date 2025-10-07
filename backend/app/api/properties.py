@@ -410,25 +410,15 @@ async def get_property_details(
     include_inactive = master_property.sold_at is not None
     info = updater.collect_property_info_from_listings(master_property, include_inactive)
     
-    # 価格の多数決を計算（アクティブな掲載のみ）
-    price_votes = {}
-    for listing in active_listings:
-        if listing.current_price:
-            price = listing.current_price
-            if price not in price_votes:
-                price_votes[price] = 0
-            price_votes[price] += 1
-    
-    majority_price = None
-    if price_votes:
-        sorted_prices = sorted(price_votes.items(), key=lambda x: (-x[1], x[0]))
-        majority_price = sorted_prices[0][0]
-    
-    # 販売終了物件でもアクティブな掲載がある場合は、アクティブな掲載の価格を優先
-    # （同じ部屋の再販や、誤統合でもアクティブな掲載がある限り販売中として扱う）
-    if master_property.sold_at and master_property.final_price and not active_listings:
+    # 価格を決定
+    # master_property.current_priceを使用（多数決で計算済み）
+    # 販売終了物件の場合はfinal_priceを使用
+    if master_property.sold_at and not active_listings:
         # アクティブな掲載がない場合のみfinal_priceを使用
         majority_price = master_property.final_price
+    else:
+        # アクティブな掲載がある場合はcurrent_priceを使用
+        majority_price = master_property.current_price
     
     # ソースサイトのリスト（アクティブな掲載のみ）
     source_sites = list(set(l.source_site for l in active_listings))

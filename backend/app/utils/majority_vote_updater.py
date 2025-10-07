@@ -472,8 +472,10 @@ class MajorityVoteUpdater:
             if majority_direction != master_property.direction:
                 new_direction = majority_direction
         
-        # 価格の多数決（販売中物件のみ、アクティブな掲載のみ）
-        if not master_property.sold_at and info['prices']:
+        # 価格の多数決（アクティブな掲載がある場合のみ）
+        # sold_atが設定されていても、アクティブな掲載があれば価格を更新
+        has_active_listing = any(listing.is_active for listing in master_property.listings)
+        if has_active_listing and info['prices']:
             # 価格のみを抽出（ソース情報は不要）
             prices = [price for price, _ in info['prices']]
             majority_price = self.get_majority_price(prices, master_property.current_price)

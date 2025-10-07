@@ -109,20 +109,13 @@ def _get_property_details(db: Session, property_data, current_price):
     active_listings = [l for l in all_listings if l.is_active]
     has_active = len(active_listings) > 0
     
-    # 価格の多数決を計算（アクティブな掲載のみ）
-    majority_price = None
-    if active_listings:
-        price_votes = {}
-        for listing in active_listings:
-            if listing.current_price:
-                price = listing.current_price
-                if price not in price_votes:
-                    price_votes[price] = 0
-                price_votes[price] += 1
-        
-        if price_votes:
-            sorted_prices = sorted(price_votes.items(), key=lambda x: (-x[1], x[0]))
-            majority_price = sorted_prices[0][0]
+    # 価格を決定
+    # master_property.current_priceを使用（多数決で計算済み）
+    if has_active:
+        majority_price = property_data.current_price
+    else:
+        # 販売終了物件はfinal_priceを使用
+        majority_price = property_data.final_price if property_data.sold_at else None
     
     # 最終確認日、販売終了日、売出確認日を取得
     last_confirmed_at = None
