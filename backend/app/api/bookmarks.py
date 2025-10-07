@@ -359,6 +359,7 @@ async def get_bookmarks(
             .join(MasterProperty, MasterProperty.id == PropertyBookmark.master_property_id)
             .join(Building, Building.id == MasterProperty.building_id)
             .filter(PropertyBookmark.user_id == current_user.id)
+            .order_by(PropertyBookmark.created_at.desc())
         ).all()
         
         # 建物ごとにグルーピング
