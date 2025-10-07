@@ -34,12 +34,17 @@ async def refresh_all_price_changes(
     """
     
     def background_refresh():
+        # バックグラウンドタスク内で新しいセッションを作成
+        from ...database import SessionLocal
+        db_session = SessionLocal()
         try:
-            calculator = PriceChangeCalculator(db)
+            calculator = PriceChangeCalculator(db_session)
             stats = calculator.refresh_all_recent_changes(days)
             logger.info(f"価格改定履歴の更新完了: {stats}")
         except Exception as e:
-            logger.error(f"価格改定履歴の更新に失敗: {e}")
+            logger.error(f"価格改定履歴の更新に失敗: {e}", exc_info=True)
+        finally:
+            db_session.close()
     
     background_tasks.add_task(background_refresh)
     
