@@ -317,6 +317,30 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                 }
               }}
               onClose={() => setAutocompleteOpen(false)}
+              ListboxProps={{
+                style: {
+                  maxHeight: '400px',
+                }
+              }}
+              slotProps={{
+                popper: {
+                  modifiers: [
+                    {
+                      name: 'offset',
+                      options: {
+                        offset: [0, 8],
+                      },
+                    },
+                  ],
+                  sx: {
+                    width: 'calc(100% - 24px) !important',
+                    marginLeft: '12px',
+                    '& .MuiAutocomplete-listbox': {
+                      maxHeight: '400px',
+                    },
+                  },
+                }
+              }}
               getOptionLabel={(option) => {
                 // オプションがオブジェクトの場合はvalueを、文字列の場合はそのまま返す
                 if (typeof option === 'object' && 'value' in option) {
@@ -371,6 +395,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                   fullWidth
                   label="建物名"
                   placeholder="建物名で検索"
+                  type="search"
                   InputProps={{
                     ...params.InputProps,
                     startAdornment: (
@@ -479,163 +504,114 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
           </Grid>
 
           <Grid item xs={12} sm={6} md={3}>
-            <Autocomplete
-              freeSolo
-              options={[1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 15000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000]}
-              value={searchParams.min_price || ''}
-              inputValue={searchParams.min_price?.toString() || ''}
-              onInputChange={(_, newInputValue) => {
-                const numValue = newInputValue ? parseInt(newInputValue) : undefined;
-                setSearchParams({
-                  ...searchParams,
-                  min_price: isNaN(numValue!) ? undefined : numValue,
-                });
-              }}
-              onChange={(_, newValue) => {
-                setSearchParams({
-                  ...searchParams,
-                  min_price: typeof newValue === 'number' ? newValue : newValue ? parseInt(newValue) : undefined,
-                });
-              }}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  fullWidth
-                  label="最低価格"
-                  type="number"
-                  InputProps={{
-                    ...params.InputProps,
-                    endAdornment: (
-                      <>
-                        {params.InputProps.endAdornment}
-                        <InputAdornment position="end">万円</InputAdornment>
-                      </>
-                    ),
-                  }}
-                />
-              )}
-              getOptionLabel={(option) => option.toString()}
-            />
+            <FormControl fullWidth>
+              <InputLabel>最低価格</InputLabel>
+              <Select
+                value={searchParams.min_price || ''}
+                onChange={handleSelectChange('min_price')}
+                label="最低価格"
+              >
+                <MenuItem value="">指定なし</MenuItem>
+                <MenuItem value={1000}>1,000万円</MenuItem>
+                <MenuItem value={2000}>2,000万円</MenuItem>
+                <MenuItem value={3000}>3,000万円</MenuItem>
+                <MenuItem value={4000}>4,000万円</MenuItem>
+                <MenuItem value={5000}>5,000万円</MenuItem>
+                <MenuItem value={6000}>6,000万円</MenuItem>
+                <MenuItem value={7000}>7,000万円</MenuItem>
+                <MenuItem value={8000}>8,000万円</MenuItem>
+                <MenuItem value={9000}>9,000万円</MenuItem>
+                <MenuItem value={10000}>1億円</MenuItem>
+                <MenuItem value={15000}>1億5,000万円</MenuItem>
+                <MenuItem value={20000}>2億円</MenuItem>
+                <MenuItem value={30000}>3億円</MenuItem>
+                <MenuItem value={40000}>4億円</MenuItem>
+                <MenuItem value={50000}>5億円</MenuItem>
+                <MenuItem value={60000}>6億円</MenuItem>
+                <MenuItem value={70000}>7億円</MenuItem>
+                <MenuItem value={80000}>8億円</MenuItem>
+                <MenuItem value={90000}>9億円</MenuItem>
+                <MenuItem value={100000}>10億円</MenuItem>
+              </Select>
+            </FormControl>
           </Grid>
 
           <Grid item xs={12} sm={6} md={3}>
-            <Autocomplete
-              freeSolo
-              options={[2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 15000, 20000, 30000, 40000, 50000, 60000, 70000, 80000, 90000, 100000]}
-              value={searchParams.max_price || ''}
-              inputValue={searchParams.max_price?.toString() || ''}
-              onInputChange={(_, newInputValue) => {
-                const numValue = newInputValue ? parseInt(newInputValue) : undefined;
-                setSearchParams({
-                  ...searchParams,
-                  max_price: isNaN(numValue!) ? undefined : numValue,
-                });
-              }}
-              onChange={(_, newValue) => {
-                setSearchParams({
-                  ...searchParams,
-                  max_price: typeof newValue === 'number' ? newValue : newValue ? parseInt(newValue) : undefined,
-                });
-              }}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  fullWidth
-                  label="最高価格"
-                  type="number"
-                  InputProps={{
-                    ...params.InputProps,
-                    endAdornment: (
-                      <>
-                        {params.InputProps.endAdornment}
-                        <InputAdornment position="end">万円</InputAdornment>
-                      </>
-                    ),
-                  }}
-                />
-              )}
-              getOptionLabel={(option) => option.toString()}
-            />
+            <FormControl fullWidth>
+              <InputLabel>最高価格</InputLabel>
+              <Select
+                value={searchParams.max_price || ''}
+                onChange={handleSelectChange('max_price')}
+                label="最高価格"
+              >
+                <MenuItem value="">指定なし</MenuItem>
+                <MenuItem value={2000}>2,000万円</MenuItem>
+                <MenuItem value={3000}>3,000万円</MenuItem>
+                <MenuItem value={4000}>4,000万円</MenuItem>
+                <MenuItem value={5000}>5,000万円</MenuItem>
+                <MenuItem value={6000}>6,000万円</MenuItem>
+                <MenuItem value={7000}>7,000万円</MenuItem>
+                <MenuItem value={8000}>8,000万円</MenuItem>
+                <MenuItem value={9000}>9,000万円</MenuItem>
+                <MenuItem value={10000}>1億円</MenuItem>
+                <MenuItem value={15000}>1億5,000万円</MenuItem>
+                <MenuItem value={20000}>2億円</MenuItem>
+                <MenuItem value={30000}>3億円</MenuItem>
+                <MenuItem value={40000}>4億円</MenuItem>
+                <MenuItem value={50000}>5億円</MenuItem>
+                <MenuItem value={60000}>6億円</MenuItem>
+                <MenuItem value={70000}>7億円</MenuItem>
+                <MenuItem value={80000}>8億円</MenuItem>
+                <MenuItem value={90000}>9億円</MenuItem>
+                <MenuItem value={100000}>10億円</MenuItem>
+              </Select>
+            </FormControl>
           </Grid>
 
           <Grid item xs={12} sm={6} md={3}>
-            <Autocomplete
-              freeSolo
-              options={[30, 40, 50, 60, 70, 80, 90, 100, 120]}
-              value={searchParams.min_area || ''}
-              inputValue={searchParams.min_area?.toString() || ''}
-              onInputChange={(_, newInputValue) => {
-                const numValue = newInputValue ? parseFloat(newInputValue) : undefined;
-                setSearchParams({
-                  ...searchParams,
-                  min_area: isNaN(numValue!) ? undefined : numValue,
-                });
-              }}
-              onChange={(_, newValue) => {
-                setSearchParams({
-                  ...searchParams,
-                  min_area: typeof newValue === 'number' ? newValue : newValue ? parseFloat(newValue) : undefined,
-                });
-              }}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  fullWidth
-                  label="最低面積"
-                  type="number"
-                  InputProps={{
-                    ...params.InputProps,
-                    endAdornment: (
-                      <>
-                        {params.InputProps.endAdornment}
-                        <InputAdornment position="end">㎡</InputAdornment>
-                      </>
-                    ),
-                  }}
-                />
-              )}
-              getOptionLabel={(option) => option.toString()}
-            />
+            <FormControl fullWidth>
+              <InputLabel>最低面積</InputLabel>
+              <Select
+                value={searchParams.min_area || ''}
+                onChange={handleSelectChange('min_area')}
+                label="最低面積"
+              >
+                <MenuItem value="">指定なし</MenuItem>
+                <MenuItem value={30}>30㎡</MenuItem>
+                <MenuItem value={40}>40㎡</MenuItem>
+                <MenuItem value={50}>50㎡</MenuItem>
+                <MenuItem value={60}>60㎡</MenuItem>
+                <MenuItem value={70}>70㎡</MenuItem>
+                <MenuItem value={80}>80㎡</MenuItem>
+                <MenuItem value={90}>90㎡</MenuItem>
+                <MenuItem value={100}>100㎡</MenuItem>
+                <MenuItem value={120}>120㎡</MenuItem>
+                <MenuItem value={150}>150㎡</MenuItem>
+              </Select>
+            </FormControl>
           </Grid>
 
           <Grid item xs={12} sm={6} md={3}>
-            <Autocomplete
-              freeSolo
-              options={[40, 50, 60, 70, 80, 90, 100, 120, 150]}
-              value={searchParams.max_area || ''}
-              inputValue={searchParams.max_area?.toString() || ''}
-              onInputChange={(_, newInputValue) => {
-                const numValue = newInputValue ? parseFloat(newInputValue) : undefined;
-                setSearchParams({
-                  ...searchParams,
-                  max_area: isNaN(numValue!) ? undefined : numValue,
-                });
-              }}
-              onChange={(_, newValue) => {
-                setSearchParams({
-                  ...searchParams,
-                  max_area: typeof newValue === 'number' ? newValue : newValue ? parseFloat(newValue) : undefined,
-                });
-              }}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  fullWidth
-                  label="最高面積"
-                  type="number"
-                  InputProps={{
-                    ...params.InputProps,
-                    endAdornment: (
-                      <>
-                        {params.InputProps.endAdornment}
-                        <InputAdornment position="end">㎡</InputAdornment>
-                      </>
-                    ),
-                  }}
-                />
-              )}
-              getOptionLabel={(option) => option.toString()}
-            />
+            <FormControl fullWidth>
+              <InputLabel>最高面積</InputLabel>
+              <Select
+                value={searchParams.max_area || ''}
+                onChange={handleSelectChange('max_area')}
+                label="最高面積"
+              >
+                <MenuItem value="">指定なし</MenuItem>
+                <MenuItem value={40}>40㎡</MenuItem>
+                <MenuItem value={50}>50㎡</MenuItem>
+                <MenuItem value={60}>60㎡</MenuItem>
+                <MenuItem value={70}>70㎡</MenuItem>
+                <MenuItem value={80}>80㎡</MenuItem>
+                <MenuItem value={90}>90㎡</MenuItem>
+                <MenuItem value={100}>100㎡</MenuItem>
+                <MenuItem value={120}>120㎡</MenuItem>
+                <MenuItem value={150}>150㎡</MenuItem>
+                <MenuItem value={200}>200㎡</MenuItem>
+              </Select>
+            </FormControl>
           </Grid>
 
           <Grid item xs={12} sm={6} md={6}>
