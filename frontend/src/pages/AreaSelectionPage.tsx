@@ -251,6 +251,10 @@ const AreaSelectionPage: React.FC = () => {
                 inputRef={inputRef}
                 variant="standard"
                 placeholder="建物名で検索（例：タワー、パーク）"
+                inputProps={{
+                  ...params.inputProps,
+                  enterKeyHint: 'search',
+                }}
                 InputProps={{
                   ...params.InputProps,
                   disableUnderline: true,
