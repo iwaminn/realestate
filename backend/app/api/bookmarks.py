@@ -510,3 +510,34 @@ async def check_bookmark_status(
         "bookmark_id": bookmark.id if bookmark else None,
         "requires_login": False
     }
+
+
+@router.post("/check-bulk")
+async def check_bookmarks_bulk(
+    property_ids: List[int],
+    current_user: Optional[User] = Depends(get_current_user_flexible),
+    db: Session = Depends(get_db)
+):
+    """複数物件のブックマーク状態を一括チェック（認証オプショナル）"""
+    
+    if not current_user:
+        # 未認証の場合は全てfalse
+        return {
+            "bookmarks": {str(prop_id): False for prop_id in property_ids},
+            "requires_login": True
+        }
+    
+    # ユーザーのブックマークを一括取得
+    bookmarks = db.query(PropertyBookmark.master_property_id).filter(
+        PropertyBookmark.user_id == current_user.id,
+        PropertyBookmark.master_property_id.in_(property_ids)
+    ).all()
+    
+    # ブックマークされている物件IDのセット
+    bookmarked_ids = {bookmark.master_property_id for bookmark in bookmarks}
+    
+    # 結果を辞書形式で返す
+    return {
+        "bookmarks": {str(prop_id): prop_id in bookmarked_ids for prop_id in property_ids},
+        "requires_login": False
+    }

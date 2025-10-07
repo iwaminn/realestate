@@ -22,9 +22,10 @@ import { BookmarkButton } from './BookmarkButton';
 
 interface PropertyCardProps {
   property: Property;
+  initialBookmarked?: boolean;
 }
 
-const PropertyCard: React.FC<PropertyCardProps> = ({ property }) => {
+const PropertyCard: React.FC<PropertyCardProps> = ({ property, initialBookmarked }) => {
   const navigate = useNavigate();
 
   // 販売終了からの経過日数を計算
@@ -147,7 +148,12 @@ const PropertyCard: React.FC<PropertyCardProps> = ({ property }) => {
         
         {/* ブックマークボタン（右上） */}
         <Box sx={{ position: 'absolute', top: 8, right: property.sold_at || property.has_active_listing === false || property.is_resale ? 72 : 8, zIndex: 1 }}>
-          <BookmarkButton propertyId={property.id} size="small" />
+          <BookmarkButton
+            propertyId={property.id}
+            size="small"
+            initialBookmarked={initialBookmarked}
+            skipInitialCheck={initialBookmarked !== undefined}
+          />
         </Box>
 
         {/* 物件数のみ表示（複数ある場合のみ） */}

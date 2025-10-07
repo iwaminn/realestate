@@ -41,6 +41,14 @@ export class BookmarkService {
   }
 
   /**
+   * 複数物件のブックマーク状態を一括チェック
+   */
+  static async checkBookmarkStatusBulk(propertyIds: number[]): Promise<{ bookmarks: { [key: string]: boolean }, requires_login: boolean }> {
+    const response = await axios.post('/bookmarks/check-bulk', propertyIds);
+    return response.data;
+  }
+
+  /**
    * ブックマークのトグル（追加/削除を自動判定）
    */
   static async toggleBookmark(propertyId: number): Promise<{ action: 'added' | 'removed', bookmark?: Bookmark }> {

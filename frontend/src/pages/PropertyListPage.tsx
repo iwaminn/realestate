@@ -29,6 +29,8 @@ import PropertyCard from '../components/PropertyCard';
 import BuildingGroupedList from '../components/BuildingGroupedList';
 import { propertyApi } from '../api/propertyApi';
 import { Property, SearchParams } from '../types/property';
+import { BookmarkService } from '../services/bookmarkService';
+import { useUserAuth } from '../contexts/UserAuthContext';
 
 const PropertyListPage: React.FC = () => {
   const location = useLocation();
@@ -44,6 +46,8 @@ const PropertyListPage: React.FC = () => {
   const [includeInactive, setIncludeInactive] = useState(false);
   const [soldCount, setSoldCount] = useState(0);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [bookmarkStatuses, setBookmarkStatuses] = useState<{ [key: string]: boolean }>({});
+  const { isAuthenticated, isLoading: authLoading } = useUserAuth();
   // URLパラメータからviewModeを取得
   const getViewModeFromUrl = (): 'properties' | 'buildings' => {
     const urlParams = new URLSearchParams(location.search);
@@ -184,15 +188,42 @@ const PropertyListPage: React.FC = () => {
     const params = getInitialParams();
     const includeInactiveFromUrl = getIncludeInactiveFromUrl();
     const viewModeFromUrl = getViewModeFromUrl();
-    
+
     setSearchParams(params);
     setIncludeInactive(includeInactiveFromUrl);
     setViewMode(viewModeFromUrl);
-    
+
     // 初回ロードまたはブラウザの戻る/進むボタンでの遷移時はURLを更新しない
     fetchPropertiesWithIncludeInactive(params, page, false, includeInactiveFromUrl);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.search]);
+
+  // 物件一覧が更新されたらブックマーク状態を一括チェック
+  useEffect(() => {
+    const fetchBookmarkStatuses = async () => {
+      // 認証チェック中または未認証の場合はスキップ
+      if (authLoading || !isAuthenticated) {
+        setBookmarkStatuses({});
+        return;
+      }
+
+      // 物件がない場合はスキップ
+      if (properties.length === 0) {
+        return;
+      }
+
+      try {
+        const propertyIds = properties.map(p => p.id);
+        const result = await BookmarkService.checkBookmarkStatusBulk(propertyIds);
+        setBookmarkStatuses(result.bookmarks);
+      } catch (error) {
+        console.error('ブックマーク状態の一括取得に失敗:', error);
+        setBookmarkStatuses({});
+      }
+    };
+
+    fetchBookmarkStatuses();
+  }, [properties, isAuthenticated, authLoading]);
 
   const handleSearch = (params: SearchParams) => {
     // クリアボタンから空のオブジェクトが渡された場合は、完全にリセット
@@ -419,7 +450,10 @@ const PropertyListPage: React.FC = () => {
                 <Grid container spacing={{ xs: 2, sm: 3 }} sx={{ opacity: !initialLoading && loading ? 0.5 : 1, transition: 'opacity 0.2s' }}>
                   {properties.map((property) => (
                     <Grid item key={property.id} xs={12} sm={6} md={4}>
-                      <PropertyCard property={property} />
+                      <PropertyCard
+                        property={property}
+                        initialBookmarked={bookmarkStatuses[property.id.toString()] || false}
+                      />
                     </Grid>
                   ))}
                 </Grid>

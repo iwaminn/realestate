@@ -41,7 +41,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [isAuthenticated]);
 
   const checkAuth = async () => {
-    // ログインページの場合は認証チェックをスキップ
+    // 管理画面以外は認証チェックをスキップ
+    if (!window.location.pathname.startsWith('/admin')) {
+      setIsAuthenticated(false);
+      setIsLoading(false);
+      return;
+    }
+
+    // ログインページの場合も認証チェックをスキップ
     if (window.location.pathname === '/admin/login') {
       setIsAuthenticated(false);
       setIsLoading(false);
