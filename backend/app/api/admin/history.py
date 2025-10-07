@@ -471,6 +471,11 @@ async def revert_property_merge(
         update_earliest_listing_date(db, primary_property_id)
         update_earliest_listing_date(db, restored_property.id)
         
+        # sold_atとfinal_priceを更新（掲載が分離されたため両方の物件を更新）
+        from ...utils.price_queries import update_sold_status_and_final_price
+        update_sold_status_and_final_price(db, primary_property_id)
+        update_sold_status_and_final_price(db, restored_property.id)
+        
         # 統合履歴を削除
         db.delete(history)
         

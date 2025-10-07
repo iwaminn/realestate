@@ -247,6 +247,7 @@ async def get_properties(
             "balcony_area": float(mp.balcony_area) if mp.balcony_area else None,
             "current_price": display_price,
             "min_price": display_price,
+            "final_price": mp.final_price,
             "is_resale": getattr(mp, 'is_resale', False),
             "listing_count": listing_count or 0,
             "source_sites": source_sites.split(',') if source_sites else [],

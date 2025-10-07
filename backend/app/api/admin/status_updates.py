@@ -151,43 +151,16 @@ async def update_listing_status(
             properties_to_update.add(listing.master_property_id)
         
         # 全掲載が非アクティブになった物件を販売終了とする
-        from ...utils.price_queries import calculate_final_price_for_sold_property
-        
+        from ...utils.price_queries import update_sold_status_and_final_price
+
         for property_id in properties_to_update:
-            # その物件のアクティブな掲載があるか確認
-            active_count = db.query(PropertyListing).filter(
-                PropertyListing.master_property_id == property_id,
-                PropertyListing.is_active.is_(True)
-            ).count()
-            
-            # 他にアクティブな掲載がない場合、物件を販売終了とする
-            if active_count == 0:
-                master_property = db.query(MasterProperty).filter(
-                    MasterProperty.id == property_id
-                ).first()
-                
-                if master_property and not master_property.sold_at:
-                    # 全掲載の最新のdelisted_atを取得
-                    all_listings = db.query(PropertyListing).filter(
-                        PropertyListing.master_property_id == property_id
-                    ).all()
-                    
-                    max_delisted_at = max(
-                        (listing.delisted_at for listing in all_listings if listing.delisted_at),
-                        default=now
-                    )
-                    
-                    master_property.sold_at = max_delisted_at
-                    sold_properties.add(master_property.id)
-                    
-                    # 最終価格を計算
-                    try:
-                        final_price = calculate_final_price_for_sold_property(db, property_id)
-                        if final_price:
-                            master_property.final_price = final_price
-                            master_property.final_price_updated_at = now
-                    except Exception as e:
-                        print(f"最終価格の更新に失敗: property_id={property_id}, error={e}")
+            # sold_atとfinal_priceを更新
+            try:
+                result = update_sold_status_and_final_price(db, property_id)
+                if result["sold_status_changed"] and result["is_sold"]:
+                    sold_properties.add(property_id)
+            except Exception as e:
+                print(f"販売終了状態の更新に失敗: property_id={property_id}, error={e}")
         
         # 3. sold_atが未設定で全掲載が非アクティブの物件を販売終了とする（設定漏れの修正）
         # この処理により、過去に設定漏れがあった物件も自動修正される
@@ -198,40 +171,13 @@ async def update_listing_status(
         fixed_sold_properties = set()
         
         for (property_id,) in properties_missing_sold_at:
-            # その物件のアクティブな掲載があるか確認
-            active_count = db.query(PropertyListing).filter(
-                PropertyListing.master_property_id == property_id,
-                PropertyListing.is_active.is_(True)
-            ).count()
-            
-            # アクティブな掲載がない場合、物件を販売終了とする
-            if active_count == 0:
-                # 全掲載を取得して、少なくとも1つ以上の掲載があるか確認
-                all_listings = db.query(PropertyListing).filter(
-                    PropertyListing.master_property_id == property_id
-                ).all()
-                
-                if all_listings:  # 掲載が存在する場合のみ処理
-                    master_property = db.query(MasterProperty).filter(
-                        MasterProperty.id == property_id
-                    ).first()
-                    
-                    # 全掲載の最新のdelisted_atを取得
-                    max_delisted_at = max(
-                        (listing.delisted_at for listing in all_listings if listing.delisted_at),
-                        default=now
-                    )
-                    
-                    master_property.sold_at = max_delisted_at
-                    fixed_sold_properties.add(master_property.id)
-                    
-                    # 最終価格を計算
-                    try:
-                        final_price = calculate_final_price_for_sold_property(db, property_id)
-                        if final_price:
-                            master_property.final_price = final_price
-                    except Exception as e:
-                        print(f"最終価格の更新に失敗: property_id={property_id}, error={e}")
+            # sold_atとfinal_priceを更新
+            try:
+                result = update_sold_status_and_final_price(db, property_id)
+                if result["sold_status_changed"] and result["is_sold"]:
+                    fixed_sold_properties.add(property_id)
+            except Exception as e:
+                print(f"販売終了状態の更新に失敗: property_id={property_id}, error={e}")
         
         # 影響を受けた全物件の最初の掲載日と価格改定日を更新
         from ...utils.property_utils import update_latest_price_change

@@ -129,13 +129,17 @@ def apply_price_filter(query, price_subquery, min_price: Optional[int], max_pric
         )
     return query
 
-def calculate_final_price_for_sold_property(db: Session, master_property_id: int) -> Optional[int]:
+def calculate_final_price_for_sold_property(db: Session, master_property_id: int, sold_at=None) -> Optional[int]:
     """
     販売終了物件の最終価格を計算（販売終了前1週間の価格履歴から多数決）
+    
+    販売終了判定は has_active_listing=False で行う。
+    sold_at は販売終了日時の参考値として使用（指定されない場合は最新の delisted_at を使用）。
     
     Args:
         db: データベースセッション
         master_property_id: マスター物件ID
+        sold_at: 販売終了日時（指定されない場合は最新のdelisted_atを使用）
     
     Returns:
         最終価格（万円）、データがない場合はNone
@@ -148,11 +152,41 @@ def calculate_final_price_for_sold_property(db: Session, master_property_id: int
         MasterProperty.id == master_property_id
     ).first()
     
-    if not master_property or not master_property.sold_at:
+    if not master_property:
         return None
     
+    # アクティブな掲載があるかチェック
+    has_active = db.query(PropertyListing).filter(
+        PropertyListing.master_property_id == master_property_id,
+        PropertyListing.is_active == True
+    ).count() > 0
+    
+    # アクティブな掲載がある場合は販売中なので final_price は不要
+    if has_active:
+        return None
+    
+    # sold_at が指定されていない場合は、最新の delisted_at を使用
+    if sold_at is None:
+        # 全掲載の最新の delisted_at を取得
+        latest_delisted = db.query(PropertyListing.delisted_at).filter(
+            PropertyListing.master_property_id == master_property_id,
+            PropertyListing.delisted_at.isnot(None)
+        ).order_by(
+            PropertyListing.delisted_at.desc()
+        ).first()
+        
+        if latest_delisted:
+            sold_at = latest_delisted[0]
+        elif master_property.sold_at:
+            # delisted_at がない場合は master_property.sold_at を使用
+            sold_at = master_property.sold_at
+        else:
+            # どちらもない場合は現在時刻を使用
+            from datetime import datetime
+            sold_at = datetime.now()
+    
     # 販売終了前1週間の期間を計算
-    end_date = master_property.sold_at
+    end_date = sold_at
     start_date = end_date - timedelta(days=7)
     
     # 期間内の価格履歴を取得（全掲載から）
@@ -217,3 +251,105 @@ def get_sold_property_final_price(db: Session, master_property: MasterProperty) 
         db.commit()
     
     return final_price
+
+
+def update_sold_status_and_final_price(db: Session, master_property_id: int) -> dict:
+    """
+    物件の販売終了状態とfinal_priceを更新
+    
+    掲載情報の変更（統合、分離、状態更新など）後に呼び出して、
+    sold_atとfinal_priceを適切に設定する。
+    
+    Args:
+        db: データベースセッション
+        master_property_id: マスター物件ID
+    
+    Returns:
+        更新結果の辞書 {
+            "sold_status_changed": bool,  # 販売終了状態が変更されたか
+            "was_sold": bool,              # 更新前に販売終了だったか
+            "is_sold": bool,               # 更新後に販売終了か
+            "sold_at": datetime or None,
+            "final_price": int or None
+        }
+    """
+    from datetime import datetime
+    from ..models import PropertyListing, MasterProperty
+    
+    # マスター物件を取得
+    master_property = db.query(MasterProperty).filter(
+        MasterProperty.id == master_property_id
+    ).first()
+    
+    if not master_property:
+        return {
+            "sold_status_changed": False,
+            "was_sold": False,
+            "is_sold": False,
+            "sold_at": None,
+            "final_price": None
+        }
+    
+    # 更新前の状態を記録
+    was_sold = master_property.sold_at is not None
+    
+    # アクティブな掲載があるかチェック
+    active_count = db.query(PropertyListing).filter(
+        PropertyListing.master_property_id == master_property_id,
+        PropertyListing.is_active == True
+    ).count()
+    
+    if active_count == 0:
+        # アクティブな掲載がない場合、販売終了として処理
+        all_listings = db.query(PropertyListing).filter(
+            PropertyListing.master_property_id == master_property_id
+        ).all()
+        
+        if all_listings:
+            # 全掲載の最新のdelisted_atを取得
+            max_delisted_at = max(
+                (listing.delisted_at for listing in all_listings if listing.delisted_at),
+                default=None
+            )
+            
+            if max_delisted_at:
+                # sold_atが未設定の場合のみ設定
+                if not master_property.sold_at:
+                    master_property.sold_at = max_delisted_at
+                
+                # 最終価格を常に再計算（掲載情報の変更に対応）
+                final_price = calculate_final_price_for_sold_property(
+                    db, master_property_id, sold_at=max_delisted_at
+                )
+                if final_price:
+                    master_property.final_price = final_price
+                
+                return {
+                    "sold_status_changed": not was_sold,
+                    "was_sold": was_sold,
+                    "is_sold": True,
+                    "sold_at": master_property.sold_at,
+                    "final_price": master_property.final_price
+                }
+    else:
+        # アクティブな掲載がある場合、販売再開として処理
+        if master_property.sold_at:
+            master_property.sold_at = None
+            master_property.final_price = None
+            
+            return {
+                "sold_status_changed": True,
+                "was_sold": was_sold,
+                "is_sold": False,
+                "sold_at": None,
+                "final_price": None
+            }
+    
+    # 状態に変化なし
+    return {
+        "sold_status_changed": False,
+        "was_sold": was_sold,
+        "is_sold": master_property.sold_at is not None,
+        "sold_at": master_property.sold_at,
+        "final_price": master_property.final_price
+    }

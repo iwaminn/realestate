@@ -2185,7 +2185,22 @@ async def merge_buildings(
                     if len(secondary_buildings) > 1 or not has_existing_records:
                         # 統合後、統合先建物のbuilding_listing_namesを再集計
                         listing_name_manager.refresh_building_names(primary_id)
-                    
+
+            # 建物統合で掲載が統合された物件のsold_atとfinal_priceを更新
+            # duplicate_merge_detailsから統合された物件のprimary_idのみを収集（最適化）
+            from ...utils.price_queries import update_sold_status_and_final_price
+            affected_property_ids = set()
+            for detail in duplicate_merge_details:
+                # 掲載が統合された物件（primary側）のみ更新が必要
+                affected_property_ids.add(detail["primary_id"])
+            
+            # 掲載統合により影響を受けた物件のみsold_atとfinal_priceを更新
+            for property_id in affected_property_ids:
+                try:
+                    update_sold_status_and_final_price(db, property_id)
+                except Exception as e:
+                    print(f"建物統合後の販売終了状態更新に失敗: property_id={property_id}, error={e}")
+
             db.commit()
             
             # 重複候補リストが変更される可能性があるため再計算を促す
@@ -2369,9 +2384,28 @@ async def revert_building_merge(
         
         # 履歴レコードを削除
         db.delete(history)
+
+        # 建物統合の取り消しで物件の自動統合が取り消される場合のみsold_atとfinal_priceを更新
+        # duplicate_merge_detailsから統合が取り消される物件を収集
+        from ...utils.price_queries import update_sold_status_and_final_price
+        affected_property_ids = set()
         
+        # 物件の自動統合が取り消される場合のみ更新が必要
+        duplicate_merge_details = history.merge_details.get("duplicate_merge_details", [])
+        for detail in duplicate_merge_details:
+            # 統合されていた物件（primary_id）が分離されるため更新が必要
+            affected_property_ids.add(detail["primary_id"])
+            # secondary_idは既に削除されているため更新不要
+        
+        # 物件の自動統合が取り消される場合のみsold_atとfinal_priceを更新
+        for property_id in affected_property_ids:
+            try:
+                update_sold_status_and_final_price(db, property_id)
+            except Exception as e:
+                print(f"建物統合取り消し後の販売終了状態更新に失敗: property_id={property_id}, error={e}")
+
         db.commit()
-        
+
         message = f"統合を取り消しました。{restored_count}件の建物を復元しました。"
         
         return {
@@ -2657,7 +2691,15 @@ async def merge_properties(
     # 両方の物件の最初の掲載日を更新
     update_earliest_listing_date(db, request.primary_property_id)
     # secondary_property_idの物件は削除されているが、念のため
-    
+
+    # 価格改定日を更新
+    from ...utils.property_utils import update_latest_price_change
+    update_latest_price_change(db, request.primary_property_id)
+
+    # sold_atとfinal_priceを再計算（掲載情報が変更されたため）
+    from ...utils.price_queries import update_sold_status_and_final_price
+    update_sold_status_and_final_price(db, request.primary_property_id)
+
     db.commit()
     
     return {
