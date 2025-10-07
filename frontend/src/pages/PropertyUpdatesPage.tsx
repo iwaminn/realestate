@@ -193,6 +193,8 @@ const PropertyUpdatesPage: React.FC = () => {
 
   const handleChangePage = (event: unknown, newPage: number) => {
     updateSearchParams({ page: newPage.toString() });
+    // ページトップにスクロール
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
