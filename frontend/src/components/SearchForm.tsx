@@ -684,7 +684,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
           display: 'flex', 
           gap: { xs: 1, sm: 2 }, 
           justifyContent: { xs: 'stretch', sm: 'flex-end' },
-          flexDirection: { xs: 'column', sm: 'row' }
+          flexDirection: 'row'
         }}>
           <Button 
             variant="outlined" 
@@ -692,7 +692,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
             onClick={handleReset} 
             disabled={loading}
             fullWidth={isMobile}
-            sx={{ order: { xs: 2, sm: 1 } }}
           >
             クリア
           </Button>
@@ -702,7 +701,6 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
             disabled={loading}
             startIcon={<SearchIcon />}
             fullWidth={isMobile}
-            sx={{ order: { xs: 1, sm: 2 } }}
           >
             検索
           </Button>
