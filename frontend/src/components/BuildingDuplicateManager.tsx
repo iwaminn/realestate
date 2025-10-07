@@ -84,11 +84,16 @@ const BuildingDuplicateManager: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [minSimilarity, setMinSimilarity] = useState(0.7); // デフォルトを0.7に設定
   const [limit, setLimit] = useState(30); // 表示件数
-  const [snackbar, setSnackbar] = useState({ 
-    open: false, 
-    message: '', 
-    severity: 'success' as 'success' | 'error' 
+  const [snackbar, setSnackbar] = useState({
+    open: false,
+    message: '',
+    severity: 'success' as 'success' | 'error'
   });
+
+  // 確認ダイアログ内で展開された建物IDを管理
+  const [expandedBuildingsInDialog, setExpandedBuildingsInDialog] = useState<number[]>([]);
+  const [buildingProperties, setBuildingProperties] = useState<Record<number, any[]>>({});
+  const [loadingProperties, setLoadingProperties] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
 
@@ -434,6 +439,39 @@ const BuildingDuplicateManager: React.FC = () => {
     if (similarity >= 0.95) return 'error';
     if (similarity >= 0.9) return 'warning';
     return 'info';
+  };
+
+  // 建物の物件情報を取得
+  const fetchBuildingProperties = async (buildingId: number) => {
+    if (buildingProperties[buildingId]) {
+      // 既に取得済みの場合はスキップ
+      return;
+    }
+
+    setLoadingProperties(prev => ({ ...prev, [buildingId]: true }));
+    try {
+      const response = await propertyApi.getBuildingProperties(buildingId, true); // 販売終了物件も含める
+      setBuildingProperties(prev => ({ ...prev, [buildingId]: response.properties }));
+    } catch (error) {
+      console.error('Failed to fetch building properties:', error);
+      setBuildingProperties(prev => ({ ...prev, [buildingId]: [] }));
+    } finally {
+      setLoadingProperties(prev => ({ ...prev, [buildingId]: false }));
+    }
+  };
+
+  // 建物の展開/折りたたみを切り替え
+  const handleToggleBuildingInDialog = async (buildingId: number) => {
+    const isExpanded = expandedBuildingsInDialog.includes(buildingId);
+
+    if (isExpanded) {
+      // 折りたたむ
+      setExpandedBuildingsInDialog(prev => prev.filter(id => id !== buildingId));
+    } else {
+      // 展開する（物件情報をまだ取得していない場合は取得）
+      setExpandedBuildingsInDialog(prev => [...prev, buildingId]);
+      await fetchBuildingProperties(buildingId);
+    }
   };
 
   const handleChangePrimary = (newPrimaryId: number) => {
@@ -799,6 +837,7 @@ const BuildingDuplicateManager: React.FC = () => {
                 <Table size="small">
                   <TableHead>
                     <TableRow>
+                      <TableCell width={50}></TableCell>
                       <TableCell width={80} align="center">
                         <Box display="flex" alignItems="center" justifyContent="center" gap={0.5}>
                           <Tooltip title="全選択">
@@ -833,62 +872,124 @@ const BuildingDuplicateManager: React.FC = () => {
                       return allBuildings.map((building) => {
                         const isCandidate = selectedGroup.candidates.some(c => c.id === building.id);
                         const isSelected = selectedCandidates.includes(building.id);
-                        
+                        const isExpanded = expandedBuildingsInDialog.includes(building.id);
+                        const properties = buildingProperties[building.id] || [];
+                        const isLoadingProps = loadingProperties[building.id] || false;
+
                         return (
-                          <TableRow 
-                            key={building.id}
-                            hover
-                          >
-                            <TableCell padding="checkbox" align="center">
-                              <Checkbox
-                                checked={isSelected}
-                                onChange={(e) => {
-                                  handleToggleCandidate(building.id);
-                                }}
-                              />
-                            </TableCell>
-                            <TableCell padding="checkbox" align="center">
-                              <Radio
-                                checked={selectedMasterId === building.id}
-                                disabled={!isSelected} // 未選択は統合先に指定不可
-                                onChange={() => setSelectedMasterId(building.id)}
-                                color="primary"
-                              />
-                            </TableCell>
-                            <TableCell>
-                              <Typography variant="body2" color="text.secondary">
-                                {building.id}
-                              </Typography>
-                            </TableCell>
-                            <TableCell>
-                              <Typography fontWeight={selectedMasterId === building.id ? 'bold' : 'normal'}>
-                                {building.normalized_name}
-                              </Typography>
-                            </TableCell>
-                            <TableCell>
-                              <Typography variant="body2">
-                                {building.address || '-'}
-                              </Typography>
-                            </TableCell>
-                            <TableCell align="center">
-                              {building.total_floors || '-'}F
-                              {building.total_units && ` / ${building.total_units}戸`}
-                            </TableCell>
-                            <TableCell align="center">
-                              {building.built_year ? (
-                                building.built_month ? 
-                                  `${building.built_year}年${building.built_month}月` : 
-                                  `${building.built_year}年`
-                              ) : '-'}
-                            </TableCell>
-                            <TableCell align="center">
-                              <Chip 
-                                label={building.property_count} 
-                                size="small" 
-                                color={selectedMasterId === building.id ? 'primary' : 'default'}
-                              />
-                            </TableCell>
-                          </TableRow>
+                          <React.Fragment key={building.id}>
+                            <TableRow hover>
+                              <TableCell>
+                                <IconButton
+                                  size="small"
+                                  onClick={() => handleToggleBuildingInDialog(building.id)}
+                                  disabled={building.property_count === 0}
+                                >
+                                  {isExpanded ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                                </IconButton>
+                              </TableCell>
+                              <TableCell padding="checkbox" align="center">
+                                <Checkbox
+                                  checked={isSelected}
+                                  onChange={(e) => {
+                                    handleToggleCandidate(building.id);
+                                  }}
+                                />
+                              </TableCell>
+                              <TableCell padding="checkbox" align="center">
+                                <Radio
+                                  checked={selectedMasterId === building.id}
+                                  disabled={!isSelected} // 未選択は統合先に指定不可
+                                  onChange={() => setSelectedMasterId(building.id)}
+                                  color="primary"
+                                />
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2" color="text.secondary">
+                                  {building.id}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Typography fontWeight={selectedMasterId === building.id ? 'bold' : 'normal'}>
+                                  {building.normalized_name}
+                                </Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Typography variant="body2">
+                                  {building.address || '-'}
+                                </Typography>
+                              </TableCell>
+                              <TableCell align="center">
+                                {building.total_floors || '-'}F
+                                {building.total_units && ` / ${building.total_units}戸`}
+                              </TableCell>
+                              <TableCell align="center">
+                                {building.built_year ? (
+                                  building.built_month ?
+                                    `${building.built_year}年${building.built_month}月` :
+                                    `${building.built_year}年`
+                                ) : '-'}
+                              </TableCell>
+                              <TableCell align="center">
+                                <Chip
+                                  label={building.property_count}
+                                  size="small"
+                                  color={selectedMasterId === building.id ? 'primary' : 'default'}
+                                />
+                              </TableCell>
+                            </TableRow>
+
+                            {/* 物件情報の展開行 */}
+                            <TableRow>
+                              <TableCell colSpan={9} sx={{ p: 0 }}>
+                                <Collapse in={isExpanded}>
+                                  <Box sx={{ p: 2, bgcolor: 'grey.50' }}>
+                                    {isLoadingProps ? (
+                                      <Box display="flex" justifyContent="center" p={2}>
+                                        <CircularProgress size={24} />
+                                      </Box>
+                                    ) : properties.length > 0 ? (
+                                      <>
+                                        <Typography variant="subtitle2" gutterBottom>
+                                          物件一覧 ({properties.length}件)
+                                        </Typography>
+                                        <Table size="small">
+                                          <TableHead>
+                                            <TableRow>
+                                              <TableCell>部屋番号</TableCell>
+                                              <TableCell align="center">階数</TableCell>
+                                              <TableCell align="center">面積</TableCell>
+                                              <TableCell align="center">間取り</TableCell>
+                                              <TableCell align="center">方角</TableCell>
+                                              <TableCell align="right">価格</TableCell>
+                                            </TableRow>
+                                          </TableHead>
+                                          <TableBody>
+                                            {properties.map((property: any) => (
+                                              <TableRow key={property.id}>
+                                                <TableCell>{property.room_number || '-'}</TableCell>
+                                                <TableCell align="center">{property.floor_number || '-'}階</TableCell>
+                                                <TableCell align="center">{property.area || '-'}㎡</TableCell>
+                                                <TableCell align="center">{property.layout || '-'}</TableCell>
+                                                <TableCell align="center">{property.direction || '-'}</TableCell>
+                                                <TableCell align="right">
+                                                  {property.current_price ? `${property.current_price.toLocaleString()}万円` : '-'}
+                                                </TableCell>
+                                              </TableRow>
+                                            ))}
+                                          </TableBody>
+                                        </Table>
+                                      </>
+                                    ) : (
+                                      <Typography variant="body2" color="text.secondary" align="center">
+                                        物件情報がありません
+                                      </Typography>
+                                    )}
+                                  </Box>
+                                </Collapse>
+                              </TableCell>
+                            </TableRow>
+                          </React.Fragment>
                         );
                       });
                     })()}
