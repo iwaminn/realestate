@@ -17,7 +17,8 @@ from ...models import (
     Building, MasterProperty, PropertyListing,
     BuildingMergeHistory, PropertyMergeHistory,
     BuildingMergeExclusion, PropertyMergeExclusion,
-    BuildingExternalId, BuildingListingName
+    BuildingExternalId, BuildingListingName,
+    PropertyBookmark
 )
 from ...utils.enhanced_building_matcher import EnhancedBuildingMatcher
 from ...utils.majority_vote_updater import MajorityVoteUpdater
@@ -2610,6 +2611,28 @@ async def merge_properties(
         "final_primary_property_id": request.primary_property_id
     })
     
+    # ブックマークを主物件に移行
+    # 二次物件をブックマークしているユーザーのブックマークを主物件に更新
+    bookmarks_to_move = db.query(PropertyBookmark).filter(
+        PropertyBookmark.master_property_id == request.secondary_property_id
+    ).all()
+    
+    bookmark_move_count = 0
+    for bookmark in bookmarks_to_move:
+        # 同じユーザーが主物件を既にブックマーク済みかチェック
+        existing_bookmark = db.query(PropertyBookmark).filter(
+            PropertyBookmark.user_id == bookmark.user_id,
+            PropertyBookmark.master_property_id == request.primary_property_id
+        ).first()
+        
+        if existing_bookmark:
+            # 既にブックマーク済みの場合、古い方（二次物件のブックマーク）を削除
+            db.delete(bookmark)
+        else:
+            # ブックマークを主物件に移行（created_atは維持）
+            bookmark.master_property_id = request.primary_property_id
+            bookmark_move_count += 1
+    
     # 変更を確実に反映させる
     db.flush()
     
@@ -2640,6 +2663,7 @@ async def merge_properties(
     return {
         "message": "Properties merged successfully",
         "moved_listings": moved_count,
+        "moved_bookmarks": bookmark_move_count,
         "primary_property": {
             "id": primary.id,
             "building_id": primary.building_id,
