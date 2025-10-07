@@ -454,7 +454,8 @@ async def get_property_details(
                 'listing_id': listing.id,
                 'is_active': listing.is_active,
                 'current_price': listing.current_price,
-                'listing_start_date': listing.first_seen_at or listing.created_at
+                'listing_start_date': listing.first_seen_at or listing.created_at,
+                'delisted_at': listing.delisted_at  # 非アクティブになった日を追加
             })
     
     # 時系列でソート

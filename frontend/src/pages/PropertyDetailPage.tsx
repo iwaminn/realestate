@@ -167,8 +167,10 @@ const PropertyDetailPage: React.FC = () => {
   // price_timelineがある場合はそれを使用
   if (price_timeline && price_timeline.timeline) {
     price_timeline.timeline.forEach((entry: any) => {
+      const entryDate = new Date(entry.date);
       const dataPoint: any = {
-        date: format(new Date(entry.date), 'yyyy/MM/dd'),
+        date: entryDate.getTime(), // タイムスタンプとして保存
+        dateStr: format(entryDate, 'yyyy/MM/dd'), // 表示用の文字列
         price: entry.price,
       };
       
@@ -815,7 +817,7 @@ const PropertyDetailPage: React.FC = () => {
           {/* 価格一貫性情報 */}
           {price_consistency && price_consistency.consistency_score < 1 && (
             <Alert severity="info" sx={{ mb: 2 }}>
-              異なる情報源で価格差が検出されました（一貫性スコア: {(price_consistency.consistency_score * 100).toFixed(1)}%）
+              複数のサイトで異なる価格が掲載されていた期間があります
             </Alert>
           )}
           
@@ -825,6 +827,10 @@ const PropertyDetailPage: React.FC = () => {
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis 
                   dataKey="date" 
+                  type="number"
+                  scale="time"
+                  domain={['dataMin', 'dataMax']}
+                  tickFormatter={(timestamp) => format(new Date(timestamp), 'yyyy/MM/dd')}
                   tick={{ fontSize: isMobile ? 10 : 12 }}
                   angle={isMobile ? -45 : 0}
                   textAnchor={isMobile ? "end" : "middle"}
@@ -837,12 +843,13 @@ const PropertyDetailPage: React.FC = () => {
                 />
                 <Tooltip
                   formatter={(value: number) => [`${value.toLocaleString()}万円`, '価格']}
-                  content={({ active, payload, label }) => {
+                  labelFormatter={(timestamp) => format(new Date(timestamp), 'yyyy/MM/dd')}
+                  content={({ active, payload }) => {
                     if (active && payload && payload.length > 0) {
                       const data = payload[0].payload;
                       return (
                         <div style={{ backgroundColor: 'white', padding: '10px', border: '1px solid #ccc' }}>
-                          <p><strong>{label}</strong></p>
+                          <p><strong>{data.dateStr}</strong></p>
                           <p>価格: {data.price?.toLocaleString()}万円</p>
                           {data.sourceCount && data.sourceCount > 1 && (
                             <p style={{ fontSize: '0.9em', color: '#666' }}>

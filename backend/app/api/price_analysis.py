@@ -11,6 +11,9 @@ def create_unified_price_timeline(price_records: List[Dict[str, Any]]) -> Dict[s
     """
     統合価格タイムラインを作成
     
+    掲載が非アクティブになった日も価格変更ポイントとして考慮する。
+    これにより、掲載数の変化による多数決結果の変化も価格推移に反映される。
+    
     Returns:
         {
             "timeline": [
@@ -39,27 +42,41 @@ def create_unified_price_timeline(price_records: List[Dict[str, Any]]) -> Dict[s
     if not price_records:
         return {"timeline": [], "price_changes": []}
     
-    # 各掲載の価格履歴と開始日を整理
-    listing_price_history = defaultdict(lambda: {'history': [], 'start_date': None, 'source': None, 'current_price': None})
+    # 各掲載の価格履歴と開始日・終了日を整理
+    listing_price_history = defaultdict(lambda: {
+        'history': [], 
+        'start_date': None, 
+        'end_date': None,  # 非アクティブになった日
+        'source': None, 
+        'current_price': None,
+        'is_active': True
+    })
     
-    # まず、現在価格を収集
+    # まず、現在価格と掲載情報を収集
     current_date = date.today()
     for record in price_records:
-        # すべての掲載（アクティブ・非アクティブ両方）を含める
         listing_id = record.get('listing_id')
         if listing_id and 'current_price' in record and record['current_price']:
             listing_price_history[listing_id]['current_price'] = record['current_price']
             listing_price_history[listing_id]['source'] = record['source_site']
+            listing_price_history[listing_id]['is_active'] = record.get('is_active', True)
+            
             # 掲載開始日を記録
             if 'listing_start_date' in record and record['listing_start_date']:
                 start_date = record['listing_start_date']
                 if isinstance(start_date, datetime):
                     start_date = start_date.date()
                 listing_price_history[listing_id]['start_date'] = start_date
+            
+            # 掲載終了日を記録（非アクティブの場合）
+            if not record.get('is_active', True) and 'delisted_at' in record and record['delisted_at']:
+                end_date = record['delisted_at']
+                if isinstance(end_date, datetime):
+                    end_date = end_date.date()
+                listing_price_history[listing_id]['end_date'] = end_date
     
     # 価格履歴を追加
     for record in price_records:
-        # すべての掲載（アクティブ・非アクティブ両方）を含める
         if record.get('price'):
             date_key = record['recorded_at'].date() if isinstance(record['recorded_at'], datetime) else record['recorded_at']
             listing_id = record.get('listing_id')
@@ -67,7 +84,6 @@ def create_unified_price_timeline(price_records: List[Dict[str, Any]]) -> Dict[s
             price = record['price']
             
             if listing_id:
-                # 価格履歴を追加
                 listing_price_history[listing_id]['history'].append((date_key, price))
                 listing_price_history[listing_id]['source'] = source
                 
@@ -82,23 +98,26 @@ def create_unified_price_timeline(price_records: List[Dict[str, Any]]) -> Dict[s
     for listing_id in listing_price_history:
         listing_price_history[listing_id]['history'].sort(key=lambda x: x[0])
         
-        # 現在価格を最新の日付として追加（履歴に含まれていない場合）
+        # 現在価格を最新の日付として追加（アクティブな掲載のみ）
         current_price = listing_price_history[listing_id].get('current_price')
-        if current_price is not None:
+        is_active = listing_price_history[listing_id].get('is_active', True)
+        
+        if current_price is not None and is_active:
             # 履歴に今日の日付がない、または最新の履歴価格と現在価格が異なる場合
             has_today = any(d == current_date for d, _ in listing_price_history[listing_id]['history'])
             if not has_today:
                 # 最新の履歴価格を確認
                 if listing_price_history[listing_id]['history']:
                     latest_date, latest_price = listing_price_history[listing_id]['history'][-1]
-                    # 現在価格が最新の履歴価格と異なる場合、または履歴がない場合は追加
-                    if latest_price != current_price or not listing_price_history[listing_id]['history']:
+                    # 現在価格が最新の履歴価格と異なる場合は追加
+                    if latest_price != current_price:
                         listing_price_history[listing_id]['history'].append((current_date, current_price))
                 else:
                     # 履歴がない場合は現在価格を追加
                     listing_price_history[listing_id]['history'].append((current_date, current_price))
     
-    # 全日付の範囲を取得
+    # 全日付の範囲を取得（価格履歴の日付 + 掲載開始日 + 掲載終了日 + 掲載終了日の翌日）
+    from datetime import timedelta
     all_dates = set()
     for listing_data in listing_price_history.values():
         # 価格履歴の日付を追加
@@ -106,6 +125,12 @@ def create_unified_price_timeline(price_records: List[Dict[str, Any]]) -> Dict[s
         # 掲載開始日も追加
         if listing_data['start_date']:
             all_dates.add(listing_data['start_date'])
+        # 掲載終了日も追加（重要：ここで多数決が変わる可能性がある）
+        if listing_data['end_date']:
+            all_dates.add(listing_data['end_date'])
+            # 掲載終了日の翌日も追加（この日から残った掲載の多数決になる）
+            next_day = listing_data['end_date'] + timedelta(days=1)
+            all_dates.add(next_day)
     
     if not all_dates:
         return {"timeline": [], "price_changes": []}
@@ -115,6 +140,7 @@ def create_unified_price_timeline(price_records: List[Dict[str, Any]]) -> Dict[s
     max_date = sorted_dates[-1]
     
     # 日付ごとに各掲載の価格を集約（価格を持ち越し）
+    # 重要：掲載終了日以降は、その掲載の価格を含めない
     daily_prices = {}
     
     for date_key in sorted_dates:
@@ -124,9 +150,15 @@ def create_unified_price_timeline(price_records: List[Dict[str, Any]]) -> Dict[s
         for listing_id, listing_data in listing_price_history.items():
             source = listing_data['source']
             start_date = listing_data['start_date']
+            end_date = listing_data['end_date']
             
-            # 掲載開始日以降のみ価格を記録
-            if start_date and date_key >= start_date:
+            # 掲載開始日以降、終了日以前のみ価格を記録
+            is_within_active_period = (
+                start_date and date_key >= start_date and
+                (end_date is None or date_key <= end_date)
+            )
+            
+            if is_within_active_period:
                 # その日以前の最新価格を取得
                 price_for_date = None
                 for hist_date, hist_price in listing_data['history']:
@@ -136,9 +168,8 @@ def create_unified_price_timeline(price_records: List[Dict[str, Any]]) -> Dict[s
                         break
                 
                 # 価格履歴がある日以降は価格を持ち越す
-                # 重要: 一度でも価格記録がある掲載は、その後の日付でも前回価格を使用
                 if price_for_date is not None:
-                    # 掲載ごとにユニークなキーを作成（同じソースでも複数掲載がある場合）
+                    # 掲載ごとにユニークなキーを作成
                     key = f"{source}_{listing_id}"
                     daily_prices[date_key][key] = price_for_date
     
@@ -153,6 +184,10 @@ def create_unified_price_timeline(price_records: List[Dict[str, Any]]) -> Dict[s
         all_prices = list(sources.values())
         unique_prices = set(all_prices)
         
+        # 価格データがない日はスキップ
+        if not all_prices:
+            continue
+        
         # ソース別に価格を集約（表示用）
         source_prices = {}
         for key, price in sources.items():
@@ -164,13 +199,10 @@ def create_unified_price_timeline(price_records: List[Dict[str, Any]]) -> Dict[s
                 source_prices[source_name] = price
         
         # 代表価格を決定（最頻値、同数の場合は最小値）
-        if all_prices:
-            price_counts = {p: all_prices.count(p) for p in unique_prices}
-            max_count = max(price_counts.values())
-            most_common_prices = [p for p, c in price_counts.items() if c == max_count]
-            representative_price = min(most_common_prices)
-        else:
-            continue  # 価格データがない日はスキップ
+        price_counts = {p: all_prices.count(p) for p in unique_prices}
+        max_count = max(price_counts.values())
+        most_common_prices = [p for p, c in price_counts.items() if c == max_count]
+        representative_price = min(most_common_prices)
         
         timeline.append({
             "date": str(date_key),
@@ -200,15 +232,12 @@ def create_unified_price_timeline(price_records: List[Dict[str, Any]]) -> Dict[s
         
         prev_price = current_price
     
-    # 現在価格を計算（property_listingsのcurrent_priceから直接取得）
-    # price_recordsに含まれるcurrent_price情報を使用（各掲載ごと）
+    # 現在価格を計算（アクティブな掲載のcurrent_priceから多数決）
     current_prices_from_listings = {}
     for record in price_records:
         if record.get('is_active', True):
             listing_id = record.get('listing_id')
-            # current_priceが含まれている場合は使用
             if 'current_price' in record and record['current_price']:
-                # 各掲載IDごとに価格を保存（ソースごとではなく）
                 if listing_id and listing_id not in current_prices_from_listings:
                     current_prices_from_listings[listing_id] = record['current_price']
     
@@ -218,7 +247,6 @@ def create_unified_price_timeline(price_records: List[Dict[str, Any]]) -> Dict[s
         for record in price_records:
             if record.get('is_active', True) and record.get('price'):
                 source = record['source_site']
-                # 各ソースの最新価格を保持
                 if source not in current_prices or record['recorded_at'] > current_prices[source]['recorded_at']:
                     current_prices[source] = {
                         'price': record['price'],
@@ -230,16 +258,16 @@ def create_unified_price_timeline(price_records: List[Dict[str, Any]]) -> Dict[s
             price_counts = {p: active_prices.count(p) for p in set(active_prices)}
             max_count = max(price_counts.values())
             most_common_prices = [p for p, c in price_counts.items() if c == max_count]
-            current_price = min(most_common_prices)  # 同数の場合は最小値
+            current_price = min(most_common_prices)
         else:
             current_price = timeline[-1]['price'] if timeline else None
     else:
-        # property_listingsのcurrent_priceから多数決（各掲載ごとに1票）
+        # アクティブな掲載のcurrent_priceから多数決
         active_prices = list(current_prices_from_listings.values())
         price_counts = {p: active_prices.count(p) for p in set(active_prices)}
         max_count = max(price_counts.values())
         most_common_prices = [p for p, c in price_counts.items() if c == max_count]
-        current_price = min(most_common_prices)  # 同数の場合は最小値
+        current_price = min(most_common_prices)
 
     return {
         "timeline": timeline,
