@@ -113,7 +113,7 @@ export const AccountSettingsPage: React.FC = () => {
           new_password: newPassword
         });
         setPasswordSuccess('パスワード設定確認メールを送信しました。メールをご確認ください。');
-        setSetPasswordMode(false);
+        // フォームは閉じずに、メッセージを表示したまま維持
         setNewPassword('');
         setConfirmPassword('');
       } else {
