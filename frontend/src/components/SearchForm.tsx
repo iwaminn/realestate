@@ -396,6 +396,10 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                   label="建物名"
                   placeholder="建物名で検索"
                   type="search"
+                  inputProps={{
+                    ...params.inputProps,
+                    enterKeyHint: 'search',
+                  }}
                   InputProps={{
                     ...params.InputProps,
                     startAdornment: (
