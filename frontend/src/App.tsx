@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useLocation } from 'react-router-dom';
 import { ThemeProvider, createTheme } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
 import { Container } from '@mui/material';
@@ -31,6 +31,27 @@ import PrivacyPage from './pages/PrivacyPage';
 import TransactionPricesPage from './pages/TransactionPricesPage';
 import ContactPage from './pages/ContactPage';
 import './utils/axiosConfig'; // Axiosの設定を読み込む
+
+// Google Analyticsのページビュートラッキングコンポーネント
+function GoogleAnalyticsTracker() {
+  const location = useLocation();
+
+  useEffect(() => {
+    // 管理画面（/admin）の場合はトラッキングしない
+    if (location.pathname.startsWith('/admin')) {
+      return;
+    }
+
+    // Google Analyticsのgtagが存在する場合のみトラッキング
+    if (typeof window.gtag === 'function') {
+      window.gtag('config', 'G-C985LS1W3F', {
+        page_path: location.pathname + location.search,
+      });
+    }
+  }, [location]);
+
+  return null;
+}
 
 const theme = createTheme({
   palette: {
@@ -69,6 +90,7 @@ function App() {
       <AuthProvider>
         <Router future={{ v7_relativeSplatPath: true, v7_startTransition: true }}>
           <UserAuthProvider>
+            <GoogleAnalyticsTracker />
             <ScrollToTop />
             <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
               <Header />
