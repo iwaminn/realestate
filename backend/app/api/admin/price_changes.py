@@ -58,30 +58,20 @@ async def refresh_price_changes_immediate(
 ):
     """
     価格改定履歴を即座に更新（同期実行）
+    指定期間のデータを更新する（キューは別途処理される）
     """
     try:
         calculator = PriceChangeCalculator(db)
-        
-        # キューに入っている物件を優先的に処理
-        queue_stats = calculator.process_queue(limit)
-        
-        # キューが空の場合は最近の変更を更新
-        if queue_stats['processed'] == 0:
-            stats = calculator.refresh_all_recent_changes(days)
-            return {
-                "success": True,
-                "message": "価格改定履歴を更新しました",
-                "stats": stats,
-                "updated_at": datetime.now().isoformat()
-            }
-        else:
-            return {
-                "success": True,
-                "message": "キューの処理を完了しました",
-                "queue_stats": queue_stats,
-                "updated_at": datetime.now().isoformat()
-            }
-            
+
+        # 指定期間の価格改定履歴を更新
+        stats = calculator.refresh_all_recent_changes(days)
+        return {
+            "success": True,
+            "message": f"価格改定履歴を更新しました（過去{days}日間）",
+            "stats": stats,
+            "updated_at": datetime.now().isoformat()
+        }
+
     except Exception as e:
         logger.error(f"価格改定履歴の更新に失敗: {e}")
         raise HTTPException(status_code=500, detail=str(e))
