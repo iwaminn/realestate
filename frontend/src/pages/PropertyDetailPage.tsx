@@ -200,6 +200,8 @@ const PropertyDetailPage: React.FC = () => {
       lastPrice = lastEntry.price;
     }
     
+    const lastDateStr = format(lastDate, 'yyyy/MM/dd');
+    
     // 4. グラフ用のデータを構築（等間隔表示用にindexを使用）
     let chartIndex = 0;
     
@@ -212,13 +214,20 @@ const PropertyDetailPage: React.FC = () => {
       label: '売出確認日',
     });
     
-    // 価格変動点
+    // 価格変動点（ただし最終日と同じ日付は除外）
     priceChangeEntries.forEach((entry: any) => {
       const entryDate = new Date(entry.date);
+      const entryDateStr = format(entryDate, 'yyyy/MM/dd');
+      
+      // 最終日と同じ日付の場合はスキップ（後で最終日として追加される）
+      if (entryDateStr === lastDateStr) {
+        return;
+      }
+      
       const dataPoint: any = {
         index: chartIndex++,
         date: entryDate.getTime(),
-        dateStr: format(entryDate, 'yyyy/MM/dd'),
+        dateStr: entryDateStr,
         price: entry.price,
         label: '価格改定',
       };
@@ -234,11 +243,11 @@ const PropertyDetailPage: React.FC = () => {
     });
     
     // 終了点（最初の点と日付が異なる場合のみ追加）
-    if (format(lastDate, 'yyyy/MM/dd') !== format(firstDate, 'yyyy/MM/dd')) {
+    if (lastDateStr !== format(firstDate, 'yyyy/MM/dd')) {
       priceChartData.push({
         index: chartIndex++,
         date: lastDate.getTime(),
-        dateStr: format(lastDate, 'yyyy/MM/dd'),
+        dateStr: lastDateStr,
         price: lastPrice,
         label: isSold ? '販売終了日' : '本日',
       });
