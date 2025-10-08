@@ -364,9 +364,18 @@ const AreaSelectionPage: React.FC = () => {
                         e.stopPropagation();
                         navigate(`/updates?tab=0&ward=${encodeURIComponent(ward.name)}`);
                       }}
-                      sx={{ 
+                      sx={{
                         minWidth: 'auto',
-                        px: 1.5,
+                        // スマートフォン版のみ画面幅に応じて2列・3列を切り替え
+                        '@media (max-width: 379px)': {
+                          flex: '0 0 calc(50% - 4px)',  // 小さい画面は2列
+                          maxWidth: 'calc(50% - 4px)',
+                        },
+                        '@media (min-width: 380px) and (max-width: 599px)': {
+                          flex: '0 0 calc(33.333% - 4px)',  // 少し大きい画面は3列
+                          maxWidth: 'calc(33.333% - 4px)',
+                        },
+                        px: { xs: 0.5, sm: 1.5 },
                         py: 0.5,
                         fontSize: '0.8rem',
                         fontWeight: 'medium',
@@ -460,9 +469,18 @@ const AreaSelectionPage: React.FC = () => {
                         e.stopPropagation();
                         navigate(`/updates?tab=1&ward=${encodeURIComponent(ward.name)}`);
                       }}
-                      sx={{ 
+                      sx={{
                         minWidth: 'auto',
-                        px: 1.5,
+                        // スマートフォン版のみ画面幅に応じて2列・3列を切り替え
+                        '@media (max-width: 379px)': {
+                          flex: '0 0 calc(50% - 4px)',  // 小さい画面は2列
+                          maxWidth: 'calc(50% - 4px)',
+                        },
+                        '@media (min-width: 380px) and (max-width: 599px)': {
+                          flex: '0 0 calc(33.333% - 4px)',  // 少し大きい画面は3列
+                          maxWidth: 'calc(33.333% - 4px)',
+                        },
+                        px: { xs: 0.5, sm: 1.5 },
                         py: 0.5,
                         fontSize: '0.8rem',
                         fontWeight: 'medium',
