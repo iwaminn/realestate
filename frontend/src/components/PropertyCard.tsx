@@ -170,7 +170,15 @@ const PropertyCard: React.FC<PropertyCardProps> = ({ property, initialBookmarked
           </Box>
         )}
 
-        <Typography gutterBottom variant="h6" component="h2" sx={{ color: isSold ? 'text.secondary' : 'text.primary' }}>
+        <Typography
+          gutterBottom
+          variant="h6"
+          component="h2"
+          sx={{
+            color: isSold ? 'text.secondary' : 'text.primary',
+            pr: property.listing_count > 1 ? 0 : 6  // 物件数表示がない場合のみブックマークボタンとの重なりを防ぐ
+          }}
+        >
           {property.display_building_name || property.building.normalized_name}
           {property.room_number && ` ${property.room_number}`}
         </Typography>
