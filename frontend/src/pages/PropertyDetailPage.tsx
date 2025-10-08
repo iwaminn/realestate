@@ -167,50 +167,81 @@ const PropertyDetailPage: React.FC = () => {
   
   // price_timelineがある場合はそれを使用
   if (price_timeline && price_timeline.timeline) {
-    price_timeline.timeline.forEach((entry: any) => {
+    // 1. 売出確認日（開始）を取得
+    const firstEntry = price_timeline.timeline[0];
+    const firstDate = new Date(firstEntry.date);
+    
+    // 2. 価格変動のあった日のみを抽出（最初と最後を除く）
+    const priceChangeEntries = [];
+    for (let i = 1; i < price_timeline.timeline.length; i++) {
+      const prevEntry = price_timeline.timeline[i - 1];
+      const currentEntry = price_timeline.timeline[i];
+      
+      // 価格が変動した場合のみ追加
+      if (currentEntry.price !== prevEntry.price) {
+        priceChangeEntries.push(currentEntry);
+      }
+    }
+    
+    // 3. 最終日を取得（販売終了日 or 本日）
+    let lastDate: Date;
+    let lastPrice: number;
+    
+    if (isSold && property.sold_at && property.final_price) {
+      lastDate = new Date(property.sold_at);
+      lastPrice = property.final_price;
+    } else if (!isSold && property.current_price) {
+      lastDate = new Date();
+      lastPrice = property.current_price;
+    } else {
+      // フォールバック：timelineの最後
+      const lastEntry = price_timeline.timeline[price_timeline.timeline.length - 1];
+      lastDate = new Date(lastEntry.date);
+      lastPrice = lastEntry.price;
+    }
+    
+    // 4. グラフ用のデータを構築（等間隔表示用にindexを使用）
+    let chartIndex = 0;
+    
+    // 開始点
+    priceChartData.push({
+      index: chartIndex++,
+      date: firstDate.getTime(),
+      dateStr: format(firstDate, 'yyyy/MM/dd'),
+      price: firstEntry.price,
+      label: '売出確認日',
+    });
+    
+    // 価格変動点
+    priceChangeEntries.forEach((entry: any) => {
       const entryDate = new Date(entry.date);
       const dataPoint: any = {
-        date: entryDate.getTime(), // タイムスタンプとして保存
-        dateStr: format(entryDate, 'yyyy/MM/dd'), // 表示用の文字列
+        index: chartIndex++,
+        date: entryDate.getTime(),
+        dateStr: format(entryDate, 'yyyy/MM/dd'),
         price: entry.price,
+        label: '価格改定',
       };
-
+      
       // ソース別の価格差がある場合は追加
       if (entry.has_discrepancy && entry.sources) {
         Object.entries(entry.sources).forEach(([source, price]) => {
           dataPoint[source] = price;
         });
       }
-
+      
       priceChartData.push(dataPoint);
     });
-
-    // 販売終了物件の場合、最後に販売終了日のデータポイントを追加
-    if (isSold && property.sold_at && property.final_price) {
-      const soldDate = new Date(property.sold_at);
-      const lastDataPoint = priceChartData[priceChartData.length - 1];
-
-      // 最後のデータポイントと販売終了日が異なる場合のみ追加
-      if (!lastDataPoint || lastDataPoint.dateStr !== format(soldDate, 'yyyy/MM/dd')) {
-        priceChartData.push({
-          date: soldDate.getTime(),
-          dateStr: format(soldDate, 'yyyy/MM/dd'),
-          price: property.final_price,
-        });
-      }
-    } else if (!isSold && property.current_price && priceChartData.length > 0) {
-      // 販売中の物件の場合、最後に本日の現在価格のデータポイントを追加
-      const today = new Date();
-      const lastDataPoint = priceChartData[priceChartData.length - 1];
-
-      // 最後のデータポイントと本日が異なる場合のみ追加
-      if (lastDataPoint.dateStr !== format(today, 'yyyy/MM/dd')) {
-        priceChartData.push({
-          date: today.getTime(),
-          dateStr: format(today, 'yyyy/MM/dd'),
-          price: property.current_price,
-        });
-      }
+    
+    // 終了点（最初の点と日付が異なる場合のみ追加）
+    if (format(lastDate, 'yyyy/MM/dd') !== format(firstDate, 'yyyy/MM/dd')) {
+      priceChartData.push({
+        index: chartIndex++,
+        date: lastDate.getTime(),
+        dateStr: format(lastDate, 'yyyy/MM/dd'),
+        price: lastPrice,
+        label: isSold ? '販売終了日' : '本日',
+      });
     }
   } else {
     // フォールバック：従来の方法で統合
@@ -233,12 +264,14 @@ const PropertyDetailPage: React.FC = () => {
 
     // 日付ごとに代表価格を算出
     const dateEntries: Array<[string, { prices: number[], sources: Set<string> }]> = Array.from(dateMap.entries());
-    dateEntries.sort((a, b) => a[0].localeCompare(b[0])).forEach(([date, data]) => {
+    dateEntries.sort((a, b) => a[0].localeCompare(b[0])).forEach(([dateStr, data], idx) => {
       const uniquePrices = [...new Set(data.prices)];
       const representativePrice = uniquePrices.length === 1 ? uniquePrices[0] : Math.min(...data.prices);
       
       priceChartData.push({
-        date,
+        index: idx,
+        date: new Date(dateStr).getTime(),
+        dateStr: dateStr,
         price: representativePrice,
         sourceCount: data.sources.size,
       });
@@ -903,11 +936,14 @@ const PropertyDetailPage: React.FC = () => {
               <LineChart data={priceChartData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis 
-                  dataKey="date" 
+                  dataKey="index"
                   type="number"
-                  scale="time"
-                  domain={['dataMin', 'dataMax']}
-                  tickFormatter={(timestamp) => format(new Date(timestamp), 'yyyy/MM/dd')}
+                  domain={[0, priceChartData.length - 1]}
+                  ticks={priceChartData.map((_, i) => i)}
+                  tickFormatter={(index) => {
+                    const dataPoint = priceChartData[index];
+                    return dataPoint ? dataPoint.dateStr : '';
+                  }}
                   tick={{ fontSize: isMobile ? 10 : 12 }}
                   angle={isMobile ? -45 : 0}
                   textAnchor={isMobile ? "end" : "middle"}
@@ -919,14 +955,13 @@ const PropertyDetailPage: React.FC = () => {
                   width={isMobile ? 45 : 60}
                 />
                 <Tooltip
-                  formatter={(value: number) => [`${value.toLocaleString()}万円`, '価格']}
-                  labelFormatter={(timestamp) => format(new Date(timestamp), 'yyyy/MM/dd')}
                   content={({ active, payload }) => {
                     if (active && payload && payload.length > 0) {
                       const data = payload[0].payload;
                       return (
                         <div style={{ backgroundColor: 'white', padding: '10px', border: '1px solid #ccc' }}>
                           <p><strong>{data.dateStr}</strong></p>
+                          {data.label && <p style={{ fontSize: '0.85em', color: '#999' }}>（{data.label}）</p>}
                           <p>価格: {data.price?.toLocaleString()}万円</p>
                           {data.sourceCount && data.sourceCount > 1 && (
                             <p style={{ fontSize: '0.9em', color: '#666' }}>
