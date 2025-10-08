@@ -157,6 +157,34 @@ async def search_buildings_for_merge(
     from ..models import BuildingListingName
     from ..utils.building_name_normalizer import canonicalize_building_name
     
+    # 建物IDでの検索をチェック（数値のみの場合）
+    if query.isdigit():
+        building_id = int(query)
+        building_with_count = db.query(
+            Building.id,
+            Building.normalized_name,
+            Building.address,
+            Building.total_floors,
+            func.count(MasterProperty.id).label('property_count')
+        ).outerjoin(
+            MasterProperty, Building.id == MasterProperty.building_id
+        ).filter(
+            Building.id == building_id
+        ).group_by(Building.id).first()
+        
+        if building_with_count:
+            return {
+                'buildings': [{
+                    'id': building_with_count.id,
+                    'normalized_name': building_with_count.normalized_name,
+                    'address': building_with_count.address or '',
+                    'total_floors': building_with_count.total_floors,
+                    'property_count': building_with_count.property_count
+                }]
+            }
+        else:
+            return {'buildings': []}
+    
     # 検索文字列を正規化してAND検索用に分割
     normalized_search = normalize_search_text(query)
     search_terms = normalized_search.split()
