@@ -274,7 +274,22 @@ const PropertyDetailPage: React.FC = () => {
       }}>
         <Grid container spacing={3}>
           <Grid item xs={12}>
-            {/* 物件名、ステータス、掲載件数、ブックマーク */}
+            {/* スマートフォン：掲載件数とブックマーク（物件名の上） */}
+            <Box sx={{ 
+              display: { xs: 'flex', md: 'none' },
+              flexWrap: 'wrap', 
+              gap: 1, 
+              justifyContent: 'flex-end',
+              mb: 1
+            }}>
+              <Chip label={`${property.listing_count}件の掲載`} color="secondary" />
+              <BookmarkButton 
+                propertyId={property.id} 
+                size="medium"
+              />
+            </Box>
+
+            {/* 物件名とステータス */}
             <Box sx={{ 
               display: 'flex', 
               flexDirection: { xs: 'column', md: 'row' },
@@ -322,13 +337,14 @@ const PropertyDetailPage: React.FC = () => {
                   />
                 )}
 
-                <Chip label={`${property.listing_count}件の掲載`} color="secondary" />
-                
-                {/* ブックマークボタン */}
-                <BookmarkButton 
-                  propertyId={property.id} 
-                  size="medium"
-                />
+                {/* PC：掲載件数とブックマーク */}
+                <Box sx={{ display: { xs: 'none', md: 'flex' }, gap: 1 }}>
+                  <Chip label={`${property.listing_count}件の掲載`} color="secondary" />
+                  <BookmarkButton 
+                    propertyId={property.id} 
+                    size="medium"
+                  />
+                </Box>
               </Box>
             </Box>
           </Grid>
