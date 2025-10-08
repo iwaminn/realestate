@@ -322,22 +322,24 @@ const PropertyDetailPage: React.FC = () => {
             </Box>
 
             {/* 物件名とステータス */}
-            <Box sx={{ 
-              display: 'flex', 
+            <Box sx={{
+              display: 'flex',
               flexDirection: { xs: 'column', md: 'row' },
-              justifyContent: 'space-between', 
-              alignItems: { xs: 'flex-start', md: 'center' }, 
-              mb: 2, 
-              gap: { xs: 1, md: 2 } 
+              justifyContent: 'space-between',
+              alignItems: { xs: 'flex-start', md: 'center' },
+              mt: { xs: 0, md: 2 },  // PC版で上部に余白を追加
+              mb: 2,
+              gap: { xs: 1, md: 2 }
             }}>
-              <Typography 
-                variant={isMobile ? "h5" : "h4"} 
-                component="h1" 
-                sx={{ 
+              <Typography
+                variant={isMobile ? "h5" : "h4"}
+                component="h1"
+                sx={{
                   color: isSold ? 'text.secondary' : 'text.primary',
                   wordBreak: 'break-word',
                   hyphens: 'auto',
                   lineHeight: { xs: 1.3, md: 1.2 },
+                  fontSize: { xs: '1.75rem', md: '2.125rem' },  // h5とh4の中間サイズ（h5: 1.5rem, h4: 2.125rem）
                   flex: 1
                 }}
               >

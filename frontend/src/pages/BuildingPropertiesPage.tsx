@@ -696,7 +696,13 @@ const BuildingPropertiesPage: React.FC = () => {
         {ward ? `${ward}の物件一覧を見る` : '物件一覧を見る'}
       </Button>
 
-      <Typography variant="h4" gutterBottom>
+      <Typography
+        variant={isMobile ? "h5" : "h4"}
+        gutterBottom
+        sx={{
+          fontSize: { xs: '1.75rem', md: '2.125rem' }  // 物件詳細ページと同じサイズ
+        }}
+      >
         <ApartmentIcon sx={{ mr: 1, verticalAlign: 'bottom' }} />
         {buildingInfo.normalized_name}
       </Typography>
