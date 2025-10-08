@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Helmet } from 'react-helmet-async';
 import {
   Box,
   Container,
@@ -512,9 +513,51 @@ const TransactionPricesPage: React.FC = () => {
     })
   };
 
+  // SEO用のタイトルと説明文を生成
+  const generatePageTitle = () => {
+    const parts: string[] = [];
+
+    if (selectedArea) {
+      parts.push(selectedArea);
+    } else if (selectedDistrict) {
+      parts.push(selectedDistrict);
+    }
+
+    if (selectedYear) {
+      parts.push(`${selectedYear}年`);
+    }
+
+    const condition = parts.length > 0 ? `${parts.join(' ')}の` : '';
+    return `${condition}マンション成約価格情報 | 都心マンション価格チェッカー`;
+  };
+
+  const generatePageDescription = () => {
+    const parts: string[] = [];
+
+    if (selectedArea) {
+      parts.push(selectedArea);
+    } else if (selectedDistrict) {
+      parts.push(selectedDistrict);
+    }
+
+    if (selectedYear) {
+      parts.push(`${selectedYear}年`);
+    }
+
+    const condition = parts.length > 0 ? `${parts.join(' ')}の` : '';
+    return `${condition}中古マンション成約価格情報。国土交通省のデータに基づく実際の取引価格や価格推移を確認できます。`;
+  };
+
+  const pageTitle = generatePageTitle();
+  const pageDescription = generatePageDescription();
 
   return (
-    <Container maxWidth="lg" sx={{ px: isMobile ? 0.5 : 3 }}>
+    <>
+      <Helmet>
+        <title>{pageTitle}</title>
+        <meta name="description" content={pageDescription} />
+      </Helmet>
+      <Container maxWidth="lg" sx={{ px: isMobile ? 0.5 : 3 }}>
       <Box sx={{ py: isMobile ? 1 : 4 }}>
         <Typography variant="h4" component="h1" gutterBottom sx={{ mb: isMobile ? 1 : 2 }}>
           成約価格情報
@@ -1070,6 +1113,7 @@ const TransactionPricesPage: React.FC = () => {
         </>
       </Box>
     </Container>
+    </>
   );
 };
 

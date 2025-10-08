@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { Helmet } from 'react-helmet-async';
 import {
   Grid,
   Typography,
@@ -261,11 +262,62 @@ const PropertyListPage: React.FC = () => {
     }
   };
 
+  // SEO用のタイトルと説明文を生成
+  const generatePageTitle = () => {
+    const parts: string[] = [];
+
+    if (searchParams.wards && searchParams.wards.length > 0) {
+      parts.push(searchParams.wards.join('・'));
+    }
+    if (searchParams.min_price || searchParams.max_price) {
+      const priceRange = [
+        searchParams.min_price ? `${searchParams.min_price}万円以上` : '',
+        searchParams.max_price ? `${searchParams.max_price}万円以下` : ''
+      ].filter(Boolean).join(' ');
+      if (priceRange) parts.push(priceRange);
+    }
+    if (searchParams.layouts && searchParams.layouts.length > 0) {
+      parts.push(searchParams.layouts.join('・'));
+    }
+
+    const searchCondition = parts.length > 0 ? `${parts.join(' ')}の` : '';
+    return `${searchCondition}中古マンション${totalCount > 0 ? ` ${totalCount}件` : ''} | 都心マンション価格チェッカー`;
+  };
+
+  const generatePageDescription = () => {
+    const parts: string[] = [];
+
+    if (searchParams.wards && searchParams.wards.length > 0) {
+      parts.push(searchParams.wards.join('・'));
+    }
+    if (searchParams.min_price || searchParams.max_price) {
+      const priceRange = [
+        searchParams.min_price ? `${searchParams.min_price}万円以上` : '',
+        searchParams.max_price ? `${searchParams.max_price}万円以下` : ''
+      ].filter(Boolean).join(' ');
+      if (priceRange) parts.push(priceRange);
+    }
+    if (searchParams.layouts && searchParams.layouts.length > 0) {
+      parts.push(searchParams.layouts.join('・'));
+    }
+
+    const searchCondition = parts.length > 0 ? `${parts.join(' ')}の` : '';
+    return `${searchCondition}中古マンション情報${totalCount > 0 ? `を${totalCount}件` : ''}掲載。価格、間取り、面積、築年数などで検索できます。`;
+  };
+
+  const pageTitle = generatePageTitle();
+  const pageDescription = generatePageDescription();
+
   return (
-    <Container maxWidth="xl" sx={{ 
-      py: 4, 
-      px: isMobile ? 1 : 3
-    }}>
+    <>
+      <Helmet>
+        <title>{pageTitle}</title>
+        <meta name="description" content={pageDescription} />
+      </Helmet>
+      <Container maxWidth="xl" sx={{
+        py: 4,
+        px: isMobile ? 1 : 3
+      }}>
       <Box sx={{ 
         display: 'flex', 
         flexDirection: { xs: 'column', sm: 'row' },
@@ -336,11 +388,12 @@ const PropertyListPage: React.FC = () => {
               gap: { xs: 2, sm: 0 },
               mb: 1 
             }}>
-              <Box sx={{ 
-                display: 'flex', 
-                flexDirection: { xs: 'column', sm: 'row' },
-                alignItems: { xs: 'flex-start', sm: 'center' }, 
-                gap: { xs: 1, sm: 2 }
+              <Box sx={{
+                display: 'flex',
+                flexDirection: 'row',
+                alignItems: 'center',
+                gap: { xs: 1, sm: 2 },
+                flexWrap: 'wrap'
               }}>
                 <Typography variant="body1" color="text.secondary">
                   検索結果: {totalCount}件
@@ -475,6 +528,7 @@ const PropertyListPage: React.FC = () => {
         </>
       )}
     </Container>
+    </>
   );
 };
 

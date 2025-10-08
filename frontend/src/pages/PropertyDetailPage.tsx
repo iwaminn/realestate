@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
+import { Helmet } from 'react-helmet-async';
 import { format } from 'date-fns';
 import { ja } from 'date-fns/locale';
 import {
@@ -254,8 +255,39 @@ const PropertyDetailPage: React.FC = () => {
   const ward = extractWard(building?.address);
   const backToListUrl = ward ? `/properties?wards=${encodeURIComponent(ward)}` : '/properties';
 
+  // SEO用のタイトルと説明文を生成
+  const pageTitle = `${property.display_building_name || building.normalized_name}${property.room_number ? ` ${property.room_number}` : ''} ${formatPrice(isSold ? property.final_price : property.current_price)} | 都心マンション価格チェッカー`;
+  const pageDescription = `${property.display_building_name || building.normalized_name}の中古マンション情報。${formatPrice(isSold ? property.final_price : property.current_price)}、${property.layout || ''}、${property.area}㎡${property.floor_number ? `、${property.floor_number}階` : ''}。${building.address || ''}${isSold ? '（販売終了）' : ''}`;
+
+  // 構造化データ（JSON-LD）の生成
+  const structuredData = {
+    "@context": "https://schema.org",
+    "@type": "Product",
+    "name": `${property.display_building_name || building.normalized_name}${property.room_number ? ` ${property.room_number}` : ''}`,
+    "description": pageDescription,
+    "offers": {
+      "@type": "Offer",
+      "price": (isSold ? property.final_price : property.current_price) * 10000,
+      "priceCurrency": "JPY",
+      "availability": isSold ? "https://schema.org/Discontinued" : "https://schema.org/InStock"
+    },
+    "address": {
+      "@type": "PostalAddress",
+      "addressCountry": "JP",
+      "addressLocality": building.address
+    }
+  };
+
   return (
-    <Box>
+    <>
+      <Helmet>
+        <title>{pageTitle}</title>
+        <meta name="description" content={pageDescription} />
+        <script type="application/ld+json">
+          {JSON.stringify(structuredData)}
+        </script>
+      </Helmet>
+      <Box>
       <Button
         component={Link}
         to={backToListUrl}
@@ -1006,7 +1038,8 @@ const PropertyDetailPage: React.FC = () => {
           )}
         </Paper>
       )}
-    </Box>
+      </Box>
+    </>
   );
 };
 

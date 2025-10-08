@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link, useLocation, useNavigate } from 'react-router-dom';
+import { Helmet } from 'react-helmet-async';
 import {
   Container,
   Typography,
@@ -672,11 +673,20 @@ const BuildingPropertiesPage: React.FC = () => {
   const ward = extractWard(building?.address);
   const backToListUrl = ward ? `/properties?wards=${encodeURIComponent(ward)}` : '/properties';
 
+  // SEO用のタイトルと説明文を生成
+  const pageTitle = `${buildingInfo.normalized_name}の物件一覧 | 都心マンション価格チェッカー`;
+  const pageDescription = `${buildingInfo.normalized_name}（${building.address}）の中古マンション${properties.length}件。${stats ? `価格${formatPrice(stats.price_range.min)}〜${formatPrice(stats.price_range.max)}、平均坪単価${Math.round(stats.avg_price_per_tsubo || 0).toLocaleString()}万円` : ''}`;
+
   return (
-    <Container maxWidth="xl" sx={{
-      py: isMobile ? 2 : 4,
-      px: isMobile ? 0 : 3
-    }}>
+    <>
+      <Helmet>
+        <title>{pageTitle}</title>
+        <meta name="description" content={pageDescription} />
+      </Helmet>
+      <Container maxWidth="xl" sx={{
+        py: isMobile ? 2 : 4,
+        px: isMobile ? 0 : 3
+      }}>
       <Button
         component={Link}
         to={backToListUrl}
@@ -1438,6 +1448,7 @@ const BuildingPropertiesPage: React.FC = () => {
         </Grid>
       )}
     </Container>
+    </>
   );
 };
 

@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  Container, 
-  Typography, 
-  Card, 
-  CardContent, 
-  Grid, 
-  Box, 
+import { Helmet } from 'react-helmet-async';
+import {
+  Container,
+  Typography,
+  Card,
+  CardContent,
+  Grid,
+  Box,
   Alert,
   CircularProgress,
   Chip,
@@ -24,9 +25,9 @@ import {
   Snackbar,
   IconButton
 } from '@mui/material';
-import { 
-  BookmarkBorder, 
-  Bookmark as BookmarkIcon, 
+import {
+  BookmarkBorder,
+  Bookmark as BookmarkIcon,
   Login as LoginIcon,
   ViewList,
   LocationOn,
@@ -921,8 +922,18 @@ export const BookmarksPage: React.FC = () => {
     );
   };
 
+  // SEO用のタイトルと説明文を生成
+  const totalCount = getTotalCount();
+  const pageTitle = `ブックマーク${totalCount > 0 ? ` ${totalCount}件` : ''} | 都心マンション価格チェッカー`;
+  const pageDescription = `保存した中古マンション${totalCount > 0 ? `${totalCount}件の` : ''}ブックマーク一覧。気になる物件を保存して価格変動を追跡できます。`;
+
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
+    <>
+      <Helmet>
+        <title>{pageTitle}</title>
+        <meta name="description" content={pageDescription} />
+      </Helmet>
+      <Container maxWidth="lg" sx={{ py: 4 }}>
       <Box display="flex" alignItems="center" mb={4}>
         <BookmarkIcon color="error" sx={{ mr: 2, fontSize: 32 }} />
         <Typography variant="h4" component="h1">
@@ -1221,5 +1232,6 @@ export const BookmarksPage: React.FC = () => {
         }
       />
     </Container>
+    </>
   );
 };

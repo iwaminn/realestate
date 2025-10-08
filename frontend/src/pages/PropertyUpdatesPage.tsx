@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Helmet } from 'react-helmet-async';
 import {
   Container,
   Typography,
@@ -315,11 +316,27 @@ const PropertyUpdatesPage: React.FC = () => {
     over20000: filteredNewListings.filter(p => p.price >= 20000).length,
   };
 
+  // SEO用のタイトルと説明文を生成
+  const tabNames = ['価格改定', '新規掲載'];
+  const currentTabName = tabNames[tabValue] || '価格改定';
+  const wardText = selectedWard === 'all' ? '全エリア' : selectedWard;
+  const hoursText = selectedHours === 24 ? '24時間以内' : `${selectedHours}時間以内`;
+
+  const updateCount = tabValue === 0 ? filteredPriceChanges.length : filteredNewListings.length;
+
+  const pageTitle = `${currentTabName}物件一覧（${wardText}・${hoursText}）${updateCount > 0 ? ` ${updateCount}件` : ''} | 都心マンション価格チェッカー`;
+  const pageDescription = `${wardText}の中古マンション${currentTabName}情報（${hoursText}）。${updateCount > 0 ? `${updateCount}件の` : ''}最新の物件更新情報を確認できます。`;
+
   return (
-    <Container maxWidth="xl" sx={{ 
-      py: 4, 
-      px: isMobile ? 0 : 3  // スマートフォンでは左右余白をゼロに
-    }}>
+    <>
+      <Helmet>
+        <title>{pageTitle}</title>
+        <meta name="description" content={pageDescription} />
+      </Helmet>
+      <Container maxWidth="xl" sx={{
+        py: 4,
+        px: isMobile ? 0 : 3  // スマートフォンでは左右余白をゼロに
+      }}>
       {/* ヘッダー */}
       <Box sx={{ mb: 4 }}>
         <Typography variant="h4" component="h1" gutterBottom sx={{ fontWeight: 'bold' }}>
@@ -1104,6 +1121,7 @@ const PropertyUpdatesPage: React.FC = () => {
 
 
     </Container>
+    </>
   );
 };
 

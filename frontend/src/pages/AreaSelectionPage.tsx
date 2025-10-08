@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Helmet } from 'react-helmet-async';
 import { APP_CONFIG } from '../config/app';
 import {
   Box,
@@ -127,9 +128,17 @@ const AreaSelectionPage: React.FC = () => {
 
   const popularWards = getPopularWards();
 
+  // SEO用のタイトルと説明文を生成
+  const pageTitle = '都心マンション価格チェッカー - 都心の中古マンション検索';
+  const pageDescription = '東京都心の中古マンション価格情報を検索できます。港区・千代田区・中央区など人気エリアの物件情報、価格推移、成約価格データを確認できます。';
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
+    <>
+      <Helmet>
+        <title>{pageTitle}</title>
+        <meta name="description" content={pageDescription} />
+      </Helmet>
+      <Container maxWidth="lg" sx={{ py: 4 }}>
       {/* ヘッダーセクション */}
       <Box sx={{ textAlign: 'center', mb: 6 }}>
         <Typography
@@ -528,6 +537,7 @@ const AreaSelectionPage: React.FC = () => {
           </Box>
       </>
     </Container>
+    </>
   );
 };
 
