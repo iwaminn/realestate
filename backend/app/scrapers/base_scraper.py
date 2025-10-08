@@ -3953,6 +3953,13 @@ class BaseScraper(ABC):
         Returns:
             tuple: (PropertyListing, update_type, update_details)
         """
+        # titleが空の場合、listing_building_nameから補完
+        if not title or not title.strip():
+            listing_building_name = kwargs.get('listing_building_name')
+            if listing_building_name and listing_building_name.strip():
+                title = listing_building_name
+                self.logger.debug(f"titleが空のため、listing_building_nameから補完: {title}")
+
         # 戻り値を初期化
         update_type = None
         update_details = None
@@ -5988,6 +5995,8 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
         r'\s*\d+階部分\s*',                 # 10階部分、1階部分 パターン
         r'\s*\d+階.*向き\s*',               # 19階南向き、3階南東向き パターン
         r'\s+\d+階\s+\d+LDK\s*',          # 1階 2LDK パターン
+        r'\s*\d+階\s+',                    # 階数の後にスペース（例：西麻布６階 4980万円）
+        r'\s*\d+階\s*$',                   # 末尾の階数（例：パークハウス六本木10階）
     ]
     
     for pattern in floor_removal_patterns:
@@ -5997,7 +6006,200 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
     # 「3%」「0.3%」などのパターンを削除
     percentage_pattern = r'[0-9]+\.?[0-9]*%'
     current_text = re.sub(percentage_pattern, ' ', current_text)
-    
+
+    # Step 1.6: 間取り表記の後に続く括弧を削除（記号削除前に実行）
+    # 例: "2LDK+S（納戸）" → "2LDK+S（納戸）"全体を削除
+    # 間取りパターン: 1LDK, 2LDK+S, 3SLDK など
+    layout_with_parens_patterns = [
+        # ネストした括弧構造に対応（外側の括弧も含めて削除）
+        # 例: "（3LDK+S（納戸））" → 全体を削除
+        # WIC、SIC、TRなどの略語にも対応
+        r'（\d+[SLDK]+(\+[A-Z]+)?（[^）]+））',   # 全角括弧のネスト
+        r'\(\d+[SLDK]+(\+[A-Z]+)?（[^）]+）\)',   # 外側半角、内側全角
+        r'（\d+[SLDK]+(\+[A-Z]+)?\([^)]+\)）',   # 外側全角、内側半角
+        r'\(\d+[SLDK]+(\+[A-Z]+)?\([^)]+\)\)',   # 半角括弧のネスト
+        # 通常の括弧（ネストなし）
+        r'\d+[SLDK]+(\+[A-Z]+)?（[^）]+）',  # 全角括弧
+        r'\d+[SLDK]+(\+[A-Z]+)?\([^)]+\)',   # 半角括弧
+    ]
+    for pattern in layout_with_parens_patterns:
+        current_text = re.sub(pattern, ' ', current_text)
+
+    # Step 1.6.5: 駅名+徒歩情報を削除（記号削除前に実行）
+    # 例: "広尾駅徒歩２分" → 削除
+    # 半角・全角数字の両方に対応
+    station_access_patterns = [
+        r'[^\s]*駅徒歩[0-9０-９]+分',  # 駅名+徒歩+数字+分
+        r'[^\s]*駅\s*徒歩[0-9０-９]+分',  # 駅名+スペース+徒歩+数字+分
+    ]
+    for pattern in station_access_patterns:
+        current_text = re.sub(pattern, ' ', current_text)
+
+    # ===== 広告文パターンの定義（ad_patternsとremoval_patternsで共通使用） =====
+    # 注：このパターンリストは^や$を含まない基本形
+    base_ad_patterns = [
+        # 内見・見学関連
+        '内見可能?', '内覧可能?', '見学可能?', '見学予約可', '予約可',
+        'プレゼント.*', 'キャンペーン.*', '.*キャンペーン.*',
+        # 状態・品質
+        'リノベーション済み?', 'リフォーム済み?',
+        '新築未入居', '新築物件', '新築', '中古', '築浅', 'リフォーム中古',
+        '美品', '内装リフォーム済',
+        # 築年数・年号
+        '築\\d+年', '\\d{4}年築', '令和\\d+年築',
+        # 手数料・価格
+        '仲介手数料無料', '手数料無料', '手数料.*', '仲介料.*',
+        '弊社限定公開', '限定公開', '新規物件',
+        '弊社.*', '当社.*', '払う.*', '勿体無い.*', '勿体ない.*', 'お得.*',
+        # 価格情報
+        '\\d+億\\d+万円', '\\d+億円', '\\d+万円', '\\d+円',
+        '\\d+億\\d+千\\d+百万円', '\\d+千\\d+百万円', '\\d+億\\d+千万円',
+        '\\d+\\.\\d+億円', '\\d+\\.\\d+万円',
+        '価格相談', '値下げ', '価格改定', 'お買い得',
+        # 駅・アクセス
+        '駅近', '徒歩\\d+分', '駅徒歩\\d+分', 'JR.*線', '東京メトロ.*線', '\\d+路線利用可',
+        'JR.*線利用可', '東京メトロ.*線利用可',
+        # アピール文言
+        'オススメ', 'おすすめ', '可能',
+        # ペット・設備
+        'ペット可', 'ペット相談可', '楽器可', '事務所利用可', 'SOHO可',
+        # 部屋特徴
+        '角部屋', '角住戸', '最上階', '低層階', '高層階',
+        # 間取り・設備
+        '\\d+LDK', '\\d+LDK\\+S', '\\d+LDK\\+WIC',
+        '[1-5](R|K|DK|LDK)', '[1-5]LDK(\\+S|\\+WIC)?',
+        # 間取りの日本語表現
+        'ワンルーム', '1ルーム', '2ルーム', '3ルーム',
+        'WIC', 'SIC', 'TR', '納戸', 'サービスルーム', 'S室', 'N室',
+        'WIC付き', 'WIC付', 'SIC付',
+        'システムキッチン', 'オートロック', '宅配ボックス',
+        'バルコニー付', '専用庭付', 'ルーフバルコニー付', 'エレベーター付', '駐車場付', '駐輪場付',
+        # 階数情報
+        '\\d+階', '\\d+F', '階部分', '\\d+th', '.*Floor',
+        '\\d+階部分', '部分', '\\d+階.*向き.*',
+        '\\d+階/.*',
+        # 方角情報
+        '(南|北|東|西|南東|南西|北東|北西|東南|西南|東北|西北)向き',
+        # 入居・契約
+        '即入居可', '空室', '賃貸中',
+        # その他広告文言
+        'シリーズ', 'エクセルシリーズ', 'プレミアムシリーズ', 'グランドシリーズ',
+        '(システムキッチン|オートロック|宅配ボックス)(付|完備)?',
+        '(エクセル|プレミアム|グランド)シリーズ',
+        '(納戸|サービスルーム|S室|N室)付?',
+        '(バルコニー|専用庭|ルーフバルコニー|エレベーター|駐車場|駐輪場)付',
+        # 感嘆符など
+        '！', '!',
+        # 部分一致パターン（.*を含むもの）
+        r'.*手数料.*', r'.*仲介料.*',
+        r'.*弊社.*', r'.*当社.*',
+        r'.*払う.*', r'.*勿体無い.*', r'.*勿体ない.*', r'.*お得.*',
+        # 敬語・丁寧語（建物名には敬語は含まれない）
+        r'.*です.*', r'.*ます.*', r'.*ません.*',
+        r'.*でした.*', r'.*ました.*',
+        r'.*します.*', r'.*しました.*',
+        r'.*ください.*', r'.*ましょう.*',
+        # 文末の丁寧語
+        r'.*す。.*', r'.*さい。.*',
+        r'.*ます。.*', r'.*です。.*', r'.*ません。.*',
+        r'.*ました。.*', r'.*でした。.*',
+        r'.*ください。.*',
+        # 謙譲語・尊敬語
+        r'.*いたします.*', r'.*ございます.*',
+        r'.*おります.*', r'.*いただけます.*',
+        r'.*いただきます.*', r'.*申し上げます.*',
+        r'.*させていただきます.*',
+        # 勧誘・疑問形
+        r'.*いかがですか.*', r'.*ませんか.*',
+        r'.*しませんか.*', r'.*いかがでしょうか.*',
+        # 可能形
+        r'.*できます.*', r'.*られます.*',
+        r'.*可能です.*',
+    ]
+
+    # Step 1.7: 括弧の外側と内側を比較して、広告文の方を削除
+    # 例: "グランドメゾン白金の杜ザ・タワー（内見可能！）" → "グランドメゾン白金の杜ザ・タワー"
+    # 部分一致用のad_patterns（base_ad_patternsをそのまま使用）
+    ad_patterns = base_ad_patterns
+
+    # 建物名らしさを判定するキーワード（データベースから抽出した頻出キーワードを含む）
+    building_name_keywords = [
+        # 基本的な建物タイプ（日本語）
+        'マンション', 'タワー', 'ハウス', 'レジデンス', 'ヒルズ', 'パーク', '棟', 'コート',
+        'ビル', 'ビルディング', 'プラザ', 'スクエア', 'ガーデン', 'アイランド',
+        'ハイツ', 'ハイム', 'コーポ', 'コープ', 'コーポラス', 'パレス', 'メゾン', 'テラス',
+        # 基本的な建物タイプ（英語）
+        'TOWER', 'RESIDENCE', 'HOUSE', 'PARK', 'COURT', 'HILL', 'HILLS', 'CITY',
+        'PLAZA', 'SQUARE', 'GARDEN', 'ISLAND', 'SUITE', 'GRAND', 'BLUE', 'TERRACE',
+        'PALACE', 'STATION', 'VIEW', 'VILLAGE', 'FLAG',
+        # ブランド名・シリーズ名（カタカナ）- 出現頻度10回以上
+        'パークハウス', 'オープンレジデンシア', 'プラウド', 'シティハウス', 'グランドメゾン',
+        'パークコート', 'ピアース', 'パークホームズ', 'ブランズ', 'グランスイート',
+        'スカーラ', 'シティタワー', 'ディアナコート', 'ホームズ', 'ジェイパーク',
+        'シャンボール', 'プレミスト', 'パークタワー', 'セザール', 'アトラス', 'クレヴィア',
+        'ダイアパレス', 'ジオ', 'サンクタス', 'クリオ', 'サンウッド', 'ファミール',
+        'イトーピア', 'ガーデンヒルズ', 'デュオ', 'パークマンション', 'セブンスター',
+        'フラワー', 'スカイ', 'インペリアル', 'クオリア', 'リビオレゾン', 'ルジェンテ',
+        # ブランド名（英語）
+        'BRILLIA', 'HARUMI',
+        # 既存のキーワード
+        'CLEARE', 'FAMILLE', 'DUET', 'DUO', 'SCALA', 'DOEL', 'ALLES', 'CLEO', 'GALA',
+        'EAST', 'WEST', 'NORTH', 'SOUTH', 'CENTER',
+        'ウエスト', 'ウェスト', 'イースト', 'ノース', 'サウス', 'セントラル',
+        'エスト', 'Est', 'Terrazza',
+        '駅前', '駅南', '駅北', '駅東', '駅西',
+    ]
+
+    # 括弧パターンを検出して処理
+    bracket_patterns = [
+        (r'^(.+?)（(.+?)）(.*)$', '（', '）'),  # 全角丸括弧
+        (r'^(.+?)\((.+?)\)(.*)$', '(', ')'),    # 半角丸括弧
+        (r'^(.+?)【(.+?)】(.*)$', '【', '】'),  # 全角角括弧
+        (r'^(.+?)\[(.+?)\](.*)$', '[', ']'),    # 半角角括弧
+    ]
+
+    for pattern, open_br, close_br in bracket_patterns:
+        match = re.match(pattern, current_text)
+        if match:
+            outside_before = match.group(1).strip()  # 括弧の前
+            inside = match.group(2).strip()          # 括弧の中
+            outside_after = match.group(3).strip()   # 括弧の後
+
+            # 3重以上のネスト（削除しきれなかった括弧）を検出したらスキップ
+            # 括弧内にさらに括弧が含まれている場合は処理しない
+            if any(bracket in inside for bracket in ['（', '）', '(', ')', '【', '】', '[', ']']):
+                continue
+
+            # 括弧の中身が広告文かどうかを判定
+            inside_is_ad = any(re.search(pat, inside, re.IGNORECASE) for pat in ad_patterns)
+
+            # 括弧の外側が広告文かどうかを判定
+            outside_text = (outside_before + ' ' + outside_after).strip()
+            outside_is_ad = any(re.search(pat, outside_text, re.IGNORECASE) for pat in ad_patterns)
+
+            # 建物名キーワードの有無を確認
+            inside_has_building_keyword = any(keyword in inside for keyword in building_name_keywords)
+            outside_has_building_keyword = any(keyword in outside_text for keyword in building_name_keywords)
+
+            # 判定ロジック
+            if inside_is_ad and not outside_is_ad:
+                # 内側が広告文、外側が建物名 → 外側を残す
+                current_text = outside_text
+                break
+            elif outside_is_ad and not inside_is_ad:
+                # 外側が広告文、内側が建物名 → 内側を残す
+                current_text = inside
+                break
+            elif inside_has_building_keyword and not outside_has_building_keyword:
+                # 内側に建物名キーワードがある → 内側を残す
+                current_text = inside
+                break
+            elif outside_has_building_keyword and not inside_has_building_keyword:
+                # 外側に建物名キーワードがある → 外側を残す
+                current_text = outside_text
+                break
+            # どちらとも判定できない場合は、そのまま次のStepへ
+
     # Step 2: 記号をすべてスペースに統一（・は保護）
     symbols_pattern = r'[☆★◆◇｜～〜【】■□▲△▼▽◎○●◯※＊\[\]「」『』（）()]'
     current_text = re.sub(symbols_pattern, ' ', current_text)
@@ -6008,75 +6210,33 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
     # Step 4: スペースで単語に分割してフィルタリング
     words = current_text.split()
     
-    # 建物名キーワード（保護対象）
-    building_keywords = [
-        'マンション', 'タワー', 'ハウス', 'レジデンス', 'ヒルズ', 'パーク', '棟', 'コート', 
-        'TOWER', 'RESIDENCE', 'HOUSE', 'PARK', 'COURT', 'HILL', 'HILLS', 'CITY',
-        'ビル', 'ビルディング', 'プラザ', 'スクエア', 'ガーデン', 'アイランド',
-        'PLAZA', 'SQUARE', 'GARDEN', 'ISLAND', 'SUITE', 'GRAND', 'BLUE', 'CLEARE',
-        'FAMILLE', 'DUET', 'DUO', 'SCALA', 'DOEL', 'ALLES', 'CLEO', 'GALA',
-        'STATION', 'VIEW', 'EAST', 'WEST', 'NORTH', 'SOUTH', 'CENTER',
-        'ウエスト', 'イースト', 'ノース', 'サウス', 'セントラル', 'テラス', 'TERRACE',
-        'ウエスト', 'ウェスト', 'エスト', 'Est', 'EAST', 'Terrazza',
-        '駅前', '駅南', '駅北', '駅東', '駅西'
-    ]
+    # 建物名キーワード（保護対象）- building_name_keywordsと同じリストを使用
+    building_keywords = building_name_keywords
     
-    # 削除対象のパターン（大幅拡充）
-    removal_patterns = [
-        r'^(?!.*(住宅|ハウス|マンション|ビル|アパート)).*駅$',  # 建物名キーワードを含まない駅名のみ
-        r'徒歩\d+分$', r'JR.*線$', r'東京メトロ.*線$', r'\d+路線利用可$',
-        # 方角情報の除去（具体的な方角パターンのみ）
-        r'^(南|北|東|西|南東|南西|北東|北西|東南|西南|東北|西北)向き$',
-        r'リノベーション済?$', r'リフォーム済?$', r'新築未入居$', r'\d{4}年築$',
-        r'\d+LDK$', r'WIC$', r'SIC$', r'TR$', r'ペット可$', r'内覧可$',
-        r'^\d+階$', r'^\d+F$', r'\d+階部分$', r'\(\d+F\)$', r'\d+階/.*$',
-        r'^\d+階.*向き.*$', r'.*\d+階$', r'^\d+th$', r'.*Floor$',
-        r'^\d+階部分$', r'^部分$',  # 単独の「部分」を削除
-        # 【】内の典型的な広告文
-        r'^リノベーション済み$', r'^新築物件$', r'^仲介手数料無料$', 
-        r'^弊社限定公開$', r'^新規物件$', r'^駅近$', r'^オススメ$',
-        # 設備・状況情報の拡充（テスト結果に基づく）
-        r'^角部屋$', r'^最上階$', r'^美品$', r'^内装リフォーム済$',
-        r'^WIC付き$', r'^WIC付$', r'^SIC付$', r'^楽器可$', r'^事務所利用可$', r'^SOHO可$',
-        # 築年・距離情報の強化
-        r'^築\d+年$', r'^駅徒歩\d+分$', r'^JR.*線利用可$',
-        # 路線情報の拡充  
-        r'^東京メトロ.*線利用可$', r'^\d+路線利用可$',
-        # 令和年号パターン
-        r'^令和\d+年築$',
-        # テスト結果に基づく改善：間取り情報の除去パターン追加
-        r'^[1-5](R|K|DK|LDK)$',  # 1R, 1K, 1DK, 2LDK など
-        # テスト結果に基づく改善：設備・施設情報の除去パターン追加
-        r'^(システムキッチン|オートロック|宅配ボックス)(付|完備)?$',
-        r'^角住戸$',
-        # テスト結果に基づく改善：シリーズ名の除去パターン追加
-        r'^(エクセル|プレミアム|グランド)シリーズ$',
-        # 追加の間取り・設備パターン（正規表現でまとめる）
-        r'^[1-5]LDK(\+S|\+WIC)?$',  # 2LDK, 3LDK+S, 2LDK+WIC など
-        r'^(バルコニー|専用庭|ルーフバルコニー|エレベーター|駐車場|駐輪場)付$',
-        # 追加の状況・品質パターン  
-        r'^中古$', r'^新築$', r'^築浅$', r'^リフォーム中古$',
-        r'^即入居可$', r'^空室$', r'^賃貸中$',
-        # 手数料・価格に関する広告文パターン
-        r'^手数料.*', r'.*手数料.*', r'^仲介料.*', r'.*仲介料.*',
-        r'^弊社.*', r'.*弊社.*', r'^当社.*', r'.*当社.*',
-        r'.*払う.*', r'.*勿体無い.*', r'.*勿体ない.*', r'.*お得.*',
-        # 価格情報の除去（SUUMOなどで使用）
-        r'^\d+億\d+万円$', r'^\d+億円$', r'^\d+万円$', r'^\d+円$'
-    ]
+    # 削除対象のパターン（base_ad_patternsから生成 + 特殊パターン）
+    # base_ad_patternsを行末一致パターン（^pattern$）に変換
+    removal_patterns = [f'^{pat}$' for pat in base_ad_patterns]
+    
+    # 特殊パターンを追加（否定先読みなど、base_ad_patternsに含められない特殊構文）
+    # 駅名判定（building_name_keywordsを含まない駅名のみ削除）
+    # building_name_keywordsを正規表現の選択肢に変換（特殊文字をエスケープ）
+    escaped_keywords = [re.escape(kw) for kw in building_name_keywords]
+    keywords_pattern = '|'.join(escaped_keywords)
+    station_exclusion_pattern = f'^(?!.*({keywords_pattern})).*駅$'
+    removal_patterns.append(station_exclusion_pattern)
     
     # 建物名部分を保護（ザ、The、新等）
+    # building_name_keywordsに含まれない接頭語・接尾語のみを保護
+    # building_name_keywordsは部分一致で既に保護されるため、重複を削除
     protected_words = [
-        'ザ', 'THE', 'The', 'new', 'NEW', '新', 'プライム', 'グランド', 
-        'ロイヤル', 'クラッシィ', 'ブランズ', 'クレスト', 'プラウド',
+        'ザ', 'THE', 'The', 'new', 'NEW', '新', 'プライム', 'グランド',
+        'ロイヤル', 'クラッシィ', 'クレスト',
         'セント', 'パレ', 'ドール', 'アルス', 'ベル', 'ヒル', 'サイド',
-        'レクセル', 'シャトー', 'エスペランス', 'オープン', 'ファミール',
+        'レクセル', 'シャトー', 'エスペランス', 'オープン',
         'グラン', 'ミューゼ', 'コスタ', 'エクレール', 'Palais', 'Soleil',
-        'ドゥ', 'トゥール', 'ドエル', 'サンクタス', 'ミューゼオ', 'ヴィンテージ', 
+        'ドゥ', 'トゥール', 'ミューゼオ', 'ヴィンテージ',
         'ペア', 'サンリーノ', '森のとなり',
-        'ウエスト', 'ウェスト', 'イースト', 'ノース', 'サウス', 'セントラル',
-        'テラス', 'エスト', 'Est', 'EAST', 'WEST', 'NORTH', 'SOUTH',
-        'プラネ', '悠遊', 'ツイン', 'NORTH棟', 'EAST棟', 'WEST棟'
+        'プラネ', '悠遊', 'ツイン'
     ]
     
     filtered_words = []
@@ -6085,15 +6245,12 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
             continue
             
         # 建物名キーワードを含む単語は保護
+        # building_name_keywordsに「ハウス」「マンション」「ビル」などが含まれているため、
+        # 駅名を含む建物名（例：渋谷駅ハウス）も自動的に保護される
         if any(keyword in word for keyword in building_keywords):
             filtered_words.append(word)
             continue
-        
-        # 駅名を含む建物名パターンの保護
-        if re.search(r'.+駅.*(住宅|ハウス|マンション|ビル|アパート)', word):
-            filtered_words.append(word)
-            continue
-            
+
         # 保護対象の単語
         if word in protected_words:
             filtered_words.append(word)
