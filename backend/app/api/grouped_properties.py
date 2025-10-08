@@ -3,7 +3,7 @@ from fastapi import APIRouter, Query, HTTPException, Depends
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_, distinct, select, String
+from sqlalchemy import func, or_, and_, distinct, select, String, case
 from urllib.parse import unquote
 import re
 
@@ -190,6 +190,16 @@ async def get_properties_grouped_by_buildings(
     building_ids = [b.id for b in buildings]
     
     if building_ids:
+        # 売出確認日を取得するサブクエリ
+        earliest_published_subq = db.query(
+            PropertyListing.master_property_id,
+            func.min(func.coalesce(
+                PropertyListing.first_published_at,
+                PropertyListing.published_at,
+                PropertyListing.first_seen_at
+            )).label('earliest_published_at')
+        ).group_by(PropertyListing.master_property_id).subquery()
+        
         # 各建物の物件を一括取得（最大3件ずつ）
         properties_query = db.query(
             MasterProperty.id,
@@ -202,7 +212,8 @@ async def get_properties_grouped_by_buildings(
             MasterProperty.sold_at,
             MasterProperty.final_price,
             func.max(PropertyListing.current_price).label('current_price'),
-            active_listing_subq.c.has_active_listing
+            active_listing_subq.c.has_active_listing,
+            earliest_published_subq.c.earliest_published_at
         ).outerjoin(
             PropertyListing,
             and_(
@@ -212,6 +223,9 @@ async def get_properties_grouped_by_buildings(
         ).outerjoin(
             active_listing_subq,
             MasterProperty.id == active_listing_subq.c.master_property_id
+        ).outerjoin(
+            earliest_published_subq,
+            MasterProperty.id == earliest_published_subq.c.master_property_id
         ).filter(
             MasterProperty.building_id.in_(building_ids)
         )
@@ -266,8 +280,12 @@ async def get_properties_grouped_by_buildings(
             MasterProperty.direction,
             MasterProperty.sold_at,
             MasterProperty.final_price,
-            active_listing_subq.c.has_active_listing
-        ).order_by(MasterProperty.floor_number.asc())
+            active_listing_subq.c.has_active_listing,
+            earliest_published_subq.c.earliest_published_at
+        ).order_by(
+            # 売出確認日の降順（新しいものが先）
+            earliest_published_subq.c.earliest_published_at.desc().nullslast()
+        )
         
         all_properties = properties_query.all()
         

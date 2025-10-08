@@ -274,13 +274,14 @@ const PropertyDetailPage: React.FC = () => {
       }}>
         <Grid container spacing={3}>
           <Grid item xs={12}>
+            {/* 物件名、ステータス、掲載件数、ブックマーク */}
             <Box sx={{ 
               display: 'flex', 
               flexDirection: { xs: 'column', md: 'row' },
               justifyContent: 'space-between', 
               alignItems: { xs: 'flex-start', md: 'center' }, 
               mb: 2, 
-              gap: { xs: 2, md: 0 } 
+              gap: { xs: 1, md: 2 } 
             }}>
               <Typography 
                 variant={isMobile ? "h5" : "h4"} 
@@ -300,13 +301,12 @@ const PropertyDetailPage: React.FC = () => {
                 display: 'flex', 
                 flexWrap: 'wrap', 
                 gap: 1, 
-                alignSelf: { xs: 'flex-start', md: 'center' } 
+                alignSelf: { xs: 'flex-start', md: 'center' }
               }}>
                 {isSold && (
                   <Chip 
                     label="販売終了" 
                     sx={{ 
-                      mr: 1,
                       backgroundColor: '#d32f2f',
                       color: 'white',
                       fontWeight: 'bold'
@@ -319,11 +319,10 @@ const PropertyDetailPage: React.FC = () => {
                     icon={<Cached />} 
                     label="買い取り再販" 
                     color="warning" 
-                    sx={{ mr: 1 }} 
                   />
                 )}
 
-                <Chip label={`${property.listing_count}件の掲載`} color="secondary" sx={{ mr: 1 }} />
+                <Chip label={`${property.listing_count}件の掲載`} color="secondary" />
                 
                 {/* ブックマークボタン */}
                 <BookmarkButton 
