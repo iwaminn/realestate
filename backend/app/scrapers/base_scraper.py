@@ -6239,41 +6239,84 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
         'プラネ', '悠遊', 'ツイン'
     ]
     
-    filtered_words = []
-    for word in words:
+    # ===== 新アプローチ: 前後からトリミングする処理 =====
+    # 広告文は物件名の前後に付加されるものであり、物件名の間に挟まることはない
+    # そのため、文字列の前方・後方から順に広告文を削除していく
+    
+    # Step 4.1: 前方からトリミング
+    # 広告文パターンに一致する単語を削除し、建物名キーワードまたはprotected_wordsで停止
+    start_index = 0
+    for i, word in enumerate(words):
         if not word.strip():
+            start_index = i + 1
             continue
-            
-        # 建物名キーワードを含む単語は保護
-        # building_name_keywordsに「ハウス」「マンション」「ビル」などが含まれているため、
-        # 駅名を含む建物名（例：渋谷駅ハウス）も自動的に保護される
-        if any(keyword in word for keyword in building_keywords):
-            filtered_words.append(word)
-            continue
-
-        # 保護対象の単語
-        if word in protected_words:
-            filtered_words.append(word)
-            continue
-            
-        # 棟名保持パターンのチェック（単語レベル）
+        
+        # 建物名キーワードまたはprotected_wordsに一致したら停止
+        if any(keyword in word for keyword in building_keywords) or word in protected_words:
+            start_index = i
+            break
+        
+        # 棟名パターンに一致したら停止
         wing_match = re.match(BUILDING_WING_PATTERN + '$', word)
         if wing_match:
-            filtered_words.append(wing_match.group(1))
-            continue
+            start_index = i
+            break
         
-        # 削除パターンにマッチするかチェック
-        should_remove = False
+        # 広告文パターンに一致したら削除（次の単語へ）
+        is_ad = False
         for pattern in removal_patterns:
             if re.match(pattern, word):
-                should_remove = True
+                is_ad = True
                 break
         
-        if not should_remove:
-            filtered_words.append(word)
+        if is_ad:
+            start_index = i + 1
+        else:
+            # 広告文でもなく、建物名キーワードでもない場合は停止
+            start_index = i
+            break
     
-    # 単語を再結合
-    result = ' '.join(filtered_words).strip()
+    # Step 4.2: 後方からトリミング
+    # 広告文パターンに一致する単語を削除し、建物名キーワードまたはprotected_wordsで停止
+    end_index = len(words) - 1
+    for i in range(len(words) - 1, start_index - 1, -1):
+        word = words[i]
+        
+        if not word.strip():
+            end_index = i - 1
+            continue
+        
+        # 建物名キーワードまたはprotected_wordsに一致したら停止
+        if any(keyword in word for keyword in building_keywords) or word in protected_words:
+            end_index = i
+            break
+        
+        # 棟名パターンに一致したら停止
+        wing_match = re.match(BUILDING_WING_PATTERN + '$', word)
+        if wing_match:
+            end_index = i
+            break
+        
+        # 広告文パターンに一致したら削除（前の単語へ）
+        is_ad = False
+        for pattern in removal_patterns:
+            if re.match(pattern, word):
+                is_ad = True
+                break
+        
+        if is_ad:
+            end_index = i - 1
+        else:
+            # 広告文でもなく、建物名キーワードでもない場合は停止
+            end_index = i
+            break
+    
+    # Step 4.3: 残った範囲を結果として返す
+    if start_index <= end_index:
+        result_words = words[start_index:end_index + 1]
+        result = ' '.join(result_words).strip()
+    else:
+        result = ""
     
     # 路線名だけが残った場合は無効な建物名として空文字を返す
     # 鉄道路線名のパターン
