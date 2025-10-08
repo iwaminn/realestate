@@ -2201,6 +2201,11 @@ async def merge_buildings(
                 except Exception as e:
                     print(f"建物統合後の販売終了状態更新に失敗: property_id={property_id}, error={e}")
 
+            # 物件更新情報のキャッシュをクリア
+            from ...utils.cache import get_cache
+            cache = get_cache()
+            cache.clear_pattern("recent_updates_")
+
             db.commit()
             
             # 重複候補リストが変更される可能性があるため再計算を促す
@@ -2699,6 +2704,11 @@ async def merge_properties(
     # sold_atとfinal_priceを再計算（掲載情報が変更されたため）
     from ...utils.price_queries import update_sold_status_and_final_price
     update_sold_status_and_final_price(db, request.primary_property_id)
+
+    # 物件更新情報のキャッシュをクリア
+    from ...utils.cache import get_cache
+    cache = get_cache()
+    cache.clear_pattern("recent_updates_")
 
     db.commit()
     

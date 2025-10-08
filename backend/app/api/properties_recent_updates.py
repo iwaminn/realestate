@@ -76,7 +76,8 @@ async def get_recent_updates_cached(
         .filter(
             PropertyPriceChange.change_date >= cutoff_date,
             active_listing_subq.c.has_active_listing == True,  # 販売中物件のみ
-            Building.is_valid_name == True  # 広告文のみの建物を除外
+            Building.is_valid_name == True,  # 広告文のみの建物を除外
+            MasterProperty.id.isnot(None)  # 削除済み物件を除外
         )
         .order_by(PropertyPriceChange.change_date.desc())
     ).all()
@@ -128,7 +129,8 @@ async def get_recent_updates_cached(
         .filter(
             first_listing_subq.c.first_created_at >= cutoff_time,
             new_listing_active_subq.c.has_active_listing == True,  # 販売中物件のみ
-            Building.is_valid_name == True  # 広告文のみの建物を除外
+            Building.is_valid_name == True,  # 広告文のみの建物を除外
+            MasterProperty.id.isnot(None)  # 削除済み物件を除外
         )
         .distinct(MasterProperty.id)
     ).all()
@@ -300,7 +302,8 @@ async def get_recent_updates_counts(
         .filter(
             PropertyPriceChange.change_date >= cutoff_date,
             active_listing_check.c.has_active_listing == True,
-            Building.is_valid_name == True
+            Building.is_valid_name == True,
+            MasterProperty.id.isnot(None)  # 削除済み物件を除外
         )
         .scalar() or 0
     )
@@ -326,7 +329,8 @@ async def get_recent_updates_counts(
         .filter(
             first_listing_subq.c.first_created_at >= cutoff_time,
             active_listing_check.c.has_active_listing == True,
-            Building.is_valid_name == True
+            Building.is_valid_name == True,
+            MasterProperty.id.isnot(None)  # 削除済み物件を除外
         )
         .scalar() or 0
     )
@@ -346,7 +350,8 @@ async def get_recent_updates_counts(
         .filter(
             PropertyPriceChange.change_date >= cutoff_date,
             active_listing_check.c.has_active_listing == True,
-            Building.is_valid_name == True
+            Building.is_valid_name == True,
+            MasterProperty.id.isnot(None)  # 削除済み物件を除外
         )
         .group_by(Building.address)
         .all()
@@ -376,7 +381,8 @@ async def get_recent_updates_counts(
         .filter(
             first_listing_subq.c.first_created_at >= cutoff_time,
             active_listing_check.c.has_active_listing == True,
-            Building.is_valid_name == True
+            Building.is_valid_name == True,
+            MasterProperty.id.isnot(None)  # 削除済み物件を除外
         )
         .group_by(Building.address)
         .all()
