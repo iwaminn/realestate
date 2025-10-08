@@ -152,9 +152,20 @@ async def get_properties(
     
     # 建物フィルタ
     query = apply_building_filters(query, wards, max_building_age)
-    
+
     # 総件数を取得
     total = query.count()
+
+    # 販売終了物件数を正確にカウント
+    sold_count = 0
+    if include_inactive:
+        # 販売中のみの件数を取得
+        active_only_query = query.filter(
+            combined_subquery.c.has_active_listing == True
+        )
+        active_count = active_only_query.count()
+        # 販売終了 = 全体 - 販売中
+        sold_count = total - active_count
     
     # ソート
     if sort_by == "price":
@@ -260,10 +271,11 @@ async def get_properties(
             "latest_price_update": latest_price_update.isoformat() if latest_price_update else None,
             "has_price_change": has_price_change or False,
         })
-    
+
     return {
         "properties": properties,
         "total": total,
+        "sold_count": sold_count,
         "page": page,
         "per_page": per_page,
         "total_pages": (total + per_page - 1) // per_page

@@ -173,16 +173,44 @@ const PropertyDetailPage: React.FC = () => {
         dateStr: format(entryDate, 'yyyy/MM/dd'), // 表示用の文字列
         price: entry.price,
       };
-      
+
       // ソース別の価格差がある場合は追加
       if (entry.has_discrepancy && entry.sources) {
         Object.entries(entry.sources).forEach(([source, price]) => {
           dataPoint[source] = price;
         });
       }
-      
+
       priceChartData.push(dataPoint);
     });
+
+    // 販売終了物件の場合、最後に販売終了日のデータポイントを追加
+    if (isSold && property.sold_at && property.final_price) {
+      const soldDate = new Date(property.sold_at);
+      const lastDataPoint = priceChartData[priceChartData.length - 1];
+
+      // 最後のデータポイントと販売終了日が異なる場合のみ追加
+      if (!lastDataPoint || lastDataPoint.dateStr !== format(soldDate, 'yyyy/MM/dd')) {
+        priceChartData.push({
+          date: soldDate.getTime(),
+          dateStr: format(soldDate, 'yyyy/MM/dd'),
+          price: property.final_price,
+        });
+      }
+    } else if (!isSold && property.current_price && priceChartData.length > 0) {
+      // 販売中の物件の場合、最後に本日の現在価格のデータポイントを追加
+      const today = new Date();
+      const lastDataPoint = priceChartData[priceChartData.length - 1];
+
+      // 最後のデータポイントと本日が異なる場合のみ追加
+      if (lastDataPoint.dateStr !== format(today, 'yyyy/MM/dd')) {
+        priceChartData.push({
+          date: today.getTime(),
+          dateStr: format(today, 'yyyy/MM/dd'),
+          price: property.current_price,
+        });
+      }
+    }
   } else {
     // フォールバック：従来の方法で統合
     const dateMap = new (Map as any)();
