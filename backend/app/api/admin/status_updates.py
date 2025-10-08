@@ -167,9 +167,9 @@ async def update_listing_status(
         properties_missing_sold_at = db.query(MasterProperty.id).filter(
             MasterProperty.sold_at.is_(None)
         ).all()
-        
+
         fixed_sold_properties = set()
-        
+
         for (property_id,) in properties_missing_sold_at:
             # sold_atとfinal_priceを更新
             try:
@@ -178,6 +178,23 @@ async def update_listing_status(
                     fixed_sold_properties.add(property_id)
             except Exception as e:
                 print(f"販売終了状態の更新に失敗: property_id={property_id}, error={e}")
+
+        # 4. sold_atは設定済みだがfinal_priceがNULLの物件を修正
+        properties_missing_final_price = db.query(MasterProperty.id).filter(
+            MasterProperty.sold_at.isnot(None),
+            MasterProperty.final_price.is_(None)
+        ).all()
+
+        fixed_final_price_count = 0
+
+        for (property_id,) in properties_missing_final_price:
+            # final_priceのみを更新
+            try:
+                result = update_sold_status_and_final_price(db, property_id)
+                if result["final_price"] is not None:
+                    fixed_final_price_count += 1
+            except Exception as e:
+                print(f"final_priceの更新に失敗: property_id={property_id}, error={e}")
         
         # 影響を受けた全物件の最初の掲載日と価格改定日を更新
         from ...utils.property_utils import update_latest_price_change
@@ -202,10 +219,12 @@ async def update_listing_status(
                 messages.append(f"{len(sold_properties)}件の物件が販売終了")
         if len(fixed_sold_properties) > 0:
             messages.append(f"{len(fixed_sold_properties)}件の物件のsold_atを修正")
-        
+        if fixed_final_price_count > 0:
+            messages.append(f"{fixed_final_price_count}件の物件のfinal_priceを修正")
+
         if not messages:
             messages.append("更新対象の掲載はありませんでした")
-        
+
         return {
             "success": True,
             "message": "、".join(messages) + "。",
@@ -213,7 +232,8 @@ async def update_listing_status(
             "reopened_properties": len(reopened_properties),
             "inactive_listings": inactive_count,
             "sold_properties": len(sold_properties),
-            "fixed_sold_properties": len(fixed_sold_properties)
+            "fixed_sold_properties": len(fixed_sold_properties),
+            "fixed_final_price": fixed_final_price_count
         }
         
     except Exception as e:

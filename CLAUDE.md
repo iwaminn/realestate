@@ -458,10 +458,10 @@ docker compose exec backend poetry run python backend/scripts/init_schema.py
 
 ## API構成
 
-- `GET /api/v2/properties`: 重複排除された物件一覧
-- `GET /api/v2/properties/{id}`: 物件詳細（全掲載情報含む）
-- `GET /api/v2/buildings/{building_id}/properties`: 建物内の全物件
-- `GET /api/v2/stats`: 統計情報
+- `GET /api/properties`: 重複排除された物件一覧
+- `GET /api/properties/{id}`: 物件詳細（全掲載情報含む）
+- `GET /api/buildings/{building_id}/properties`: 建物内の全物件
+- `GET /api/stats`: 統計情報
 
 ## スクレイパー設定
 
