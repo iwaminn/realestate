@@ -43,24 +43,29 @@ def update_all_properties(session, limit=None):
     properties = query.all()
     total = len(properties)
     updated_count = 0
+    building_name_updated_count = 0
 
     logger.info(f"処理対象物件数: {total}件")
 
     for i, prop in enumerate(properties, 1):
         try:
-            # 多数決で物件情報を更新
+            # 多数決で物件属性を更新
             if updater.update_master_property_by_majority(prop):
                 updated_count += 1
 
+            # 多数決で物件レベルの建物名を更新
+            if updater.update_property_building_name_by_majority(prop.id):
+                building_name_updated_count += 1
+
             # 進捗表示（100件ごと）
             if i % 100 == 0:
-                logger.info(f"進捗: {i}/{total}件処理完了 (更新: {updated_count}件)")
+                logger.info(f"進捗: {i}/{total}件処理完了 (属性更新: {updated_count}件, 建物名更新: {building_name_updated_count}件)")
 
         except Exception as e:
             logger.error(f"物件ID {prop.id} の更新に失敗: {e}")
             continue
 
-    logger.info(f"物件情報の更新完了: {updated_count}/{total}件を更新")
+    logger.info(f"物件情報の更新完了: 属性更新 {updated_count}/{total}件, 建物名更新 {building_name_updated_count}/{total}件")
     return updated_count
 
 
@@ -128,10 +133,22 @@ def update_single_property(session, property_id):
         logger.error(f"物件ID {property_id} が見つかりません")
         return False
 
-    logger.info(f"更新前: current_price={prop.current_price}, sold_at={prop.sold_at}")
+    logger.info(f"更新前: current_price={prop.current_price}, sold_at={prop.sold_at}, display_building_name={prop.display_building_name}")
 
+    updated = False
+    
+    # 物件属性の更新
     if updater.update_master_property_by_majority(prop):
-        logger.info(f"更新後: current_price={prop.current_price}, sold_at={prop.sold_at}")
+        updated = True
+        logger.info("物件属性を更新しました")
+    
+    # 物件レベルの建物名の更新
+    if updater.update_property_building_name_by_majority(property_id):
+        updated = True
+        logger.info("物件レベルの建物名を更新しました")
+    
+    if updated:
+        logger.info(f"更新後: current_price={prop.current_price}, sold_at={prop.sold_at}, display_building_name={prop.display_building_name}")
         logger.info("更新成功")
         return True
     else:

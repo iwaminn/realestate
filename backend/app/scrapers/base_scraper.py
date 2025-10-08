@@ -5966,6 +5966,8 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
     純粋に広告文除去処理のみを実行し、判定は行わない
     """
     import re
+    import logging
+    logger = logging.getLogger(__name__)
     
     if not ad_text:
         return ad_text
@@ -5986,54 +5988,17 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
     # 棟名保持パターン（棟名を保持して階数のみ除去）
     BUILDING_WING_PATTERN = rf'({WING_NAMES}棟)\s*\d+階'
     current_text = re.sub(BUILDING_WING_PATTERN, r'\1', current_text)
-    
-    # 通常の階数・方角除去パターン
-    floor_removal_patterns = [
-        r'\s*\d+階\s*/\s*\d+階\s*',      # 7階/7階 パターン
-        r'\s*\d+階\s*/\s*-+\s*',          # 4階/--- パターン
-        r'\s*\(\d+F\)\s*',                # (4F) パターン
-        r'\s*\d+階部分\s*',                 # 10階部分、1階部分 パターン
-        r'\s*\d+階.*向き\s*',               # 19階南向き、3階南東向き パターン
-        r'\s+\d+階\s+\d+LDK\s*',          # 1階 2LDK パターン
-        r'\s*\d+階\s+',                    # 階数の後にスペース（例：西麻布６階 4980万円）
-        r'\s*\d+階\s*$',                   # 末尾の階数（例：パークハウス六本木10階）
-    ]
-    
-    for pattern in floor_removal_patterns:
-        current_text = re.sub(pattern, ' ', current_text)
-    
+
     # Step 1.5: パーセンテージ表記を削除（記号削除前に実行）
     # 「3%」「0.3%」などのパターンを削除
     percentage_pattern = r'[0-9]+\.?[0-9]*%'
     current_text = re.sub(percentage_pattern, ' ', current_text)
 
-    # Step 1.6: 間取り表記の後に続く括弧を削除（記号削除前に実行）
-    # 例: "2LDK+S（納戸）" → "2LDK+S（納戸）"全体を削除
-    # 間取りパターン: 1LDK, 2LDK+S, 3SLDK など
-    layout_with_parens_patterns = [
-        # ネストした括弧構造に対応（外側の括弧も含めて削除）
-        # 例: "（3LDK+S（納戸））" → 全体を削除
-        # WIC、SIC、TRなどの略語にも対応
-        r'（\d+[SLDK]+(\+[A-Z]+)?（[^）]+））',   # 全角括弧のネスト
-        r'\(\d+[SLDK]+(\+[A-Z]+)?（[^）]+）\)',   # 外側半角、内側全角
-        r'（\d+[SLDK]+(\+[A-Z]+)?\([^)]+\)）',   # 外側全角、内側半角
-        r'\(\d+[SLDK]+(\+[A-Z]+)?\([^)]+\)\)',   # 半角括弧のネスト
-        # 通常の括弧（ネストなし）
-        r'\d+[SLDK]+(\+[A-Z]+)?（[^）]+）',  # 全角括弧
-        r'\d+[SLDK]+(\+[A-Z]+)?\([^)]+\)',   # 半角括弧
-    ]
-    for pattern in layout_with_parens_patterns:
-        current_text = re.sub(pattern, ' ', current_text)
-
-    # Step 1.6.5: 駅名+徒歩情報を削除（記号削除前に実行）
-    # 例: "広尾駅徒歩２分" → 削除
-    # 半角・全角数字の両方に対応
-    station_access_patterns = [
-        r'[^\s]*駅徒歩[0-9０-９]+分',  # 駅名+徒歩+数字+分
-        r'[^\s]*駅\s*徒歩[0-9０-９]+分',  # 駅名+スペース+徒歩+数字+分
-    ]
-    for pattern in station_access_patterns:
-        current_text = re.sub(pattern, ' ', current_text)
+    # Step 1.6: 階数・間取りの前にスペースを挿入（単語境界を明確にする）
+    # 「大森3階」→「大森 3階」、「大森1LDK」→「大森 1LDK」
+    # これにより、後のトリミング処理で階数・間取りを正しく削除できる
+    current_text = re.sub(r'([^\d\s])(\d+階)', r'\1 \2', current_text)
+    current_text = re.sub(r'([^\d\s])(\d+[SLDK]{1,3})', r'\1 \2', current_text)  # 1LDK等
 
     # ===== 広告文パターンの定義（ad_patternsとremoval_patternsで共通使用） =====
     # 注：このパターンリストは^や$を含まない基本形
@@ -6042,9 +6007,10 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
         '内見可能?', '内覧可能?', '見学可能?', '見学予約可', '予約可',
         'プレゼント.*', 'キャンペーン.*', '.*キャンペーン.*',
         # 状態・品質
-        'リノベーション済み?', 'リフォーム済み?',
+        'リノベーション済み?', 'リフォーム済み?', 'リノベ.*', '.*リノベ.*',
         '新築未入居', '新築物件', '新築', '中古', '築浅', 'リフォーム中古',
         '美品', '内装リフォーム済',
+        '売主.*', '.*売主.*',
         # 築年数・年号
         '築\\d+年', '\\d{4}年築', '令和\\d+年築',
         # 手数料・価格
@@ -6057,27 +6023,31 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
         '\\d+\\.\\d+億円', '\\d+\\.\\d+万円',
         '価格相談', '値下げ', '価格改定', 'お買い得',
         # 駅・アクセス
-        '駅近', '徒歩\\d+分', '駅徒歩\\d+分', 'JR.*線', '東京メトロ.*線', '\\d+路線利用可',
-        'JR.*線利用可', '東京メトロ.*線利用可',
+        '駅近', '徒歩\\d+分', '駅徒歩\\d+分', '.*駅から徒歩\\d+分.*', 'JR.*線', '東京メトロ.*線', '\\d+路線利用.*', '.*路線利用.*',
+        'JR.*線利用可', '東京メトロ.*線利用可', '\\d+駅.*路線利用.*',
         # アピール文言
         'オススメ', 'おすすめ', '可能',
         # ペット・設備
         'ペット可', 'ペット相談可', '楽器可', '事務所利用可', 'SOHO可',
+        # 無償・有償の特典
+        '無償.*', '有償.*', '.*地下車庫.*', '.*トランクルーム.*',
         # 部屋特徴
         '角部屋', '角住戸', '最上階', '低層階', '高層階',
-        # 間取り・設備
-        '\\d+LDK', '\\d+LDK\\+S', '\\d+LDK\\+WIC',
-        '[1-5](R|K|DK|LDK)', '[1-5]LDK(\\+S|\\+WIC)?',
+        # 間取り・設備（数字+間取りタイプ+オプション）
+        '\\d+(R|LDK|LK|DK|K)(\\+S|\\+WIC|\\+)?',
+        '\\d+S',  # サービスルーム数（例：2S）
+        'S',  # 単独のサービスルーム表記
         # 間取りの日本語表現
         'ワンルーム', '1ルーム', '2ルーム', '3ルーム',
         'WIC', 'SIC', 'TR', '納戸', 'サービスルーム', 'S室', 'N室',
         'WIC付き', 'WIC付', 'SIC付',
         'システムキッチン', 'オートロック', '宅配ボックス',
-        'バルコニー付', '専用庭付', 'ルーフバルコニー付', 'エレベーター付', '駐車場付', '駐輪場付',
-        # 階数情報
+        'バルコニー付', '専用庭付.*', '.*専用庭.*', 'ルーフバルコニー付', 'エレベーター付', '駐車場付', '駐輪場付',
+        # 階数・部屋番号情報
         '\\d+階', '\\d+F', '階部分', '\\d+th', '.*Floor',
         '\\d+階部分', '部分', '\\d+階.*向き.*',
         '\\d+階/.*',
+        '\\d+号室',  # 部屋番号
         # 方角情報
         '(南|北|東|西|南東|南西|北東|北西|東南|西南|東北|西北)向き',
         # 入居・契約
@@ -6150,7 +6120,7 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
         '駅前', '駅南', '駅北', '駅東', '駅西',
     ]
 
-    # 括弧パターンを検出して処理
+    # 括弧パターンを検出して処理（2重、3重の括弧にも対応するため繰り返し実行）
     bracket_patterns = [
         (r'^(.+?)（(.+?)）(.*)$', '（', '）'),  # 全角丸括弧
         (r'^(.+?)\((.+?)\)(.*)$', '(', ')'),    # 半角丸括弧
@@ -6158,50 +6128,87 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
         (r'^(.+?)\[(.+?)\](.*)$', '[', ']'),    # 半角角括弧
     ]
 
-    for pattern, open_br, close_br in bracket_patterns:
-        match = re.match(pattern, current_text)
-        if match:
-            outside_before = match.group(1).strip()  # 括弧の前
-            inside = match.group(2).strip()          # 括弧の中
-            outside_after = match.group(3).strip()   # 括弧の後
+    # 最大10回まで括弧処理を繰り返す（2重、3重の括弧に対応）
+    for _ in range(10):
+        found_bracket = False
+        for pattern, open_br, close_br in bracket_patterns:
+            match = re.match(pattern, current_text)
+            if match:
+                outside_before = match.group(1).strip()  # 括弧の前
+                inside = match.group(2).strip()          # 括弧の中
+                outside_after = match.group(3).strip()   # 括弧の後
 
-            # 3重以上のネスト（削除しきれなかった括弧）を検出したらスキップ
-            # 括弧内にさらに括弧が含まれている場合は処理しない
-            if any(bracket in inside for bracket in ['（', '）', '(', ')', '【', '】', '[', ']']):
-                continue
+                # 3重以上のネスト（削除しきれなかった括弧）を検出したらスキップ
+                # 括弧内にさらに括弧が含まれている場合は処理しない
+                if any(bracket in inside for bracket in ['（', '）', '(', ')', '【', '】', '[', ']']):
+                    continue
 
-            # 括弧の中身が広告文かどうかを判定
-            inside_is_ad = any(re.search(pat, inside, re.IGNORECASE) for pat in ad_patterns)
+                # 括弧の中身が広告文かどうかを判定
+                inside_is_ad = any(re.search(pat, inside, re.IGNORECASE) for pat in ad_patterns)
 
-            # 括弧の外側が広告文かどうかを判定
-            outside_text = (outside_before + ' ' + outside_after).strip()
-            outside_is_ad = any(re.search(pat, outside_text, re.IGNORECASE) for pat in ad_patterns)
+                # 括弧の前後を別々に判定
+                before_is_ad = any(re.search(pat, outside_before, re.IGNORECASE) for pat in ad_patterns)
+                after_is_ad = any(re.search(pat, outside_after, re.IGNORECASE) for pat in ad_patterns)
 
-            # 建物名キーワードの有無を確認
-            inside_has_building_keyword = any(keyword in inside for keyword in building_name_keywords)
-            outside_has_building_keyword = any(keyword in outside_text for keyword in building_name_keywords)
+                # 建物名キーワードの有無を確認（前後別々に）
+                inside_has_building_keyword = any(keyword in inside for keyword in building_name_keywords)
+                before_has_building_keyword = any(keyword in outside_before for keyword in building_name_keywords)
+                after_has_building_keyword = any(keyword in outside_after for keyword in building_name_keywords)
 
-            # 判定ロジック
-            if inside_is_ad and not outside_is_ad:
-                # 内側が広告文、外側が建物名 → 外側を残す
-                current_text = outside_text
-                break
-            elif outside_is_ad and not inside_is_ad:
-                # 外側が広告文、内側が建物名 → 内側を残す
-                current_text = inside
-                break
-            elif inside_has_building_keyword and not outside_has_building_keyword:
-                # 内側に建物名キーワードがある → 内側を残す
-                current_text = inside
-                break
-            elif outside_has_building_keyword and not inside_has_building_keyword:
-                # 外側に建物名キーワードがある → 外側を残す
-                current_text = outside_text
-                break
-            # どちらとも判定できない場合は、そのまま次のStepへ
+                # 判定ロジック（シンプル版）
+                # 原則：建物名は連続しており、括弧内が広告文なら前か後ろのどちらかが建物名
+                
+                # Step 1: 括弧内が広告文の場合
+                if inside_is_ad:
+                    found_bracket = True
+                    # 前に建物名キーワードがあれば前を残す
+                    if before_has_building_keyword:
+                        current_text = outside_before
+                        break
+                    # 後ろに建物名キーワードがあれば後ろを残す
+                    elif after_has_building_keyword:
+                        current_text = outside_after
+                        break
+                    # どちらにもキーワードがなければ、空でない方を優先
+                    # かつ広告文でない方を残す
+                    elif outside_before and not before_is_ad:
+                        current_text = outside_before
+                        break
+                    elif outside_after and not after_is_ad:
+                        current_text = outside_after
+                        break
+                    # 両方とも広告文または空の場合は、より長い方を残す
+                    elif len(outside_before) >= len(outside_after):
+                        current_text = outside_before
+                        break
+                    else:
+                        current_text = outside_after
+                        break
+                
+                # Step 2: 括弧内が広告文でない場合（建物名の一部）
+                elif not inside_is_ad:
+                    found_bracket = True
+                    # 内側に建物名キーワードがあれば内側を残す
+                    if inside_has_building_keyword:
+                        current_text = inside
+                        break
+                    # キーワードがなくても、外側が広告文なら内側を残す
+                    elif before_is_ad or after_is_ad:
+                        current_text = inside
+                        break
+                
+                # どちらとも判定できない場合は、次の括弧パターンへ
+        
+        # 括弧が見つからなかった、または処理できなかった場合は終了
+        if not found_bracket:
+            break
 
     # Step 2: 記号をすべてスペースに統一（・は保護）
-    symbols_pattern = r'[☆★◆◇｜～〜【】■□▲△▼▽◎○●◯※＊\[\]「」『』（）()]'
+    # より網羅的な記号リスト：
+    # - 括弧類：【】[]「」『』（）()〔〕〈〉《》
+    # - 記号類：☆★◆◇■□▲△▼▽◎○●◯※＊！？：；♪｜～〜、。
+    # - 矢印類：→←↑↓⇒⇐⇑⇓
+    symbols_pattern = r'[☆★◆◇■□▲△▼▽◎○●◯※＊！？：；♪｜～〜、。→←↑↓⇒⇐⇑⇓\[\]「」『』（）()【】〔〕〈〉《》]'
     current_text = re.sub(symbols_pattern, ' ', current_text)
     
     # Step 3: 複数スペースを単一スペースに統一
@@ -6222,9 +6229,11 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
     # building_name_keywordsを正規表現の選択肢に変換（特殊文字をエスケープ）
     escaped_keywords = [re.escape(kw) for kw in building_name_keywords]
     keywords_pattern = '|'.join(escaped_keywords)
-    station_exclusion_pattern = f'^(?!.*({keywords_pattern})).*駅$'
+    # 駅・駅徒歩パターン（building_name_keywordsを含まない駅名のみ削除）
+    # 例: "広尾駅" → 削除、"タワー駅" → 保護、"広尾駅徒歩2分" → 削除、"タワー駅徒歩2分" → 保護
+    station_exclusion_pattern = f'^(?!.*({keywords_pattern})).*駅(\\s*徒歩[0-9０-９]+分)?$'
     removal_patterns.append(station_exclusion_pattern)
-    
+
     # 建物名部分を保護（ザ、The、新等）
     # building_name_keywordsに含まれない接頭語・接尾語のみを保護
     # building_name_keywordsは部分一致で既に保護されるため、重複を削除
@@ -6349,3 +6358,5 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
                 return ""  # 路線名のみの場合は空文字を返す
     
     return result
+
+# この関数は既に定義されているので、代わりに該当行の後に挿入する方法を使います
