@@ -366,7 +366,6 @@ async def get_building_properties(
             "has_active_listing": has_active,
             "last_confirmed_at": str(last_confirmed) if last_confirmed else None,
             "delisted_at": str(delisted) if delisted else None,
-            "station_info": mp.station_info if mp.station_info else station_info,
             "management_fee": mp.management_fee,
             "repair_fund": mp.repair_fund,
             "earliest_published_at": display_earliest_published_at,

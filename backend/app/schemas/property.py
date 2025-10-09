@@ -47,7 +47,6 @@ class MasterPropertySchema(BaseModel):
     current_price: Optional[int]
     listing_count: int
     source_sites: List[str]
-    station_info: Optional[str]
     management_fee: Optional[int]
     repair_fund: Optional[int]
     earliest_published_at: Optional[datetime]

@@ -81,7 +81,6 @@ class MasterProperty(Base):
     # 物件付属情報（多数決で決定）
     management_fee = Column(Integer)                          # 管理費（月額・円）
     repair_fund = Column(Integer)                             # 修繕積立金（月額・円）
-    station_info = Column(Text)                               # 交通情報（物件レベル）
     parking_info = Column(Text)                               # 駐車場情報（物件レベル）
     
     # 建物名関連（物件ごとに異なる場合がある）

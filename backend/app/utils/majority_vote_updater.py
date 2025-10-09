@@ -192,15 +192,23 @@ class MajorityVoteUpdater:
                 normalized_groups[normalized].append((value, source))
                 
         elif value_type == 'station_info':
-            # 駅情報の正規化（スペースや改行を統一）
-            import re
-            for value, source in valid_items:
-                # 複数の空白文字を1つに統一、改行を統一
-                normalized = re.sub(r'\s+', ' ', value.strip())
-                normalized = normalized.replace('\r\n', '\n').replace('\r', '\n')
-                if normalized not in normalized_groups:
-                    normalized_groups[normalized] = []
-                normalized_groups[normalized].append((value, source))
+            # 駅情報の多数決（駅ごと集計方式）
+            from .station_info_parser import get_majority_station_info
+            
+            # 駅ごとに分解して集計する新方式を使用
+            majority_value = get_majority_station_info(
+                valid_items,
+                site_priority_func=self.get_site_priority,
+                min_vote_ratio=0.3,  # 30%以上の掲載に含まれる駅を採用
+                max_stations=3        # 最大3駅まで
+            )
+            
+            # 新方式で結果が得られた場合はそのまま返す
+            if majority_value:
+                return majority_value
+            
+            # 新方式で結果が得られない場合は元の値を返す
+            return current_value
                 
         else:
             # その他の値は正規化なし（数値など）
@@ -385,7 +393,6 @@ class MajorityVoteUpdater:
             'balcony_areas': [],
             'management_fees': [],
             'repair_funds': [],
-            'station_infos': [],
             'parking_infos': [],
             'addresses': [],
             'prices': []  # 価格情報も収集
@@ -397,10 +404,6 @@ class MajorityVoteUpdater:
                 info['management_fees'].append((listing.management_fee, listing.source_site))
             if listing.repair_fund:
                 info['repair_funds'].append((listing.repair_fund, listing.source_site))
-            
-            # 駅情報
-            if listing.station_info:
-                info['station_infos'].append((listing.station_info, listing.source_site))
             
             # 価格情報
             if listing.current_price:
@@ -564,15 +567,7 @@ class MajorityVoteUpdater:
                 master_property.repair_fund = majority_repair_fund
                 updated = True
         
-        # 交通情報の多数決（ユニーク制約に含まれない、正規化あり）
-        if info['station_infos']:
-            majority_station = self.get_majority_value_with_normalization(
-                info['station_infos'], master_property.station_info, value_type='station_info'
-            )
-            if majority_station != master_property.station_info:
-                logger.info(f"物件ID {master_property.id} の交通情報を更新")
-                master_property.station_info = majority_station
-                updated = True
+        # 交通情報は建物レベルで管理するため、物件レベルでは更新しない
         
         # 駐車場情報の多数決（ユニーク制約に含まれない）
         if info['parking_infos']:

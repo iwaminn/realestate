@@ -11,6 +11,7 @@ export interface Building {
   structure?: string;
   land_rights?: string;
   parking_info?: string;
+  station_info?: string;
 }
 
 export interface PriceChangeInfo {
@@ -36,10 +37,8 @@ export interface Property {
   current_price?: number;
   listing_count: number;
   source_sites: string[];
-  station_info?: string;
   management_fee?: number;
   repair_fund?: number;
-  earliest_published_at?: string;
   has_active_listing?: boolean;
   last_confirmed_at?: string;
   delisted_at?: string;

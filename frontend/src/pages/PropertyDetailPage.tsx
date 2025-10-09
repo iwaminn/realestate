@@ -604,13 +604,13 @@ const PropertyDetailPage: React.FC = () => {
                   }
                 />
               </ListItem>
-              {property.station_info && (
+              {property.building.station_info && (
                 <ListItem>
                   <Train sx={{ mr: 2 }} />
-                  <ListItemText 
-                    primary="交通" 
-                    secondary={property.station_info}
-                    secondaryTypographyProps={{ 
+                  <ListItemText
+                    primary="交通"
+                    secondary={property.building.station_info}
+                    secondaryTypographyProps={{
                       component: 'div',
                       style: { whiteSpace: 'pre-line' }
                     }}

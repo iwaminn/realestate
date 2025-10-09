@@ -247,7 +247,8 @@ async def get_properties(
                 "total_floors": building.total_floors,
                 "built_year": building.built_year,
                 "built_month": building.built_month,
-                "total_units": building.total_units
+                "total_units": building.total_units,
+                "station_info": building.station_info
             },
             "display_building_name": mp.display_building_name,
             "room_number": mp.room_number,
@@ -266,7 +267,6 @@ async def get_properties(
             "last_confirmed_at": last_confirmed_at.isoformat() if last_confirmed_at else None,
             "delisted_at": delisted_at.isoformat() if delisted_at else None,
             "sold_at": mp.sold_at.isoformat() if mp.sold_at else None,
-            "station_info": station_info,
             "earliest_published_at": earliest_published_at.isoformat() if earliest_published_at else None,
             "latest_price_update": latest_price_update.isoformat() if latest_price_update else None,
             "has_price_change": has_price_change or False,
@@ -436,10 +436,7 @@ async def get_property_details(
     # ソースサイトのリスト（アクティブな掲載のみ）
     source_sites = list(set(l.source_site for l in active_listings))
     
-    # 交通情報を多数決で決定（マスター物件に保存されていない場合のみ）
-    station_info = master_property.station_info
-    if not station_info and info['station_infos']:
-        station_info = updater.get_majority_value(info['station_infos'])
+    # 交通情報は建物レベルで管理
     
     # 統合価格履歴を作成（物件単位）
     all_price_records = []
@@ -526,7 +523,6 @@ async def get_property_details(
         "current_price": majority_price,  # 多数決価格
         "listing_count": len(active_listings),
         "source_sites": source_sites,
-        "station_info": station_info,
         "management_fee": master_property.management_fee,
         "repair_fund": master_property.repair_fund,
         "earliest_published_at": earliest_published_at,

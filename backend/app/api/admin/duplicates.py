@@ -2479,7 +2479,6 @@ async def merge_properties(
 
         "management_fee": secondary.management_fee,
         "repair_fund": secondary.repair_fund,
-        "station_info": secondary.station_info,
         "parking_info": secondary.parking_info,
         "display_building_name": secondary.display_building_name,
         "created_at": secondary.created_at.isoformat() if secondary.created_at else None,
