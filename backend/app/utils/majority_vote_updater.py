@@ -618,9 +618,11 @@ class MajorityVoteUpdater:
                     building.normalized_address = normalizer.normalize_for_comparison(majority_address)
 
                 # 住所が変更されたので座標キャッシュをクリア
+                # 次回の座標取得時（物件詳細ページ表示時など）に自動的に再取得される
                 building.latitude = None
                 building.longitude = None
                 building.geocoded_at = None
+                building.geocoding_failed_at = None  # 失敗履歴もクリア
                 logger.info(f"建物 '{building.normalized_name}' の座標キャッシュをクリア")
 
                 updated = True

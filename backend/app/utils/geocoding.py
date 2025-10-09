@@ -18,6 +18,9 @@ class GeocodingService:
     # 東京大学CSISシンプルジオコーディングAPI
     CSIS_API_URL = "https://geocode.csis.u-tokyo.ac.jp/cgi-bin/simple_geocode.cgi"
     
+    # 失敗時の再試行遅延（日数）
+    RETRY_DELAY_DAYS = 7  # 失敗から7日後に再試行
+    
     @classmethod
     def get_coordinates_from_address(cls, address: str) -> Optional[Tuple[float, float]]:
         """
@@ -110,11 +113,16 @@ class GeocodingService:
                 building.latitude = lat
                 building.longitude = lng
                 building.geocoded_at = datetime.now()
+                building.geocoding_failed_at = None  # 成功したので失敗履歴をクリア
                 db.commit()
                 api_logger.info(f"建物の座標を更新: ID={building_id}, ({lat}, {lng})")
                 return True
-            
-            return False
+            else:
+                # 座標取得失敗時は失敗日時を記録
+                building.geocoding_failed_at = datetime.now()
+                db.commit()
+                api_logger.warning(f"建物の座標取得失敗を記録: ID={building_id}, address={building.address}")
+                return False
             
         except Exception as e:
             api_logger.error(f"座標更新エラー: {e}", exc_info=True)
@@ -125,6 +133,10 @@ class GeocodingService:
     def get_or_update_coordinates(cls, db: Session, building_id: int) -> Optional[Tuple[float, float]]:
         """
         建物の座標を取得（キャッシュ優先、なければAPI取得）
+        
+        キャッシュポリシー:
+        - 成功時: 住所が変わらない限り永久にキャッシュ
+        - 失敗時: 7日後に再試行
         
         Args:
             db: データベースセッション
@@ -139,12 +151,25 @@ class GeocodingService:
             if not building:
                 return None
             
-            # キャッシュされた座標があれば返す
+            # キャッシュされた座標があればそのまま返す
+            # 住所が変わらない限り座標は不変なので、期限チェックは不要
             if building.latitude is not None and building.longitude is not None:
                 api_logger.info(f"キャッシュから座標を返却: ID={building_id}")
                 return (building.latitude, building.longitude)
             
-            # なければ取得して保存
+            # 前回の失敗から十分な時間が経過しているかチェック
+            if building.geocoding_failed_at:
+                now = datetime.now()
+                failed_age = now - building.geocoding_failed_at
+                if failed_age.days < cls.RETRY_DELAY_DAYS:
+                    api_logger.info(
+                        f"前回の失敗から{failed_age.days}日（再試行は{cls.RETRY_DELAY_DAYS}日後）: ID={building_id}"
+                    )
+                    return None
+                else:
+                    api_logger.info(f"再試行期間経過、座標取得を再試行: ID={building_id}")
+            
+            # キャッシュがないか、再試行期間経過したので取得
             if cls.update_building_coordinates(db, building_id):
                 building = db.query(Building).filter(Building.id == building_id).first()
                 if building.latitude is not None and building.longitude is not None:

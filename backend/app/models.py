@@ -34,7 +34,8 @@ class Building(Base):
     # 座標情報（キャッシュ用）
     latitude = Column(Float)                                   # 緯度
     longitude = Column(Float)                                  # 経度
-    geocoded_at = Column(DateTime)                            # ジオコーディング実行日時
+    geocoded_at = Column(DateTime)                            # ジオコーディング成功日時
+    geocoding_failed_at = Column(DateTime)                     # ジオコーディング失敗日時
     
     # 管理情報
     created_at = Column(DateTime, server_default=func.now())
