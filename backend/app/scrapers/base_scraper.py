@@ -5982,7 +5982,11 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
         return ""
         
     current_text = original_text.strip()
-    
+
+    # Step 0: 全角英数記号を半角に統一（パターンマッチングの簡略化のため）
+    import unicodedata
+    current_text = unicodedata.normalize('NFKC', current_text)
+
     # Step 1: 全文レベルでの階数・方角情報除去
     WING_NAMES = r'[A-Z東西南北本新旧]'
     
@@ -5994,6 +5998,11 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
     # 「3%」「0.3%」などのパターンを削除
     percentage_pattern = r'[0-9]+\.?[0-9]*%'
     current_text = re.sub(percentage_pattern, ' ', current_text)
+
+    # Step 1.5.5: スラッシュをスペースに変換（広告文の分割のため）
+    # 例: "建物名/85.20m2/ 2LDK+WIC+納戸" → "建物名 85.20m2  2LDK+WIC+納戸"
+    # 注: 全角スラッシュはStep 0で半角に変換済み
+    current_text = current_text.replace('/', ' ')
 
     # Step 1.6: 階数・間取りの前にスペースを挿入（単語境界を明確にする）
     # 「大森3階」→「大森 3階」、「大森1LDK」→「大森 1LDK」
@@ -6026,6 +6035,8 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
         '\\d+億\\d+万円', '\\d+億円', '\\d+万円', '\\d+円',
         '\\d+億\\d+千\\d+百万円', '\\d+千\\d+百万円', '\\d+億\\d+千万円',
         '\\d+\\.\\d+億円', '\\d+\\.\\d+万円',
+        # 価格範囲（例：1億2900万円~1億3900万円）
+        '\\d+億\\d+万円~\\d+億\\d+万円', '\\d+万円~\\d+万円', '\\d+億円~\\d+億円',
         '価格相談', '値下げ', '価格改定', 'お買い得',
         # 駅・アクセス（建物名に含まれる可能性のある「○○駅」は削除しない）
         '駅近', '徒歩\d+分', '駅徒歩\d+分', '.*駅から徒歩\d+分.*', '駅\d+分',
@@ -6033,6 +6044,9 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
         'JR.*線利用可', '東京メトロ.*線利用可',
         # アピール文言
         'オススメ', 'おすすめ', '可能',
+        # 建物タイプの説明文（「〇〇のマンション」など）
+        '.*型.*マンション.*', '.*型.*タワー.*', '.*の.*マンション.*', '.*の.*タワー.*',
+        '駅直結型.*', '.*駅直結.*', '.*タイプ.*マンション.*',
         # ペット・設備
         'ペット可', 'ペット相談可', '楽器可', '事務所利用可', 'SOHO可',
         # 無償・有償の特典
@@ -6050,7 +6064,11 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
         # 設備詳細
         '床暖房', 'コンシェルジュサービス.*', 'コンシェルジュ付.*', 'バレー.*サービス.*', '.*サービス付.*',
         # 間取り・設備（数字+間取りタイプ+オプション）
-        '\\d+(R|LDK|LK|DK|K)(\\+S|\\+WIC|\\+)?',
+        # 複数の設備付き間取りに対応（例：2LDK+WIC+納戸）
+        '\\d+(R|LDK|LK|DK|K)(\\+[A-Z]+)*(\\+納戸)?(\\+サービスルーム)?',
+        '\\d+(R|LDK|LK|DK|K)(\\+S|\\+WIC|\\+)?',  # 従来のパターンも保持
+        # 間取り範囲（例：1LDK~3LDK、1LDK+2S(納戸)~3LDK）
+        '\\d+(R|LDK|LK|DK|K).*~\\d+(R|LDK|LK|DK|K)',
         '\d+S',  # サービスルーム数（例：2S）
         '[A-Z]タイプ', '\d+タイプ',  # Aタイプ、1タイプなど間取りタイプ
         '\d+LDKタイプ', '\d+DKタイプ', '\d+Kタイプ',  # 1LDKタイプ等
@@ -6106,16 +6124,9 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
     # 部分一致用のad_patterns（base_ad_patternsをそのまま使用）
     ad_patterns = base_ad_patterns
 
-    # 建物名らしさを判定するキーワード（データベースから抽出した頻出キーワードを含む）
+    # トリミング処理で建物名として保護するキーワード（ブランド名のみ）
+    # 一般的な建物タイプ（"タワー"、"マンション"）は含めない
     building_name_keywords = [
-        # 基本的な建物タイプ（日本語）
-        'マンション', 'タワー', 'ハウス', 'レジデンス', 'ヒルズ', 'パーク', '棟', 'コート',
-        'ビル', 'ビルディング', 'プラザ', 'スクエア', 'ガーデン', 'アイランド',
-        'ハイツ', 'ハイム', 'コーポ', 'コープ', 'コーポラス', 'パレス', 'メゾン', 'テラス',
-        # 基本的な建物タイプ（英語）
-        'TOWER', 'RESIDENCE', 'HOUSE', 'PARK', 'COURT', 'HILL', 'HILLS', 'CITY',
-        'PLAZA', 'SQUARE', 'GARDEN', 'ISLAND', 'SUITE', 'GRAND', 'BLUE', 'TERRACE',
-        'PALACE', 'STATION', 'VIEW', 'VILLAGE', 'FLAG',
         # ブランド名・シリーズ名（カタカナ）- 出現頻度10回以上
         'パークハウス', 'オープンレジデンシア', 'プラウド', 'シティハウス', 'グランドメゾン',
         'パークコート', 'ピアース', 'パークホームズ', 'ブランズ', 'グランスイート',
@@ -6123,15 +6134,14 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
         'シャンボール', 'プレミスト', 'パークタワー', 'セザール', 'アトラス', 'クレヴィア',
         'ダイアパレス', 'ジオ', 'サンクタス', 'クリオ', 'サンウッド', 'ファミール',
         'イトーピア', 'ガーデンヒルズ', 'デュオ', 'パークマンション', 'セブンスター',
-        'フラワー', 'スカイ', 'インペリアル', 'クオリア', 'リビオレゾン', 'ルジェンテ',
+        'インペリアル', 'クオリア', 'リビオレゾン', 'ルジェンテ',
         # ブランド名（英語）
-        'BRILLIA', 'HARUMI',
-        # 既存のキーワード
-        'CLEARE', 'FAMILLE', 'DUET', 'DUO', 'SCALA', 'DOEL', 'ALLES', 'CLEO', 'GALA',
+        'BRILLIA', 'HARUMI', 'CLEARE', 'FAMILLE', 'DUET', 'DUO', 'SCALA',
+        'DOEL', 'ALLES', 'CLEO', 'GALA',
+        # 方角（建物名に含まれる可能性が高い）
         'EAST', 'WEST', 'NORTH', 'SOUTH', 'CENTER',
         'ウエスト', 'ウェスト', 'イースト', 'ノース', 'サウス', 'セントラル',
         'エスト', 'Est', 'Terrazza',
-        '駅前', '駅南', '駅北', '駅東', '駅西',
     ]
 
     # 前後の広告文をトリミングする共通関数
@@ -6161,17 +6171,7 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
         station_exclusion_pattern = f'^(?!.*({keywords_pattern})).*駅(\\s*徒歩[0-9０-９]+分)?$'
         removal_patterns.append(station_exclusion_pattern)
 
-        # 保護対象の単語
-        protected_words = [
-            'ザ', 'THE', 'The', 'new', 'NEW', '新', 'プライム', 'グランド',
-            'ロイヤル', 'クラッシィ', 'クレスト',
-            'セント', 'パレ', 'ドール', 'アルス', 'ベル', 'ヒル', 'サイド',
-            'レクセル', 'シャトー', 'エスペランス', 'オープン',
-            'グラン', 'ミューゼ', 'コスタ', 'エクレール', 'Palais', 'Soleil',
-            'ドゥ', 'トゥール', 'ミューゼオ', 'ヴィンテージ',
-            'ペア', 'サンリーノ', '森のとなり',
-            'プラネ', '悠遊', 'ツイン'
-        ]
+
 
         # Step 3: 前方からトリミング
         start_index = 0
@@ -6180,8 +6180,8 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
                 start_index = i + 1
                 continue
 
-            # 建物名キーワードまたはprotected_wordsに一致したら停止
-            if any(keyword in word for keyword in building_name_keywords) or word in protected_words:
+            # 建物名キーワードに一致したら停止
+            if any(keyword in word for keyword in building_name_keywords):
                 start_index = i
                 break
 
@@ -6214,8 +6214,8 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
                 end_index = i - 1
                 continue
 
-            # 建物名キーワードまたはprotected_wordsに一致したら停止
-            if any(keyword in word for keyword in building_name_keywords) or word in protected_words:
+            # 建物名キーワード（ブランド名）に一致したら停止（優先）
+            if any(keyword in word for keyword in building_name_keywords):
                 end_index = i
                 break
 
@@ -6248,9 +6248,8 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
 
     # 括弧パターンを検出して処理（2重、3重の括弧にも対応するため繰り返し実行）
     bracket_patterns = [
-        (r'^(.+?)（(.+?)）(.*)$', '（', '）'),  # 全角丸括弧
-        (r'^(.+?)\((.+?)\)(.*)$', '(', ')'),    # 半角丸括弧
-        (r'^(.+?)【(.+?)】(.*)$', '【', '】'),  # 全角角括弧
+        (r'^(.+?)\((.+?)\)(.*)$', '(', ')'),    # 半角丸括弧（全角もNFKCで半角に変換済み）
+        (r'^(.+?)【(.+?)】(.*)$', '【', '】'),  # 全角角括弧（NFKCで変換されない）
         (r'^(.+?)\[(.+?)\](.*)$', '[', ']'),    # 半角角括弧
     ]
 
@@ -6359,7 +6358,8 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
     # Step 2以降: 前後の広告文をトリミング（共通関数を使用）
     # 括弧も含めてすべての記号をスペースに置き換える（半角記号も含む）
     # 注：&は建物名に使用されることがあるため除外
-    symbols_pattern = r'[☆★◆◇■□▲△▼▽◎○●◯※＊！？：；♪｜～〜、。→←↑↓⇒⇐⇑⇓\[\]「」『』（）()\【】〔〕〈〉《》!?@#$%^*+×/／]'
+    # 注：～（全角チルダ）はNFKCで~（半角チルダ）に変換されるため、半角も追加
+    symbols_pattern = r'[☆★◆◇■□▲△▼▽◎○●◯※＊！？：；♪｜～〜~、。→←↑↓⇒⇐⇑⇓\[\]「」『』（）()\【】〔〕〈〉《》!?@#$%^*×/]'
     result = _trim_ad_text_from_ends(current_text, symbols_pattern)
     
     # 記号だけが残った場合は無効な建物名として空文字を返す
