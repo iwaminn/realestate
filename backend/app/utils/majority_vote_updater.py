@@ -702,36 +702,26 @@ class MajorityVoteUpdater:
         """
         建物に関連する全ての掲載情報から建物属性を収集
         
+        普遍的属性（住所、総階数、築年月など）は全ての掲載履歴から収集し、
+        可変的属性（交通情報など）はアクティブな掲載のみから収集する。
+        
         Args:
             building_id: 建物ID
             
         Returns:
             属性ごとの値とソースのリスト
         """
-        # アクティブな掲載情報があるかチェック
-        active_listings_exist = self.session.query(PropertyListing).join(
+        # 全ての掲載情報を取得（普遍的属性用）
+        all_listings = self.session.query(PropertyListing).join(
             MasterProperty
         ).filter(
-            MasterProperty.building_id == building_id,
-            PropertyListing.is_active == True
-        ).first() is not None
+            MasterProperty.building_id == building_id
+        ).all()
         
-        # 掲載情報を取得
-        if active_listings_exist:
-            # アクティブな掲載のみ
-            listings = self.session.query(PropertyListing).join(
-                MasterProperty
-            ).filter(
-                MasterProperty.building_id == building_id,
-                PropertyListing.is_active == True
-            ).all()
-        else:
-            # 全ての掲載（販売終了物件を含む）
-            listings = self.session.query(PropertyListing).join(
-                MasterProperty
-            ).filter(
-                MasterProperty.building_id == building_id
-            ).all()
+        # アクティブな掲載をフィルタ（可変的属性用）
+        active_listings = [l for l in all_listings if l.is_active]
+        # アクティブな掲載がない場合は全ての掲載を使用
+        listings_for_variable_attrs = active_listings if active_listings else all_listings
         
         info = {
             'addresses': [],
@@ -745,26 +735,43 @@ class MajorityVoteUpdater:
             'total_units': []
         }
         
-        for listing in listings:
-            # listing_*フィールドから情報を収集
+        # 普遍的属性: 全ての掲載履歴から収集（建物の固有属性は時間で変化しない）
+        for listing in all_listings:
+            # 住所（建物の位置は不変）
             if hasattr(listing, 'listing_address') and listing.listing_address:
                 info['addresses'].append((listing.listing_address, listing.source_site))
+            
+            # 総階数（建物の構造は不変）
             if hasattr(listing, 'listing_total_floors') and listing.listing_total_floors:
                 info['total_floors'].append((listing.listing_total_floors, listing.source_site))
+            
+            # 築年月（建物の竣工時期は不変）
             if hasattr(listing, 'listing_built_year') and listing.listing_built_year:
                 info['built_years'].append((listing.listing_built_year, listing.source_site))
             if hasattr(listing, 'listing_built_month') and listing.listing_built_month:
                 info['built_months'].append((listing.listing_built_month, listing.source_site))
+            
+            # 構造（建物の建築構造は不変）
             if hasattr(listing, 'listing_building_structure') and listing.listing_building_structure:
                 info['structures'].append((listing.listing_building_structure, listing.source_site))
+            
+            # 地下階数（建物の構造は不変）
             if hasattr(listing, 'listing_basement_floors') and listing.listing_basement_floors:
                 info['basement_floors'].append((listing.listing_basement_floors, listing.source_site))
+            
+            # 敷地権利形態（所有権・借地権などは基本的に不変）
             if hasattr(listing, 'listing_land_rights') and listing.listing_land_rights:
                 info['land_rights'].append((listing.listing_land_rights, listing.source_site))
-            if hasattr(listing, 'listing_station_info') and listing.listing_station_info:
-                info['station_infos'].append((listing.listing_station_info, listing.source_site))
+            
+            # 総戸数（増築などで変わる可能性は低いが、基本的に不変）
             if hasattr(listing, 'listing_total_units') and listing.listing_total_units:
                 info['total_units'].append((listing.listing_total_units, listing.source_site))
+        
+        # 可変的属性: アクティブな掲載のみ（または全て非アクティブの場合は全て）
+        for listing in listings_for_variable_attrs:
+            # 交通情報（新駅開業などで変化する可能性がある）
+            if hasattr(listing, 'listing_station_info') and listing.listing_station_info:
+                info['station_infos'].append((listing.listing_station_info, listing.source_site))
         
         return info
     
