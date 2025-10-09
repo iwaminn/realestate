@@ -333,8 +333,8 @@ async def get_building_properties(
             display_price = mp.final_price
             final_price = mp.final_price
         else:
-            # アクティブな掲載がある場合は、多数決価格（min_priceまたはcurrent_price）を使用
-            display_price = min_price if min_price else mp.current_price
+            # アクティブな掲載がある場合は、多数決価格を使用
+            display_price = mp.current_price  # 多数決で決定された価格
             final_price = None
         
         # 価格変更情報を取得
