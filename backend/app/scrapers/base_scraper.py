@@ -6391,12 +6391,7 @@ def extract_building_name_from_ad_text(ad_text: str) -> str:
     # 路線名だけの場合は無効
     for pattern in railway_patterns:
         if re.match(pattern, result):
-            # ただし、建物名キーワードを含む場合は有効
-            # 例：「東横線ハイツ」「山手線マンション」は有効
-            building_keywords_in_result = ['マンション', 'ハウス', 'レジデンス', 'ビル', 'タワー', 
-                                          'コート', 'パーク', 'プラザ', 'スクエア', 'ガーデン']
-            if not any(keyword in result for keyword in building_keywords_in_result):
-                return ""  # 路線名のみの場合は空文字を返す
+            return ""  # 路線名のみの場合は空文字を返す
     
     return result
 
