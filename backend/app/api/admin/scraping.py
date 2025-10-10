@@ -1555,6 +1555,10 @@ def execute_scraping_strategy(
                         print(f"[{task_id}] スクレイピング完了。価格改定履歴キューの処理を開始します...")
                         stats = calculator.process_queue(limit=1000)
                         print(f"[{task_id}] 価格改定履歴キューの処理完了: 処理={stats['processed']}件, 失敗={stats['failed']}件, 変更={stats['changes_found']}件")
+                        
+                        # サーバーサイドキャッシュをクリア
+                        from ...utils.cache import clear_recent_updates_cache
+                        clear_recent_updates_cache()
                     except Exception as queue_error:
                         print(f"[{task_id}] 価格改定履歴キューの処理に失敗: {queue_error}")
                         # キュー処理の失敗はメインタスクに影響させない
