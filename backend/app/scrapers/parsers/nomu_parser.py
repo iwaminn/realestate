@@ -976,20 +976,17 @@ class NomuParser(BaseHtmlParser):
                 # 間取り
                 if '間取' in key and 'layout' not in property_data:
                     layout = self.normalize_layout(value)
-                    if layout:
-                        property_data['layout'] = layout
+                    self.track_field_extraction(property_data, 'layout', layout, field_found=True)
                 
                 # 専有面積
                 elif '専有面積' in key and 'area' not in property_data:
                     area = self.parse_area(value)
-                    if area:
-                        property_data['area'] = area
+                    self.track_field_extraction(property_data, 'area', area, field_found=True)
                 
                 # バルコニー面積
                 elif 'バルコニー' in key and 'balcony_area' not in property_data:
                     balcony_area = self.parse_area(value)
-                    if balcony_area:
-                        property_data['balcony_area'] = balcony_area
+                    self.track_field_extraction(property_data, 'balcony_area', balcony_area, field_found=True)
                 
                 # 構造（総階数）
                 # 注：構造フィールドからの総階数抽出は無効化
@@ -1008,54 +1005,47 @@ class NomuParser(BaseHtmlParser):
                 # 所在階
                 elif '所在階' in key and 'floor_number' not in property_data:
                     floor = self.parse_floor(value)
-                    if floor:
-                        property_data['floor_number'] = floor
+                    self.track_field_extraction(property_data, 'floor_number', floor, field_found=True)
                 
                 # 向き（方角）
                 elif '向き' in key and 'direction' not in property_data:
                     direction = self.normalize_direction(value)
-                    if direction:
-                        property_data['direction'] = direction
+                    self.track_field_extraction(property_data, 'direction', direction, field_found=True)
                 
                 # 築年月
                 elif '築年月' in key and 'built_year' not in property_data:
                     built_info = self.parse_built_date(value)
-                    if built_info['built_year']:
-                        property_data['built_year'] = built_info['built_year']
-                    if built_info['built_month'] and 'built_month' not in property_data:
+                    built_year = built_info.get('built_year')
+                    self.track_field_extraction(property_data, 'built_year', built_year, field_found=True)
+                    if built_info.get('built_month') and 'built_month' not in property_data:
                         property_data['built_month'] = built_info['built_month']
                 
                 # 所在地
                 elif '所在地' in key and 'address' not in property_data:
                     address = self.normalize_address(value)
-                    if address:
-                        property_data['address'] = address
+                    self.track_field_extraction(property_data, 'address', address, field_found=True)
                 
                 # 交通
                 elif '交通' in key and 'station_info' not in property_data:
                     station = self.parse_station_info(value)
-                    if station:
-                        property_data['station_info'] = station
+                    self.track_field_extraction(property_data, 'station_info', station, field_found=True)
                 
                 # 管理費
                 elif '管理費' in key and 'management_fee' not in property_data:
                     from ..data_normalizer import extract_monthly_fee
                     fee = extract_monthly_fee(value)
-                    if fee:
-                        property_data['management_fee'] = fee
+                    self.track_field_extraction(property_data, 'management_fee', fee, field_found=True)
                 
                 # 修繕積立金
                 elif '修繕積立' in key and 'repair_fund' not in property_data:
                     from ..data_normalizer import extract_monthly_fee
                     fund = extract_monthly_fee(value)
-                    if fund:
-                        property_data['repair_fund'] = fund
+                    self.track_field_extraction(property_data, 'repair_fund', fund, field_found=True)
                 
                 # 総戸数
                 elif '総戸数' in key and 'total_units' not in property_data:
                     units = self.parse_total_units(value)
-                    if units:
-                        property_data['total_units'] = units
+                    self.track_field_extraction(property_data, 'total_units', units, field_found=True)
 
     def _process_item_table(self, table: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """
@@ -1067,104 +1057,97 @@ class NomuParser(BaseHtmlParser):
         """
         # item_tableは通常の2カラムテーブル（th/td）構造
         for row in table.find_all('tr'):
-            th = row.find('th')
-            td = row.find('td')
+            # 1行に複数のth/tdペアがある場合に対応（管理費と修繕積立金が同じ行にあるケース）
+            ths = row.find_all('th')
+            tds = row.find_all('td')
             
-            if not th or not td:
+            if not ths or not tds:
                 continue
+            
+            # 各th/tdペアを処理
+            for i in range(len(ths)):
+                if i >= len(tds):
+                    break
+                    
+                key = self.extract_text(ths[i])
+                value = self.extract_text(tds[i])
                 
-            key = self.extract_text(th)
-            value = self.extract_text(td)
-            
-            if not key or not value:
-                continue
-            
-            # 各項目を処理
-            if '価格' in key and 'price' not in property_data:
-                price = self.parse_price(value)
-                if price:
-                    property_data['price'] = price
-            
-            elif '間取' in key and 'layout' not in property_data:
-                layout = self.normalize_layout(value)
-                if layout:
-                    property_data['layout'] = layout
-            
-            elif '専有面積' in key and 'area' not in property_data:
-                area = self.parse_area(value)
-                if area:
-                    property_data['area'] = area
-            
-            elif 'バルコニー' in key and 'balcony_area' not in property_data:
-                balcony_area = self.parse_area(value)
-                if balcony_area:
-                    property_data['balcony_area'] = balcony_area
-            
-            elif ('位置' in key or '所在階' in key) and 'floor_number' not in property_data:
-                # 「22階 / 47階建」のような形式から所在階を抽出
-                floor = self.parse_floor(value)
-                if floor:
-                    property_data['floor_number'] = floor
-                # 総階数も抽出
-                if '階建' in value and 'total_floors' not in property_data:
+                if not key or not value:
+                    continue
+                
+                # 各項目を処理
+                if '価格' in key and 'price' not in property_data:
+                    price = self.parse_price(value)
+                    self.track_field_extraction(property_data, 'price', price, field_found=True)
+                
+                elif '間取' in key and 'layout' not in property_data:
+                    layout = self.normalize_layout(value)
+                    self.track_field_extraction(property_data, 'layout', layout, field_found=True)
+                
+                elif '専有面積' in key and 'area' not in property_data:
+                    area = self.parse_area(value)
+                    self.track_field_extraction(property_data, 'area', area, field_found=True)
+                
+                elif 'バルコニー' in key and 'balcony_area' not in property_data:
+                    balcony_area = self.parse_area(value)
+                    self.track_field_extraction(property_data, 'balcony_area', balcony_area, field_found=True)
+                
+                elif ('位置' in key or '所在階' in key) and 'floor_number' not in property_data:
+                    # 「22階 / 47階建」のような形式から所在階を抽出
+                    floor = self.parse_floor(value)
+                    self.track_field_extraction(property_data, 'floor_number', floor, field_found=True)
+                    # 総階数も抽出
+                    if '階建' in value and 'total_floors' not in property_data:
+                        total_floors = self.parse_total_floors(value)
+                        self.track_field_extraction(property_data, 'total_floors', total_floors, field_found=True)
+                
+                elif '構造' in key:
+                    # 構造情報は保存するが、総階数は抽出しない（誤った値の可能性があるため）
+                    if 'structure' not in property_data:
+                        property_data['structure'] = value
+                
+                elif '向き' in key and 'direction' not in property_data:
+                    direction = self.normalize_direction(value)
+                    self.track_field_extraction(property_data, 'direction', direction, field_found=True)
+                
+                elif '築年月' in key and 'built_year' not in property_data:
+                    built_info = self.parse_built_date(value)
+                    built_year = built_info.get('built_year')
+                    self.track_field_extraction(property_data, 'built_year', built_year, field_found=True)
+                    if built_info.get('built_month') and 'built_month' not in property_data:
+                        property_data['built_month'] = built_info['built_month']
+                
+                elif '所在地' in key and 'address' not in property_data:
+                    address = self.normalize_address(value)
+                    self.track_field_extraction(property_data, 'address', address, field_found=True)
+                
+                elif '交通' in key and 'station_info' not in property_data:
+                    station = self.parse_station_info(value)
+                    self.track_field_extraction(property_data, 'station_info', station, field_found=True)
+                
+                elif '管理費' in key and 'management_fee' not in property_data:
+                    from ..data_normalizer import extract_monthly_fee
+                    fee = extract_monthly_fee(value)
+                    self.track_field_extraction(property_data, 'management_fee', fee, field_found=True)
+                
+                elif '修繕積立' in key and 'repair_fund' not in property_data:
+                    from ..data_normalizer import extract_monthly_fee
+                    fund = extract_monthly_fee(value)
+                    self.track_field_extraction(property_data, 'repair_fund', fund, field_found=True)
+                
+                elif '総戸数' in key and 'total_units' not in property_data:
+                    units = self.parse_total_units(value)
+                    self.track_field_extraction(property_data, 'total_units', units, field_found=True)
+                
+                elif '建物階数' in key and 'total_floors' not in property_data:
+                    # 「47階建」のような形式から総階数を抽出
                     total_floors = self.parse_total_floors(value)
-                    if total_floors:
-                        property_data['total_floors'] = total_floors
-            
-            elif '構造' in key:
-                # 構造情報は保存するが、総階数は抽出しない（誤った値の可能性があるため）
-                if 'structure' not in property_data:
-                    property_data['structure'] = value
-            
-            elif '向き' in key and 'direction' not in property_data:
-                direction = self.normalize_direction(value)
-                if direction:
-                    property_data['direction'] = direction
-            
-            elif '築年月' in key and 'built_year' not in property_data:
-                built_info = self.parse_built_date(value)
-                if built_info['built_year']:
-                    property_data['built_year'] = built_info['built_year']
-                if built_info['built_month'] and 'built_month' not in property_data:
-                    property_data['built_month'] = built_info['built_month']
-            
-            elif '所在地' in key and 'address' not in property_data:
-                address = self.normalize_address(value)
-                if address:
-                    property_data['address'] = address
-            
-            elif '交通' in key and 'station_info' not in property_data:
-                station = self.parse_station_info(value)
-                if station:
-                    property_data['station_info'] = station
-            
-            elif '管理費' in key and 'management_fee' not in property_data:
-                from ..data_normalizer import extract_monthly_fee
-                fee = extract_monthly_fee(value)
-                if fee:
-                    property_data['management_fee'] = fee
-            
-            elif '修繕積立' in key and 'repair_fund' not in property_data:
-                from ..data_normalizer import extract_monthly_fee
-                fund = extract_monthly_fee(value)
-                if fund:
-                    property_data['repair_fund'] = fund
-            
-            elif '総戸数' in key and 'total_units' not in property_data:
-                units = self.parse_total_units(value)
-                if units:
-                    property_data['total_units'] = units
-            
-            elif '建物階数' in key and 'total_floors' not in property_data:
-                # 「47階建」のような形式から総階数を抽出
-                total_floors = self.parse_total_floors(value)
-                if total_floors:
-                    property_data['total_floors'] = total_floors
-                # 地下階もチェック
-                if 'basement_floors' not in property_data:
-                    basement = self.parse_basement_floors(value)
-                    if basement:
-                        property_data['basement_floors'] = basement
+                    self.track_field_extraction(property_data, 'total_floors', total_floors, field_found=True)
+                    # 地下階もチェック
+                    if 'basement_floors' not in property_data:
+                        basement = self.parse_basement_floors(value)
+                        if basement:
+                            property_data['basement_floors'] = basement
     
         
             # その他のフィールドも同様に処理...
