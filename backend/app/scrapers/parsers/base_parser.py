@@ -33,6 +33,62 @@ class BaseHtmlParser:
         self.logger = logger or logging.getLogger(__name__)
         from ..components.html_parser import HtmlParserComponent
         self.html_parser = HtmlParserComponent(logger=self.logger)
+
+    
+    # ========== フィールド抽出追跡フレームワーク ==========
+    
+    def track_field_extraction(
+        self, 
+        property_data: Dict[str, Any], 
+        field_name: str, 
+        value: Any,
+        field_found: bool = True
+    ):
+        """
+        フィールド抽出の追跡（HTML構造変更の早期検出用）
+        
+        このメソッドは、各フィールドの抽出状態を記録し、
+        HTML構造の変更などでフィールド自体が見つからなくなった場合と、
+        元々データがない場合を区別できるようにします。
+        
+        Args:
+            property_data: データ格納先（パース結果を格納する辞書）
+            field_name: フィールド名（例: 'management_fee', 'floor_number'）
+            value: 抽出された値（Noneの場合は値が抽出できなかったことを示す）
+            field_found: フィールド（HTML要素）が見つかったかどうか（デフォルト: True）
+        
+        使用例:
+            # テーブルのth要素が見つかった場合
+            if '管理費' in key:
+                fee = extract_monthly_fee(value)
+                self.track_field_extraction(property_data, 'management_fee', fee, field_found=True)
+            
+            # HTML要素自体が見つからなかった場合
+            if not price_element:
+                self.track_field_extraction(property_data, 'price', None, field_found=False)
+        
+        メタデータ構造:
+            property_data['_field_extraction_meta'] = {
+                'management_fee': {
+                    'field_found': True,      # HTML要素が見つかったか
+                    'value_extracted': False  # 有効な値が抽出できたか
+                }
+            }
+        """
+        # メタデータ領域を初期化
+        if '_field_extraction_meta' not in property_data:
+            property_data['_field_extraction_meta'] = {}
+        
+        # フィールドの抽出状態を記録
+        property_data['_field_extraction_meta'][field_name] = {
+            'field_found': field_found,           # HTML要素が見つかったか
+            'value_extracted': value is not None  # 有効な値が抽出できたか
+        }
+        
+        # 値が有効な場合のみproperty_dataに設定
+        # None以外の値（0を含む）はすべて有効な値として扱う
+        if value is not None:
+            property_data[field_name] = value
     
     # ========== HTML操作メソッド（HtmlParserComponentに委譲） ==========
     
@@ -143,3 +199,24 @@ class BaseHtmlParser:
             return None
         
         return result
+
+    def normalize_building_name(self, building_name: str) -> str:
+        """
+        建物名を正規化（広告文除去）
+        
+        Args:
+            building_name: 広告文を含む可能性のある建物名
+            
+        Returns:
+            広告文を除去した建物名（除去後に空の場合は元の建物名）
+        """
+        from ...utils.building_name_normalizer import remove_ad_text_from_building_name
+        
+        cleaned_name = remove_ad_text_from_building_name(building_name)
+        
+        # 広告文除去後に空になった場合は、元の建物名をそのまま返す
+        # （広告文のみの可能性があるが、データを失うよりは保持する）
+        if not cleaned_name or not cleaned_name.strip():
+            return building_name
+        
+        return cleaned_name

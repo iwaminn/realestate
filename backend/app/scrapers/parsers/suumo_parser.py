@@ -94,15 +94,13 @@ class SuumoParser(BaseHtmlParser):
                             if dd_text:
                                 property_data['building_name'] = dd_text
                         elif '専有面積' in dt_text:
-                            # 専有面積を取得（基底クラスのメソッドを使用）
+                            # 専有面積を取得（基底クラスのメソッドを使用）（フィールド抽出追跡を使用）
                             area = self.parse_area(dd_text)
-                            if area:
-                                property_data['area'] = area
+                            self.track_field_extraction(property_data, 'area', area, field_found=True)
                         elif '間取り' in dt_text:
-                            # 間取りを取得（基底クラスのメソッドを使用）
+                            # 間取りを取得（基底クラスのメソッドを使用）（フィールド抽出追跡を使用）
                             layout = self.normalize_layout(dd_text)
-                            if layout:
-                                property_data['layout'] = layout
+                            self.track_field_extraction(property_data, 'layout', layout, field_found=True)
                         elif '築年月' in dt_text:
                             # 築年月を取得（基底クラスのメソッドで年月を分離）
                             built_info = self.parse_built_date(dd_text)
@@ -126,244 +124,14 @@ class SuumoParser(BaseHtmlParser):
                                 if 'm²' in cell_text or '㎡' in cell_text:
                                     if 'area' not in property_data:
                                         area = self.parse_area(cell_text)
-                                        if area:
-                                            property_data['area'] = area
+                                        self.track_field_extraction(property_data, 'area', area, field_found=True)
             
             # URLとsite_property_idがある場合のみ追加
             if property_data.get('url') and property_data.get('site_property_id'):
                 properties.append(property_data)
         
         return properties
-    
-    def _parse_property_card(self, card: Tag) -> List[Dict[str, Any]]:
-        """
-        物件カードから情報を抽出
-        
-        Args:
-            card: 物件カード要素
-            
-        Returns:
-            物件データのリスト
-        """
-        properties = []
-        property_data = {}
-        
-        # 物件詳細へのリンク（タイトルリンクを取得）
-        title_link = card.select_one('.property_unit-title a')
-        if not title_link:
-            # 代替セレクタ
-            title_link = card.select_one('h2.property_unit-title a') or \
-                        card.select_one('a.js-cassette_link_href') or \
-                        card.select_one('h2 a')
-        
-        if title_link:
-            href = title_link.get('href')
-            if href:
-                property_data['url'] = self.normalize_url(href, self.BASE_URL)
-                # URLからIDを抽出
-                id_match = re.search(r'/(\d+)/?(?:\?|$)', property_data['url'])
-                if id_match:
-                    property_data['site_property_id'] = id_match.group(1)
-                
-                # 建物名を取得
-                property_data['building_name'] = self.extract_text(title_link)
-        
-        # 価格情報
-        price_elem = card.select_one('.dottable-value') or \
-                     card.select_one('.price') or \
-                     card.select_one('span.ui-text--bold')
-        if price_elem:
-            price = self.parse_price(self.extract_text(price_elem))
-            if price:
-                property_data['price'] = price
-        
-        # 間取り・面積・階数などの詳細情報
-        detail_items = card.select('.dottable-line')
-        for item in detail_items:
-            text = self.extract_text(item)
-            if '間取り' in text or 'LDK' in text or 'DK' in text:
-                layout = self.normalize_layout(text)
-                if layout:
-                    property_data['layout'] = layout
-            elif '専有面積' in text or '㎡' in text:
-                area = self.parse_area(text)
-                if area:
-                    property_data['area'] = area
-            elif '階' in text:
-                floor = self.parse_floor(text)
-                if floor:
-                    property_data['floor_number'] = floor
-        
-        # URLがある場合のみ追加
-        if property_data.get('url'):
-            properties.append(property_data)
-        
-        return properties
-    
-    def _extract_building_name(self, card: Tag) -> Optional[str]:
-        """
-        建物名を抽出
-        
-        Args:
-            card: カード要素
-            
-        Returns:
-            建物名
-        """
-        # 建物名の候補セレクタ
-        selectors = [
-            "h2.cassette_heading a",
-            "h2.property-name",
-            "div.cassette_title",
-            "a.js-cassette_link_href"
-        ]
-        
-        for selector in selectors:
-            elem = card.select_one(selector)
-            if elem:
-                building_name = self.extract_text(elem)
-                if building_name:
-                    # 価格や間取り情報が含まれている場合は除去
-                    # 例: "中銀高輪マンシオン 3480万円（1LDK）" → "中銀高輪マンシオン"
-                    # 価格パターン（○○万円、○○億円、○○億のみ）を削除
-                    building_name = re.sub(r'\s*\d+(?:\.\d+)?(?:万|億)(?:円)?.*$', '', building_name)
-                    # 間取りパターン（括弧内の間取り情報）を削除
-                    building_name = re.sub(r'\s*[（\(][^）\)]*[）\)].*$', '', building_name)
-                    # 余分な空白を削除
-                    building_name = building_name.strip()
-                    
-                    if building_name:
-                        return building_name
-        
-        return None
-    
-    def _extract_common_info(self, card: Tag) -> Dict[str, Any]:
-        """
-        物件カード共通情報を抽出
-        
-        Args:
-            card: カード要素
-            
-        Returns:
-            共通情報
-        """
-        common_info = {}
-        
-        # 住所
-        address_elem = card.select_one("li.cassette-list-item--address, div.address")
-        if address_elem:
-            common_info['address'] = self.normalize_address(self.extract_text(address_elem))
-        
-        # 交通情報
-        access_elem = card.select_one("li.cassette-list-item--access, div.access")
-        if access_elem:
-            common_info['station_info'] = self.parse_station_info(self.extract_text(access_elem))
-        
-        # 築年月
-        built_elem = card.select_one("li.cassette-list-item--built, span.built")
-        if built_elem:
-            built_info = self.parse_built_date(self.extract_text(built_elem))
-            if built_info['built_year']:
-                common_info['built_year'] = built_info['built_year']
-            if built_info['built_month']:
-                common_info['built_month'] = built_info['built_month']
-        
-        # 総階数
-        floors_elem = card.select_one("li.cassette-list-item--floors, span.floors")
-        if floors_elem:
-            total_floors = self.parse_floor(self.extract_text(floors_elem))
-            if total_floors:
-                common_info['total_floors'] = total_floors
-        
-        return common_info
-    
-    def _extract_room_info(self, room_elem: Tag, property_data: Dict[str, Any]) -> None:
-        """
-        部屋固有の情報を抽出
-        
-        Args:
-            room_elem: 部屋要素
-            property_data: データ格納先
-        """
-        # URL
-        link = room_elem.select_one("a") or room_elem.find("a", href=True)
-        if link and link.get('href'):
-            property_data['url'] = self.normalize_url(link['href'], self.BASE_URL)
-            # URLからIDを抽出
-            site_id_match = re.search(r'/(\d+)/', link['href'])
-            if site_id_match:
-                property_data['site_property_id'] = site_id_match.group(1)
-        
-        # 価格
-        price_elem = room_elem.select_one("span.cassetteitem_price--sale, td.price")
-        if price_elem:
-            price = self.parse_price(self.extract_text(price_elem))
-            if price:
-                property_data['price'] = price
-        
-        # 間取り
-        layout_elem = room_elem.select_one("span.cassetteitem_madori, td.layout")
-        if layout_elem:
-            layout = self.normalize_layout(self.extract_text(layout_elem))
-            if layout:
-                property_data['layout'] = layout
-        
-        # 面積
-        area_elem = room_elem.select_one("span.cassetteitem_menseki, td.area")
-        if area_elem:
-            area = self.parse_area(self.extract_text(area_elem))
-            if area:
-                property_data['area'] = area
-        
-        # 階数
-        floor_elem = room_elem.select_one("td:contains('階'), span.floor")
-        if floor_elem:
-            floor_text = self.extract_text(floor_elem)
-            floor = self.parse_floor(floor_text)
-            if floor:
-                property_data['floor_number'] = floor
-        
-        # 方角
-        direction_elem = room_elem.select_one("td:contains('向き'), span.direction")
-        if direction_elem:
-            direction = self.normalize_direction(self.extract_text(direction_elem))
-            if direction:
-                property_data['direction'] = direction
-        
-        # 不動産会社名
-        agency_elem = room_elem.select_one("span.cassetteitem_agency, div.agency")
-        if agency_elem:
-            property_data['agency_name'] = self.extract_text(agency_elem)
-        # 不動産会社が取得できない場合は空のままにする
-    
-    def _extract_single_property_info(self, card: Tag, property_data: Dict[str, Any]) -> None:
-        """
-        単一物件の情報を抽出
-        
-        Args:
-            card: カード要素
-            property_data: データ格納先
-        """
-        # URL
-        link = card.select_one("a[href]")
-        if link and link.get('href'):
-            property_data['url'] = self.normalize_url(link['href'], self.BASE_URL)
-            # URLからIDを抽出
-            site_id_match = re.search(r'/(\d+)/', link['href'])
-            if site_id_match:
-                property_data['site_property_id'] = site_id_match.group(1)
-        
-        # 価格、間取り、面積などの情報を取得
-        info_table = card.select_one("table.cassette-item-table")
-        if info_table:
-            table_data = self.extract_table_data(info_table)
-            for key, value in table_data.items():
-                self._process_table_item(key, value, property_data)
-        
-        # 不動産会社名（デフォルト）
-        if 'agency_name' not in property_data:
-            property_data['agency_name'] = self.DEFAULT_AGENCY_NAME
-    
+
     def _process_table_item(self, key: str, value: str, property_data: Dict[str, Any]) -> None:
         """
         テーブルアイテムを処理
@@ -382,23 +150,20 @@ class SuumoParser(BaseHtmlParser):
             if price:
                 property_data['price'] = price
         
-        # 間取り
+        # 間取り（フィールド抽出追跡を使用）
         elif '間取' in key and 'layout' not in property_data:
             layout = self.normalize_layout(value)
-            if layout:
-                property_data['layout'] = layout
+            self.track_field_extraction(property_data, 'layout', layout, field_found=True)
         
-        # 面積
+        # 面積（フィールド抽出追跡を使用）
         elif '専有面積' in key or '面積' in key:
             area = self.parse_area(value)
-            if area:
-                property_data['area'] = area
-        
-        # 階数
+            self.track_field_extraction(property_data, 'area', area, field_found=True)
+
+        # 階数（フィールド抽出追跡を使用）
         elif '所在階' in key or '階' in key:
             floor = self.parse_floor(value)
-            if floor:
-                property_data['floor_number'] = floor
+            self.track_field_extraction(property_data, 'floor_number', floor, field_found=True)
         
         # 方角
         elif '向き' in key or '方角' in key:
@@ -455,19 +220,11 @@ class SuumoParser(BaseHtmlParser):
                     # タイトルフィールドには元のテキストを設定（表示用）
                     property_data['title'] = building_name
                     
-                    # 価格や間取り情報を削除してクリーンな建物名を取得
-                    # 価格パターン（○○万円、○○億円、○○億のみ）を削除
-                    building_name = re.sub(r'\s*\d+(?:\.\d+)?(?:万|億)(?:円)?.*$', '', building_name)
-                    # 間取りパターン（括弧内の間取り情報）を削除
-                    building_name = re.sub(r'\s*[（\(][^）\)]*[）\)].*$', '', building_name)
-                    # 部屋番号部分を除去
-                    building_name = re.sub(r'\s*\d+号室.*$', '', building_name)
-                    building_name = re.sub(r'\s*\d+階.*$', '', building_name)
-                    # 余分な空白を削除
-                    building_name = building_name.strip()
+                    # 建物名を正規化（広告文除去）
+                    building_name = self.normalize_building_name(building_name)
                     
-                    if building_name:
-                        property_data['building_name'] = building_name
+                    # フィールド抽出追跡を使用
+                    self.track_field_extraction(property_data, 'building_name', building_name, field_found=True)
                     return
     
     def _extract_basic_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
@@ -676,23 +433,20 @@ class SuumoParser(BaseHtmlParser):
         if not value:
             return
         
-        # 価格
+        # 価格（フィールド抽出追跡を使用）
         if ('価格' in key or '販売価格' in key) and 'price' not in property_data:
             price = self.parse_price(value)
-            if price:
-                property_data['price'] = price
+            self.track_field_extraction(property_data, 'price', price, field_found=True)
 
-        # 間取り
+        # 間取り（フィールド抽出追跡を使用）
         elif '間取' in key and 'layout' not in property_data:
             layout = self.normalize_layout(value)
-            if layout:
-                property_data['layout'] = layout
+            self.track_field_extraction(property_data, 'layout', layout, field_found=True)
 
-        # 専有面積
+        # 専有面積（フィールド抽出追跡を使用）
         elif '専有面積' in key and 'area' not in property_data:
             area = self.parse_area(value)
-            if area:
-                property_data['area'] = area
+            self.track_field_extraction(property_data, 'area', area, field_found=True)
             
             # 専有面積のセル内にバルコニー面積が含まれる場合の処理
             if 'バルコニー面積' in value and 'balcony_area' not in property_data:
@@ -712,44 +466,40 @@ class SuumoParser(BaseHtmlParser):
             if balcony_area:
                 property_data['balcony_area'] = balcony_area
         
-        # 階数（所在階/階建）
+        # 階数（所在階/階建）（フィールド抽出追跡を使用）
         elif '所在階' in key:
             # 所在階の抽出
             floor = self.parse_floor(value)
-            if floor:
-                property_data['floor_number'] = floor
+            self.track_field_extraction(property_data, 'floor_number', floor, field_found=True)
 
             # 総階数の抽出（"10階建"の部分から）
             total_floors = self.parse_total_floors(value)
-            if total_floors:
-                property_data['total_floors'] = total_floors
+            self.track_field_extraction(property_data, 'total_floors', total_floors, field_found=True)
 
             # 地下階数の抽出
             basement_floors = self.parse_basement_floors(value)
             if basement_floors:
                 property_data['basement_floors'] = basement_floors
         
-        # 総階数
+        # 総階数（フィールド抽出追跡を使用）
         elif '階建' in key or '総階数' in key:
             total_floors = self.parse_total_floors(value)
-            if total_floors:
-                property_data['total_floors'] = total_floors
+            self.track_field_extraction(property_data, 'total_floors', total_floors, field_found=True)
             
             # 地下階数の抽出
             basement_floors = self.parse_basement_floors(value)
             if basement_floors:
                 property_data['basement_floors'] = basement_floors
         
-        # 総戸数
+        # 総戸数（フィールド抽出追跡を使用）
         elif '総戸数' in key or '総区画数' in key:
             units = self.parse_total_units(value)
-            if units:
-                property_data['total_units'] = units
-            else:
-                # 「戸」がない場合も試す（数値のみ）
+            # 数値が取れない場合も再試行
+            if units is None:
                 units_match = re.search(r'(\d+)', value)
                 if units_match:
-                    property_data['total_units'] = int(units_match.group(1))
+                    units = int(units_match.group(1))
+            self.track_field_extraction(property_data, 'total_units', units, field_found=True)
         
         # 方角
         elif '向き' in key or '主要採光面' in key:
@@ -757,38 +507,36 @@ class SuumoParser(BaseHtmlParser):
             if direction:
                 property_data['direction'] = direction
         
-        # 築年月
+        # 築年月（フィールド抽出追跡を使用）
         elif '築年月' in key or '竣工時期' in key:
             # 基底クラスのメソッドで年月を分離して保存
             built_info = self.parse_built_date(value)
-            if built_info['built_year']:
-                property_data['built_year'] = built_info['built_year']
-            if built_info['built_month']:
+            built_year = built_info.get('built_year')
+            self.track_field_extraction(property_data, 'built_year', built_year, field_found=True)
+            
+            # 築月も設定
+            if built_info.get('built_month'):
                 property_data['built_month'] = built_info['built_month']
         
-        # 所在地・住所
+        # 所在地・住所（フィールド抽出追跡を使用）
         elif '所在地' in key or '住所' in key:
             address = self.normalize_address(value)
-            if address:
-                property_data['address'] = address
+            self.track_field_extraction(property_data, 'address', address, field_found=True)
         
-        # 交通
+        # 交通（フィールド抽出追跡を使用）
         elif '交通' in key:
             station = self.parse_station_info(value)
-            if station:
-                property_data['station_info'] = station
+            self.track_field_extraction(property_data, 'station_info', station, field_found=True)
         
-        # 管理費
+        # 管理費（フィールド抽出追跡を使用）
         elif '管理費' in key:
             fee = extract_monthly_fee(value)
-            if fee:
-                property_data['management_fee'] = fee
+            self.track_field_extraction(property_data, 'management_fee', fee, field_found=True)
         
-        # 修繕積立金
+        # 修繕積立金（フィールド抽出追跡を使用）
         elif '修繕積立' in key:
             fund = extract_monthly_fee(value)
-            if fund:
-                property_data['repair_fund'] = fund
+            self.track_field_extraction(property_data, 'repair_fund', fund, field_found=True)
         
         # 部屋番号
         elif '部屋番号' in key:
@@ -894,29 +642,3 @@ class SuumoParser(BaseHtmlParser):
                 return next_url
         
         return None
-    
-    def _validate_card_data(self, data: Dict[str, Any]) -> bool:
-        """
-        カードデータの妥当性を検証
-        
-        Args:
-            data: 物件データ
-            
-        Returns:
-            妥当性フラグ
-        """
-        # 必須フィールド
-        required = ['building_name', 'price', 'url']
-        for field in required:
-            if field not in data or not data[field]:
-                self.logger.debug(f"必須フィールド '{field}' が欠落")
-                return False
-        
-        # 価格の妥当性
-        if data.get('price'):
-            price = data['price']
-            if price < 100 or price > 500000:  # 100万円〜50億円
-                self.logger.debug(f"価格が範囲外: {price}万円")
-                return False
-        
-        return True

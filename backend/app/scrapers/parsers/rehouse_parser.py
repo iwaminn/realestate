@@ -181,26 +181,29 @@ class RehouseParser(BaseHtmlParser):
                     property_data['address'] = address
                     break
 
-        # 間取りを抽出（例: "3LDK"）
+        # 間取りを抽出（例: "3LDK"）（フィールド抽出追跡を使用）
         layout_match = re.search(r'\b([1-9]\d*(?:K|DK|LDK|SDK|R|SLDK))\b', desc_text)
         if layout_match:
             layout = self.normalize_layout(layout_match.group(1))
-            if layout:
-                property_data['layout'] = layout
+            self.track_field_extraction(property_data, 'layout', layout, field_found=True)
+        else:
+            self.track_field_extraction(property_data, 'layout', None, field_found=False)
 
-        # 専有面積を抽出（例: "85.07㎡"）
+        # 専有面積を抽出（例: "85.07㎡"）（フィールド抽出追跡を使用）
         area_match = re.search(r'([\d.]+)(?:㎡|m2)', desc_text)
         if area_match:
             area = self.parse_area(area_match.group(0))
-            if area:
-                property_data['area'] = area
+            self.track_field_extraction(property_data, 'area', area, field_found=True)
+        else:
+            self.track_field_extraction(property_data, 'area', None, field_found=False)
 
-        # 所在階を抽出（例: "7階"）
+        # 所在階を抽出（例: "7階"）（フィールド抽出追跡を使用）
         floor_match = re.search(r'(\d+)階', desc_text)
         if floor_match:
             floor_number = self.parse_floor(floor_match.group(0))
-            if floor_number:
-                property_data['floor_number'] = floor_number
+            self.track_field_extraction(property_data, 'floor_number', floor_number, field_found=True)
+        else:
+            self.track_field_extraction(property_data, 'floor_number', None, field_found=False)
     
     def _extract_card_info(self, card: Tag, property_data: Dict[str, Any]) -> None:
         """
@@ -313,7 +316,9 @@ class RehouseParser(BaseHtmlParser):
                     if isinstance(offers, dict) and 'price' in offers:
                         # 円単位の価格を万円単位に変換
                         price_yen = int(offers['price'])
-                        property_data['price'] = price_yen // 10000
+                        price = price_yen // 10000
+                        # フィールド抽出追跡を使用
+                        self.track_field_extraction(property_data, 'price', price, field_found=True)
                         return True
             except:
                 pass
@@ -325,7 +330,8 @@ class RehouseParser(BaseHtmlParser):
             if '万円' in cell_text:
                 price = self.parse_price(cell_text)
                 if price and price > 100:  # 最低価格100万円
-                    property_data['price'] = price
+                    # フィールド抽出追跡を使用
+                    self.track_field_extraction(property_data, 'price', price, field_found=True)
                     return True
         
         # それでも見つからない場合は、他の要素から探す
@@ -337,9 +343,12 @@ class RehouseParser(BaseHtmlParser):
             
             price = self.parse_price(str(elem))
             if price and price > 100:
-                property_data['price'] = price
+                # フィールド抽出追跡を使用
+                self.track_field_extraction(property_data, 'price', price, field_found=True)
                 return True
         
+        # 価格が見つからなかった場合
+        self.track_field_extraction(property_data, 'price', None, field_found=False)
         return False
     
     def _extract_table_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
@@ -432,15 +441,13 @@ class RehouseParser(BaseHtmlParser):
             
         # 階数情報
         if '階数' in label and '階建' in value:
-            # 所在階の抽出（基底クラスのメソッド使用）
+            # 所在階の抽出（基底クラスのメソッド使用）（フィールド抽出追跡を使用）
             floor = self.parse_floor(value)
-            if floor:
-                property_data['floor_number'] = floor
+            self.track_field_extraction(property_data, 'floor_number', floor, field_found=True)
             
-            # 総階数の抽出（基底クラスのメソッド使用）
+            # 総階数の抽出（基底クラスのメソッド使用）（フィールド抽出追跡を使用）
             total_floors = self.parse_total_floors(value)
-            if total_floors:
-                property_data['total_floors'] = total_floors
+            self.track_field_extraction(property_data, 'total_floors', total_floors, field_found=True)
             
             # 地下階の抽出（基底クラスのメソッド使用）
             basement = self.parse_basement_floors(value)
@@ -448,31 +455,30 @@ class RehouseParser(BaseHtmlParser):
                 property_data['basement_floors'] = basement
         
         elif '所在階' in label:
+            # フィールド抽出追跡を使用
             floor = self.parse_floor(value)
-            if floor:
-                property_data['floor_number'] = floor
+            self.track_field_extraction(property_data, 'floor_number', floor, field_found=True)
         
         # 建物構造で総階数を抽出
         elif '構造' in label or '建物' in label:
             total_floors = self.parse_total_floors(value)
             if total_floors and 'total_floors' not in property_data:
-                property_data['total_floors'] = total_floors
+                # フィールド抽出追跡を使用
+                self.track_field_extraction(property_data, 'total_floors', total_floors, field_found=True)
         
-        # 専有面積（基底クラスのparse_area使用）
+        # 専有面積（基底クラスのparse_area使用）（フィールド抽出追跡を使用）
         elif '専有面積' in label or ('面積' in label and 'バルコニー' not in label):
             area = self.parse_area(value)
-            if area:
-                property_data['area'] = area
-                if self.logger:
-                    self.logger.debug(f"[REHOUSE] 面積設定: {area}㎡ (label={label}, value={value})")
+            self.track_field_extraction(property_data, 'area', area, field_found=True)
+            if area and self.logger:
+                self.logger.debug(f"[REHOUSE] 面積設定: {area}㎡ (label={label}, value={value})")
             elif self.logger:
                 self.logger.warning(f"[REHOUSE] 面積パース失敗: label={label}, value={value}")
         
-        # 間取り（基底クラスのnormalize_layout使用）
+        # 間取り（基底クラスのnormalize_layout使用）（フィールド抽出追跡を使用）
         elif '間取り' in label:
             layout = self.normalize_layout(value)
-            if layout:
-                property_data['layout'] = layout
+            self.track_field_extraction(property_data, 'layout', layout, field_found=True)
         
         # バルコニー面積（基底クラスのparse_area使用）
         elif 'バルコニー' in label and '面積' in label:
@@ -486,43 +492,38 @@ class RehouseParser(BaseHtmlParser):
             if direction:
                 property_data['direction'] = direction
         
-        # 築年月（基底クラスのparse_built_date使用）
+        # 築年月（基底クラスのparse_built_date使用）（フィールド抽出追跡を使用）
         elif '築年月' in label:
             built_info = self.parse_built_date(value)
-            if built_info['built_year']:
-                property_data['built_year'] = built_info['built_year']
-            if built_info['built_month']:
+            built_year = built_info.get('built_year')
+            self.track_field_extraction(property_data, 'built_year', built_year, field_found=True)
+            if built_info.get('built_month'):
                 property_data['built_month'] = built_info['built_month']
         
-        # 管理費
+        # 管理費（フィールド抽出追跡を使用）
         elif '管理費' in label:
             management_fee = extract_monthly_fee(value)
-            if management_fee:
-                property_data['management_fee'] = management_fee
+            self.track_field_extraction(property_data, 'management_fee', management_fee, field_found=True)
         
-        # 修繕積立金
+        # 修繕積立金（フィールド抽出追跡を使用）
         elif '修繕積立金' in label or '修繕積立費' in label:
             repair_fund = extract_monthly_fee(value)
-            if repair_fund:
-                property_data['repair_fund'] = repair_fund
+            self.track_field_extraction(property_data, 'repair_fund', repair_fund, field_found=True)
         
-        # 総戸数（基底クラスのparse_total_units使用）
+        # 総戸数（基底クラスのparse_total_units使用）（フィールド抽出追跡を使用）
         elif '総戸数' in label or '総区画数' in label:
             units = self.parse_total_units(value)
-            if units:
-                property_data['total_units'] = units
+            self.track_field_extraction(property_data, 'total_units', units, field_found=True)
         
-        # 所在地/住所（基底クラスのnormalize_address使用）
+        # 所在地/住所（基底クラスのnormalize_address使用）（フィールド抽出追跡を使用）
         elif '所在地' in label or '住所' in label:
             address = self.normalize_address(value)
-            if address:
-                property_data['address'] = address
+            self.track_field_extraction(property_data, 'address', address, field_found=True)
         
-        # 交通/最寄り駅（基底クラスのparse_station_info使用）
+        # 交通/最寄り駅（基底クラスのparse_station_info使用）（フィールド抽出追跡を使用）
         elif '交通' in label or '駅' in label:
             station_info = self.parse_station_info(value)
-            if station_info:
-                property_data['station_info'] = station_info
+            self.track_field_extraction(property_data, 'station_info', station_info, field_found=True)
         
         # 取引態様
         elif '取引態様' in label:
@@ -624,14 +625,17 @@ class RehouseParser(BaseHtmlParser):
                     if self.logger:
                         self.logger.debug(f"リハウス: タイトル取得成功 - selector={selector}, title={building_name}")
                     
-                    # 部屋番号部分を除去してbuilding_nameに設定
-                    building_name = re.sub(r'\s*\d+号室.*$', '', building_name)
-                    property_data['building_name'] = building_name
+                    # 建物名を正規化（広告文除去）
+                    building_name = self.normalize_building_name(building_name)
+                    # フィールド抽出追跡を使用
+                    self.track_field_extraction(property_data, 'building_name', building_name, field_found=True)
                     return
         
-        # タイトルが取得できなかった場合の警告
+        # タイトルが取得できなかった場合
         if self.logger:
             self.logger.warning("リハウス: タイトルが取得できませんでした")
+        # フィールド抽出追跡を使用
+        self.track_field_extraction(property_data, 'building_name', None, field_found=False)
     
     def get_next_page_url(self, soup: BeautifulSoup, current_url: str) -> Optional[str]:
         """

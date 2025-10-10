@@ -2,7 +2,7 @@
 """
 property_listingsのlisting_building_nameを再生成するスクリプト
 
-既存のtitleカラムから、新しいextract_building_name_from_ad_textメソッドを使って
+既存のtitleカラムから、新しいnormalize_building_nameメソッドを使って
 listing_building_nameを再生成します。
 """
 
@@ -16,7 +16,7 @@ sys.path.insert(0, str(project_root))
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
-from app.scrapers.base_scraper import extract_building_name_from_ad_text
+from app.utils.building_name_normalizer import remove_ad_text_from_building_name
 import logging
 
 # ロギング設定
@@ -105,7 +105,7 @@ def regenerate_listing_building_names(dry_run=True, batch_size=1000):
                 effective_title = title if title and title.strip() else old_building_name
 
                 # 新しいメソッドで建物名を抽出
-                new_building_name = extract_building_name_from_ad_text(effective_title)
+                new_building_name = remove_ad_text_from_building_name(effective_title)
 
                 # 統計を更新
                 stats['total'] += 1

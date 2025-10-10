@@ -297,17 +297,15 @@ class LivableParser(BaseHtmlParser):
 
             key = self.extract_text(dt)
 
-            # 間取り
+            # 間取り（フィールド抽出追跡を使用）
             if '間取り' in key:
                 layout = self.normalize_layout(value)
-                if layout:
-                    property_data['layout'] = layout
+                self.track_field_extraction(property_data, 'layout', layout, field_found=True)
 
-            # 専有面積
+            # 専有面積（フィールド抽出追跡を使用）
             elif '専有面積' in key:
                 area = self.parse_area(value)
-                if area:
-                    property_data['area'] = area
+                self.track_field_extraction(property_data, 'area', area, field_found=True)
 
             # 築年月
             elif '築年月' in key:
@@ -317,13 +315,16 @@ class LivableParser(BaseHtmlParser):
                 if built_info['built_month']:
                     property_data['built_month'] = built_info['built_month']
 
-            # 所在階数
+            # 所在階数（フィールド抽出追跡を使用）
             elif '所在階' in key or '階数' in key:
                 # 例: "4階／地上9階" から 4 を抽出
                 import re
                 floor_match = re.match(r'(\d+)階', value)
                 if floor_match:
-                    property_data['floor_number'] = int(floor_match.group(1))
+                    floor_number = int(floor_match.group(1))
+                    self.track_field_extraction(property_data, 'floor_number', floor_number, field_found=True)
+                else:
+                    self.track_field_extraction(property_data, 'floor_number', None, field_found=True)
 
             # 向き
             elif '向き' in key:
@@ -351,26 +352,23 @@ class LivableParser(BaseHtmlParser):
             
             # dtがない場合（間取りの場合がある）
             if not dt:
-                # c-article-item_info_data--type クラスがある場合は間取り
+                # c-article-item_info_data--type クラスがある場合は間取り（フィールド抽出追跡を使用）
                 if 'c-article-item_info_data--type' in dl.get('class', []):
                     layout = self.normalize_layout(value)
-                    if layout:
-                        property_data['layout'] = layout
+                    self.track_field_extraction(property_data, 'layout', layout, field_found=True)
                 continue
             
             key = self.extract_text(dt)
             
-            # 専有面積
+            # 専有面積（フィールド抽出追跡を使用）
             if '専有面積' in key or '面積' in key:
                 area = self.parse_area(value)
-                if area:
-                    property_data['area'] = area
-            
-            # 階数
+                self.track_field_extraction(property_data, 'area', area, field_found=True)
+
+            # 階数（フィールド抽出追跡を使用）
             elif '階数' in key or '階' in key:
                 floor = self.parse_floor(value)
-                if floor:
-                    property_data['floor_number'] = floor
+                self.track_field_extraction(property_data, 'floor_number', floor, field_found=True)
             
             # 向き
             elif '向き' in key or '方角' in key:
@@ -394,14 +392,16 @@ class LivableParser(BaseHtmlParser):
         
         # フォールバック: 通常のセレクタ
         if 'layout' not in property_data:
-            # パターン1: o-product-list__layoutクラス
+            # パターン1: o-product-list__layoutクラス（フィールド抽出追跡を使用）
             layout_elem = item.select_one('.o-product-list__layout, .layout')
             if layout_elem:
                 layout = self.normalize_layout(self.extract_text(layout_elem))
-                if layout:
-                    property_data['layout'] = layout
+                self.track_field_extraction(property_data, 'layout', layout, field_found=True)
+            else:
+                # 要素が見つからなかった場合は次のパターンへ（ここではfield_found=Falseを記録しない）
+                pass
             
-            # パターン2: spanタグで「間取」を検索し、次のp要素を取得
+            # パターン2: spanタグで「間取」を検索し、次のp要素を取得（フィールド抽出追跡を使用）
             if 'layout' not in property_data:
                 for elem in item.find_all('span'):
                     if '間取' in self.extract_text(elem):
@@ -409,30 +409,27 @@ class LivableParser(BaseHtmlParser):
                         next_elem = elem.find_next_sibling('p')
                         if next_elem:
                             layout = self.normalize_layout(self.extract_text(next_elem))
-                            if layout:
-                                property_data['layout'] = layout
-                                break
+                            self.track_field_extraction(property_data, 'layout', layout, field_found=True)
+                            break
                         # 親要素内で探す
                         parent = elem.parent
                         if parent:
                             p_elem = parent.find('p')
                             if p_elem:
                                 layout = self.normalize_layout(self.extract_text(p_elem))
-                                if layout:
-                                    property_data['layout'] = layout
-                                    break
+                                self.track_field_extraction(property_data, 'layout', layout, field_found=True)
+                                break
             
             # パターン3: translate クラスを持つ要素で間取りパターンに一致するもの
             if 'layout' not in property_data:
                 translate_elems = item.select('.translate')
                 for elem in translate_elems:
                     text = self.extract_text(elem)
-                    # 間取りパターンに一致するか確認（1LDK, 2DK, 3LDK等）
+                    # 間取りパターンに一致するか確認（1LDK, 2DK, 3LDK等）（フィールド抽出追跡を使用）
                     if re.match(r'^\d+[A-Z]+', text):
                         layout = self.normalize_layout(text)
-                        if layout:
-                            property_data['layout'] = layout
-                            break
+                        self.track_field_extraction(property_data, 'layout', layout, field_found=True)
+                        break
         
         if 'area' not in property_data:
             area_elem = item.select_one('.o-product-list__area, .area')
@@ -539,8 +536,8 @@ class LivableParser(BaseHtmlParser):
                                     self.logger.info(f"[Livable] Grantact専有面積を取得: {area}㎡")
                             elif '間取' in label:
                                 layout = self.normalize_layout(value)
+                                self.track_field_extraction(property_data, 'layout', layout, field_found=True)
                                 if layout:
-                                    property_data['layout'] = layout
                                     self.logger.info(f"[Livable] Grantact間取りを取得: {layout}")
                             elif '販売価格' in label or '価格' in label:
                                 price = self.parse_price(value)
@@ -594,11 +591,10 @@ class LivableParser(BaseHtmlParser):
             if price:
                 property_data['price'] = price
         
-        # 間取り
+        # 間取り（フィールド抽出追跡を使用）
         elif '間取り' in label or '間取' in label:
             layout = self.normalize_layout(value)
-            if layout:
-                property_data['layout'] = layout
+            self.track_field_extraction(property_data, 'layout', layout, field_found=True)
         
         # 専有面積
         elif '専有面積' in label:
@@ -846,7 +842,10 @@ class LivableParser(BaseHtmlParser):
                 property_data['title'] = title_match.group(1).strip()
                 # 建物名がまだない場合は、タイトルから取得した名前を使用
                 if 'building_name' not in property_data:
-                    property_data['building_name'] = property_data['title']
+                    # 建物名を正規化（広告文除去）
+                    building_name = self.normalize_building_name(property_data['title'])
+                    # フィールド抽出追跡を使用
+                    self.track_field_extraction(property_data, 'building_name', building_name, field_found=True)
             else:
                 # パターンにマッチしない場合でも、タイトル全体を使用（後で区切り文字で分割）
                 # 例：「物件名」「物件名 | サイト名」「物件名｜サイト名」
@@ -858,7 +857,9 @@ class LivableParser(BaseHtmlParser):
                 
                 # 建物名も設定
                 if 'building_name' not in property_data:
-                    property_data['building_name'] = property_data['title']
+                    building_name = property_data['title']
+                    # フィールド抽出追跡を使用
+                    self.track_field_extraction(property_data, 'building_name', building_name, field_found=True)
         
         # タイトルタグから取得できなかった場合のフォールバック
         if 'title' not in property_data or not property_data.get('title'):
@@ -869,7 +870,13 @@ class LivableParser(BaseHtmlParser):
                 if title_text:
                     property_data['title'] = title_text
                     if 'building_name' not in property_data:
-                        property_data['building_name'] = title_text
+                        # 建物名を正規化（広告文除去）
+                        building_name = self.normalize_building_name(title_text)
+                        # フィールド抽出追跡を使用
+                        self.track_field_extraction(property_data, 'building_name', building_name, field_found=True)
+            else:
+                # 建物名が見つからなかった場合
+                self.track_field_extraction(property_data, 'building_name', None, field_found=False)
     
     def _extract_address(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
         """住所を抽出"""
@@ -913,14 +920,15 @@ class LivableParser(BaseHtmlParser):
             # normalize_addressで最終的なクリーニングと正規化
             # このメソッドで「４丁目」→「4」への変換が行われるはず
             normalized = self.normalize_address(address_from_html)
-            if normalized:
-                property_data['address'] = normalized
-            else:
+            # フィールド抽出追跡を使用
+            self.track_field_extraction(property_data, 'address', normalized, field_found=True)
+            if not normalized:
                 # 正規化が失敗した場合はログを出力
                 self.logger.warning(f"住所の正規化に失敗しました: {address_from_html}")
-                # 住所は設定しない（無効なデータの可能性が高いため）
         else:
             self.logger.warning("住所情報を取得できませんでした")
+            # フィールド抽出追跡を使用
+            self.track_field_extraction(property_data, 'address', None, field_found=False)
     
     def _extract_detail_price(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> bool:
         """詳細ページから価格を抽出"""
@@ -931,7 +939,8 @@ class LivableParser(BaseHtmlParser):
             price_text = self.build_price_text_from_spans(price_elem)
             price = self.parse_price(price_text)
             if price:
-                property_data['price'] = price
+                # フィールド抽出追跡を使用
+                self.track_field_extraction(property_data, 'price', price, field_found=True)
                 return True
         
         # 優先2: m-status-tableから価格を探す
@@ -945,7 +954,8 @@ class LivableParser(BaseHtmlParser):
                     price_text = dd.get_text(strip=True)
                     price = self.parse_price(price_text)
                     if price:
-                        property_data['price'] = price
+                        # フィールド抽出追跡を使用
+                        self.track_field_extraction(property_data, 'price', price, field_found=True)
                         return True
         
         # 優先3: その他のパターン
@@ -962,9 +972,12 @@ class LivableParser(BaseHtmlParser):
                 price_text = self.extract_text(price_elem)
                 price = self.parse_price(price_text)
                 if price:
-                    property_data['price'] = price
+                    # フィールド抽出追跡を使用
+                    self.track_field_extraction(property_data, 'price', price, field_found=True)
                     return True
         
+        # 価格が見つからなかった場合
+        self.track_field_extraction(property_data, 'price', None, field_found=False)
         return False
     
     def _extract_property_details(self, soup: BeautifulSoup, property_data: Dict[str, Any], detail_info: Dict[str, Any]):
@@ -992,11 +1005,10 @@ class LivableParser(BaseHtmlParser):
     
     def _copy_detail_info_to_property_data(self, detail_info: Dict[str, Any], property_data: Dict[str, Any]):
         """detail_infoの重要な情報をproperty_dataにコピー"""
-        # 間取りの特殊処理
+        # 間取りの特殊処理（フィールド抽出追跡を使用）
         if 'layout' not in property_data and '間取り' in detail_info:
             layout = self.normalize_layout(detail_info['間取り'])
-            if layout:
-                property_data['layout'] = layout
+            self.track_field_extraction(property_data, 'layout', layout, field_found=True)
         
         # 階数の特殊処理
         if 'floor_number' not in property_data and '所在階' in detail_info:
@@ -1054,23 +1066,20 @@ class LivableParser(BaseHtmlParser):
         if not value:
             return
         
-        # 価格
+        # 価格（フィールド抽出追跡を使用）
         if '価格' in key:
             price = self.parse_price(value)
-            if price:
-                property_data['price'] = price
+            self.track_field_extraction(property_data, 'price', price, field_found=True)
         
-        # 間取り
+        # 間取り（フィールド抽出追跡を使用）
         elif '間取' in key:
             layout = self.normalize_layout(value)
-            if layout:
-                property_data['layout'] = layout
+            self.track_field_extraction(property_data, 'layout', layout, field_found=True)
         
-        # 専有面積
+        # 専有面積（フィールド抽出追跡を使用）
         elif '専有面積' in key:
             area = self.parse_area(value)
-            if area:
-                property_data['area'] = area
+            self.track_field_extraction(property_data, 'area', area, field_found=True)
         
         # バルコニー面積
         elif 'バルコニー' in key:
@@ -1082,29 +1091,27 @@ class LivableParser(BaseHtmlParser):
         elif any(x in key for x in ['所在階', '階数', '階建']):
             # 「所在階/階建」「所在階数」「所在階」「建物階数」「総階数」「階建」を統一処理
             
-            # 所在階（floor_number）の抽出
+            # 所在階（floor_number）の抽出（フィールド抽出追跡を使用）
             if '所在階' in key:
                 floor = self.parse_floor(value)
-                if floor:
-                    property_data['floor_number'] = floor
+                self.track_field_extraction(property_data, 'floor_number', floor, field_found=True)
             
             # 総階数（total_floors）と地下階数（basement_floors）の抽出
             # 「所在階/階建」「所在階数」パターンから総階数を抽出
             if '/' in value or '地上' in value or '階建' in key or '階数' in key or '地下' in value:
                 total_floors = self.parse_total_floors(value)
-                if total_floors:
-                    property_data['total_floors'] = total_floors
+                # フィールド抽出追跡を使用
+                self.track_field_extraction(property_data, 'total_floors', total_floors, field_found=True)
                 
                 # 地下階数の抽出
                 basement_floors = self.parse_basement_floors(value)
                 if basement_floors:
                     property_data['basement_floors'] = basement_floors
         
-        # 総戸数
+        # 総戸数（フィールド抽出追跡を使用）
         elif '総戸数' in key or '総区画数' in key:
             units = self.parse_total_units(value)
-            if units:
-                property_data['total_units'] = units
+            self.track_field_extraction(property_data, 'total_units', units, field_found=True)
         
         # 方角
         elif '向き' in key or '方位' in key:
@@ -1112,44 +1119,40 @@ class LivableParser(BaseHtmlParser):
             if direction:
                 property_data['direction'] = direction
         
-        # 築年月
+        # 築年月（フィールド抽出追跡を使用）
         elif '築年月' in key:
             built_info = self.parse_built_date(value)
-            if built_info['built_year']:
-                property_data['built_year'] = built_info['built_year']
-            if built_info['built_month']:
+            built_year = built_info.get('built_year')
+            self.track_field_extraction(property_data, 'built_year', built_year, field_found=True)
+            if built_info.get('built_month'):
                 property_data['built_month'] = built_info['built_month']
         
-        # 所在地
+        # 所在地（フィールド抽出追跡を使用）
         elif '所在地' in key:
             # すでに住所が設定されている場合はスキップ（_extract_addressで既に正規化済みの可能性）
             if 'address' not in property_data:
                 # normalize_addressがUI要素（「地図を見る」など）を自動的に削除
                 address = self.normalize_address(value)
-                if address:
-                    property_data['address'] = address
+                self.track_field_extraction(property_data, 'address', address, field_found=True)
         
-        # 交通
+        # 交通（フィールド抽出追跡を使用）
         elif '交通' in key or '最寄' in key:
             station = self.parse_station_info(value)
-            if station:
-                property_data['station_info'] = station
+            self.track_field_extraction(property_data, 'station_info', station, field_found=True)
         
-        # 管理費
+        # 管理費（フィールド抽出追跡を使用）
         elif '管理費' in key:
             # "/月" を除去
             value = value.replace('/月', '').strip()
             fee = extract_monthly_fee(value)
-            if fee:
-                property_data['management_fee'] = fee
+            self.track_field_extraction(property_data, 'management_fee', fee, field_found=True)
         
-        # 修繕積立金
+        # 修繕積立金（フィールド抽出追跡を使用）
         elif '修繕積立' in key:
             # "/月" を除去
             value = value.replace('/月', '').strip()
             fund = extract_monthly_fee(value)
-            if fund:
-                property_data['repair_fund'] = fund
+            self.track_field_extraction(property_data, 'repair_fund', fund, field_found=True)
         
         # 土地権利
         elif '土地権利' in key or '敷地権' in key or '所有権' in key:

@@ -117,19 +117,21 @@ class HomesParser(BaseHtmlParser):
             if price:
                 property_data['price'] = price
         
-        # 間取り（4番目のtd）
+        # 間取り（4番目のtd）（フィールド抽出追跡を使用）
         if len(tds) > 3:
             layout_text = self.extract_text(tds[3])
             layout = self.normalize_layout(layout_text)
-            if layout:
-                property_data['layout'] = layout
+            self.track_field_extraction(property_data, 'layout', layout, field_found=True)
+        else:
+            self.track_field_extraction(property_data, 'layout', None, field_found=False)
         
-        # 面積（5番目のtd）
+        # 面積（5番目のtd）（フィールド抽出追跡を使用）
         if len(tds) > 4:
             area_text = self.extract_text(tds[4])
             area = self.parse_area(area_text)
-            if area:
-                property_data['area'] = area
+            self.track_field_extraction(property_data, 'area', area, field_found=True)
+        else:
+            self.track_field_extraction(property_data, 'area', None, field_found=False)
         
         # 階数（2番目のtdに含まれている可能性があるが、詳細ページで取得する）
         # ここでは一覧ページの必須フィールドのみ
@@ -313,31 +315,32 @@ class HomesParser(BaseHtmlParser):
         if not value:
             return
         
-        # 価格（賃料）
+        # 価格（賃料）（フィールド抽出追跡を使用）
         if '価格' in key or '賃料' in key:
             price = self.parse_price(value)
-            if price:
-                property_data['price'] = price
+            self.track_field_extraction(property_data, 'price', price, field_found=True)
         
-        # 間取り
+        # 間取り（フィールド抽出追跡を使用）
         elif '間取' in key:
             # 正規表現で間取りを抽出（例: "3LDK / 85.5㎡" -> "3LDK"）
             layout_match = re.search(r'^([1-9]\d*[SLDK]+)', value)
             if layout_match:
-                property_data['layout'] = layout_match.group(1)
+                layout = layout_match.group(1)
+                self.track_field_extraction(property_data, 'layout', layout, field_found=True)
             else:
                 # フォールバック: normalize_layoutを使用
                 from ..data_normalizer import normalize_layout
                 layout = normalize_layout(value.split('/')[0].strip())
-                if layout:
-                    property_data['layout'] = layout
+                self.track_field_extraction(property_data, 'layout', layout, field_found=True)
         
-        # 専有面積
+        # 専有面積（フィールド抽出追跡を使用）
         elif '専有面積' in key or ('面積' in key and 'バルコニー' not in key and '建築' not in key and '敷地' not in key):
             from ..data_normalizer import extract_area, validate_area
             area = extract_area(value)
             if area and validate_area(area):
-                property_data['area'] = area
+                self.track_field_extraction(property_data, 'area', area, field_found=True)
+            else:
+                self.track_field_extraction(property_data, 'area', None, field_found=True)
         
         # バルコニー面積
         elif 'バルコニー' in key:
@@ -347,17 +350,15 @@ class HomesParser(BaseHtmlParser):
             if balcony_area is not None and 0 <= balcony_area <= 100:
                 property_data['balcony_area'] = balcony_area
         
-        # 階数情報
+        # 階数情報（フィールド抽出追跡を使用）
         elif '階' in key:
             # 所在階の抽出
             floor = self.parse_floor(value)
-            if floor:
-                property_data['floor_number'] = floor
+            self.track_field_extraction(property_data, 'floor_number', floor, field_found=True)
 
             # 総階数の抽出
             total_floors = self.parse_total_floors(value)
-            if total_floors:
-                property_data['total_floors'] = total_floors
+            self.track_field_extraction(property_data, 'total_floors', total_floors, field_found=True)
 
             # 地下階数の抽出
             basement_floors = self.parse_basement_floors(value)
@@ -370,43 +371,39 @@ class HomesParser(BaseHtmlParser):
             if direction:
                 property_data['direction'] = direction
         
-        # 築年月
+        # 築年月（フィールド抽出追跡を使用）
         elif '築年月' in key or '竣工' in key:
             built_info = self.parse_built_date(value)
-            if built_info['built_year']:
-                property_data['built_year'] = built_info['built_year']
-            if built_info['built_month']:
+            built_year = built_info.get('built_year')
+            self.track_field_extraction(property_data, 'built_year', built_year, field_found=True)
+            
+            if built_info.get('built_month'):
                 property_data['built_month'] = built_info['built_month']
         
-        # 所在地
+        # 所在地（フィールド抽出追跡を使用）
         elif '所在地' in key or '住所' in key:
             address = self.normalize_address(value)
-            if address:
-                property_data['address'] = address
+            self.track_field_extraction(property_data, 'address', address, field_found=True)
         
-        # 交通
+        # 交通（フィールド抽出追跡を使用）
         elif '交通' in key or '最寄' in key or '駅' in key:
             station = self.parse_station_info(value)
-            if station:
-                property_data['station_info'] = station
+            self.track_field_extraction(property_data, 'station_info', station, field_found=True)
         
-        # 管理費
+        # 管理費（フィールド抽出追跡を使用）
         elif '管理費' in key:
             fee = extract_monthly_fee(value)
-            if fee:
-                property_data['management_fee'] = fee
+            self.track_field_extraction(property_data, 'management_fee', fee, field_found=True)
         
-        # 修繕積立金
+        # 修繕積立金（フィールド抽出追跡を使用）
         elif '修繕積立' in key:
             fund = extract_monthly_fee(value)
-            if fund:
-                property_data['repair_fund'] = fund
+            self.track_field_extraction(property_data, 'repair_fund', fund, field_found=True)
         
-        # 総戸数
+        # 総戸数（フィールド抽出追跡を使用）
         elif '総戸数' in key or '総区画数' in key:
             units = self.parse_total_units(value)
-            if units:
-                property_data['total_units'] = units
+            self.track_field_extraction(property_data, 'total_units', units, field_found=True)
 
         # 部屋番号
         elif '部屋番号' in key or '号室' in key:
@@ -514,19 +511,18 @@ class HomesParser(BaseHtmlParser):
         # タイトルフィールドにも設定（表示用）
         property_data['title'] = h1_building_name
         
-        # 部屋番号と階数を除去してbuilding_nameに設定
-        cleaned_name = re.sub(r'\s*\d+号室.*$', '', h1_building_name)
-        cleaned_name = re.sub(r'\s*\d+[-〜～]?\d*階.*$', '', cleaned_name)
-        cleaned_name = cleaned_name.strip()
+        # 建物名を正規化（広告文除去）
+        cleaned_name = self.normalize_building_name(h1_building_name)
         
         # 建物名が空でないことを確認
         if cleaned_name:
-            property_data['building_name'] = cleaned_name
-            
+            # フィールド抽出追跡を使用
+            self.track_field_extraction(property_data, 'building_name', cleaned_name, field_found=True)
+
             # 部屋番号も保存（取得できている場合）
             if room_number:
                 property_data['room_number'] = room_number
-            
+
             # 建物名候補リストも作成（MULTI_SOURCE用）
             property_data['_building_names_candidates'] = [cleaned_name]
         else:

@@ -2233,8 +2233,8 @@ class BaseScraper(ABC):
                 self._last_detail_fetched = True  # フラグを記録
                 print("  → 詳細取得成功")
                 
-                # 管理費・修繕積立金の取得チェック（全スクレイパー共通）
-                self._check_fee_extraction(detail_data, property_data.get('url', ''))
+                # 重要フィールドの取得チェック（全スクレイパー共通）
+                self._check_field_extraction(detail_data, property_data.get('url', ''))
                 
             else:
                 print("  → 詳細取得失敗")
@@ -3406,22 +3406,15 @@ class BaseScraper(ABC):
         # 元の建物名を保持
         original_building_name = building_name
         
-        # 広告文が含まれている場合は、建物名部分のみを抽出
-        is_ad_text_only = False  # フラグを初期化
-        extracted_name = extract_building_name_from_ad_text(building_name)
-        if extracted_name and extracted_name != building_name:
-            self.logger.debug(f"広告文から建物名を抽出: '{building_name}' → '{extracted_name}'")
-            building_name = extracted_name
-        elif not extracted_name:
-            # 広告文のみで建物名が含まれていない場合でも、元の名前をそのまま使用
-            self.logger.warning(f"建物名が広告文のみ: '{building_name}' - そのまま使用")
-            building_name = original_building_name
-            # 広告文のみの場合はフラグを立てる（後で使用）
-            is_ad_text_only = True
-        else:
-            is_ad_text_only = False
+        # 建物名が空の場合は広告文のみと判定
+        # （parserで既に正規化済みのため、二重の正規化は不要）
+        is_ad_text_only = not building_name or not building_name.strip()
+        if is_ad_text_only:
+            # 広告文のみの場合でも処理は続行（後の検証で判定）
+            self.logger.warning(f"建物名が空または広告文のみ: '{original_building_name}'")
+            building_name = original_building_name or ""
         
-        # 外部IDがある場合は先に検索
+# 外部IDがある場合は先に検索
         if external_property_id:
             # ハンドラーを使用して既存の外部IDをチェック
             handler = self._ensure_external_id_handler(session)
@@ -5576,29 +5569,241 @@ class BaseScraper(ABC):
         except Exception as e:
             self.logger.error(f"アラート記録エラー: {e}")
 
-    def _check_fee_extraction(self, detail_data: Dict[str, Any], url: str):
-        """管理費・修繕積立金の取得をチェックし、必要に応じてエラーを記録
+    def _check_field_extraction(self, detail_data: Dict[str, Any], url: str):
+        """重要フィールドの取得をチェックし、必要に応じてエラーを記録
         
-        全スクレイパー共通の処理として、詳細ページから管理費・修繕積立金が
+        全スクレイパー共通の処理として、詳細ページから重要フィールドが
         取得できているかチェックし、取得失敗が一定割合を超えた場合にアラートを発生させる。
+        
+        フィールド抽出追跡フレームワークを使用して、HTML要素の欠落と
+        元々データがない場合を区別します。
         
         Args:
             detail_data: 詳細ページから抽出したデータ
             url: 物件URL
+        
+        チェック対象フィールド:
+            - price: 価格フィールドが見つからない場合にエラー
+            - building_name: 建物名フィールドが見つからない場合にエラー
+            - address: 住所フィールドが見つからない場合にエラー
+            - management_fee: 管理費フィールドが見つからない場合にエラー
+            - repair_fund: 修繕積立金フィールドが見つからない場合にエラー
+            - floor_number: 所在階フィールドが見つからない場合にエラー
+            - area: 専有面積フィールドが見つからない場合にエラー
+            - built_year: 築年月フィールドが見つからない場合にエラー
+            - station_info: 交通フィールドが見つからない場合にエラー
+            - total_floors: 総階数フィールドが見つからない場合にエラー
+            - total_units: 総戸数フィールドが見つからない場合にエラー
+            - layout: 間取りフィールドが見つからない場合にエラー
+        
+        注意:
+            - フィールド抽出エラーの閾値は20%（環境変数で設定可能）
         """
         if not detail_data:
             return
         
-        # 管理費・修繕積立金の取得状況をチェック
-        has_management_fee = detail_data.get('management_fee') is not None and detail_data.get('management_fee') > 0
-        has_repair_fund = detail_data.get('repair_fund') is not None and detail_data.get('repair_fund') > 0
+        # フィールド抽出のメタデータを確認
+        extraction_meta = detail_data.get('_field_extraction_meta', {})
         
-        # 両方とも取得できていない場合はエラーとして記録
-        # 注：片方のみ取得できている場合や、両方が0円の場合は正常とみなす
-        if not has_management_fee and not has_repair_fund:
-            # 既存のエラー記録メソッドを使用（log_error=Falseで静かに記録）
-            # これにより、エラー率が閾値を超えた場合に自動的にアラートが発生する
-            self.record_field_extraction_error('management_fee_repair_fund', url, log_error=False)
+        # メタデータが存在しない場合は何もしない
+        # （古いパーサーや、まだtrack_field_extractionを使用していないパーサー）
+        if not extraction_meta:
+            return
+        
+        # フィールド抽出専用のエラー率閾値（環境変数で設定可能、デフォルト20%）
+        # HTML構造変更の場合はほぼ全物件で失敗するため、低めに設定
+        field_extraction_error_threshold = float(
+            os.getenv('SCRAPER_FIELD_EXTRACTION_ERROR_RATE', '0.2')
+        )
+        
+        # 各フィールドを個別にチェック
+        # フィールドが見つからなかった場合のみエラーとして記録
+        
+        # 価格
+        price_meta = extraction_meta.get('price')
+        if price_meta is not None and not price_meta.get('field_found', False):
+            self._record_field_extraction_error_with_threshold(
+                'price', url, field_extraction_error_threshold
+            )
+        
+        # 建物名
+        building_name_meta = extraction_meta.get('building_name')
+        if building_name_meta is not None and not building_name_meta.get('field_found', False):
+            self._record_field_extraction_error_with_threshold(
+                'building_name', url, field_extraction_error_threshold
+            )
+        
+        # 住所
+        address_meta = extraction_meta.get('address')
+        if address_meta is not None and not address_meta.get('field_found', False):
+            self._record_field_extraction_error_with_threshold(
+                'address', url, field_extraction_error_threshold
+            )
+        
+        # 管理費
+        mgmt_meta = extraction_meta.get('management_fee')
+        if mgmt_meta is not None and not mgmt_meta.get('field_found', False):
+            self._record_field_extraction_error_with_threshold(
+                'management_fee', url, field_extraction_error_threshold
+            )
+        
+        # 修繕積立金
+        repair_meta = extraction_meta.get('repair_fund')
+        if repair_meta is not None and not repair_meta.get('field_found', False):
+            self._record_field_extraction_error_with_threshold(
+                'repair_fund', url, field_extraction_error_threshold
+            )
+        
+        # 所在階
+        floor_meta = extraction_meta.get('floor_number')
+        if floor_meta is not None and not floor_meta.get('field_found', False):
+            self._record_field_extraction_error_with_threshold(
+                'floor_number', url, field_extraction_error_threshold
+            )
+        
+        # 専有面積
+        area_meta = extraction_meta.get('area')
+        if area_meta is not None and not area_meta.get('field_found', False):
+            self._record_field_extraction_error_with_threshold(
+                'area', url, field_extraction_error_threshold
+            )
+        
+        # 築年月
+        built_year_meta = extraction_meta.get('built_year')
+        if built_year_meta is not None and not built_year_meta.get('field_found', False):
+            self._record_field_extraction_error_with_threshold(
+                'built_year', url, field_extraction_error_threshold
+            )
+        
+        # 交通
+        station_meta = extraction_meta.get('station_info')
+        if station_meta is not None and not station_meta.get('field_found', False):
+            self._record_field_extraction_error_with_threshold(
+                'station_info', url, field_extraction_error_threshold
+            )
+        
+        # 総階数
+        total_floors_meta = extraction_meta.get('total_floors')
+        if total_floors_meta is not None and not total_floors_meta.get('field_found', False):
+            self._record_field_extraction_error_with_threshold(
+                'total_floors', url, field_extraction_error_threshold
+            )
+        
+        # 総戸数
+        total_units_meta = extraction_meta.get('total_units')
+        if total_units_meta is not None and not total_units_meta.get('field_found', False):
+            self._record_field_extraction_error_with_threshold(
+                'total_units', url, field_extraction_error_threshold
+            )
+        
+        # 間取り
+        layout_meta = extraction_meta.get('layout')
+        if layout_meta is not None and not layout_meta.get('field_found', False):
+            self._record_field_extraction_error_with_threshold(
+                'layout', url, field_extraction_error_threshold
+            )
+    
+    def _record_field_extraction_error_with_threshold(
+        self, 
+        field_name: str, 
+        url: str, 
+        error_threshold: float = 0.2
+    ):
+        """フィールド抽出エラーを記録し、閾値をチェック
+        
+        Args:
+            field_name: フィールド名
+            url: 物件URL
+            error_threshold: エラー率の閾値（デフォルト20%）
+        """
+        # エラーを記録（静かに）
+        self.record_field_extraction_error(field_name, url, log_error=False)
+        
+        # エラー統計を取得
+        stats = self.error_manager.get_statistics()
+        field_errors = stats.get('field_errors', {}).get(field_name, {})
+        error_count = field_errors.get('extraction', 0)
+        
+        # 詳細取得成功数を取得
+        detail_fetched_count = self._scraping_stats.get('detail_fetched', 0)
+        
+        # エラー率をチェック（最低10件以上のサンプルが必要）
+        if detail_fetched_count >= 10:
+            error_rate = error_count / detail_fetched_count
+            
+            # 閾値を超えた場合、アラートを記録
+            if error_rate > error_threshold:
+                self.logger.warning(
+                    f"[フィールド抽出エラー] {field_name}: "
+                    f"エラー率 {error_rate:.1%} が閾値 {error_threshold:.1%} を超えました "
+                    f"({error_count}/{detail_fetched_count}件)"
+                )
+                
+                # アラートをデータベースに記録
+                self._record_field_extraction_alert(field_name, error_rate, error_threshold)
+    
+    def _record_field_extraction_alert(self, field_name: str, error_rate: float, threshold: float):
+        """フィールド抽出エラーのアラートをデータベースに記録
+        
+        Args:
+            field_name: フィールド名
+            error_rate: エラー率
+            threshold: 閾値
+        """
+        try:
+            from ..models import ScraperAlert
+            from ..database import get_session
+            from ..utils.datetime_utils import get_utc_now
+            
+            with get_session() as session:
+                # 同じフィールドのアラートが既に存在するかチェック
+                existing_alert = session.query(ScraperAlert).filter(
+                    ScraperAlert.scraper_name == self.source_site.value,
+                    ScraperAlert.alert_type == 'field_extraction_error',
+                    ScraperAlert.is_resolved == False,
+                    ScraperAlert.details.contains(f'"field_name": "{field_name}"')
+                ).first()
+                
+                if not existing_alert:
+                    alert = ScraperAlert(
+                        scraper_name=self.source_site.value,
+                        alert_type='field_extraction_error',
+                        severity='high',
+                        message=f'{field_name}フィールドの取得エラー率が{error_rate:.1%}に達しました（閾値: {threshold:.1%}）',
+                        details={
+                            'field_name': field_name,
+                            'error_rate': error_rate,
+                            'threshold': threshold,
+                            'description': 'HTML構造の変更により、フィールドが見つからなくなっている可能性があります'
+                        },
+                        created_at=get_utc_now()
+                    )
+                    session.add(alert)
+                    session.commit()
+                    self.logger.error(f"フィールド抽出エラーのアラートを記録しました: {field_name}")
+        except Exception as e:
+            self.logger.error(f"アラート記録エラー: {e}")
+        
+        # 以下のフィールドは、追跡が実装されたら個別にチェック
+        # 現時点ではtrack_field_extractionを使用していないため、チェックをスキップ
+        
+        # TODO: 他のパーサーでもtrack_field_extractionを使用するように修正したら、
+        # 以下のコメントアウトを解除してチェックを有効化
+        
+        # # 所在階のチェック（重要フィールド）
+        # floor_meta = extraction_meta.get('floor_number', {})
+        # if not floor_meta.get('field_found', False):
+        #     self.record_field_extraction_error('floor_number', url, log_error=False)
+        
+        # # 専有面積のチェック（重要フィールド）
+        # area_meta = extraction_meta.get('area', {})
+        # if not area_meta.get('field_found', False):
+        #     self.record_field_extraction_error('area', url, log_error=False)
+        
+        # # 築年月のチェック（重要フィールド）
+        # built_year_meta = extraction_meta.get('built_year', {})
+        # if not built_year_meta.get('field_found', False):
+        #     self.record_field_extraction_error('built_year', url, log_error=False)
             # トランザクションはwith文を抜ける際に自動的にロールバック
     
     def _record_structure_change_alert(self, selector: str, field_name: str, fail_rate: float):
@@ -5988,438 +6193,6 @@ class BaseScraper(ABC):
         return self.clean_address(address_text)
 
 
-def extract_building_name_from_ad_text(ad_text: str) -> str:
-    """
-    広告テキストから建物名を抽出する独立関数
-    純粋に広告文除去処理のみを実行し、判定は行わない
-    """
-    import re
-    import logging
-    logger = logging.getLogger(__name__)
-    
-    if not ad_text:
-        return ad_text
-    
-    original_text = ad_text.strip()
-    if not original_text:
-        return ""
-    
-    # 統一された広告文除去処理
-    if not original_text or not original_text.strip():
-        return ""
-        
-    current_text = original_text.strip()
 
-    # Step 0: 全角英数記号を半角に統一（パターンマッチングの簡略化のため）
-    import unicodedata
-    current_text = unicodedata.normalize('NFKC', current_text)
-
-    # Step 1: 全文レベルでの階数・方角情報除去
-    WING_NAMES = r'[A-Z東西南北本新旧]'
-    
-    # 棟名保持パターン（棟名を保持して階数のみ除去）
-    BUILDING_WING_PATTERN = rf'({WING_NAMES}棟)\s*\d+階'
-    current_text = re.sub(BUILDING_WING_PATTERN, r'\1', current_text)
-
-    # Step 1.5: パーセンテージ表記を削除（記号削除前に実行）
-    # 「3%」「0.3%」などのパターンを削除
-    percentage_pattern = r'[0-9]+\.?[0-9]*%'
-    current_text = re.sub(percentage_pattern, ' ', current_text)
-
-    # Step 1.5.5: スラッシュをスペースに変換（広告文の分割のため）
-    # 例: "建物名/85.20m2/ 2LDK+WIC+納戸" → "建物名 85.20m2  2LDK+WIC+納戸"
-    # 注: 全角スラッシュはStep 0で半角に変換済み
-    current_text = current_text.replace('/', ' ')
-
-    # Step 1.6: 階数・間取りの前にスペースを挿入（単語境界を明確にする）
-    # 「大森3階」→「大森 3階」、「大森1LDK」→「大森 1LDK」
-    # これにより、後のトリミング処理で階数・間取りを正しく削除できる
-    current_text = re.sub(r'([^\d\s])(\d+階)', r'\1 \2', current_text)
-    current_text = re.sub(r'([^\d\s])(\d+[SLDK]{1,3})', r'\1 \2', current_text)  # 1LDK等
-
-    # ===== 広告文パターンの定義（ad_patternsとremoval_patternsで共通使用） =====
-    # 注：このパターンリストは^や$を含まない基本形
-    base_ad_patterns = [
-        # 内見・見学関連
-        '内見可能?', '内覧可能?', '見学可能?', '見学予約可', '予約可',
-        '予約制内覧会.*', '.*予約制内覧会.*', '内覧会実施.*', '.*内覧会実施.*',
-        'ネット見学.*', '.*ネット見学.*', 'オンライン見学.*', '.*オンライン見学.*',
-        'プレゼント.*', 'キャンペーン.*', '.*キャンペーン.*',
-        # 状態・品質
-        'リノベーション済み?', 'リフォーム済み?', 'リノベ.*', '.*リノベ.*',
-        '新築未入居', '新築物件', '新築', '中古', '築浅', 'リフォーム中古',
-        '美品', '内装リフォーム済',
-        '売主.*', '.*売主.*',
-        # 築年数・年号
-        '築\d+年', '\d{4}年築', '令和\d+年築', '\d{4}年', '\d+年築',
-        # 日付パターン
-        '\d+/\d+.*', '\d+月\d+日.*', '\d+/\d+', '\d+月\d+日',
-        # 手数料・価格
-        '仲介手数料無料', '手数料無料', '手数料.*', '仲介料.*',
-        '弊社限定公開', '限定公開', '独占公開', '新規物件', '新価格',
-        '弊社.*', '当社.*', '払う.*', '勿体無い.*', '勿体ない.*', 'お得.*',
-        # 価格情報
-        '\\d+億\\d+万円', '\\d+億円', '\\d+万円', '\\d+円',
-        '\\d+億\\d+千\\d+百万円', '\\d+千\\d+百万円', '\\d+億\\d+千万円',
-        '\\d+\\.\\d+億円', '\\d+\\.\\d+万円',
-        # 価格範囲（例：1億2900万円~1億3900万円）
-        '\\d+億\\d+万円~\\d+億\\d+万円', '\\d+万円~\\d+万円', '\\d+億円~\\d+億円',
-        '価格相談', '値下げ', '価格改定', 'お買い得',
-        # 駅・アクセス（建物名に含まれる可能性のある「○○駅」は削除しない）
-        '駅近', '徒歩\d+分', '駅徒歩\d+分', '.*駅から徒歩\d+分.*', '駅\d+分',
-        'JR.*線', '東京メトロ.*線', '\d+路線利用.*', '.*路線利用.*',
-        'JR.*線利用可', '東京メトロ.*線利用可',
-        # アピール文言
-        'オススメ', 'おすすめ', '可能',
-        # 建物タイプの説明文（「〇〇のマンション」など）
-        '.*型.*マンション.*', '.*型.*タワー.*', '.*の.*マンション.*', '.*の.*タワー.*',
-        '駅直結型.*', '.*駅直結.*', '.*タイプ.*マンション.*',
-        # ペット・設備
-        'ペット可', 'ペット相談可', '楽器可', '事務所利用可', 'SOHO可',
-        # 無償・有償の特典
-        '無償.*', '有償.*', '.*地下車庫.*', '.*トランクルーム.*',
-        # 部屋特徴・眺望・日当たり
-        '角部屋', '角住戸', '最上階', '低層階', '高層階',
-        '眺望.*', '.*眺望.*', '陽当.*', '.*陽当.*', '日当.*', '.*日当.*',
-        '開放感.*', '.*開放感.*',
-        # 清潔・美観
-        '.*キレイ.*', '.*きれい.*', '.*綺麗.*', '室内.*',
-        # 監修・設計
-        '.*監修.*', '.*設計.*',
-        # 面積情報（大文字小文字両対応）
-        '\d+平米', '\d+㎡', '\d+[mM]2', '\d+\.\d+平米', '\d+\.\d+㎡', '\d+\.\d+[mM]2',
-        # 設備詳細
-        '床暖房', 'コンシェルジュサービス.*', 'コンシェルジュ付.*', 'バレー.*サービス.*', '.*サービス付.*',
-        # 間取り・設備（数字+間取りタイプ+オプション）
-        # 複数の設備付き間取りに対応（例：2LDK+WIC+納戸）
-        '\\d+(R|LDK|LK|DK|K)(\\+[A-Z]+)*(\\+納戸)?(\\+サービスルーム)?',
-        '\\d+(R|LDK|LK|DK|K)(\\+S|\\+WIC|\\+)?',  # 従来のパターンも保持
-        # 間取り範囲（例：1LDK~3LDK、1LDK+2S(納戸)~3LDK）
-        '\\d+(R|LDK|LK|DK|K).*~\\d+(R|LDK|LK|DK|K)',
-        '\d+S',  # サービスルーム数（例：2S）
-        '[A-Z]タイプ', '\d+タイプ',  # Aタイプ、1タイプなど間取りタイプ
-        '\d+LDKタイプ', '\d+DKタイプ', '\d+Kタイプ',  # 1LDKタイプ等
-        'メゾネットタイプ', 'メゾネット',  # メゾネットタイプ
-        # 'S',  # 単独のサービスルーム表記 - "SUN"などに誤マッチするため削除
-        # 間取りの日本語表現
-        'ワンルーム', '1ルーム', '2ルーム', '3ルーム',
-        'WIC', 'SIC', 'TR', '納戸', 'サービスルーム', 'S室', 'N室',
-        'WIC付き', 'WIC付', 'SIC付', 'WIC×\d+', 'SIC×\d+',
-        'システムキッチン', 'オートロック', '宅配ボックス',
-        'バルコニー付', '専用庭付.*', '.*専用庭.*', 'ルーフバルコニー付', 'ルーフバルコニー×\d+',
-        'エレベーター付', '駐車場付', '駐輪場付',
-        # 階数・部屋番号情報（詳細パターン追加）
-        '\d+階', '\d+F', '階部分', '\d+th', '.*Floor',
-        '\d+階部分', '部分', '\d+階.*向き.*', '\d+階.*角.*',
-        '\d+階の.*', '\d+階/.*', '\d+号室',  # 部屋番号
-        # 方角・方向情報
-        '(南|北|東|西|南東|南西|北東|北西|東南|西南|東北|西北)向き',
-        '\d+方向.*', '.*方向角.*', '南西角.*', '北東角.*', '東南角.*', '北西角.*',
-        # 入居・契約
-        '即入居可', '空室', '賃貸中',
-        # その他広告文言
-        'シリーズ', 'エクセルシリーズ', 'プレミアムシリーズ', 'グランドシリーズ',
-        '(システムキッチン|オートロック|宅配ボックス)(付|完備)?',
-        '(エクセル|プレミアム|グランド)シリーズ',
-        '(納戸|サービスルーム|S室|N室)付?',
-        '(バルコニー|専用庭|ルーフバルコニー|エレベーター|駐車場|駐輪場)付',
-
-        # 部分一致パターン（.*を含むもの）
-        r'.*手数料.*', r'.*仲介料.*',
-        r'.*弊社.*', r'.*当社.*',
-        r'.*払う.*', r'.*勿体無い.*', r'.*勿体ない.*', r'.*お得.*',
-        # 敬語・丁寧語（建物名には敬語は含まれない）
-        r'.*です.*', r'.*ます.*', r'.*ません.*',
-        r'.*でした.*', r'.*ました.*',
-        r'.*します.*', r'.*しました.*',
-        r'.*ください.*', r'.*ましょう.*',
-        # 謙譲語・尊敬語
-        r'.*いたします.*', r'.*ございます.*',
-        r'.*おります.*', r'.*いただけます.*',
-        r'.*いただきます.*', r'.*申し上げます.*',
-        r'.*させていただきます.*',
-        # 勧誘・疑問形
-        r'.*いかがですか.*', r'.*ませんか.*',
-        r'.*しませんか.*', r'.*いかがでしょうか.*',
-        # 可能形
-        r'.*できます.*', r'.*られます.*',
-        r'.*可能です.*',
-    ]
-
-    # Step 1.7: 括弧の外側と内側を比較して、広告文の方を削除
-    # 例: "グランドメゾン白金の杜ザ・タワー（内見可能！）" → "グランドメゾン白金の杜ザ・タワー"
-    # 部分一致用のad_patterns（base_ad_patternsをそのまま使用）
-    ad_patterns = base_ad_patterns
-
-    # トリミング処理で建物名として保護するキーワード（ブランド名のみ）
-    # 一般的な建物タイプ（"タワー"、"マンション"）は含めない
-    building_name_keywords = [
-        # ブランド名・シリーズ名（カタカナ）- 出現頻度10回以上
-        'パークハウス', 'オープンレジデンシア', 'プラウド', 'シティハウス', 'グランドメゾン',
-        'パークコート', 'ピアース', 'パークホームズ', 'ブランズ', 'グランスイート',
-        'スカーラ', 'シティタワー', 'ディアナコート', 'ホームズ', 'ジェイパーク',
-        'シャンボール', 'プレミスト', 'パークタワー', 'セザール', 'アトラス', 'クレヴィア',
-        'ダイアパレス', 'ジオ', 'サンクタス', 'クリオ', 'サンウッド', 'ファミール',
-        'イトーピア', 'ガーデンヒルズ', 'デュオ', 'パークマンション', 'セブンスター',
-        'インペリアル', 'クオリア', 'リビオレゾン', 'ルジェンテ',
-        # ブランド名（英語）
-        'BRILLIA', 'HARUMI', 'CLEARE', 'FAMILLE', 'DUET', 'DUO', 'SCALA',
-        'DOEL', 'ALLES', 'CLEO', 'GALA',
-        # 方角（建物名に含まれる可能性が高い）
-        'EAST', 'WEST', 'NORTH', 'SOUTH', 'CENTER',
-        'ウエスト', 'ウェスト', 'イースト', 'ノース', 'サウス', 'セントラル',
-        'エスト', 'Est', 'Terrazza',
-    ]
-
-    # 前後の広告文をトリミングする共通関数
-    def _trim_ad_text_from_ends(text, symbols_pattern):
-        """テキストから前後の広告文をトリミングする
-
-        Args:
-            text: トリミング対象のテキスト
-            symbols_pattern: 削除する記号の正規表現パターン
-
-        Returns:
-            トリミング後のテキスト
-        """
-        # Step 1: 記号をスペースに統一
-        trimmed = re.sub(symbols_pattern, ' ', text)
-        trimmed = re.sub(r'\s+', ' ', trimmed.strip())
-
-        # Step 2: 単語に分割
-        words = trimmed.split()
-        if not words:
-            return ""
-
-        # 削除対象のパターン
-        removal_patterns = [f'^{pat}$' for pat in base_ad_patterns]
-        escaped_keywords = [re.escape(kw) for kw in building_name_keywords]
-        keywords_pattern = '|'.join(escaped_keywords)
-        station_exclusion_pattern = f'^(?!.*({keywords_pattern})).*駅(\\s*徒歩[0-9０-９]+分)?$'
-        removal_patterns.append(station_exclusion_pattern)
-
-
-
-        # Step 3: 前方からトリミング
-        start_index = 0
-        for i, word in enumerate(words):
-            if not word.strip():
-                start_index = i + 1
-                continue
-
-            # 建物名キーワードに一致したら停止
-            if any(keyword in word for keyword in building_name_keywords):
-                start_index = i
-                break
-
-            # 棟名パターンに一致したら停止
-            wing_match = re.match(BUILDING_WING_PATTERN + '$', word)
-            if wing_match:
-                start_index = i
-                break
-
-            # 広告文パターンに一致したら削除（次の単語へ）
-            is_ad = False
-            for pattern in removal_patterns:
-                if re.match(pattern, word):
-                    is_ad = True
-                    break
-
-            if is_ad:
-                start_index = i + 1
-            else:
-                # 広告文でもなく、建物名キーワードでもない場合は停止
-                start_index = i
-                break
-
-        # Step 4: 後方からトリミング
-        end_index = len(words) - 1
-        for i in range(len(words) - 1, start_index - 1, -1):
-            word = words[i]
-
-            if not word.strip():
-                end_index = i - 1
-                continue
-
-            # 建物名キーワード（ブランド名）に一致したら停止（優先）
-            if any(keyword in word for keyword in building_name_keywords):
-                end_index = i
-                break
-
-            # 棟名パターンに一致したら停止
-            wing_match = re.match(BUILDING_WING_PATTERN + '$', word)
-            if wing_match:
-                end_index = i
-                break
-
-            # 広告文パターンに一致したら削除（前の単語へ）
-            is_ad = False
-            for pattern in removal_patterns:
-                if re.match(pattern, word):
-                    is_ad = True
-                    break
-
-            if is_ad:
-                end_index = i - 1
-            else:
-                # 広告文でもなく、建物名キーワードでもない場合は停止
-                end_index = i
-                break
-
-        # Step 5: 残った範囲を結果として返す
-        if start_index <= end_index:
-            result_words = words[start_index:end_index + 1]
-            return ' '.join(result_words).strip()
-        else:
-            return ""
-
-    # 括弧パターンを検出して処理（2重、3重の括弧にも対応するため繰り返し実行）
-    bracket_patterns = [
-        (r'^(.+?)\((.+?)\)(.*)$', '(', ')'),    # 半角丸括弧（全角もNFKCで半角に変換済み）
-        (r'^(.+?)【(.+?)】(.*)$', '【', '】'),  # 全角角括弧（NFKCで変換されない）
-        (r'^(.+?)\[(.+?)\](.*)$', '[', ']'),    # 半角角括弧
-    ]
-
-    # 候補をトリミングする関数（括弧は保持するため、次のループで処理可能にする）
-    def trim_candidate(text):
-        """候補から広告文をトリミング（括弧は保持）"""
-        # 括弧は除外 - 次のループで処理するため
-        symbols_pattern = r'[☆★◆◇■□▲△▼▽◎○●◯※＊！？：；♪｜～〜、。→←↑↓⇒⇐⇑⇓]'
-        return _trim_ad_text_from_ends(text, symbols_pattern)
-
-    # 最大10回まで括弧処理を繰り返す（2重、3重の括弧に対応）
-    for _ in range(10):
-        found_bracket = False
-        for pattern, open_br, close_br in bracket_patterns:
-            match = re.match(pattern, current_text)
-            if match:
-                outside_before = match.group(1).strip()  # 括弧の前
-                inside = match.group(2).strip()          # 括弧の中
-                outside_after = match.group(3).strip()   # 括弧の後
-
-                # 3重以上のネスト（削除しきれなかった括弧）を検出したらスキップ
-                # 括弧内にさらに括弧が含まれている場合は処理しない
-                if any(bracket in inside for bracket in ['（', '）', '(', ')', '【', '】', '[', ']']):
-                    continue
-
-                # 括弧の中身が広告文かどうかを判定
-                inside_is_ad = any(re.search(pat, inside, re.IGNORECASE) for pat in ad_patterns)
-
-                # 括弧の前後を別々に判定
-                before_is_ad = any(re.search(pat, outside_before, re.IGNORECASE) for pat in ad_patterns)
-                after_is_ad = any(re.search(pat, outside_after, re.IGNORECASE) for pat in ad_patterns)
-
-                # 建物名キーワードの有無を確認（前後別々に）
-                inside_has_building_keyword = any(keyword in inside for keyword in building_name_keywords)
-                before_has_building_keyword = any(keyword in outside_before for keyword in building_name_keywords)
-                after_has_building_keyword = any(keyword in outside_after for keyword in building_name_keywords)
-
-                # 判定ロジック（改良版）
-                # 原則：建物名は括弧の前後にまたがる場合もある
-                # 候補：1) 括弧内、2) 括弧の前、3) 括弧の後、4) 括弧を除去して前後を繋げたもの
-                
-                # 候補を生成
-                candidates = []
-                
-                # 候補1: 括弧内
-                if inside and inside.strip():
-                    candidates.append(('inside', inside))
-                
-                # 候補2: 括弧の前
-                if outside_before and outside_before.strip():
-                    candidates.append(('before', outside_before))
-                
-                # 候補3: 括弧の後
-                if outside_after and outside_after.strip():
-                    candidates.append(('after', outside_after))
-                
-                # 候補4: 括弧を除去して前後を繋げたもの
-                combined = (outside_before + ' ' + outside_after).strip()
-                if combined and combined != outside_before and combined != outside_after:
-                    candidates.append(('combined', combined))
-                
-                # 各候補をトリミング（括弧は保持）
-                trimmed_candidates = []
-                for candidate_type, candidate_text in candidates:
-                    trimmed_text = trim_candidate(candidate_text)
-                    if trimmed_text:
-                        trimmed_candidates.append((candidate_type, candidate_text, trimmed_text))
-                
-                # 有効な候補を選択（トリミング後のテキストで判定）
-                valid_candidates = []
-                
-                for candidate_type, original_text, trimmed_text in trimmed_candidates:
-                    # 広告文パターンに一致する場合は候補から完全除外
-                    # （トリミング後も広告文が残っているということは、候補全体が広告文）
-                    is_ad = any(re.search(pat, trimmed_text, re.IGNORECASE) for pat in ad_patterns)
-                    if is_ad:
-                        continue  # この候補はスキップ
-
-                    # 建物名キーワードが含まれているかチェック
-                    has_keyword = any(kw in trimmed_text for kw in building_name_keywords)
-                    valid_candidates.append((trimmed_text, has_keyword))
-                
-                # 優先順位で候補を選択
-                # 1. 建物名キーワードが含まれている候補を優先
-                # 2. 複数の候補が同じ優先度である場合は長い方を優先
-                best_candidate = None
-                if valid_candidates:
-                    # キーワードが含まれている候補を優先
-                    candidates_with_keyword = [text for text, has_kw in valid_candidates if has_kw]
-                    if candidates_with_keyword:
-                        best_candidate = max(candidates_with_keyword, key=len)
-                    else:
-                        # キーワードなしの候補のみの場合、最長のものを選ぶ
-                        best_candidate = max([text for text, has_kw in valid_candidates], key=len)
-                
-                if best_candidate:
-                    current_text = best_candidate
-                    found_bracket = True
-                    break
-                
-                # 候補が見つからない場合は次の括弧パターンへ
-                # 括弧が見つからなかった、または処理できなかった場合は終了
-        if not found_bracket:
-            break
-
-    # Step 2以降: 前後の広告文をトリミング（共通関数を使用）
-    # 括弧も含めてすべての記号をスペースに置き換える（半角記号も含む）
-    # 注：&は建物名に使用されることがあるため除外
-    # 注：～（全角チルダ）はNFKCで~（半角チルダ）に変換されるため、半角も追加
-    symbols_pattern = r'[☆★◆◇■□▲△▼▽◎○●◯※＊！？：；♪｜～〜~、。→←↑↓⇒⇐⇑⇓\[\]「」『』（）()\【】〔〕〈〉《》!?@#$%^*×/]'
-    result = _trim_ad_text_from_ends(current_text, symbols_pattern)
-    
-    # 記号だけが残った場合は無効な建物名として空文字を返す
-    # 記号だけのパターン（英数字や日本語が含まれていない）
-    # 全角英数字も有効な文字として扱う
-    if result and re.match(r'^[^a-zA-Z0-9ぁ-んァ-ヶー一-龥Ａ-Ｚａ-ｚ０-９]+$', result):
-        return ""  # 記号のみの場合は空文字を返す
-
-    # 路線名だけが残った場合は無効な建物名として空文字を返す
-    # 鉄道路線名のパターン
-    railway_patterns = [
-        r'^.*線$',  # 〜線で終わる
-        r'^JR.*$',  # JRで始まる
-        r'^東京メトロ.*$',  # 東京メトロで始まる
-        r'^都営.*線$',  # 都営〜線
-        r'^東急.*線$',  # 東急〜線
-        r'^小田急.*線$',  # 小田急〜線
-        r'^京王.*線$',  # 京王〜線
-        r'^西武.*線$',  # 西武〜線
-        r'^東武.*線$',  # 東武〜線
-        r'^京急.*線$',  # 京急〜線
-        r'^相鉄.*線$',  # 相鉄〜線
-        r'^京成.*線$',  # 京成〜線
-        r'^つくばエクスプレス$',  # つくばエクスプレス
-        r'^りんかい線$',  # りんかい線
-        r'^ゆりかもめ$',  # ゆりかもめ
-    ]
-    
-    # 路線名だけの場合は無効
-    for pattern in railway_patterns:
-        if re.match(pattern, result):
-            return ""  # 路線名のみの場合は空文字を返す
-    
-    return result
 
 # この関数は既に定義されているので、代わりに該当行の後に挿入する方法を使います

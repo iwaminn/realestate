@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, and_, String
 from sqlalchemy.orm import Session
 from ..models import Building, MasterProperty, PropertyListing, ListingPriceHistory
-from ..scrapers.base_scraper import extract_building_name_from_ad_text
+from .building_name_normalizer import remove_ad_text_from_building_name
 import logging
 
 logger = logging.getLogger(__name__)
@@ -878,13 +878,13 @@ class MajorityVoteUpdater:
                 name_weights[building_name] = weight
         
         # 広告文除去処理を適用してから建物名をグループ化
-        from ..scrapers.base_scraper import extract_building_name_from_ad_text
+        from .building_name_normalizer import remove_ad_text_from_building_name
         cleaned_names = []
         cleaned_name_weights = {}
         
         for name in all_building_names:
             # 広告文除去処理
-            cleaned_name = extract_building_name_from_ad_text(name)
+            cleaned_name = remove_ad_text_from_building_name(name)
             
             # 広告文除去後に有効な建物名がない場合はスキップ
             if not cleaned_name:
@@ -940,7 +940,7 @@ class MajorityVoteUpdater:
             
             # 正規化して比較・更新
             from ..utils.building_name_normalizer import normalize_building_name, canonicalize_building_name
-            normalized_best_name = normalize_building_name(best_name)
+            normalized_best_name = remove_ad_text_from_building_name(best_name)
             
             # 現在の名前と異なる場合は更新
             if normalized_best_name != building.normalized_name:
@@ -1004,7 +1004,7 @@ class MajorityVoteUpdater:
             for listing in active_listings:
                 if listing.listing_building_name:
                     # 広告文除去処理を適用
-                    cleaned_building_name = extract_building_name_from_ad_text(listing.listing_building_name)
+                    cleaned_building_name = remove_ad_text_from_building_name(listing.listing_building_name)
                     
                     # 広告文除去後に有効な建物名がない場合はスキップ
                     if not cleaned_building_name:
@@ -1027,7 +1027,7 @@ class MajorityVoteUpdater:
             for listing in recent_listings:
                 if listing.listing_building_name:
                     # 広告文除去処理を適用
-                    cleaned_building_name = extract_building_name_from_ad_text(listing.listing_building_name)
+                    cleaned_building_name = remove_ad_text_from_building_name(listing.listing_building_name)
                     
                     # 広告文除去後に有効な建物名がない場合はスキップ
                     if not cleaned_building_name:
@@ -1074,7 +1074,7 @@ class MajorityVoteUpdater:
             
             # 正規化して比較・更新（建物レベルと同様の処理）
             from ..utils.building_name_normalizer import normalize_building_name
-            normalized_best_name = normalize_building_name(best_name)
+            normalized_best_name = remove_ad_text_from_building_name(best_name)
             
             # 現在の名前と異なる場合、またはNoneの場合は更新
             if property_obj.display_building_name != normalized_best_name:
