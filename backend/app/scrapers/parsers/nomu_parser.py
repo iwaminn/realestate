@@ -79,7 +79,9 @@ class NomuParser(BaseHtmlParser):
             if link:
                 building_name = link.get_text(strip=True)
                 property_data['title'] = building_name
-                property_data['building_name'] = building_name
+                # 建物名を正規化（広告文除去）
+                normalized_name = self.normalize_building_name(building_name)
+                property_data['building_name'] = normalized_name
                 
                 href = link.get('href')
                 if href:
@@ -117,55 +119,51 @@ class NomuParser(BaseHtmlParser):
             if price_elem:
                 price_text = self._build_price_text(price_elem)
                 price = self.parse_price(price_text)
-                if price:
-                    property_data['price'] = price
+                # フィールド抽出追跡を使用
+                self.track_field_extraction(property_data, 'price', price, field_found=True)
         
         # 面積・間取り・方角を抽出 (item_4)
         detail_cell = table.find("td", class_="item_td item_4")
         if detail_cell:
             p_tags = detail_cell.find_all("p")
             
-            # 1番目のp: 面積
+            # 1番目のp: 面積（フィールド抽出追跡を使用）
             if len(p_tags) > 0:
                 area_text = p_tags[0].get_text(strip=True)
                 area = self.parse_area(area_text)
-                if area:
-                    property_data['area'] = area
+                self.track_field_extraction(property_data, 'area', area, field_found=True)
             
-            # 2番目のp: 間取り
+            # 2番目のp: 間取り（フィールド抽出追跡を使用）
             if len(p_tags) > 1:
                 layout = self.normalize_layout(p_tags[1].get_text(strip=True))
-                if layout:
-                    property_data['layout'] = layout
+                self.track_field_extraction(property_data, 'layout', layout, field_found=True)
             
-            # 3番目のp: 方角
+            # 3番目のp: 方角（フィールド抽出追跡を使用）
             if len(p_tags) > 2:
                 direction = self.normalize_direction(p_tags[2].get_text(strip=True))
-                if direction:
-                    property_data['direction'] = direction
+                self.track_field_extraction(property_data, 'direction', direction, field_found=True)
         
         # 階数・築年情報を抽出 (item_5)
         floor_cell = table.find("td", class_="item_td item_5")
         if floor_cell:
             p_tags = floor_cell.find_all("p")
             
-            # 1番目のp: 築年月
+            # 1番目のp: 築年月（フィールド抽出追跡を使用）
             if len(p_tags) > 0:
                 built_text = p_tags[0].get_text(strip=True)
                 built_info = self.parse_built_date(built_text)
-                if built_info['built_year']:
-                    property_data['built_year'] = built_info['built_year']
-                if built_info['built_month']:
+                built_year = built_info.get('built_year')
+                self.track_field_extraction(property_data, 'built_year', built_year, field_found=True)
+                if built_info.get('built_month'):
                     property_data['built_month'] = built_info['built_month']
             
-            # 2番目のp: 階数情報（例: "39階 / 48階建"）
+            # 2番目のp: 階数情報（例: "39階 / 48階建"）（フィールド抽出追跡を使用）
             if len(p_tags) > 1:
                 floor_text = p_tags[1].get_text(strip=True)
                 
                 # 所在階を抽出（基底クラスのメソッドを使用）
                 floor_number = self.parse_floor(floor_text)
-                if floor_number:
-                    property_data['floor_number'] = floor_number
+                self.track_field_extraction(property_data, 'floor_number', floor_number, field_found=True)
                 
                 # 総階数を抽出
                 # "48階建"のような部分から総階数を抽出
@@ -179,8 +177,7 @@ class NomuParser(BaseHtmlParser):
                     
                     # 総階数を基底クラスのメソッドで取得
                     total_floors = self.parse_total_floors(total_text)
-                    if total_floors:
-                        property_data['total_floors'] = total_floors
+                    self.track_field_extraction(property_data, 'total_floors', total_floors, field_found=True)
                 
                 # 地下階の処理（基底クラスのメソッドを使用）
                 basement = self.parse_basement_floors(floor_text)
@@ -192,12 +189,11 @@ class NomuParser(BaseHtmlParser):
         if location_cell:
             p_tags = location_cell.find_all("p")
             
-            # 1番目のp: 住所のみ取得
+            # 1番目のp: 住所のみ取得（フィールド抽出追跡を使用）
             if len(p_tags) > 0:
                 address_text = p_tags[0].get_text(strip=True)
                 address = self.normalize_address(address_text)
-                if address:
-                    property_data['address'] = address
+                self.track_field_extraction(property_data, 'address', address, field_found=True)
 
     def _build_price_text(self, price_elem: Tag) -> str:
         """
@@ -398,31 +394,29 @@ class NomuParser(BaseHtmlParser):
             
             # 各項目を処理
             if '所在階' in title:
-                # 「22階 / 42階建」のような形式から階数を抽出
+                # 「22階 / 42階建」のような形式から階数を抽出（フィールド抽出追跡を使用）
                 floor = self.parse_floor(content)
                 if floor:
                     # デバッグログ
                     if 'floor_number' in property_data:
                         self.logger.debug(f"[NomuParser] floor_numberを更新: {property_data['floor_number']}階 → {floor}階")
-                    property_data['floor_number'] = floor
+                self.track_field_extraction(property_data, 'floor_number', floor, field_found=True)
                 
-                # 総階数も抽出
+                # 総階数も抽出（フィールド抽出追跡を使用）
                 if '階建' in content:
                     total_floors = self.parse_total_floors(content)
                     if total_floors:
                         if 'total_floors' in property_data:
                             self.logger.debug(f"[NomuParser] total_floorsを更新: {property_data['total_floors']}階 → {total_floors}階")
-                        property_data['total_floors'] = total_floors
+                    self.track_field_extraction(property_data, 'total_floors', total_floors, field_found=True)
             
             elif '間取' in title and 'layout' not in property_data:
                 layout = self.normalize_layout(content)
-                if layout:
-                    property_data['layout'] = layout
+                self.track_field_extraction(property_data, 'layout', layout, field_found=True)
             
             elif '専有面積' in title and 'area' not in property_data:
                 area = self.parse_area(content)
-                if area:
-                    property_data['area'] = area
+                self.track_field_extraction(property_data, 'area', area, field_found=True)
             
             elif '所在地' in title and 'address' not in property_data:
                 # リンクがある場合は特別な処理
@@ -440,46 +434,41 @@ class NomuParser(BaseHtmlParser):
                         address_parts.append(remaining_text)
                     if address_parts:
                         full_address = ''.join(address_parts)
-                        property_data['address'] = self.normalize_address(full_address)
+                        address = self.normalize_address(full_address)
+                        self.track_field_extraction(property_data, 'address', address, field_found=True)
                 else:
                     address = self.normalize_address(content)
-                    if address:
-                        property_data['address'] = address
+                    self.track_field_extraction(property_data, 'address', address, field_found=True)
             
             elif '交通' in title and 'station_info' not in property_data:
-                property_data['station_info'] = content
+                self.track_field_extraction(property_data, 'station_info', content, field_found=True)
             
             elif '築年月' in title and 'built_year' not in property_data:
                 built_info = self.parse_built_date(content)
-                if built_info['built_year']:
-                    property_data['built_year'] = built_info['built_year']
-                if built_info['built_month'] and 'built_month' not in property_data:
+                built_year = built_info.get('built_year')
+                self.track_field_extraction(property_data, 'built_year', built_year, field_found=True)
+                if built_info.get('built_month') and 'built_month' not in property_data:
                     property_data['built_month'] = built_info['built_month']
             
             elif 'バルコニー' in title and 'balcony_area' not in property_data:
                 balcony_area = self.parse_area(content)
-                if balcony_area:
-                    property_data['balcony_area'] = balcony_area
+                self.track_field_extraction(property_data, 'balcony_area', balcony_area, field_found=True)
             
             elif '向き' in title and 'direction' not in property_data:
                 direction = self.normalize_direction(content)
-                if direction:
-                    property_data['direction'] = direction
+                self.track_field_extraction(property_data, 'direction', direction, field_found=True)
             
             elif '管理費' in title and 'management_fee' not in property_data:
                 fee = self.parse_price(content)
-                if fee:
-                    property_data['management_fee'] = fee
+                self.track_field_extraction(property_data, 'management_fee', fee, field_found=True)
             
             elif '修繕積立' in title and 'repair_fund' not in property_data:
                 fund = self.parse_price(content)
-                if fund:
-                    property_data['repair_fund'] = fund
+                self.track_field_extraction(property_data, 'repair_fund', fund, field_found=True)
             
             elif '総戸数' in title and 'total_units' not in property_data:
                 units = self.parse_total_units(content)
-                if units:
-                    property_data['total_units'] = units
+                self.track_field_extraction(property_data, 'total_units', units, field_found=True)
 
     def _extract_building_name(self, element: BeautifulSoup, detail_data: Dict[str, Any]):
         """建物名を抽出"""
@@ -502,11 +491,16 @@ class NomuParser(BaseHtmlParser):
             # 残ったテキストが建物名
             building_name = h1_copy.get_text(strip=True)
             if building_name:
-                detail_data['building_name'] = building_name
                 detail_data['title'] = building_name  # タイトルも設定
+                # 建物名を正規化（広告文除去）
+                normalized_name = self.normalize_building_name(building_name)
+                # フィールド抽出追跡を使用
+                self.track_field_extraction(detail_data, 'building_name', normalized_name, field_found=True)
         else:
             # 建物名が取得できない場合はエラーログを出力
-            self.logger.error("[NomuParser] 建物名を取得できませんでした - HTML構造が変更された可能性があります")  # タイトルも設定  # タイトルも設定
+            self.logger.error("[NomuParser] 建物名を取得できませんでした - HTML構造が変更された可能性があります")
+            # フィールド抽出追跡を使用
+            self.track_field_extraction(detail_data, 'building_name', None, field_found=False)
     
     def _extract_detail_price(self, element: BeautifulSoup, detail_data: Dict[str, Any]):
         """詳細ページから価格を取得"""
@@ -545,12 +539,14 @@ class NomuParser(BaseHtmlParser):
         # 価格をパース
         if price_text:
             price = self.parse_price(price_text)
+            # フィールド抽出追跡を使用
+            self.track_field_extraction(detail_data, 'price', price, field_found=True)
             if price:
-                detail_data['price'] = price
                 self.logger.debug(f"価格取得成功: {price}万円 (raw: {price_text})")
         else:
             # 価格が取得できない場合はデバッグログを出力（一覧ページから既に取得済みの可能性）
             self.logger.debug("[NomuParser] 詳細ページから価格を取得できませんでした - 一覧ページの価格を使用")
+            # 一覧ページで既に取得している場合があるため、field_found=Falseは設定しない
     
     def _extract_address_and_station(self, element: BeautifulSoup, detail_data: Dict[str, Any]):
         """住所と駅情報を取得"""
@@ -598,11 +594,14 @@ class NomuParser(BaseHtmlParser):
                         # 住所を結合
                         if address_parts:
                             full_address = ''.join(address_parts)
-                            detail_data['address'] = self.normalize_address(full_address)
+                            address = self.normalize_address(full_address)
+                            # フィールド抽出追跡を使用
+                            self.track_field_extraction(detail_data, 'address', address, field_found=True)
                     
                     elif "交通" in header or "最寄" in header:
                         value = td.get_text(' ', strip=True)
-                        detail_data['station_info'] = value
+                        # フィールド抽出追跡を使用
+                        self.track_field_extraction(detail_data, 'station_info', value, field_found=True)
     
     def _extract_mansion_table_info(self, element: BeautifulSoup, detail_data: Dict[str, Any]):
         """mansionテーブルから建物全体の情報を取得（個別物件情報は扱わない）"""
@@ -635,31 +634,34 @@ class NomuParser(BaseHtmlParser):
                         if 'basement_floors' not in detail_data:
                             detail_data['basement_floors'] = int(total_match.group(1))
                         if 'total_floors' not in detail_data:
-                            detail_data['total_floors'] = int(total_match.group(2))
+                            total_floors = int(total_match.group(2))
+                            # フィールド抽出追跡を使用
+                            self.track_field_extraction(detail_data, 'total_floors', total_floors, field_found=True)
                     else:
                         # 地下階がない場合
                         total_match = re.search(r'(\d+)階建', value)
                         if total_match and 'total_floors' not in detail_data:
-                            detail_data['total_floors'] = int(total_match.group(1))
+                            total_floors = int(total_match.group(1))
+                            # フィールド抽出追跡を使用
+                            self.track_field_extraction(detail_data, 'total_floors', total_floors, field_found=True)
                         # または基底クラスのメソッドを使用
                         if 'basement_floors' not in detail_data:
                             basement = self.parse_basement_floors(value)
                             if basement:
                                 detail_data['basement_floors'] = basement
                 
-                # 築年月（建物全体の情報）
+                # 築年月（建物全体の情報）（フィールド抽出追跡を使用）
                 elif "築年月" in header and 'built_year' not in detail_data:
                     built_info = self.parse_built_date(value)
-                    if built_info['built_year']:
-                        detail_data['built_year'] = built_info['built_year']
-                    if built_info['built_month'] and 'built_month' not in detail_data:
+                    built_year = built_info.get('built_year')
+                    self.track_field_extraction(detail_data, 'built_year', built_year, field_found=True)
+                    if built_info.get('built_month') and 'built_month' not in detail_data:
                         detail_data['built_month'] = built_info['built_month']
                 
-                # 総戸数（建物全体の情報）
+                # 総戸数（建物全体の情報）（フィールド抽出追跡を使用）
                 elif "総戸数" in header and 'total_units' not in detail_data:
                     units = self.parse_total_units(value)
-                    if units:
-                        detail_data['total_units'] = units
+                    self.track_field_extraction(detail_data, 'total_units', units, field_found=True)
                 
                 i += 2
 
@@ -1180,7 +1182,9 @@ class NomuParser(BaseHtmlParser):
         if title:
             building_name = self.extract_text(title)
             if building_name:
-                property_data['building_name'] = building_name
+                # 建物名を正規化（広告文除去）
+                normalized_name = self.normalize_building_name(building_name)
+                property_data['building_name'] = normalized_name
     
 
     

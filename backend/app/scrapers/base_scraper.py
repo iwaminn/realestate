@@ -2233,6 +2233,9 @@ class BaseScraper(ABC):
                 self._last_detail_fetched = True  # フラグを記録
                 print("  → 詳細取得成功")
                 
+                # 管理費・修繕積立金の取得チェック（全スクレイパー共通）
+                self._check_fee_extraction(detail_data, property_data.get('url', ''))
+                
             else:
                 print("  → 詳細取得失敗")
                 property_data['detail_fetched'] = False
@@ -5572,6 +5575,30 @@ class BaseScraper(ABC):
                 
         except Exception as e:
             self.logger.error(f"アラート記録エラー: {e}")
+
+    def _check_fee_extraction(self, detail_data: Dict[str, Any], url: str):
+        """管理費・修繕積立金の取得をチェックし、必要に応じてエラーを記録
+        
+        全スクレイパー共通の処理として、詳細ページから管理費・修繕積立金が
+        取得できているかチェックし、取得失敗が一定割合を超えた場合にアラートを発生させる。
+        
+        Args:
+            detail_data: 詳細ページから抽出したデータ
+            url: 物件URL
+        """
+        if not detail_data:
+            return
+        
+        # 管理費・修繕積立金の取得状況をチェック
+        has_management_fee = detail_data.get('management_fee') is not None and detail_data.get('management_fee') > 0
+        has_repair_fund = detail_data.get('repair_fund') is not None and detail_data.get('repair_fund') > 0
+        
+        # 両方とも取得できていない場合はエラーとして記録
+        # 注：片方のみ取得できている場合や、両方が0円の場合は正常とみなす
+        if not has_management_fee and not has_repair_fund:
+            # 既存のエラー記録メソッドを使用（log_error=Falseで静かに記録）
+            # これにより、エラー率が閾値を超えた場合に自動的にアラートが発生する
+            self.record_field_extraction_error('management_fee_repair_fund', url, log_error=False)
             # トランザクションはwith文を抜ける際に自動的にロールバック
     
     def _record_structure_change_alert(self, selector: str, field_name: str, fail_rate: float):

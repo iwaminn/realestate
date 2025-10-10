@@ -550,6 +550,24 @@ class SuumoParser(BaseHtmlParser):
                 # キーが空でない場合のみ処理
                 if key:
                     self._process_detail_item(key, value, property_data)
+
+    def _extract_table_key(self, th) -> str:
+        """
+        テーブルのthからキーを抽出
+        
+        Args:
+            th: th要素
+            
+        Returns:
+            抽出されたキー
+        """
+        # div.flがあればそのテキストを取得
+        key_div = th.find('div', class_='fl')
+        if key_div:
+            return self.extract_text(key_div)
+        
+        # なければth全体から取得（ヒントを除去）
+        return self.extract_text(th).replace('ヒント', '').strip()
     
     def _extract_detail_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """
@@ -588,6 +606,22 @@ class SuumoParser(BaseHtmlParser):
                             
                             if key and value:
                                 self._process_detail_item(key, value, property_data)
+                    break
+        
+        # 管理費・修繕積立金を抽出（h2:物件概要 > h3:【マンション】> table）
+        if not property_data.get('management_fee') or not property_data.get('repair_fund'):
+            # h2:物件概要を探す（内部構造が複雑なのでget_text()で判定）
+            for h2 in soup.find_all('h2'):
+                if '物件概要' in self.extract_text(h2):
+                    # h2の下のh3:【マンション】を探す
+                    building_h3 = h2.find_next('h3', string=lambda text: text and '【マンション】' in text)
+                    if building_h3:
+                        table = building_h3.find_next('table')
+                        if table:
+                            for th, td in zip(table.find_all('th'), table.find_all('td')):
+                                key = self._extract_table_key(th)
+                                if '管理費' in key or '修繕積立' in key:
+                                    self._process_detail_item(key, self.extract_text(td), property_data)
                     break
         
         # 従来のdl要素からの抽出も維持（フォールバック）
