@@ -41,6 +41,58 @@ def normalize_station_text(text: str) -> str:
     return normalized.strip()
 
 
+def normalize_line_name(line_name: str) -> str:
+    """
+    路線名の表記揺れを正規化
+    
+    【問題】
+    同じJR山手線でも「JR山手線」「山手線」のように表記が異なり、
+    投票が分散してしまう。
+    
+    【正規化ルール】
+    - 「山手線」→「JR山手線」
+    - 「京浜東北線」「京浜東北・根岸線」→「JR京浜東北・根岸線」
+    - 「中央線」→「JR中央線」
+    - その他の主要JR路線も同様
+    - 既に「JR」が付いている場合はそのまま
+    - 私鉄・地下鉄は変更しない
+    
+    Args:
+        line_name: 路線名
+        
+    Returns:
+        正規化された路線名
+    """
+    if not line_name:
+        return line_name
+    
+    # 既にJRやその他の事業者名が付いている場合はそのまま
+    if any(prefix in line_name for prefix in ['JR', '東京メトロ', '都営', '東急', '京王', '小田急', '西武', '京急', '東武']):
+        return line_name
+    
+    # JR路線の正規化マッピング
+    jr_line_mapping = {
+        '山手線': 'JR山手線',
+        '京浜東北線': 'JR京浜東北・根岸線',
+        '京浜東北・根岸線': 'JR京浜東北・根岸線',
+        '中央線': 'JR中央線',
+        '中央・総武線': 'JR中央・総武線',
+        '総武線': 'JR総武線',
+        '埼京線': 'JR埼京線',
+        '湘南新宿ライン': 'JR湘南新宿ライン',
+        '横須賀線': 'JR横須賀線',
+        '常磐線': 'JR常磐線',
+        '武蔵野線': 'JR武蔵野線',
+        '南武線': 'JR南武線',
+        '横浜線': 'JR横浜線',
+        '京葉線': 'JR京葉線',
+        '宇都宮線': 'JR宇都宮線',
+        '高崎線': 'JR高崎線',
+    }
+    
+    return jr_line_mapping.get(line_name, line_name)
+
+
 def parse_station_info(station_info: str) -> List[Dict]:
     """
     交通情報から駅情報をパースして正規化
@@ -97,12 +149,15 @@ def parse_station_info(station_info: str) -> List[Dict]:
             line_name = match.group(1).strip()
             station_name = match.group(2).strip()
             walk_minutes = int(match.group(5))
+            
+            # 路線名を正規化（JR路線の表記揺れを吸収）
+            normalized_line_name = normalize_line_name(line_name)
 
-            # 駅の一意キー（路線名_駅名）
-            station_key = f"{line_name}_{station_name}"
+            # 駅の一意キー（正規化された路線名_駅名）
+            station_key = f"{normalized_line_name}_{station_name}"
 
             stations.append({
-                'line': line_name,
+                'line': normalized_line_name,  # 正規化された路線名を使用
                 'station': station_name,
                 'walk_min': walk_minutes,
                 'key': station_key
