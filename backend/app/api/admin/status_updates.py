@@ -133,7 +133,11 @@ async def update_listing_status(
                 master_property.final_price = None
                 master_property.final_price_updated_at = None
                 reopened_properties.add(master_property.id)
-        
+
+        # 【重要】再アクティブ化の変更をフラッシュ
+        if reactivate_listings:
+            db.flush()
+
         # 2. 24時間以上確認されていないアクティブな掲載を非アクティブに
         inactive_listings = db.query(PropertyListing).filter(
             PropertyListing.is_active == True,
@@ -149,7 +153,12 @@ async def update_listing_status(
             listing.delisted_at = now
             listing.updated_at = now
             properties_to_update.add(listing.master_property_id)
-        
+
+        # 【重要】変更をフラッシュしてデータベースに反映
+        # これがないと、次のクエリで is_active の変更が反映されない
+        if inactive_listings:
+            db.flush()
+
         # 全掲載が非アクティブになった物件を販売終了とする
         from ...utils.price_queries import update_sold_status_and_final_price
 
