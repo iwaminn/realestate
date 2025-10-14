@@ -101,6 +101,8 @@ def remove_ad_text_from_building_name(ad_text: str) -> str:
         '諸費用.*', '企画.*',
         '弊社限定公開', '限定公開', '独占公開', '新規物件', '新価格',
         '弊社.*', '当社.*', '払う.*', '勿体無い.*', '勿体ない.*', 'お得.*',
+        # 不動産会社の略称・ブランド
+        'VECS',  # 不動産会社の略称
         # 価格情報
         r'\d+億\d+万円', r'\d+億円', r'\d+万円', r'\d+円',
         r'\d+億\d+千\d+百万円', r'\d+千\d+百万円', r'\d+億\d+千万円',
@@ -212,7 +214,7 @@ def remove_ad_text_from_building_name(ad_text: str) -> str:
         'ダイアパレス', 'ジオ', 'サンクタス', 'クリオ', 'サンウッド',
         'ファミール', 'イトーピア', 'ガーデンヒルズ', 'デュオ',
         'パークマンション', 'セブンスター', 'インペリアル', 'クオリア',
-        'リビオレゾン', 'ルジェンテ',
+        'リビオレゾン', 'ルジェンテ', 'マスターズホーム',
         'BRILLIA', 'HARUMI', 'CLEARE', 'FAMILLE', 'DUET', 'DUO', 'SCALA',
         'DOEL', 'ALLES', 'CLEO', 'GALA',
         'EAST', 'WEST', 'NORTH', 'SOUTH', 'CENTER',
@@ -247,7 +249,7 @@ def remove_ad_text_from_building_name(ad_text: str) -> str:
                 return False
             if re.match(BUILDING_WING_PATTERN + '$', word):
                 return False
-            
+
             # まず中点を含めた状態でパターンマッチ
             for pattern in removal_patterns:
                 if re.match(pattern, word):
@@ -307,6 +309,19 @@ def remove_ad_text_from_building_name(ad_text: str) -> str:
                 processed_words.append(word)
 
         words = processed_words
+
+        # 各単語の末尾から階数を削除
+        # 例: 「西麻布6階」→「西麻布」「35階」→削除
+        final_words = []
+        for word in words:
+            # 末尾の階数パターンを削除
+            cleaned_word = re.sub(r'\d+階$', '', word).strip()
+            # 階数のみの単語（例：「35階」）は削除
+            if cleaned_word:
+                final_words.append(cleaned_word)
+            # 階数のみの場合は何も追加しない（削除）
+
+        words = final_words
 
         # 前方からトリミング
         start_index = 0
