@@ -772,10 +772,22 @@ class MajorityVoteUpdater:
         
         return info
     
+
+
     def update_building_name_by_majority(self, building_or_id) -> bool:
         """
-        建物名を関連する掲載情報から直接多数決で決定
-        2段階投票アルゴリズムを使用して票の分散を防ぐ
+        建物名を物件レベルの建物名から多数決で決定（改善版）
+        
+        【改善点】
+        掲載情報を直接集計するのではなく、物件レベルの建物名を1票として扱う。
+        これにより、多数の掲載を持つ人気物件の影響力が過大にならない。
+        
+        【真の2段階投票アルゴリズム】
+        1. 各物件のdisplay_building_nameを1票として収集（事前に更新済みであること）
+        2. 収集した物件建物名を元に、建物レベルの建物名を多数決で決定
+        
+        注意：このメソッドは物件の建物名を更新しません。物件の建物名は
+        update_property_building_name_by_majorityで事前に更新されている必要があります。
         
         Args:
             building_or_id: 建物オブジェクトまたは建物ID
@@ -793,180 +805,102 @@ class MajorityVoteUpdater:
             building = building_or_id
             building_id = building.id
         
-        # property_listings から直接建物名を取得
-        # アクティブな掲載情報があるかチェック
-        active_listings = self.session.query(
-            PropertyListing.listing_building_name,
-            PropertyListing.source_site,
-            func.count(PropertyListing.id).label('count')
-        ).join(
-            MasterProperty
-        ).filter(
-            MasterProperty.building_id == building_id,
-            PropertyListing.is_active == True,
-            PropertyListing.listing_building_name.isnot(None)
-        ).group_by(
-            PropertyListing.listing_building_name,
-            PropertyListing.source_site
+        # この建物に属する全物件を取得
+        properties = self.session.query(MasterProperty).filter(
+            MasterProperty.building_id == building_id
         ).all()
         
-        if active_listings:
-            # アクティブな掲載情報から建物名を取得
-            building_name_votes = active_listings
-        else:
-            # 全ての掲載が非アクティブの場合
-            one_week_ago = datetime.now() - timedelta(days=7)
-            
-            # 販売終了から1週間以内の掲載情報を取得
-            recent_listings = self.session.query(
-                PropertyListing.listing_building_name,
-                PropertyListing.source_site,
-                func.count(PropertyListing.id).label('count')
-            ).join(
-                MasterProperty
-            ).filter(
-                MasterProperty.building_id == building_id,
-                MasterProperty.sold_at.isnot(None),
-                MasterProperty.sold_at >= one_week_ago,
-                PropertyListing.listing_building_name.isnot(None)
-            ).group_by(
-                PropertyListing.listing_building_name,
-                PropertyListing.source_site
-            ).all()
-            
-            if recent_listings:
-                building_name_votes = recent_listings
-            else:
-                # 販売終了から1週間以上経過している場合は、全ての掲載情報を使用
-                all_listings = self.session.query(
-                    PropertyListing.listing_building_name,
-                    PropertyListing.source_site,
-                    func.count(PropertyListing.id).label('count')
-                ).join(
-                    MasterProperty
-                ).filter(
-                    MasterProperty.building_id == building_id,
-                    PropertyListing.listing_building_name.isnot(None)
-                ).group_by(
-                    PropertyListing.listing_building_name,
-                    PropertyListing.source_site
-                ).all()
-                
-                building_name_votes = all_listings
-        
-        if not building_name_votes:
-            # 掲載情報から建物名が取得できない場合
+        if not properties:
+            logger.warning(f"建物ID {building_id}: 物件が見つかりません")
             return False
         
-        # 2段階投票アルゴリズムの実装
-        # 1. BuildingNameGrouperを使用してグループ化
+        # 【ステップ1】各物件の建物名（display_building_name）を取得
+        # 注意：display_building_nameは事前に更新されている必要があります
+        property_building_names = []  # [(物件ID, 建物名)]
+        
+        for prop in properties:
+            if prop.display_building_name:
+                # この物件の建物名として記録（1票）
+                property_building_names.append((prop.id, prop.display_building_name))
+        
+        if not property_building_names:
+            logger.warning(f"建物ID {building_id}: 有効な物件建物名が見つかりません")
+            return False
+        
+        # 【ステップ2】各物件の建物名を1票として、建物レベルの建物名を多数決で決定
         from .building_name_grouper import get_grouper
         grouper = get_grouper()
         
-        # 投票データを準備（建物名のリストと重み）
-        all_building_names = []
-        name_weights = {}  # {建物名: 重み}
+        # 物件ごとの建物名を収集（各物件1票）
+        all_property_names = [name for _, name in property_building_names]
+        name_counts = Counter(all_property_names)
         
-        for building_name, source_site, count in building_name_votes:
-            # 純粋な出現回数による重み（サイトによる重み付けなし）
-            weight = count
-            
-            all_building_names.append(building_name)
-            if building_name in name_weights:
-                name_weights[building_name] += weight
-            else:
-                name_weights[building_name] = weight
+        logger.debug(
+            f"建物ID {building_id}: {len(properties)}物件中{len(property_building_names)}物件から建物名を集計"
+            f"（各物件のdisplay_building_nameから1票ずつ）"
+        )
         
-        # 広告文除去処理を適用してから建物名をグループ化
-        from .building_name_normalizer import remove_ad_text_from_building_name
-        cleaned_names = []
-        cleaned_name_weights = {}
+        # 建物名をグループ化
+        grouped_names = grouper.group_building_names(all_property_names)
         
-        for name in all_building_names:
-            # 広告文除去処理
-            cleaned_name = remove_ad_text_from_building_name(name)
-            
-            # 広告文除去後に有効な建物名がない場合はスキップ
-            if not cleaned_name:
-                logger.debug(f"広告文除去により無効化された建物名: '{name}'")
-                continue
-            
-            cleaned_names.append(cleaned_name)
-            
-            # 元の重みを引き継ぐ（既に広告文判定で重みは調整済み）
-            if cleaned_name in cleaned_name_weights:
-                cleaned_name_weights[cleaned_name] += name_weights.get(name, 0)
-            else:
-                cleaned_name_weights[cleaned_name] = name_weights.get(name, 0)
-        
-        # 有効な建物名がない場合は更新しない
-        if not cleaned_names:
-            logger.warning(f"建物ID {building_id}: すべての建物名が広告文として除去されました")
-            return False
-        
-        # 建物名をグループ化（基本版：スペース正規化のみ使用）
-        # 物件関係を考慮した類似度ベースのグループ化は、
-        # 「白金ザ・スカイ」と「白金ザ・スカイ東棟」のような
-        # 異なる棟表記を適切に分離できないため、基本版を使用
-        grouped_names = grouper.group_building_names(cleaned_names)
-        
-        # 2. 各グループの合計重みを計算（第1段階投票）
+        # 各グループの合計票数を計算（物件数）
         group_weights = {}
         for group_key, names in grouped_names.items():
-            # 重複を除いてユニークな名前のみの重みを合計
-            unique_names = list(set(names))
-            total_weight = sum(cleaned_name_weights.get(name, 0) for name in unique_names)
+            # ユニークな名前の票数を合計（同じ物件が同じ名前で複数カウントされないように）
+            unique_names = set(names)
+            total_weight = sum(name_counts.get(name, 0) for name in unique_names)
             group_weights[group_key] = total_weight
         
         # 最も重みの高いグループを選択
-        if group_weights:
-            best_group_key = max(group_weights.items(), key=lambda x: x[1])[0]
-            best_group_names = grouped_names[best_group_key]
+        best_group_key = max(group_weights.items(), key=lambda x: x[1])[0]
+        best_group_names = grouped_names[best_group_key]
+        
+        # グループ内で最適な表記を選択
+        best_name = grouper.find_best_representation(
+            list(best_group_names),
+            name_weights=name_counts
+        )
+        
+        # 正規化して比較・更新
+        from ..utils.building_name_normalizer import normalize_building_name, canonicalize_building_name
+        normalized_best_name = remove_ad_text_from_building_name(best_name)
+        
+        # 広告文除去後に空文字になる場合はスキップ（元の名前を保持）
+        if not normalized_best_name or normalized_best_name.strip() == '':
+            logger.warning(
+                f"建物ID {building_id}: 広告文除去後に空文字になるためスキップ "
+                f"(元の名前: '{best_name}', 現在の名前: '{building.normalized_name}')"
+            )
+            return False
+        
+        # 現在の名前と異なる場合は更新
+        if normalized_best_name != building.normalized_name:
+            # ログ出力用に投票結果を整形
+            vote_summary = {}
+            for name, weight in name_counts.items():
+                vote_summary[name] = weight
             
-            # 3. 選択されたグループ内で最適な表記を選択（第2段階投票）
-            # 重み情報を渡して最頻出の表記を選択
-            best_name = grouper.find_best_representation(best_group_names, cleaned_name_weights)
+            # canonical_nameも更新（検索用）
+            new_canonical_name = canonicalize_building_name(normalized_best_name)
             
-            # デバッグ用：グループ化の効果をログ出力
-            if len(grouped_names) != len(all_building_names):
-                logger.debug(
-                    f"建物名のグループ化: {len(all_building_names)}個の表記 → {len(grouped_names)}グループ"
-                )
+            logger.info(
+                f"建物名更新（物件ベース）: '{building.normalized_name}' → '{normalized_best_name}' "
+                f"(ID: {building_id}, 物件数: {len(property_building_names)}, "
+                f"グループ数: {len(grouped_names)}, "
+                f"選択グループ: '{best_group_key}', "
+                f"元の名前: '{best_name}', "
+                f"canonical_name: '{building.canonical_name}' → '{new_canonical_name}', "
+                f"votes: {dict(sorted(vote_summary.items(), key=lambda x: x[1], reverse=True)[:5])})"
+            )
+            building.normalized_name = normalized_best_name
+            building.canonical_name = new_canonical_name
             
-            if len(best_group_names) > 1:
-                logger.debug(
-                    f"グループ '{best_group_key}' の表記ゆれを統合: {best_group_names[:5]} → '{best_name}'"
-                )
+            # 多数決で建物名が更新された場合は、妥当な名前とみなす
+            if hasattr(building, 'is_valid_name') and not building.is_valid_name:
+                building.is_valid_name = True
+                logger.info(f"建物ID {building_id}: is_valid_nameをTrueに更新")
             
-            # 正規化して比較・更新
-            from ..utils.building_name_normalizer import normalize_building_name, canonicalize_building_name
-            normalized_best_name = remove_ad_text_from_building_name(best_name)
-            
-            # 現在の名前と異なる場合は更新
-            if normalized_best_name != building.normalized_name:
-                # ログ出力用に投票結果を整形
-                vote_summary = {}
-                for name, weight in cleaned_name_weights.items():
-                    vote_summary[name] = weight
-                
-                # canonical_nameも更新（検索用）
-                new_canonical_name = canonicalize_building_name(normalized_best_name)
-                
-                logger.info(
-                    f"建物名更新: '{building.normalized_name}' → '{normalized_best_name}' "
-                    f"(ID: {building_id}, グループ数: {len(grouped_names)}, "
-                    f"選択グループ: '{best_group_key}', "
-                    f"元の名前: '{best_name}', "
-                    f"canonical_name: '{building.canonical_name}' → '{new_canonical_name}', "
-                    f"votes: {dict(sorted(vote_summary.items(), key=lambda x: x[1], reverse=True)[:5])})"
-                )
-                building.normalized_name = normalized_best_name
-                building.canonical_name = new_canonical_name
-                # 多数決で建物名が更新された場合は、妥当な名前とみなす
-                if hasattr(building, 'is_valid_name') and not building.is_valid_name:
-                    building.is_valid_name = True
-                    logger.info(f"建物ID {building_id}: is_valid_nameをTrueに更新")
-                return True
+            return True
         
         return False
     
@@ -1075,6 +1009,14 @@ class MajorityVoteUpdater:
             # 正規化して比較・更新（建物レベルと同様の処理）
             from ..utils.building_name_normalizer import normalize_building_name
             normalized_best_name = remove_ad_text_from_building_name(best_name)
+            
+            # 広告文除去後に空文字になる場合はスキップ
+            if not normalized_best_name or normalized_best_name.strip() == '':
+                logger.warning(
+                    f"物件ID {property_id}: 広告文除去後に空文字になるためスキップ "
+                    f"(元の名前: '{best_name}', 現在の名前: '{property_obj.display_building_name}')"
+                )
+                return False
             
             # 現在の名前と異なる場合、またはNoneの場合は更新
             if property_obj.display_building_name != normalized_best_name:

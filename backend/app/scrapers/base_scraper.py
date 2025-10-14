@@ -5007,14 +5007,17 @@ class BaseScraper(ABC):
             # すべての多数決更新を実行（エラーは内部で処理）
             updates_to_perform = []
             
+            # 建物情報の更新を予定（物件建物名→建物名の順）
+            if master_property.building_id:
+                # 先に物件レベルの建物名を更新（掲載情報から多数決）
+                updates_to_perform.append(('property_building_name', master_property.id, None))
+                # 次に建物レベルの建物名を更新（保存済みの物件建物名から多数決）
+                updates_to_perform.append(('building_name', master_property.building_id, None))
+                # その他の建物情報を更新
+                updates_to_perform.append(('building', master_property.building_id, master_property.building))
+            
             # 物件情報の更新を予定
             updates_to_perform.append(('property', master_property.id, master_property))
-            
-            # 建物情報の更新を予定
-            if master_property.building_id:
-                updates_to_perform.append(('building', master_property.building_id, master_property.building))
-                updates_to_perform.append(('building_name', master_property.building_id, None))
-                updates_to_perform.append(('property_building_name', master_property.id, None))
             
             # 各更新を順次実行（エラーは個別に処理）
             for update_type, target_id, target_obj in updates_to_perform:

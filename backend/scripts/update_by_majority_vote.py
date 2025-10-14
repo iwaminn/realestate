@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 def update_all_properties(session, limit=None):
     """
-    全物件の情報を多数決で更新
+    全物件の情報を多数決で更新（属性と物件レベルの建物名）
 
     Args:
         session: データベースセッション
@@ -71,7 +71,11 @@ def update_all_properties(session, limit=None):
 
 def update_all_buildings(session, limit=None):
     """
-    全建物の情報を多数決で更新
+    全建物の情報を多数決で更新（建物名を含む）
+
+    注意：update_building_name_by_majorityは事前に更新された各物件の
+    display_building_nameを元に建物の建物名を決定します（真の2段階投票）。
+    物件のdisplay_building_nameはupdate_all_propertiesで更新されている必要があります。
 
     Args:
         session: データベースセッション
@@ -183,13 +187,15 @@ def main():
                 logger.info("ドライラン: 変更をロールバックしました")
             return
 
-        # 全体の更新
+        # 全体の更新（物件→建物の順で実行）
         property_updates = 0
         building_updates = 0
 
+        # 物件を先に更新（物件レベルの建物名を含む）
         if args.target in ['property', 'both']:
             property_updates = update_all_properties(session, args.limit)
 
+        # 建物を更新（事前更新済みの物件建物名から建物名を決定）
         if args.target in ['building', 'both']:
             building_updates = update_all_buildings(session, args.limit)
 
