@@ -221,6 +221,11 @@ def main():
         default=1000,
         help='バッチ処理のサイズ（デフォルト: 1000）'
     )
+    parser.add_argument(
+        '--yes',
+        action='store_true',
+        help='確認プロンプトをスキップ'
+    )
 
     args = parser.parse_args()
 
@@ -229,10 +234,11 @@ def main():
         logger.warning("")
         logger.warning("⚠️  実際に更新を実行します")
         logger.warning("")
-        response = input("続行しますか？ (yes/no): ")
-        if response.lower() != 'yes':
-            logger.info("処理を中止しました")
-            return
+        if not args.yes:
+            response = input("続行しますか？ (yes/no): ")
+            if response.lower() != 'yes':
+                logger.info("処理を中止しました")
+                return
         logger.info("")
 
     # 実行

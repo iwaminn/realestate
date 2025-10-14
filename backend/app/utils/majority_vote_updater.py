@@ -814,12 +814,22 @@ class MajorityVoteUpdater:
             logger.warning(f"建物ID {building_id}: 物件が見つかりません")
             return False
         
+        # 【循環参照防止】有効な掲載情報を持つ物件IDのセットを事前に取得
+        # 掲載情報がない物件は建物名の多数決に参加させない
+        property_ids_with_listings = set(
+            row[0] for row in self.session.query(PropertyListing.master_property_id).filter(
+                PropertyListing.master_property_id.in_([p.id for p in properties]),
+                PropertyListing.listing_building_name.isnot(None)
+            ).distinct()
+        )
+        
         # 【ステップ1】各物件の建物名（display_building_name）を取得
         # 注意：display_building_nameは事前に更新されている必要があります
         property_building_names = []  # [(物件ID, 建物名)]
         
         for prop in properties:
-            if prop.display_building_name:
+            # 有効な掲載情報を持つ物件のみを多数決に参加させる
+            if prop.display_building_name and prop.id in property_ids_with_listings:
                 # この物件の建物名として記録（1票）
                 property_building_names.append((prop.id, prop.display_building_name))
         
@@ -1031,7 +1041,8 @@ class MajorityVoteUpdater:
                 self.session.flush()  # 変更を即座に反映
                 return True
         elif property_obj.display_building_name is None:
-            # 掲載情報がない場合でも、建物の正規化名を使用
+            # 掲載情報がない場合、建物の正規化名を使用
+            # （ただし建物レベルの多数決には参加させない）
             building = self.session.query(Building).filter_by(id=property_obj.building_id).first()
             if building and building.normalized_name:
                 logger.info(
