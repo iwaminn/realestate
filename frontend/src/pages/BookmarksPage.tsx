@@ -289,14 +289,16 @@ export const BookmarksPage: React.FC = () => {
         });
       case 'updated_at_desc':
         return sorted.sort((a, b) => {
-          const dateA = new Date(a.master_property?.updated_at || 0).getTime();
-          const dateB = new Date(b.master_property?.updated_at || 0).getTime();
+          // 価格改定日優先、なければ売出確認日
+          const dateA = new Date(a.master_property?.price_change_info?.date || a.master_property?.earliest_published_at || 0).getTime();
+          const dateB = new Date(b.master_property?.price_change_info?.date || b.master_property?.earliest_published_at || 0).getTime();
           return dateB - dateA;
         });
       case 'updated_at_asc':
         return sorted.sort((a, b) => {
-          const dateA = new Date(a.master_property?.updated_at || 0).getTime();
-          const dateB = new Date(b.master_property?.updated_at || 0).getTime();
+          // 価格改定日優先、なければ売出確認日
+          const dateA = new Date(a.master_property?.price_change_info?.date || a.master_property?.earliest_published_at || 0).getTime();
+          const dateB = new Date(b.master_property?.price_change_info?.date || b.master_property?.earliest_published_at || 0).getTime();
           return dateA - dateB;
         });
       case 'price_asc':
@@ -379,8 +381,9 @@ export const BookmarksPage: React.FC = () => {
         });
       case 'updated_at_desc':
         return sorted.sort((a, b) => {
-          const dateA = new Date(a.master_property?.updated_at || 0).getTime();
-          const dateB = new Date(b.master_property?.updated_at || 0).getTime();
+          // 価格改定日優先、なければ売出確認日
+          const dateA = new Date(a.master_property?.price_change_info?.date || a.master_property?.earliest_published_at || 0).getTime();
+          const dateB = new Date(b.master_property?.price_change_info?.date || b.master_property?.earliest_published_at || 0).getTime();
           if (dateB !== dateA) return dateB - dateA;
           // 第二ソート：ブックマーク登録日（新しい順）
           const bookmarkDateA = new Date(a.created_at).getTime();
@@ -389,8 +392,9 @@ export const BookmarksPage: React.FC = () => {
         });
       case 'updated_at_asc':
         return sorted.sort((a, b) => {
-          const dateA = new Date(a.master_property?.updated_at || 0).getTime();
-          const dateB = new Date(b.master_property?.updated_at || 0).getTime();
+          // 価格改定日優先、なければ売出確認日
+          const dateA = new Date(a.master_property?.price_change_info?.date || a.master_property?.earliest_published_at || 0).getTime();
+          const dateB = new Date(b.master_property?.price_change_info?.date || b.master_property?.earliest_published_at || 0).getTime();
           if (dateA !== dateB) return dateA - dateB;
           // 第二ソート：ブックマーク登録日（新しい順）
           const bookmarkDateA = new Date(a.created_at).getTime();
@@ -509,14 +513,16 @@ export const BookmarksPage: React.FC = () => {
         });
       case 'updated_at_desc':
         return sorted.sort((a, b) => {
-          const dateA = Math.max(...a[1].properties.map((p: any) => new Date(p.master_property?.updated_at || 0).getTime()));
-          const dateB = Math.max(...b[1].properties.map((p: any) => new Date(p.master_property?.updated_at || 0).getTime()));
+          // 価格改定日優先、なければ売出確認日
+          const dateA = Math.max(...a[1].properties.map((p: any) => new Date(p.master_property?.price_change_info?.date || p.master_property?.earliest_published_at || 0).getTime()));
+          const dateB = Math.max(...b[1].properties.map((p: any) => new Date(p.master_property?.price_change_info?.date || p.master_property?.earliest_published_at || 0).getTime()));
           return dateB - dateA;
         });
       case 'updated_at_asc':
         return sorted.sort((a, b) => {
-          const dateA = Math.min(...a[1].properties.map((p: any) => new Date(p.master_property?.updated_at || 0).getTime()));
-          const dateB = Math.min(...b[1].properties.map((p: any) => new Date(p.master_property?.updated_at || 0).getTime()));
+          // 価格改定日優先、なければ売出確認日
+          const dateA = Math.min(...a[1].properties.map((p: any) => new Date(p.master_property?.price_change_info?.date || p.master_property?.earliest_published_at || 0).getTime()));
+          const dateB = Math.min(...b[1].properties.map((p: any) => new Date(p.master_property?.price_change_info?.date || p.master_property?.earliest_published_at || 0).getTime()));
           return dateA - dateB;
         });
       case 'price_asc':
