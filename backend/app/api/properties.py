@@ -188,10 +188,15 @@ async def get_properties(
             combined_subquery.c.earliest_published_at.desc() if sort_order == "desc"
             else combined_subquery.c.earliest_published_at.asc()
         )
-    else:  # デフォルト: updated_at
+    else:  # デフォルト: updated_at (価格改定日または売出確認日)
+        # 価格改定日が存在する場合はそれを優先、なければ売出確認日を使用
+        sort_column = func.coalesce(
+            combined_subquery.c.latest_price_update,
+            combined_subquery.c.earliest_published_at
+        )
         query = query.order_by(
-            MasterProperty.updated_at.desc() if sort_order == "desc" 
-            else MasterProperty.updated_at.asc()
+            sort_column.desc().nullslast() if sort_order == "desc"
+            else sort_column.asc().nullsfirst()
         )
     
     # ページネーション

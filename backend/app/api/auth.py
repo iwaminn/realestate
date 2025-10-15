@@ -208,10 +208,7 @@ def get_current_user_from_cookie(
     db: Session = Depends(get_db)
 ) -> Optional[User]:
     """Cookieから現在のユーザーを取得"""
-    # デバッグ: Cookieの内容を確認
-    print(f"[DEBUG] Cookies: {request.cookies}")
     access_token = request.cookies.get("access_token")
-    print(f"[DEBUG] access_token from cookie: {access_token}")
     if not access_token:
         return None
     
@@ -249,7 +246,6 @@ def require_auth(
     db: Session = Depends(get_db)
 ) -> User:
     """認証が必須のエンドポイント用"""
-    print(f"[Auth] require_auth called, credentials={credentials}")
     if not credentials:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

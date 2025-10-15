@@ -93,8 +93,8 @@ axios.interceptors.response.use(
         }
       } else {
         // 一般ユーザーの場合 - リフレッシュトークンで自動更新を試みる
-        if (originalRequest.url?.includes('/refresh') || originalRequest.url?.includes('/logout')) {
-          // リフレッシュAPIやログアウトAPIのエラーは再試行しない
+        if (originalRequest.url?.includes('/login') || originalRequest.url?.includes('/refresh') || originalRequest.url?.includes('/logout')) {
+          // ログイン、リフレッシュ、ログアウトAPIのエラーは再試行しない
           return Promise.reject(error);
         }
 

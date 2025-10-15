@@ -24,6 +24,7 @@ alembic = "^1.13.0"
 # 日本語処理
 jaconv = "^0.3.4"
 # 認証関連の依存関係
+bcrypt = ">=4.0.1,<4.1.0"  # passlib 1.7.4との互換性のため4.0.xに固定
 passlib = {extras = ["bcrypt"], version = "^1.7.4"}
 python-jose = {extras = ["cryptography"], version = "^3.3.0"}
 python-multipart = "^0.0.6"
