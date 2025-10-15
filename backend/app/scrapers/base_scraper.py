@@ -3586,7 +3586,7 @@ class BaseScraper(ABC):
                                         floor_number: int = None, area: float = None,
                                         layout: str = None, direction: str = None,
                                         balcony_area: float = None, url: str = None,
-                                        use_learning: bool = True) -> MasterProperty:
+                                        price: int = None, use_learning: bool = True) -> MasterProperty:
         """
         マスター物件を取得または作成（学習機能付き）
         
@@ -3595,14 +3595,124 @@ class BaseScraper(ABC):
         with self.transaction_scope() as session:
             return self._get_or_create_master_property_with_session(
                 session, building, room_number, floor_number, area,
-                layout, direction, balcony_area, url, use_learning
+                layout, direction, balcony_area, url, price, use_learning
             )
     
+    def _find_property_by_listing_attributes(self, session, current_building: Building,
+                                         floor_number: int = None, area: float = None,
+                                         layout: str = None, direction: str = None,
+                                         price: int = None) -> Optional[Tuple[Building, MasterProperty]]:
+        """
+        掲載情報の物理的属性（階・面積・価格）から既存物件を検索
+        
+        建物名が異なっていても、以下の条件が一致すれば同一物件として扱う：
+        - 建物レベル: 住所が前方一致、築年が一致、総階数が一致
+        - 物件レベル: 所在階、専有面積が一致
+        - 掲載レベル: 販売価格が一致
+        
+        Returns:
+            Tuple[Building, MasterProperty]: 見つかった建物と物件、見つからない場合はNone
+        """
+        # 必須条件のチェック
+        if not all([floor_number, area]):
+            return None
+        
+        # 現在の建物の属性をチェック
+        if not current_building.address or not current_building.total_floors or not current_building.built_year:
+            self.logger.debug("現在の建物に住所・総階数・築年のいずれかが欠けているため、掲載情報ベースの検索をスキップ")
+            return None
+        
+        if not price:
+            self.logger.debug("価格情報がないため、掲載情報ベースの検索をスキップ")
+            return None
+        
+        # 住所を正規化
+        from ..utils.address_normalizer import AddressNormalizer
+        normalizer = AddressNormalizer()
+        current_normalized_addr = normalizer.normalize_for_comparison(current_building.address)
+        
+        # 掲載情報を先に検索（階数・面積・価格が完全一致）してから建物条件で絞り込む
+        # この方が候補が少なく効率的
+        matching_listings = session.query(PropertyListing, Building).join(
+            MasterProperty, PropertyListing.master_property_id == MasterProperty.id
+        ).join(
+            Building, MasterProperty.building_id == Building.id
+        ).filter(
+            Building.id != current_building.id,  # 現在の建物を除外
+            Building.normalized_address.isnot(None),
+            Building.normalized_address.like(f"{current_normalized_addr}%"),  # 住所前方一致
+            Building.total_floors == current_building.total_floors,  # 総階数完全一致
+            Building.built_year == current_building.built_year,  # 築年完全一致
+            PropertyListing.is_active == True,  # アクティブな掲載のみ
+            PropertyListing.listing_floor_number == floor_number,  # 階数完全一致
+            PropertyListing.listing_area == area,  # 面積完全一致
+            PropertyListing.current_price == price  # 価格完全一致
+        ).limit(10).all()
+        
+        if matching_listings:
+            # 最初の一致する掲載情報とその建物を使用
+            matching_listing, candidate_building = matching_listings[0]
+            matching_property = matching_listing.master_property
+            
+            # 住所の一致度を計算
+            address_score, _ = self._calculate_address_match_score(
+                current_normalized_addr,
+                normalizer.normalize_for_comparison(candidate_building.address)
+            )
+            
+            self.logger.warning(
+                "🔗 掲載情報ベースで既存物件を発見！\n" +
+                f"  現在の建物: {current_building.normalized_name} (ID:{current_building.id})\n" +
+                f"  見つかった建物: {candidate_building.normalized_name} (ID:{candidate_building.id})\n" +
+                f"  住所一致度: {address_score}%\n" +
+                "  一致条件:\n" +
+                f"    - 総階数: {candidate_building.total_floors}階\n" +
+                f"    - 築年: {candidate_building.built_year}年\n" +
+                f"    - 所在階: {floor_number}階\n" +
+                f"    - 面積: {area}㎡\n" +
+                f"    - 価格: {price}万円\n" +
+                f"  → 建物ID {candidate_building.id} の物件ID {matching_property.id} に紐付けます"
+            )
+            
+            # 建物統合候補として記録（後で手動確認できるように）
+            self._record_building_merge_suggestion(
+                session,
+                current_building,
+                candidate_building,
+                reason="掲載情報の物理的属性が一致",
+                confidence_score=address_score / 100.0
+            )
+            
+            return (candidate_building, matching_property)
+        
+        return None
+
+
+    def _record_building_merge_suggestion(self, session, building1: Building, building2: Building,
+                                     reason: str = None, confidence_score: float = 0.0):
+        """
+        建物統合の提案を記録（将来の手動確認用）
+        
+        注：現時点では簡易的にログ出力のみ。
+        将来的にはbuilding_merge_candidatesテーブルを作成して記録することを推奨。
+        """
+        self.logger.info(
+            f"📋 建物統合候補を記録: "
+            f"建物1={building1.normalized_name}(ID:{building1.id}), "
+            f"建物2={building2.normalized_name}(ID:{building2.id}), "
+            f"理由={reason}, "
+            f"信頼度={confidence_score:.1%}"
+        )
+        # 将来的な拡張: データベーステーブルに記録
+        # suggestion = BuildingMergeSuggestion(...)
+        # session.add(suggestion)
+
+
     def _get_or_create_master_property_with_session(self, session, building: Building, room_number: str = None,
                                                     floor_number: int = None, area: float = None,
                                                     layout: str = None, direction: str = None,
                                                     balcony_area: float = None, url: str = None,
-                                                    use_learning: bool = True) -> MasterProperty:
+                                                    price: int = None, use_learning: bool = True) -> MasterProperty:
         """マスター物件を取得または作成（セッション指定版）"""
         # 同一物件の判定条件：建物、所在階、平米数、間取り、方角が一致
         # 部屋番号は両方に値がある場合のみ一致を要求（片方が未入力なら無視）
@@ -3890,6 +4000,30 @@ class BaseScraper(ABC):
             
             return master_property
         
+        # フォールバック: 掲載情報の物理的属性から既存物件を検索
+        # （建物名が異なっていても、住所・築年・総階数・階・面積・価格が一致すれば同一物件として扱う）
+        if price:  # 価格情報がある場合のみ
+            fallback_result = self._find_property_by_listing_attributes(
+                session=session,
+                current_building=building,
+                floor_number=floor_number,
+                area=area,
+                layout=layout,
+                direction=direction,
+                price=price
+            )
+            
+            if fallback_result:
+                found_building, found_property = fallback_result
+                self.logger.info(
+                    f"✅ フォールバック検索成功: "
+                    f"建物ID {found_building.id} の物件ID {found_property.id} を使用します"
+                )
+                # 見つかった物件を返す（建物は異なるが、物件は同一と判定）
+                # found_propertyは既にfound_building.idを持っているため、
+                # 新しい掲載情報は自動的にfound_buildingに紐付けられます
+                return found_property
+        
         # 新規作成
         self.logger.info(f"[DEBUG] 新規MasterProperty作成: building_id={building.id if building else 'None'}, floor={floor_number}, room={room_number}")
         
@@ -3921,7 +4055,7 @@ class BaseScraper(ABC):
                 # 再度検索（同じ条件で）
                 return self._get_or_create_master_property_with_session(
                     session, building, room_number, floor_number, area, 
-                    layout, direction, balcony_area, url, use_learning
+                    layout, direction, balcony_area, url, price, use_learning
                 )
             else:
                 # その他のエラーは再発生
@@ -5306,7 +5440,8 @@ class BaseScraper(ABC):
                         area=property_data.get('area'),
                         layout=property_data.get('layout'),
                         direction=property_data.get('direction'),
-                        balcony_area=property_data.get('balcony_area')
+                        balcony_area=property_data.get('balcony_area'),
+                        price=property_data.get('price')  # 価格情報を追加（フォールバック検索用）
                     )
                 
                 if not master_property:
