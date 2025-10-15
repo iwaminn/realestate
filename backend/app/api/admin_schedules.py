@@ -30,6 +30,7 @@ class ScheduleCreateRequest(BaseModel):
     daily_minute: Optional[int] = None
     max_properties: int = 100
     is_active: bool = True
+    update_listing_status_after_scraping: bool = False  # スクレイピング完了後に掲載状態を更新
 
 
 class ScheduleUpdateRequest(BaseModel):
@@ -43,6 +44,7 @@ class ScheduleUpdateRequest(BaseModel):
     daily_minute: Optional[int] = None
     max_properties: Optional[int] = None
     is_active: Optional[bool] = None
+    update_listing_status_after_scraping: Optional[bool] = None  # スクレイピング完了後に掲載状態を更新
 
 def convert_areas_to_codes(areas, strict=False):
     """エリア名（日本語/英語）をエリアコードに変換
@@ -123,6 +125,7 @@ async def get_schedules(
             'daily_minute': schedule.daily_minute,
             'max_properties': schedule.max_properties,
             'is_active': schedule.is_active,
+            'update_listing_status_after_scraping': schedule.update_listing_status_after_scraping,
             'last_run_at': schedule.last_run_at.isoformat() if schedule.last_run_at else None,
             'next_run_at': schedule.next_run_at.isoformat() if schedule.next_run_at else None,
             'last_task_id': schedule.last_task_id,
@@ -266,6 +269,7 @@ async def create_schedule(
         daily_minute=request.daily_minute,
         max_properties=request.max_properties,
         is_active=request.is_active,
+        update_listing_status_after_scraping=request.update_listing_status_after_scraping,
         next_run_at=next_run_at,
         created_by="admin",  # TODO: 実際のユーザー名を取得
         created_at=now,
@@ -320,7 +324,9 @@ async def get_schedule(
         'interval_minutes': schedule.interval_minutes,
         'daily_hour': schedule.daily_hour,
         'daily_minute': schedule.daily_minute,
+        'max_properties': schedule.max_properties,
         'is_active': schedule.is_active,
+        'update_listing_status_after_scraping': schedule.update_listing_status_after_scraping,
         'last_run_at': schedule.last_run_at.isoformat() if schedule.last_run_at else None,
         'next_run_at': schedule.next_run_at.isoformat() if schedule.next_run_at else None,
         'last_task_id': schedule.last_task_id,
@@ -379,6 +385,8 @@ async def update_schedule(
         schedule.max_properties = request.max_properties
     if request.is_active is not None:
         schedule.is_active = request.is_active
+    if request.update_listing_status_after_scraping is not None:
+        schedule.update_listing_status_after_scraping = request.update_listing_status_after_scraping
     
     # スケジュール設定が変更された場合は次回実行時刻を再計算
     if (request.schedule_type is not None or 
@@ -643,6 +651,32 @@ async def execute_scheduled_scraping(schedule_id: int, db: Session):
                 
                 # フック登録
                 hooks.on_completion(update_schedule_history)
+                
+                # スケジュールに掲載状態更新オプションが設定されている場合のフック
+                if schedule.update_listing_status_after_scraping:
+                    def update_listing_status_hook(task_id: str, final_status: str):
+                        """スクレイピング完了後に掲載状態を更新"""
+                        if final_status == "completed":
+                            try:
+                                logger.info(f"Hook: Updating listing status after scraping for schedule {schedule_id}")
+                                
+                                # 共通関数を呼び出し
+                                from ..api.admin.status_updates import perform_listing_status_update
+                                
+                                with SessionLocal() as update_db:
+                                    result = perform_listing_status_update(update_db, logger)
+                                    
+                                    logger.info(
+                                        f"Hook: Listing status updated - "
+                                        f"{result['reactivated_listings']} reactivated, "
+                                        f"{result['inactive_listings']} deactivated, "
+                                        f"{result['sold_properties']} sold"
+                                    )
+                                    
+                            except Exception as e:
+                                logger.error(f"Hook: Error updating listing status: {str(e)}", exc_info=True)
+                    
+                    hooks.on_completion(update_listing_status_hook)
                 
                 execute_scraping_strategy(
                     task_id=task_id,

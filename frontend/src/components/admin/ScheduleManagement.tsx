@@ -64,6 +64,7 @@ interface Schedule {
   daily_minute?: number;
   max_properties: number;
   is_active: boolean;
+  update_listing_status_after_scraping: boolean;  // 新しいフィールド
   last_run_at?: string;
   next_run_at?: string;
   last_task_id?: number;
@@ -113,6 +114,7 @@ export const ScheduleManagement: React.FC = () => {
     daily_minute: 0,
     max_properties: 100,
     is_active: true,
+    update_listing_status_after_scraping: false,  // 新しいフィールド
   });
 
   // 共通定数を使用
@@ -235,6 +237,7 @@ export const ScheduleManagement: React.FC = () => {
       daily_minute: schedule.daily_minute || 0,
       max_properties: schedule.max_properties,
       is_active: schedule.is_active,
+      update_listing_status_after_scraping: schedule.update_listing_status_after_scraping || false,  // 新しいフィールド
     });
     setEditDialogOpen(true);
   };
@@ -251,6 +254,7 @@ export const ScheduleManagement: React.FC = () => {
       daily_minute: 0,
       max_properties: 100,
       is_active: true,
+      update_listing_status_after_scraping: false,  // 新しいフィールド
     });
     setEditingSchedule(null);
   };
@@ -635,6 +639,17 @@ export const ScheduleManagement: React.FC = () => {
                 label="アクティブ"
               />
             </Grid>
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={formData.update_listing_status_after_scraping}
+                    onChange={(e) => setFormData({ ...formData, update_listing_status_after_scraping: e.target.checked })}
+                  />
+                }
+                label="スクレイピング完了後に掲載状態を更新"
+              />
+            </Grid>
           </Grid>
         </DialogContent>
         <DialogActions>
@@ -820,6 +835,17 @@ export const ScheduleManagement: React.FC = () => {
                   />
                 }
                 label="アクティブ"
+              />
+            </Grid>
+            <Grid item xs={12}>
+              <FormControlLabel
+                control={
+                  <Switch
+                    checked={formData.update_listing_status_after_scraping}
+                    onChange={(e) => setFormData({ ...formData, update_listing_status_after_scraping: e.target.checked })}
+                  />
+                }
+                label="スクレイピング完了後に掲載状態を更新"
               />
             </Grid>
           </Grid>

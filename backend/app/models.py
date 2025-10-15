@@ -480,6 +480,9 @@ class ScrapingSchedule(Base):
     daily_minute = Column(Integer)                                # 日次モード：実行時刻（分）
     max_properties = Column(Integer, nullable=False, default=100) # 処理上限数
     
+    # スクレイピング完了後の処理オプション
+    update_listing_status_after_scraping = Column(Boolean, nullable=False, default=False)  # 掲載状態を更新
+    
     is_active = Column(Boolean, nullable=False, default=True)     # アクティブフラグ
     last_run_at = Column(DateTime)                                # 最後の実行日時
     next_run_at = Column(DateTime)                                # 次の実行予定日時

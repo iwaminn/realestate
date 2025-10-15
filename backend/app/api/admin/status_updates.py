@@ -90,12 +90,20 @@ async def get_listing_status_stats(
         raise HTTPException(status_code=500, detail=f"統計情報の取得に失敗: {str(e)}")
 
 
-@router.post("/update-listing-status")
-async def update_listing_status(
-    current_user: dict = Depends(get_admin_user),
-    db: Session = Depends(get_db)
-):
-    """掲載状態を一括更新（24時間以上確認されていない掲載を終了）"""
+def perform_listing_status_update(db: Session, logger=None):
+    """
+    掲載状態を一括更新する共通処理
+    
+    Args:
+        db: データベースセッション
+        logger: ロガー（オプション）
+    
+    Returns:
+        dict: 更新結果の統計情報
+    """
+    if logger is None:
+        import logging
+        logger = logging.getLogger(__name__)
     
     try:
         # 現在時刻
@@ -169,7 +177,7 @@ async def update_listing_status(
                 if result["sold_status_changed"] and result["is_sold"]:
                     sold_properties.add(property_id)
             except Exception as e:
-                print(f"販売終了状態の更新に失敗: property_id={property_id}, error={e}")
+                logger.error(f"販売終了状態の更新に失敗: property_id={property_id}, error={e}")
         
         # 3. sold_atが未設定で全掲載が非アクティブの物件を販売終了とする（設定漏れの修正）
         # この処理により、過去に設定漏れがあった物件も自動修正される
@@ -186,7 +194,7 @@ async def update_listing_status(
                 if result["sold_status_changed"] and result["is_sold"]:
                     fixed_sold_properties.add(property_id)
             except Exception as e:
-                print(f"販売終了状態の更新に失敗: property_id={property_id}, error={e}")
+                logger.error(f"販売終了状態の更新に失敗: property_id={property_id}, error={e}")
 
         # 4. sold_atは設定済みだがfinal_priceがNULLの物件を修正
         properties_missing_final_price = db.query(MasterProperty.id).filter(
@@ -203,7 +211,7 @@ async def update_listing_status(
                 if result["final_price"] is not None:
                     fixed_final_price_count += 1
             except Exception as e:
-                print(f"final_priceの更新に失敗: property_id={property_id}, error={e}")
+                logger.error(f"final_priceの更新に失敗: property_id={property_id}, error={e}")
         
         # 影響を受けた全物件の最初の掲載日と価格改定日を更新
         from ...utils.property_utils import update_latest_price_change
@@ -212,31 +220,11 @@ async def update_listing_status(
                 update_earliest_listing_date(db, property_id)
                 update_latest_price_change(db, property_id)
             except Exception as e:
-                print(f"最初の掲載日の更新に失敗: property_id={property_id}, error={e}")
+                logger.error(f"最初の掲載日の更新に失敗: property_id={property_id}, error={e}")
         
         db.commit()
         
-        # メッセージを構築
-        messages = []
-        if reactivate_count > 0:
-            messages.append(f"{reactivate_count}件の掲載を再開")
-            if len(reopened_properties) > 0:
-                messages.append(f"{len(reopened_properties)}件の物件が販売再開")
-        if inactive_count > 0:
-            messages.append(f"{inactive_count}件の掲載を終了")
-            if len(sold_properties) > 0:
-                messages.append(f"{len(sold_properties)}件の物件が販売終了")
-        if len(fixed_sold_properties) > 0:
-            messages.append(f"{len(fixed_sold_properties)}件の物件のsold_atを修正")
-        if fixed_final_price_count > 0:
-            messages.append(f"{fixed_final_price_count}件の物件のfinal_priceを修正")
-
-        if not messages:
-            messages.append("更新対象の掲載はありませんでした")
-
         return {
-            "success": True,
-            "message": "、".join(messages) + "。",
             "reactivated_listings": reactivate_count,
             "reopened_properties": len(reopened_properties),
             "inactive_listings": inactive_count,
@@ -247,6 +235,51 @@ async def update_listing_status(
         
     except Exception as e:
         db.rollback()
+        logger.error(f"掲載状態の更新でエラー: {e}")
+        raise
+
+
+@router.post("/update-listing-status")
+async def update_listing_status(
+    current_user: dict = Depends(get_admin_user),
+    db: Session = Depends(get_db)
+):
+    """掲載状態を一括更新（24時間以上確認されていない掲載を終了）"""
+    
+    try:
+        # 共通処理を呼び出し
+        result = perform_listing_status_update(db)
+        
+        # メッセージを構築
+        messages = []
+        if result["reactivated_listings"] > 0:
+            messages.append(f"{result['reactivated_listings']}件の掲載を再開")
+            if result["reopened_properties"] > 0:
+                messages.append(f"{result['reopened_properties']}件の物件が販売再開")
+        if result["inactive_listings"] > 0:
+            messages.append(f"{result['inactive_listings']}件の掲載を終了")
+            if result["sold_properties"] > 0:
+                messages.append(f"{result['sold_properties']}件の物件が販売終了")
+        if result["fixed_sold_properties"] > 0:
+            messages.append(f"{result['fixed_sold_properties']}件の物件のsold_atを修正")
+        if result["fixed_final_price"] > 0:
+            messages.append(f"{result['fixed_final_price']}件の物件のfinal_priceを修正")
+
+        if not messages:
+            messages.append("更新対象の掲載はありませんでした")
+
+        return {
+            "success": True,
+            "message": "、".join(messages) + "。",
+            "reactivated_listings": result["reactivated_listings"],
+            "reopened_properties": result["reopened_properties"],
+            "inactive_listings": result["inactive_listings"],
+            "sold_properties": result["sold_properties"],
+            "fixed_sold_properties": result["fixed_sold_properties"],
+            "fixed_final_price": result["fixed_final_price"]
+        }
+        
+    except Exception as e:
         print(f"掲載状態の更新でエラー: {e}")
         raise HTTPException(status_code=500, detail=f"更新処理でエラーが発生しました: {str(e)}")
 
