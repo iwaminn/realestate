@@ -77,7 +77,8 @@ async def get_recent_updates_cached(
             PropertyPriceChange.change_date >= cutoff_date,
             active_listing_subq.c.has_active_listing == True,  # 販売中物件のみ
             Building.is_valid_name == True,  # 広告文のみの建物を除外
-            MasterProperty.id.isnot(None)  # 削除済み物件を除外
+            MasterProperty.id.isnot(None),  # 削除済み物件を除外
+            PropertyPriceChange.new_price == MasterProperty.current_price  # 現在の価格と一致する価格変更のみ
         )
         .order_by(PropertyPriceChange.change_date.desc())
     ).all()
@@ -303,7 +304,8 @@ async def get_recent_updates_counts(
             PropertyPriceChange.change_date >= cutoff_date,
             active_listing_check.c.has_active_listing == True,
             Building.is_valid_name == True,
-            MasterProperty.id.isnot(None)  # 削除済み物件を除外
+            MasterProperty.id.isnot(None),  # 削除済み物件を除外
+            PropertyPriceChange.new_price == MasterProperty.current_price  # 現在の価格と一致する価格変更のみ
         )
         .scalar() or 0
     )
@@ -351,7 +353,8 @@ async def get_recent_updates_counts(
             PropertyPriceChange.change_date >= cutoff_date,
             active_listing_check.c.has_active_listing == True,
             Building.is_valid_name == True,
-            MasterProperty.id.isnot(None)  # 削除済み物件を除外
+            MasterProperty.id.isnot(None),  # 削除済み物件を除外
+            PropertyPriceChange.new_price == MasterProperty.current_price  # 現在の価格と一致する価格変更のみ
         )
         .group_by(Building.address)
         .all()
