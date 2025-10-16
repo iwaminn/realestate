@@ -501,6 +501,103 @@ def normalize_building_name_with_ad_removal(building_name: str) -> str:
     return normalize_building_name(cleaned_name)
 
 
+
+def normalize_wing_name(building_name: str) -> str:
+    """
+    建物名の棟名部分を正規化する
+    
+    例：
+    - 「白金ザ・スカイ EAST」→「白金ザ・スカイ 東棟」
+    - 「白金ザ・スカイ イースト棟」→「白金ザ・スカイ 東棟」
+    - 「白金ザ・スカイE棟」→「白金ザ・スカイ 東棟」
+    - 「イトーピア白金高輪壱番館」→「イトーピア白金高輪 1番館」
+    - 「カテリーナ三田タワースイート イーストアーク」→「カテリーナ三田タワースイート 東アーク」
+    
+    Args:
+        building_name: 正規化する建物名（既に基本的な正規化が適用されていること）
+        
+    Returns:
+        棟名を正規化した建物名
+    """
+    if not building_name:
+        return ""
+    
+    import re
+    
+    # 接尾辞の正規化を先に実行（方角系の処理の前）
+    # WING → ウイング、ARC → アーク、HILL → ヒル
+    suffix_patterns = [
+        (r'\s*WING\b', 'ウイング'),
+        (r'\s*ウィング\b', 'ウイング'),
+        (r'\s*ARC\b', 'アーク'),
+        (r'\s*HILL\b', 'ヒル'),
+        (r'\s*TOWER\b', 'タワー'),
+        (r'\s*COURT\b', 'コート'),
+        (r'\s*RESIDENCE\b', 'レジデンス'),
+    ]
+    
+    result = building_name
+    
+    # 接尾辞の正規化を適用
+    for pattern, replacement in suffix_patterns:
+        result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+    
+    # 方角系の正規化パターン（優先順位の高い順に処理）
+    directional_patterns = [
+        # イースト/ウエスト/サウス/ノース + 棟/ウイング/アーク/ヒル/タワー/コート/レジデンス
+        (r'\s*(イースト|EAST)\s*(棟|ウイング|アーク|ヒル|タワー|コート|レジデンス)', r' 東\2'),
+        (r'\s*(ウエスト|ウェスト|WEST)\s*(棟|ウイング|アーク|ヒル|タワー|コート|レジデンス)', r' 西\2'),
+        (r'\s*(サウス|SOUTH)\s*(棟|ウイング|アーク|ヒル|タワー|コート|レジデンス)', r' 南\2'),
+        (r'\s*(ノース|NORTH)\s*(棟|ウイング|アーク|ヒル|タワー|コート|レジデンス)', r' 北\2'),
+        (r'\s*(センター|CENTER)\s*(棟|ウイング|アーク|ヒル|タワー|コート|レジデンス)', r' 中\2'),
+        
+        # イースト/ウエスト/サウス/ノース単体（末尾）
+        (r'\s*(イースト|EAST)$', r' 東棟'),
+        (r'\s*(ウエスト|ウェスト|WEST)$', r' 西棟'),
+        (r'\s*(サウス|SOUTH)$', r' 南棟'),
+        (r'\s*(ノース|NORTH)$', r' 北棟'),
+        (r'\s*(センター|CENTER)$', r' 中棟'),
+        
+        # 単独のアルファベット + 棟（方角の略称として扱う）
+        # スペースがあってもなくても対応
+        (r'\s*E棟', ' 東棟'),
+        (r'\s*W棟', ' 西棟'),
+        (r'\s*S棟', ' 南棟'),
+        (r'\s*N棟', ' 北棟'),
+    ]
+    
+    # 方角系の正規化を適用
+    for pattern, replacement in directional_patterns:
+        result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+    
+    # 番号系の正規化パターン
+    number_patterns = [
+        # 一番館/壱番館 → 1番館
+        (r'一番館', '1番館'),
+        (r'壱番館', '1番館'),
+        (r'二番館', '2番館'),
+        (r'弐番館', '2番館'),
+        (r'三番館', '3番館'),
+        (r'参番館', '3番館'),
+        (r'四番館', '4番館'),
+        (r'五番館', '5番館'),
+        (r'六番館', '6番館'),
+        (r'七番館', '7番館'),
+        (r'八番館', '8番館'),
+        (r'九番館', '9番館'),
+        (r'十番館', '10番館'),
+    ]
+    
+    # 番号系の正規化を適用
+    for pattern, replacement in number_patterns:
+        result = result.replace(pattern, replacement)
+    
+    # スペースの正規化（連続スペースを1つに）
+    result = re.sub(r'\s+', ' ', result).strip()
+    
+    return result
+
+
 def normalize_building_name(building_name: str) -> str:
     """
     建物名を正規化する共通メソッド
@@ -566,7 +663,11 @@ def normalize_building_name(building_name: str) -> str:
     # 日本語（ひらがな・カタカナ・漢字）は影響を受けない
     normalized = normalized.upper()
     
-    # 6. スペースの正規化
+    # 6. 棟名の正規化（表記ゆれを統一）
+    # 例：「EAST」→「東棟」、「イースト棟」→「東棟」、「壱番館」→「1番館」
+    normalized = normalize_wing_name(normalized)
+    
+    # 7. スペースの正規化
     # 全角スペースも半角スペースに変換
     normalized = normalized.replace('　', ' ')
     # 連続するスペースを1つの半角スペースに統一
