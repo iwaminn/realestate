@@ -18,7 +18,7 @@ from ...models import (
     BuildingMergeHistory, PropertyMergeHistory,
     BuildingMergeExclusion, PropertyMergeExclusion,
     BuildingExternalId, BuildingListingName,
-    PropertyBookmark
+    PropertyBookmark, PropertyPriceChange
 )
 from ...utils.enhanced_building_matcher import EnhancedBuildingMatcher
 from ...utils.majority_vote_updater import MajorityVoteUpdater
