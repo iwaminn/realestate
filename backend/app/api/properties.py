@@ -17,17 +17,17 @@ router = APIRouter(prefix="/api", tags=["properties"])
 
 @router.get("/properties", response_model=Dict[str, Any])
 async def get_properties(
-    min_price: Optional[int] = Query(None, description="最低価格（万円）"),
-    max_price: Optional[int] = Query(None, description="最高価格（万円）"),
-    min_area: Optional[float] = Query(None, description="最低面積（㎡）"),
-    max_area: Optional[float] = Query(None, description="最高面積（㎡）"),
-    layouts: Optional[List[str]] = Query(None, description="間取りリスト"),
-    building_name: Optional[str] = Query(None, description="建物名"),
-    max_building_age: Optional[int] = Query(None, description="築年数以内"),
-    wards: Optional[List[str]] = Query(None, description="区名リスト（例: 港区、中央区）"),
-    include_inactive: bool = Query(False, description="削除済み物件も含む"),
-    page: int = Query(1, ge=1, description="ページ番号"),
-    per_page: int = Query(20, ge=1, le=100, description="1ページあたりの件数"),
+    min_price: Optional[int] = Query(None),
+    max_price: Optional[int] = Query(None),
+    min_area: Optional[float] = Query(None),
+    max_area: Optional[float] = Query(None),
+    layouts: Optional[List[str]] = Query(None),
+    building_name: Optional[str] = Query(None),
+    max_building_age: Optional[int] = Query(None),
+    wards: Optional[List[str]] = Query(None),
+    include_inactive: bool = Query(False, description="販売終了物件を含む"),
+    page: int = Query(1, ge=1),
+    per_page: int = Query(30, ge=1, le=100),
     sort_by: str = Query("updated_at", description="ソート項目"),
     sort_order: str = Query("desc", description="ソート順序"),
     db: Session = Depends(get_db)
@@ -188,6 +188,18 @@ async def get_properties(
             combined_subquery.c.earliest_published_at.desc() if sort_order == "desc"
             else combined_subquery.c.earliest_published_at.asc()
         )
+    elif sort_by == "tsubo_price":
+        # 坪単価で並び替え（価格 / (面積 / 3.30578)）
+        # 面積が0の物件は最後に表示
+        tsubo_price_expr = case(
+            (MasterProperty.area > 0, 
+             func.coalesce(MasterProperty.current_price, MasterProperty.final_price) / (MasterProperty.area / 3.30578)),
+            else_=None
+        )
+        if sort_order == "desc":
+            query = query.order_by(tsubo_price_expr.desc().nullslast())
+        else:
+            query = query.order_by(tsubo_price_expr.asc().nullsfirst())
     else:  # デフォルト: updated_at (価格改定日または売出確認日)
         # 価格改定日が存在する場合はそれを優先、なければ売出確認日を使用
         sort_column = func.coalesce(

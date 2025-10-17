@@ -160,13 +160,13 @@ async def get_properties_grouped_by_buildings(
             func.count(distinct(MasterProperty.id)).desc(),
             Building.id
         )
-    elif sort_by == 'avg_tsubo_price_asc':
+    elif sort_by in ['avg_tsubo_price_asc', 'tsubo_price_asc']:
         # 平均坪単価が安い順
         base_query = base_query.order_by(
             tsubo_subq.c.avg_tsubo_price.asc().nullsfirst(),
             Building.id
         )
-    elif sort_by == 'avg_tsubo_price_desc':
+    elif sort_by in ['avg_tsubo_price_desc', 'tsubo_price_desc']:
         # 平均坪単価が高い順
         base_query = base_query.order_by(
             tsubo_subq.c.avg_tsubo_price.desc().nullslast(),
