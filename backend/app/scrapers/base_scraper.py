@@ -5346,8 +5346,8 @@ class BaseScraper(ABC):
                                         MasterProperty.id == existing_listing.master_property_id
                                     ).first()
                                     if master_prop and master_prop.sold_at:
-                                        # 環境変数から再活性化期間を取得（デフォルト90日）
-                                        threshold_days = int(os.getenv('REACTIVATION_THRESHOLD_DAYS', '90'))
+                                        # 環境変数から再活性化期間を取得（デフォルト60日）
+                                        threshold_days = int(os.getenv('REACTIVATION_THRESHOLD_DAYS', '60'))
                                         threshold_date = datetime.now() - timedelta(days=threshold_days)
 
                                         # 販売終了から一定期間経過している場合は新規物件として扱う
