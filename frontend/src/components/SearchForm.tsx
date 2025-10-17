@@ -618,7 +618,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
             </FormControl>
           </Grid>
 
-          <Grid item xs={12} sm={6} md={6}>
+          <Grid item xs={12} sm={6} md={3}>
             <FormControl fullWidth>
               <InputLabel id="layout-multiple-chip-label">間取り</InputLabel>
               <Select
