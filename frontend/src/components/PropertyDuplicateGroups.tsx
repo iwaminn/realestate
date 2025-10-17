@@ -51,6 +51,7 @@ import axios from 'axios';
 interface PropertyInGroup {
   id: number;
   room_number: string | null;
+  floor_number: number | null;
   area: number | null;
   layout: string | null;
   direction: string | null;
@@ -950,7 +951,7 @@ const PropertyDuplicateGroups: React.FC = () => {
                                 </Typography>
                               </TableCell>
                               <TableCell>{detail?.room_number || prop.room_number || '-'}</TableCell>
-                              <TableCell>{detail?.floor_number || '-'}階</TableCell>
+                              <TableCell>{detail?.floor_number || prop.floor_number || '-'}階</TableCell>
                               <TableCell>{prop.area ? `${prop.area}㎡` : '-'}</TableCell>
                               <TableCell>{prop.layout || '-'}</TableCell>
                               <TableCell>{prop.direction || '-'}</TableCell>

@@ -1459,6 +1459,7 @@ def get_duplicate_properties(
                         JSON_BUILD_OBJECT(
                             'id', mp.id,
                             'room_number', mp.room_number,
+                            'floor_number', mp.floor_number,
                             'area', mp.area,
                             'layout', mp.layout,
                             'direction', mp.direction,
@@ -1466,12 +1467,14 @@ def get_duplicate_properties(
                                 MODE() WITHIN GROUP (ORDER BY pl.current_price),
                                 MIN(pl.current_price)
                             ),
-                            'listing_count', COUNT(pl.id)::text
+                            'listing_count', COUNT(pl.id)::text,
+                            'source_count', COUNT(DISTINCT pl.source_site)::text,
+                            'agency_names', STRING_AGG(DISTINCT pl.agency_name, ', ')
                         ) as prop_data
                     FROM master_properties mp
                     LEFT JOIN property_listings pl ON mp.id = pl.master_property_id AND pl.is_active = true
                     WHERE mp.id = ANY(pg.property_ids)
-                    GROUP BY mp.id, mp.room_number, mp.area, mp.layout, mp.direction
+                    GROUP BY mp.id, mp.room_number, mp.floor_number, mp.area, mp.layout, mp.direction
                 ) as subquery
             ) as property_details
         FROM property_groups pg
