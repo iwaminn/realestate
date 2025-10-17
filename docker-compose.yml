@@ -44,6 +44,8 @@ services:
       # スクレイパー個別設定の例（必要に応じてコメントアウトを解除）
       # - SCRAPER_SUUMO_DETAIL_REFETCH_DAYS=60
       # - SCRAPER_HOMES_DETAIL_REFETCH_DAYS=30
+      # 再販物件の再活性化期間（デフォルト90日）
+      - REACTIVATION_THRESHOLD_DAYS=90  # 販売終了から指定日数以内なら既存データを再活性化、超過したら新規登録
       # メール送信設定（本番環境用）
       # - MAIL_USERNAME=your-email@gmail.com
       # - MAIL_PASSWORD=your-app-password

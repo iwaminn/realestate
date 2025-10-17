@@ -5340,19 +5340,39 @@ class BaseScraper(ABC):
                             
                             # 非アクティブな掲載を再アクティブ化
                             if not existing_listing.is_active:
-                                existing_listing.is_active = True
-                                print(f"  → 掲載を再開 (ID: {existing_listing.id})")
-                                
-                                # 物件が販売終了になっていた場合は販売再開
+                                # 物件が販売終了になっていた場合は期間制限をチェック
                                 if existing_listing.master_property_id:
                                     master_prop = session.query(MasterProperty).filter(
                                         MasterProperty.id == existing_listing.master_property_id
                                     ).first()
                                     if master_prop and master_prop.sold_at:
-                                        master_prop.sold_at = None
-                                        master_prop.final_price = None
-                                        master_prop.final_price_updated_at = None
-                                        print(f"  → 物件を販売再開 (物件ID: {master_prop.id})")
+                                        # 環境変数から再活性化期間を取得（デフォルト90日）
+                                        threshold_days = int(os.getenv('REACTIVATION_THRESHOLD_DAYS', '90'))
+                                        threshold_date = datetime.now() - timedelta(days=threshold_days)
+
+                                        # 販売終了から一定期間経過している場合は新規物件として扱う
+                                        if master_prop.sold_at < threshold_date:
+                                            days_since_sold = (datetime.now() - master_prop.sold_at).days
+                                            print(f"  → 販売終了から{days_since_sold}日経過（閾値: {threshold_days}日）")
+                                            print(f"  → 新規物件として登録します (旧物件ID: {master_prop.id})")
+                                            existing_listing = None
+                                            # 詳細取得していない新規物件は保存しない
+                                            property_data['property_saved'] = False
+                                            return False
+                                        else:
+                                            # 期間内なら再活性化
+                                            days_since_sold = (datetime.now() - master_prop.sold_at).days
+                                            print(f"  → 販売終了から{days_since_sold}日以内（閾値: {threshold_days}日）のため再活性化")
+                                            existing_listing.is_active = True
+                                            master_prop.sold_at = None
+                                            master_prop.final_price = None
+                                            master_prop.final_price_updated_at = None
+                                            print(f"  → 掲載を再開 (ID: {existing_listing.id})")
+                                            print(f"  → 物件を販売再開 (物件ID: {master_prop.id})")
+                                else:
+                                    # master_property_idがない場合は通常の再活性化
+                                    existing_listing.is_active = True
+                                    print(f"  → 掲載を再開 (ID: {existing_listing.id})")
                             
                             print(f"  → 既存物件の最終確認日時を更新 (ID: {existing_listing.id})")
                             property_data['update_type'] = 'skipped'
