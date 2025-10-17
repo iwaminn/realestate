@@ -2555,77 +2555,14 @@ async def merge_properties(
             {"candidates": json.dumps(candidate_ids), "match_id": match.id}
         )
     
-    # property_price_changesテーブルの参照を更新
-    # 二次物件の価格改定履歴を主物件に移行
-    # 同じ日付のレコードがある場合は、より多い投票数を持つ方を残す
-    
-    # まず、重複する日付のレコードを確認
-    duplicate_dates = db.execute(
-        text("""
-            SELECT ppc1.change_date
-            FROM property_price_changes ppc1
-            INNER JOIN property_price_changes ppc2 
-                ON ppc1.change_date = ppc2.change_date
-            WHERE ppc1.master_property_id = :primary_id
-                AND ppc2.master_property_id = :secondary_id
-        """),
-        {"primary_id": request.primary_property_id, "secondary_id": request.secondary_property_id}
-    ).fetchall()
-    
-    if duplicate_dates:
-        # 重複する日付がある場合、より多い投票数を持つレコードを保持
-        for (change_date,) in duplicate_dates:
-            # 両方のレコードを取得
-            primary_record = db.execute(
-                text("""
-                    SELECT new_price_votes, old_price_votes
-                    FROM property_price_changes
-                    WHERE master_property_id = :primary_id AND change_date = :change_date
-                """),
-                {"primary_id": request.primary_property_id, "change_date": change_date}
-            ).first()
-            
-            secondary_record = db.execute(
-                text("""
-                    SELECT new_price_votes, old_price_votes
-                    FROM property_price_changes
-                    WHERE master_property_id = :secondary_id AND change_date = :change_date
-                """),
-                {"secondary_id": request.secondary_property_id, "change_date": change_date}
-            ).first()
-            
-            # 投票数の合計を比較
-            primary_votes = (primary_record.new_price_votes or 0) + (primary_record.old_price_votes or 0)
-            secondary_votes = (secondary_record.new_price_votes or 0) + (secondary_record.old_price_votes or 0)
-            
-            if secondary_votes > primary_votes:
-                # 二次物件のレコードの方が信頼性が高い場合、主物件のレコードを削除
-                db.execute(
-                    text("""
-                        DELETE FROM property_price_changes
-                        WHERE master_property_id = :primary_id AND change_date = :change_date
-                    """),
-                    {"primary_id": request.primary_property_id, "change_date": change_date}
-                )
-            else:
-                # 主物件のレコードを保持、二次物件のレコードを削除
-                db.execute(
-                    text("""
-                        DELETE FROM property_price_changes
-                        WHERE master_property_id = :secondary_id AND change_date = :change_date
-                    """),
-                    {"secondary_id": request.secondary_property_id, "change_date": change_date}
-                )
-    
-    # 残りの二次物件のレコードを主物件に移行
-    db.execute(
-        text("""
-            UPDATE property_price_changes 
-            SET master_property_id = :primary_id 
-            WHERE master_property_id = :secondary_id
-        """),
-        {"primary_id": request.primary_property_id, "secondary_id": request.secondary_property_id}
-    )
+    # 価格履歴を再生成するため、両物件の既存の価格改定履歴を削除
+    # 統合後に全掲載情報から正しい価格履歴を再計算する
+    db.query(PropertyPriceChange).filter(
+        PropertyPriceChange.master_property_id.in_([
+            request.primary_property_id,
+            request.secondary_property_id
+        ])
+    ).delete(synchronize_session=False)
     
     # PropertyMergeHistoryの参照を更新（二次物件が他の統合履歴で参照されている場合）
     # primary_property_idとして参照されている場合、主物件IDに更新
@@ -2696,7 +2633,14 @@ async def merge_properties(
     update_earliest_listing_date(db, request.primary_property_id)
     # secondary_property_idの物件は削除されているが、念のため
 
-    # 価格改定日を更新
+    # 価格履歴を再生成（統合後の全掲載情報から正しい履歴を計算）
+    from ...utils.price_change_calculator import PriceChangeCalculator
+    calculator = PriceChangeCalculator(db)
+    changes = calculator.calculate_price_changes(request.primary_property_id)
+    saved_count = calculator.save_price_changes(request.primary_property_id, changes)
+    logger.info(f"物件統合後に価格履歴を再生成: {saved_count}件の価格変更を記録")
+    
+    # 価格改定日を更新（latest_price_change_atフィールドを更新）
     from ...utils.property_utils import update_latest_price_change
     update_latest_price_change(db, request.primary_property_id)
 
