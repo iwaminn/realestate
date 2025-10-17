@@ -678,7 +678,25 @@ sudo nano /etc/logrotate.d/realestate
 }
 ```
 
-### 6.3 バックアップの設定
+### 6.3 バックアップ戦略の選択
+
+データベースのバックアップには2つの方法があります。システムの重要度とコストに応じて選択してください。
+
+| 方法 | メリット | デメリット | 推奨用途 |
+|------|---------|-----------|----------|
+| **ローカルバックアップのみ** | 設定が簡単、追加コストなし | EC2障害時にデータ損失のリスク | テスト環境、開発環境 |
+| **S3バックアップ（推奨）** | EC2障害時も安全、長期保存可能 | 少額のコスト（月額約20円） | 本番環境 |
+
+#### どちらを選ぶべきか？
+
+- **本番環境**: S3バックアップ（6.3.2）を強く推奨
+- **開発・テスト環境**: ローカルバックアップ（6.3.1）でも可
+
+---
+
+### 6.3.1 ローカルバックアップのみ（基本）
+
+EC2インスタンス内にバックアップを保存します。設定は簡単ですが、EC2インスタンスが停止・削除された場合、バックアップも失われます。
 
 ```bash
 # バックアップスクリプトの作成
@@ -706,6 +724,325 @@ chmod +x /home/ubuntu/backup-realestate.sh
 # cronジョブの設定（毎日午前2時に実行）
 (crontab -l 2>/dev/null; echo "0 2 * * * /home/ubuntu/backup-realestate.sh") | crontab -
 ```
+
+> **注意**: このバックアップ方法は、EC2インスタンスが正常に動作している場合のみ有効です。インスタンスの障害やストレージの破損には対応できません。本番環境では6.3.2のS3バックアップを使用してください。
+
+---
+
+### 6.3.2 S3バックアップ（推奨）
+
+EC2インスタンスのトラブルに備えて、S3への外部バックアップを設定します。
+
+#### 6.3.2.1 AWS CLIのインストール
+
+```bash
+# AWS CLIのインストール（Ubuntu 24.04対応）
+# Snapを使用（推奨）
+sudo snap install aws-cli --classic
+
+# バージョン確認
+aws --version
+
+# 【注意】apt版（awscli）はUbuntu 24.04では利用できません
+# 代替方法1: 公式インストーラーを使用する場合
+# curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+# unzip awscliv2.zip
+# sudo ./aws/install
+
+# 代替方法2: pipを使用する場合
+# sudo apt install -y python3-pip
+# pip3 install awscli --user
+```
+
+#### 6.3.2.2 IAMロールの設定
+
+> **重要**: S3バケットを作成する前に、IAMロールを設定する必要があります。
+
+**AWSマネジメントコンソールでの作業：**
+
+1. **IAMポリシーの作成**：
+   - IAMコンソール → ポリシー → ポリシーを作成
+   - JSONタブで以下を貼り付け：
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "s3:CreateBucket",
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:ListBucket",
+        "s3:DeleteObject",
+        "s3:PutBucketVersioning",
+        "s3:PutLifecycleConfiguration"
+      ],
+      "Resource": [
+        "arn:aws:s3:::realestate-backup-*/*",
+        "arn:aws:s3:::realestate-backup-*"
+      ]
+    }
+  ]
+}
+```
+
+   - ポリシー名: `RealestateS3BackupPolicy`
+
+2. **IAMロールの作成**：
+   - IAMコンソール → ロール → ロールを作成
+   - 信頼されたエンティティ: AWS サービス
+   - ユースケース: EC2
+   - 先ほど作成したポリシーをアタッチ
+   - ロール名: `RealestateBackupRole`
+
+3. **EC2インスタンスにロールをアタッチ**：
+   - EC2コンソール → インスタンス選択
+   - アクション → セキュリティ → IAMロールを変更
+   - `RealestateBackupRole` を選択
+
+4. **IAMロール設定の確認**：
+
+```bash
+# ロールが正しくアタッチされているか確認（数秒待ってから実行）
+aws sts get-caller-identity
+
+# 成功すると以下のような出力が表示されます：
+# {
+#     "UserId": "AIDACKCEVSQ6C2EXAMPLE",
+#     "Account": "123456789012",
+#     "Arn": "arn:aws:sts::123456789012:assumed-role/RealestateBackupRole/i-1234567890abcdef0"
+# }
+```
+
+#### 6.3.2.3 S3バケットの作成
+
+IAMロールの設定が完了したら、S3バケットを作成します。
+
+```bash
+# バケット名を決定（グローバルでユニークな名前が必要）
+BUCKET_NAME="realestate-backup-$(date +%Y%m%d)"
+
+# S3バケットの作成（東京リージョン）
+aws s3 mb s3://${BUCKET_NAME} --region ap-northeast-1
+
+# バージョニングを有効化（誤削除対策）
+aws s3api put-bucket-versioning \
+  --bucket ${BUCKET_NAME} \
+  --versioning-configuration Status=Enabled
+
+# ライフサイクルポリシーの設定
+cat > /tmp/lifecycle.json << 'EOF'
+{
+  "Rules": [
+    {
+      "Id": "MoveToIA",
+      "Status": "Enabled",
+      "Transitions": [
+        {
+          "Days": 30,
+          "StorageClass": "STANDARD_IA"
+        }
+      ],
+      "Expiration": {
+        "Days": 365
+      }
+    }
+  ]
+}
+EOF
+
+aws s3api put-bucket-lifecycle-configuration \
+  --bucket ${BUCKET_NAME} \
+  --lifecycle-configuration file:///tmp/lifecycle.json
+
+# バケット名を環境変数として保存（後続のスクリプトで使用）
+echo "export S3_BACKUP_BUCKET=${BUCKET_NAME}" >> ~/.bashrc
+source ~/.bashrc
+
+echo "S3バケット作成完了: ${BUCKET_NAME}"
+```
+
+#### 6.3.2.4 S3バックアップスクリプトの作成
+
+```bash
+# S3対応バックアップスクリプトの作成
+cat > /home/ubuntu/backup-realestate-s3.sh << 'EOF'
+#!/bin/bash
+
+# 設定
+BACKUP_DIR="/home/ubuntu/backups"
+DATE=$(date +%Y%m%d_%H%M%S)
+DB_BACKUP_FILE="$BACKUP_DIR/realestate_db_$DATE.sql"
+S3_BUCKET="YOUR_BUCKET_NAME"  # 実際のバケット名に変更
+LOG_FILE="/home/ubuntu/logs/backup.log"
+
+# ログディレクトリ作成
+mkdir -p /home/ubuntu/logs
+
+# ログ出力関数
+log() {
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" | tee -a $LOG_FILE
+}
+
+log "=== Backup started ==="
+
+# バックアップディレクトリの作成
+mkdir -p $BACKUP_DIR
+
+# データベースのバックアップ
+log "Creating database dump..."
+if docker exec realestate-postgres pg_dump -U realestate realestate > $DB_BACKUP_FILE; then
+    log "Database dump created successfully"
+else
+    log "ERROR: Database dump failed"
+    exit 1
+fi
+
+# 圧縮
+log "Compressing backup..."
+if gzip $DB_BACKUP_FILE; then
+    log "Compression completed"
+    COMPRESSED_FILE="${DB_BACKUP_FILE}.gz"
+else
+    log "ERROR: Compression failed"
+    exit 1
+fi
+
+# S3へアップロード
+log "Uploading to S3..."
+if aws s3 cp $COMPRESSED_FILE s3://${S3_BUCKET}/database/ \
+    --storage-class STANDARD_IA \
+    --metadata "backup-date=$(date -u +%Y-%m-%dT%H:%M:%SZ)"; then
+    log "Upload to S3 completed: s3://${S3_BUCKET}/database/$(basename $COMPRESSED_FILE)"
+else
+    log "ERROR: S3 upload failed"
+    exit 1
+fi
+
+# ローカルの古いバックアップを削除（7日以上前）
+log "Cleaning up old local backups..."
+find $BACKUP_DIR -name "*.gz" -mtime +7 -delete
+
+# S3の古いバックアップを削除（90日以上前）
+log "Cleaning up old S3 backups..."
+CUTOFF_DATE=$(date -d '90 days ago' +%Y-%m-%d)
+aws s3 ls s3://${S3_BUCKET}/database/ | while read -r line; do
+    FILE_DATE=$(echo $line | awk '{print $1}')
+    FILE_NAME=$(echo $line | awk '{print $4}')
+    if [[ "$FILE_DATE" < "$CUTOFF_DATE" ]] && [[ ! -z "$FILE_NAME" ]]; then
+        log "Deleting old backup: $FILE_NAME"
+        aws s3 rm s3://${S3_BUCKET}/database/$FILE_NAME
+    fi
+done
+
+log "=== Backup completed successfully ==="
+
+exit 0
+EOF
+
+chmod +x /home/ubuntu/backup-realestate-s3.sh
+
+# 6.3.2.3で設定した環境変数を使用してバケット名を置換
+sed -i "s/YOUR_BUCKET_NAME/$S3_BACKUP_BUCKET/g" /home/ubuntu/backup-realestate-s3.sh
+
+# 設定確認
+echo "バックアップスクリプトに設定されたS3バケット: $S3_BACKUP_BUCKET"
+grep "S3_BUCKET=" /home/ubuntu/backup-realestate-s3.sh
+```
+
+#### 6.3.2.5 cronジョブの設定
+
+```bash
+# 既存のローカルバックアップcronを削除
+crontab -l | grep -v backup-realestate.sh | crontab -
+
+# S3バックアップcronを追加（毎日午前2時に実行）
+(crontab -l 2>/dev/null; echo "0 2 * * * /home/ubuntu/backup-realestate-s3.sh") | crontab -
+
+# cronジョブの確認
+crontab -l
+```
+
+#### 6.3.2.6 手動テスト
+
+```bash
+# スクリプトを手動実行してテスト
+/home/ubuntu/backup-realestate-s3.sh
+
+# ログを確認
+cat /home/ubuntu/logs/backup.log
+
+# S3のバックアップを確認
+aws s3 ls s3://$S3_BACKUP_BUCKET/database/
+```
+
+#### 6.3.2.7 S3からの復元方法
+
+```bash
+# 復元スクリプトの作成
+cat > /home/ubuntu/restore-from-s3.sh << 'EOF'
+#!/bin/bash
+
+S3_BUCKET="YOUR_BUCKET_NAME"  # 実際のバケット名に変更
+
+# 利用可能なバックアップを表示
+echo "Available backups in S3:"
+aws s3 ls s3://${S3_BUCKET}/database/ | grep ".sql.gz"
+
+# 復元するファイル名を入力
+read -p "復元するバックアップファイル名を入力してください: " BACKUP_FILE
+
+# S3からダウンロード
+echo "Downloading backup from S3..."
+aws s3 cp s3://${S3_BUCKET}/database/${BACKUP_FILE} /tmp/
+
+# 解凍
+echo "Extracting backup..."
+gunzip /tmp/${BACKUP_FILE}
+
+# データベースへの接続を強制終了
+echo "Terminating database connections..."
+docker exec realestate-postgres psql -U realestate -d postgres -c \
+  "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'realestate' AND pid <> pg_backend_pid();"
+
+# データベースを削除して再作成
+echo "Recreating database..."
+docker exec realestate-postgres psql -U realestate -d postgres -c "DROP DATABASE IF EXISTS realestate;"
+docker exec realestate-postgres psql -U realestate -d postgres -c "CREATE DATABASE realestate;"
+
+# 復元
+echo "Restoring database..."
+cat /tmp/${BACKUP_FILE%.gz} | docker exec -i realestate-postgres psql -U realestate -d realestate
+
+echo "Restore completed!"
+
+# 一時ファイルの削除
+rm /tmp/${BACKUP_FILE} /tmp/${BACKUP_FILE%.gz}
+EOF
+
+chmod +x /home/ubuntu/restore-from-s3.sh
+
+# 6.3.2.3で設定した環境変数を使用してバケット名を置換
+sed -i "s/YOUR_BUCKET_NAME/$S3_BACKUP_BUCKET/g" /home/ubuntu/restore-from-s3.sh
+
+# 設定確認
+echo "復元スクリプトに設定されたS3バケット: $S3_BACKUP_BUCKET"
+grep "S3_BUCKET=" /home/ubuntu/restore-from-s3.sh
+```
+
+#### 6.3.2.8 コスト最適化
+
+S3のライフサイクルポリシーにより、以下のようにコストを最適化します：
+
+- **最初の30日間**: STANDARD_IA（低頻度アクセス）
+- **365日後**: 自動削除
+
+ストレージコストの目安：
+- データベースサイズ: 約50MB（圧縮後）
+- 月間バックアップ数: 30個
+- 月額コスト: 約$0.15（約20円）
 
 ## 7. セキュリティの強化
 
