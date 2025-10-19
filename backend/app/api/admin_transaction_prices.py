@@ -1,10 +1,9 @@
 """管理者向け成約価格情報API"""
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta
 import subprocess
-import os
 from typing import Dict
 
 from ..database import get_db
@@ -66,24 +65,29 @@ async def get_transaction_price_stats(
 async def run_update_script(mode: str = "update"):
     """バックグラウンドで成約価格更新スクリプトを実行"""
     try:
-        # Dockerコンテナ内で実行
+        # コンテナ内で直接実行
         script_path = "/app/backend/scripts/fetch_transaction_prices_api.py"
+        log_path = f"/app/logs/transaction_prices_update_{mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+
         cmd = [
-            "docker", "exec", "realestate-backend",
-            "poetry", "run", "python", script_path,
+            "python", script_path,
             "--mode", mode,
             "--area", "all"  # 東京23区全体を更新
         ]
 
-        # バックグラウンドで実行
+        # ログファイルを開く
+        log_file = open(log_path, 'w')
+
+        # バックグラウンドで実行（ログファイルに出力）
         subprocess.Popen(
             cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True
+            stdout=log_file,
+            stderr=log_file,
+            start_new_session=True,
+            cwd="/app"  # 作業ディレクトリを明示的に指定
         )
 
-        return {"success": True, "message": "更新処理を開始しました"}
+        return {"success": True, "message": f"更新処理を開始しました（ログ: {log_path}）"}
     except Exception as e:
         return {"success": False, "message": f"更新処理の開始に失敗しました: {str(e)}"}
 
