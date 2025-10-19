@@ -14,3 +14,8 @@ class TaskCancelledException(Exception):
 class MaintenanceException(Exception):
     """サイトがメンテナンス中の場合の例外"""
     pass
+
+
+class PropertyTypeNotSupportedError(Exception):
+    """対象外の物件タイプの場合の例外（タウンハウス、一戸建てなど）"""
+    pass

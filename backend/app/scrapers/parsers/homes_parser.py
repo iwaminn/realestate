@@ -249,7 +249,10 @@ class HomesParser(BaseHtmlParser):
             
         Raises:
             ValueError: HTML構造が期待と異なる場合
+            PropertyTypeNotSupportedError: マンション以外の物件タイプの場合
         """
+        from app.utils.exceptions import PropertyTypeNotSupportedError
+        
         property_data = {}
 
         try:
@@ -289,12 +292,19 @@ class HomesParser(BaseHtmlParser):
             # 建物名を取得
             try:
                 self._extract_building_name_from_detail(soup, property_data)
+            except PropertyTypeNotSupportedError:
+                # マンション以外の物件タイプ（タウンハウスなど）は除外
+                # 上位に伝播させる
+                raise
             except ValueError as e:
                 # 建物名の取得でHTML構造エラーが発生した場合
                 self.logger.error(f"[HOMES] 建物名の抽出でエラー: {e}")
                 # 建物名が取得できない場合は、パース全体を失敗とする
                 raise ValueError(f"必須フィールド（建物名）の取得に失敗: {e}")
                 
+        except PropertyTypeNotSupportedError:
+            # マンション以外の物件タイプは上位に伝播
+            raise
         except Exception as e:
             # 予期しないエラーをキャッチしてログに記録
             self.logger.error(f"[HOMES] 詳細ページのパースでエラー: {e}", exc_info=True)
@@ -428,7 +438,10 @@ class HomesParser(BaseHtmlParser):
             
         Raises:
             ValueError: HTML構造が期待と異なる場合
+            PropertyTypeNotSupportedError: タウンハウスなど除外対象の物件タイプの場合
         """
+        from app.utils.exceptions import PropertyTypeNotSupportedError
+        
         h1_building_name = None
         room_number = None
         
@@ -458,12 +471,18 @@ class HomesParser(BaseHtmlParser):
                 
                 raise ValueError(error_msg)
             
-            # 1番目のspan: "中古マンション"、"マンション未入居"、または単に"マンション"であることを確認
-            # 新しい構造では最初のspanが入れ子になっている場合がある
+            # 1番目のspan: 物件タイプをチェック
             first_span_text = self.extract_text(span_elements[0])
-            # 「マンション」という文字列が含まれていればOKとする（より柔軟な判定）
+            
+            # タウンハウスは明示的に除外（静かにスキップ）
+            if "タウンハウス" in first_span_text:
+                self.logger.info(f"[HOMES] タウンハウスのため除外: '{first_span_text}'")
+                raise PropertyTypeNotSupportedError(f"タウンハウス物件のため除外: '{first_span_text}'")
+            
+            # 「マンション」という文字列が含まれていることを確認
             if "マンション" not in first_span_text:
-                error_msg = f"h1の1番目のspan要素が期待値と異なります: '{first_span_text}' (期待値: 'マンション'を含む)"
+                # マンションでもタウンハウスでもない場合は警告を出してエラー
+                error_msg = f"h1の1番目のspan要素が期待値と異なります: '{first_span_text}' (期待値: 'マンション'を含む、またはタウンハウス)"
                 self.logger.error(f"[HOMES] {error_msg}")
                 raise ValueError(error_msg)
             

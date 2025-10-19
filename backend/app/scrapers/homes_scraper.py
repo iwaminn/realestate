@@ -198,26 +198,34 @@ class HomesScraper(BaseScraper):
     
     def parse_property_detail(self, url: str) -> Optional[Dict[str, Any]]:
         """物件詳細ページを解析 - パーサーに委譲"""
+        from ..utils.exceptions import PropertyTypeNotSupportedError
+        
         soup = self.fetch_page(url)
         if not soup:
             return None
-            
-        # パーサーで詳細な解析を実行
-        detail_data = self.parser.parse_property_detail(soup)
         
-        # スクレイパー固有の処理
-        if detail_data:
-            detail_data["url"] = url
-            detail_data["_page_text"] = soup.get_text()  # 建物名一致確認用
+        try:
+            # パーサーで詳細な解析を実行
+            detail_data = self.parser.parse_property_detail(soup)
             
-            # site_property_idの抽出と検証
-            if "site_property_id" not in detail_data and url:
-                import re
-                site_id_match = re.search(r'/mansion/b-(\\d+)/', url)
-                if site_id_match:
-                    detail_data["site_property_id"] = site_id_match.group(1)
-        
-        return detail_data
+            # スクレイパー固有の処理
+            if detail_data:
+                detail_data["url"] = url
+                detail_data["_page_text"] = soup.get_text()  # 建物名一致確認用
+                
+                # site_property_idの抽出と検証
+                if "site_property_id" not in detail_data and url:
+                    import re
+                    site_id_match = re.search(r'/mansion/b-(\\d+)/', url)
+                    if site_id_match:
+                        detail_data["site_property_id"] = site_id_match.group(1)
+            
+            return detail_data
+            
+        except PropertyTypeNotSupportedError as e:
+            # マンション以外の物件タイプ（タウンハウス、一戸建てなど）は静かにスキップ
+            self.logger.info(f"対象外の物件タイプのためスキップ: {url} - {e}")
+            return None
     
     def _extract_site_property_id(self, href: str, property_data: Dict[str, Any]) -> bool:
         """URLから物件IDを抽出
