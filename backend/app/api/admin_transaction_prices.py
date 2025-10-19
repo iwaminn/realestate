@@ -92,28 +92,25 @@ async def get_transaction_price_stats(
 async def run_update_script(mode: str = "update"):
     """バックグラウンドで成約価格更新スクリプトを実行"""
     try:
+        # modeの変換: "full" -> "historical"
+        script_mode = "historical" if mode == "full" else mode
+        
         # コンテナ内で直接実行
         script_path = "/app/backend/scripts/fetch_transaction_prices_api.py"
         log_path = f"/app/logs/transaction_prices_update_{mode}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-
-        cmd = [
-            "python", script_path,
-            "--mode", mode,
-            "--area", "all"  # 東京23区全体を更新
-        ]
-
-        # ログファイルを開く
-        log_file = open(log_path, 'w')
 
         # ロックファイルを作成
         with open(LOCK_FILE_PATH, 'w') as lock:
             lock.write(f"{datetime.now().isoformat()}\n")
             lock.write(f"mode: {mode}\n")
 
+        # ログファイルを開く
+        log_file = open(log_path, 'w')
+
         # バックグラウンドで実行（ログファイルに出力）
         # 完了後にロックファイルを削除するラッパースクリプトを使用
         wrapper_cmd = f"""
-python {script_path} --mode {mode} --area all
+python {script_path} --mode {script_mode} --area all
 rm -f {LOCK_FILE_PATH}
 """
         subprocess.Popen(

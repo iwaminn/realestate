@@ -502,15 +502,32 @@ def main():
     fetcher = TransactionPriceAPIFetcher()
 
     try:
-        if args.mode == 'recent':
-            # 最新四半期のみ取得
-            fetcher.fetch_recent_data(city_code=city_code)
-        elif args.mode == 'historical':
-            # 指定期間すべて取得
-            fetcher.fetch_historical_data(from_year=args.from_year, to_year=args.to_year, city_code=city_code)
-        else:  # update
-            # 不足期間を自動判定して取得
-            fetcher.update_missing_periods(city_code=city_code)
+        # city_code = Noneの場合は全23区を取得
+        if city_code is None:
+            city_codes = list(AREA_CODES.values())
+            print(f"東京23区すべてのデータを取得します（{len(city_codes)}区）")
+        else:
+            city_codes = [city_code]
+
+        for code in city_codes:
+            area_name = next((k for k, v in AREA_CODES.items() if v == code), code)
+            print(f"\n{'='*60}")
+            print(f"処理中: {area_name} ({code})")
+            print(f"{'='*60}\n")
+
+            if args.mode == 'recent':
+                # 最新四半期のみ取得
+                fetcher.fetch_recent_data(city_code=code)
+            elif args.mode == 'historical':
+                # 指定期間すべて取得
+                fetcher.fetch_historical_data(from_year=args.from_year, to_year=args.to_year, city_code=code)
+            else:  # update
+                # 不足期間を自動判定して取得
+                fetcher.update_missing_periods(city_code=code)
+
+        print(f"\n{'='*60}")
+        print("すべての区の処理が完了しました")
+        print(f"{'='*60}\n")
     finally:
         fetcher.close()
 
