@@ -71,7 +71,8 @@ async def run_update_script(mode: str = "update"):
         cmd = [
             "docker", "exec", "realestate-backend",
             "poetry", "run", "python", script_path,
-            "--mode", mode
+            "--mode", mode,
+            "--area", "all"  # 東京23区全体を更新
         ]
 
         # バックグラウンドで実行

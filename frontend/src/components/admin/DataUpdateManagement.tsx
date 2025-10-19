@@ -493,13 +493,13 @@ export const DataUpdateManagement: React.FC = () => {
                   成約価格情報の更新
                 </Typography>
                 <Typography variant="body2" color="text.secondary" paragraph>
-                  国土交通省の不動産情報ライブラリAPIから最新の成約価格データを取得します。
+                  国土交通省の不動産情報ライブラリAPIから最新の成約価格データを取得します（東京23区全体）。
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
                   • 最新データのみ：直近の四半期のみ取得（推奨）
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  • 全期間：すべての期間のデータを再取得
+                  • 全期間：すべての期間のデータを再取得（2021年〜）
                 </Typography>
               </CardContent>
               <CardActions>
