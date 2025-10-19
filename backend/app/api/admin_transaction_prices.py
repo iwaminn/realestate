@@ -1,9 +1,10 @@
 """管理者向け成約価格情報API"""
-from fastapi import APIRouter, Depends, BackgroundTasks
+from fastapi import APIRouter, Depends, BackgroundTasks, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import datetime, timedelta
 import subprocess
+import os
 from typing import Dict
 
 from ..database import get_db
@@ -13,6 +14,32 @@ from ..models import TransactionPrice
 router = APIRouter(
     dependencies=[Depends(get_admin_user)]
 )
+
+# ロックファイルのパス
+LOCK_FILE_PATH = "/app/logs/transaction_prices_update.lock"
+
+
+@router.get("/transaction-prices/update-status")
+async def get_update_status() -> Dict:
+    """成約価格情報更新の実行状態を取得"""
+    if os.path.exists(LOCK_FILE_PATH):
+        try:
+            with open(LOCK_FILE_PATH, 'r') as lock:
+                lock_info = lock.read()
+            return {
+                "is_running": True,
+                "details": lock_info
+            }
+        except Exception:
+            return {
+                "is_running": True,
+                "details": "実行中（詳細不明）"
+            }
+    else:
+        return {
+            "is_running": False,
+            "details": None
+        }
 
 
 @router.get("/transaction-prices/stats")
@@ -78,9 +105,19 @@ async def run_update_script(mode: str = "update"):
         # ログファイルを開く
         log_file = open(log_path, 'w')
 
+        # ロックファイルを作成
+        with open(LOCK_FILE_PATH, 'w') as lock:
+            lock.write(f"{datetime.now().isoformat()}\n")
+            lock.write(f"mode: {mode}\n")
+
         # バックグラウンドで実行（ログファイルに出力）
+        # 完了後にロックファイルを削除するラッパースクリプトを使用
+        wrapper_cmd = f"""
+python {script_path} --mode {mode} --area all
+rm -f {LOCK_FILE_PATH}
+"""
         subprocess.Popen(
-            cmd,
+            ["sh", "-c", wrapper_cmd],
             stdout=log_file,
             stderr=log_file,
             start_new_session=True,
@@ -89,6 +126,9 @@ async def run_update_script(mode: str = "update"):
 
         return {"success": True, "message": f"更新処理を開始しました（ログ: {log_path}）"}
     except Exception as e:
+        # エラー時はロックファイルを削除
+        if os.path.exists(LOCK_FILE_PATH):
+            os.remove(LOCK_FILE_PATH)
         return {"success": False, "message": f"更新処理の開始に失敗しました: {str(e)}"}
 
 
@@ -104,6 +144,24 @@ async def update_transaction_prices(
     Parameters:
     - mode: "update" (最新データのみ) または "full" (全期間)
     """
+
+    # 実行中チェック
+    if os.path.exists(LOCK_FILE_PATH):
+        # ロックファイルの内容を読み取る
+        try:
+            with open(LOCK_FILE_PATH, 'r') as lock:
+                lock_info = lock.read()
+            raise HTTPException(
+                status_code=409,
+                detail=f"成約価格情報の更新が既に実行中です。\n{lock_info}"
+            )
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(
+                status_code=409,
+                detail="成約価格情報の更新が既に実行中です。"
+            )
 
     # バックグラウンドで実行
     background_tasks.add_task(run_update_script, mode)
