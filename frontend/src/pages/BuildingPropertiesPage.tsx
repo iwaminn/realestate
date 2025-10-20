@@ -478,8 +478,9 @@ const BuildingPropertiesPage: React.FC = () => {
           bValue = b.area || 0;
           break;
         case 'min_price':
-          aValue = a.min_price || 0;
-          bValue = b.min_price || 0;
+          // 販売中なら current_price、販売終了なら final_price を使用
+          aValue = (!a.has_active_listing ? a.final_price : a.current_price) || 0;
+          bValue = (!b.has_active_listing ? b.final_price : b.current_price) || 0;
           break;
         case 'layout':
           aValue = a.layout || '';
