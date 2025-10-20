@@ -685,49 +685,43 @@ class NomuParser(BaseHtmlParser):
                 if not th_text:  # Noneチェックを追加
                     continue
                 
-                # 管理費
+                # 管理費（フィールド抽出追跡を使用）
                 if '管理費' in th_text and 'management_fee' not in property_data:
                     # 同じ行に2つのth/tdがある場合
                     if len(ths) == 2 and len(tds) == 2:
                         # 最初のthが管理費の場合、最初のtdを取得
                         if i == 0:
                             fee = self.parse_monthly_fee(self.extract_text(tds[0]))
-                            if fee:
-                                property_data['management_fee'] = fee
+                            self.track_field_extraction(property_data, 'management_fee', fee, field_found=True)
                         # 2番目のthが管理費の場合、2番目のtdを取得
                         elif i == 1:
                             fee = self.parse_monthly_fee(self.extract_text(tds[1]))
-                            if fee:
-                                property_data['management_fee'] = fee
+                            self.track_field_extraction(property_data, 'management_fee', fee, field_found=True)
                     else:
                         # 通常のパターン
                         td = th.find_next_sibling('td')
                         if td:
                             fee = self.parse_monthly_fee(self.extract_text(td))
-                            if fee:
-                                property_data['management_fee'] = fee
+                            self.track_field_extraction(property_data, 'management_fee', fee, field_found=True)
                 
-                # 修繕積立金
+                # 修繕積立金（フィールド抽出追跡を使用）
                 elif '修繕積立金' in th_text and 'repair_fund' not in property_data:
                     # 同じ行に2つのth/tdがある場合
                     if len(ths) == 2 and len(tds) == 2:
                         # 最初のthが修繕積立金の場合、最初のtdを取得
                         if i == 0:
                             fee = self.parse_monthly_fee(self.extract_text(tds[0]))
-                            if fee:
-                                property_data['repair_fund'] = fee
+                            self.track_field_extraction(property_data, 'repair_fund', fee, field_found=True)
                         # 2番目のthが修繕積立金の場合、2番目のtdを取得
                         elif i == 1:
                             fee = self.parse_monthly_fee(self.extract_text(tds[1]))
-                            if fee:
-                                property_data['repair_fund'] = fee
+                            self.track_field_extraction(property_data, 'repair_fund', fee, field_found=True)
                     else:
                         # 通常のパターン
                         td = th.find_next_sibling('td')
                         if td:
                             fee = self.parse_monthly_fee(self.extract_text(td))
-                            if fee:
-                                property_data['repair_fund'] = fee
+                            self.track_field_extraction(property_data, 'repair_fund', fee, field_found=True)
     
     def _extract_area_and_layout_current_format(self, soup: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """
@@ -1046,6 +1040,14 @@ class NomuParser(BaseHtmlParser):
                 elif '総戸数' in key and 'total_units' not in property_data:
                     units = self.parse_total_units(value)
                     self.track_field_extraction(property_data, 'total_units', units, field_found=True)
+                
+                # 敷地の権利形態（フィールド抽出追跡を使用）
+                elif '敷地' in key and '権利' in key and 'land_rights' not in property_data:
+                    land_rights = self.extract_text(value)
+                    # '-' は値なしとして扱う
+                    if land_rights == '-':
+                        land_rights = None
+                    self.track_field_extraction(property_data, 'land_rights', land_rights, field_found=True)
 
     def _process_item_table(self, table: BeautifulSoup, property_data: Dict[str, Any]) -> None:
         """

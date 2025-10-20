@@ -334,36 +334,39 @@ class SuumoParser(BaseHtmlParser):
             soup: BeautifulSoupオブジェクト
             property_data: データ格納先
         """
-        # 「物件詳細情報」のh3見出しを探す
-        h3_detail = None
-        for h3 in soup.find_all('h3'):
-            h3_text = self.extract_text(h3)
-            if h3_text and '物件詳細情報' in h3_text:
-                h3_detail = h3
-                break
+        # 複数のh3見出しから情報を抽出
+        h3_targets = ['物件詳細情報', '共通概要']
         
-        if h3_detail:
-            # h3の次のテーブルを探す
-            current = h3_detail
-            for _ in range(10):  # 最大10要素まで探索
-                current = current.find_next()
-                if not current:
+        for h3_text_target in h3_targets:
+            # h3見出しを探す
+            h3_detail = None
+            for h3 in soup.find_all('h3'):
+                h3_text = self.extract_text(h3)
+                if h3_text and h3_text_target in h3_text:
+                    h3_detail = h3
                     break
-                
-                if current.name == 'table':
-                    # 物件詳細情報のテーブルを発見
-                    rows = current.find_all('tr')
-                    for row in rows:
-                        th = row.find('th')
-                        td = row.find('td')
-                        if th and td:
-                            # thのテキストを取得（ヒントを除去）
-                            key = self.extract_text(th).replace('ヒント', '').strip()
-                            value = self.extract_text(td)
-                            
-                            if key and value:
-                                self._process_detail_item(key, value, property_data)
-                    break
+            
+            if not h3_detail:
+                continue
+            
+            # h3の次のテーブルを処理（最初の1つだけ）
+            table = h3_detail.find_next('table')
+            if table:
+                # テーブル内の行を処理
+                rows = table.find_all('tr')
+                for row in rows:
+                    # 1行に複数のth-tdペアがある可能性があるため、すべてのthとtdを取得
+                    ths = row.find_all('th')
+                    tds = row.find_all('td')
+                    
+                    # th-tdペアを処理
+                    for th, td in zip(ths, tds):
+                        # thのテキストを取得（ヒントを除去）
+                        key = self.extract_text(th).replace('ヒント', '').strip()
+                        value = self.extract_text(td)
+                        
+                        if key and value:
+                            self._process_detail_item(key, value, property_data)
         
         # 管理費・修繕積立金を抽出（h2:物件概要 > h3:【マンション】> table）
         if not property_data.get('management_fee') or not property_data.get('repair_fund'):
@@ -543,6 +546,14 @@ class SuumoParser(BaseHtmlParser):
             room = self.extract_text(value)
             if room and room != '-':
                 property_data['room_number'] = room
+        
+        # 敷地の権利形態（フィールド抽出追跡を使用）
+        elif '敷地' in key and '権利' in key:
+            land_rights = self.extract_text(value)
+            # '-' は値なしとして扱う
+            if land_rights == '-':
+                land_rights = None
+            self.track_field_extraction(property_data, 'land_rights', land_rights, field_found=True)
 
         # その他面積（バルコニー面積が含まれる場合がある）
         elif 'その他面積' in key and 'balcony_area' not in property_data:

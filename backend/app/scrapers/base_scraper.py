@@ -5485,6 +5485,7 @@ class BaseScraper(ABC):
                         'listing_built_year': property_data.get('built_year'),
                         'listing_built_month': property_data.get('built_month'),
                         'listing_address': property_data.get('address'),
+                        'listing_land_rights': property_data.get('land_rights'),
                         'remarks': property_data.get('remarks'),
                         'agency_tel': property_data.get('agency_tel'),
                         'scraped_from_area': getattr(self, 'current_area_code', None)
@@ -5729,33 +5730,39 @@ class BaseScraper(ABC):
 
     def _check_field_extraction(self, detail_data: Dict[str, Any], url: str):
         """重要フィールドの取得をチェックし、必要に応じてエラーを記録
-        
+
         全スクレイパー共通の処理として、詳細ページから重要フィールドが
         取得できているかチェックし、取得失敗が一定割合を超えた場合にアラートを発生させる。
-        
-        フィールド抽出追跡フレームワークを使用して、HTML要素の欠落と
-        元々データがない場合を区別します。
-        
+
+        フィールド抽出追跡フレームワークを使用して、以下の2つの異常を検知します：
+        1. フィールドを探したが見つからなかった（field_found=False）
+        2. フィールドを探索しなかった（track_field_extractionが呼ばれていない）
+
+        2つ目のケースは、HTML構造が大きく変わってパーサーがフィールドを
+        探索できなくなった場合に発生します。
+
         Args:
             detail_data: 詳細ページから抽出したデータ
             url: 物件URL
-        
+
         チェック対象フィールド:
-            - price: 価格フィールドが見つからない場合にエラー
-            - building_name: 建物名フィールドが見つからない場合にエラー
-            - address: 住所フィールドが見つからない場合にエラー
-            - management_fee: 管理費フィールドが見つからない場合にエラー
-            - repair_fund: 修繕積立金フィールドが見つからない場合にエラー
-            - floor_number: 所在階フィールドが見つからない場合にエラー
-            - area: 専有面積フィールドが見つからない場合にエラー
-            - built_year: 築年月フィールドが見つからない場合にエラー
-            - station_info: 交通フィールドが見つからない場合にエラー
-            - total_floors: 総階数フィールドが見つからない場合にエラー
-            - total_units: 総戸数フィールドが見つからない場合にエラー
-            - layout: 間取りフィールドが見つからない場合にエラー
-        
+            - price: 価格
+            - building_name: 建物名
+            - address: 住所
+            - management_fee: 管理費
+            - repair_fund: 修繕積立金
+            - floor_number: 所在階
+            - area: 専有面積
+            - built_year: 築年月
+            - station_info: 交通
+            - total_floors: 総階数
+            - total_units: 総戸数
+            - layout: 間取り
+            - land_rights: 敷地の権利形態
+
         注意:
             - フィールド抽出エラーの閾値は20%（環境変数で設定可能）
+            - 詳細ページを処理した場合のみチェックされます
         """
         if not detail_data:
             return
@@ -5773,93 +5780,26 @@ class BaseScraper(ABC):
         field_extraction_error_threshold = float(
             os.getenv('SCRAPER_FIELD_EXTRACTION_ERROR_RATE', '0.2')
         )
-        
-        # 各フィールドを個別にチェック
-        # フィールドが見つからなかった場合のみエラーとして記録
-        
-        # 価格
-        price_meta = extraction_meta.get('price')
-        if price_meta is not None and not price_meta.get('field_found', False):
-            self._record_field_extraction_error_with_threshold(
-                'price', url, field_extraction_error_threshold
-            )
-        
-        # 建物名
-        building_name_meta = extraction_meta.get('building_name')
-        if building_name_meta is not None and not building_name_meta.get('field_found', False):
-            self._record_field_extraction_error_with_threshold(
-                'building_name', url, field_extraction_error_threshold
-            )
-        
-        # 住所
-        address_meta = extraction_meta.get('address')
-        if address_meta is not None and not address_meta.get('field_found', False):
-            self._record_field_extraction_error_with_threshold(
-                'address', url, field_extraction_error_threshold
-            )
-        
-        # 管理費
-        mgmt_meta = extraction_meta.get('management_fee')
-        if mgmt_meta is not None and not mgmt_meta.get('field_found', False):
-            self._record_field_extraction_error_with_threshold(
-                'management_fee', url, field_extraction_error_threshold
-            )
-        
-        # 修繕積立金
-        repair_meta = extraction_meta.get('repair_fund')
-        if repair_meta is not None and not repair_meta.get('field_found', False):
-            self._record_field_extraction_error_with_threshold(
-                'repair_fund', url, field_extraction_error_threshold
-            )
-        
-        # 所在階
-        floor_meta = extraction_meta.get('floor_number')
-        if floor_meta is not None and not floor_meta.get('field_found', False):
-            self._record_field_extraction_error_with_threshold(
-                'floor_number', url, field_extraction_error_threshold
-            )
-        
-        # 専有面積
-        area_meta = extraction_meta.get('area')
-        if area_meta is not None and not area_meta.get('field_found', False):
-            self._record_field_extraction_error_with_threshold(
-                'area', url, field_extraction_error_threshold
-            )
-        
-        # 築年月
-        built_year_meta = extraction_meta.get('built_year')
-        if built_year_meta is not None and not built_year_meta.get('field_found', False):
-            self._record_field_extraction_error_with_threshold(
-                'built_year', url, field_extraction_error_threshold
-            )
-        
-        # 交通
-        station_meta = extraction_meta.get('station_info')
-        if station_meta is not None and not station_meta.get('field_found', False):
-            self._record_field_extraction_error_with_threshold(
-                'station_info', url, field_extraction_error_threshold
-            )
-        
-        # 総階数
-        total_floors_meta = extraction_meta.get('total_floors')
-        if total_floors_meta is not None and not total_floors_meta.get('field_found', False):
-            self._record_field_extraction_error_with_threshold(
-                'total_floors', url, field_extraction_error_threshold
-            )
-        
-        # 総戸数
-        total_units_meta = extraction_meta.get('total_units')
-        if total_units_meta is not None and not total_units_meta.get('field_found', False):
-            self._record_field_extraction_error_with_threshold(
-                'total_units', url, field_extraction_error_threshold
-            )
-        
-        # 間取り
-        layout_meta = extraction_meta.get('layout')
-        if layout_meta is not None and not layout_meta.get('field_found', False):
-            self._record_field_extraction_error_with_threshold(
-                'layout', url, field_extraction_error_threshold
-            )
+
+        # チェック対象フィールドのリスト
+        # 詳細ページを処理した場合、これらのフィールドは必ず探索されるべき
+        required_fields = [
+            'price', 'building_name', 'address', 'management_fee', 'repair_fund',
+            'floor_number', 'area', 'built_year', 'station_info', 'total_floors',
+            'total_units', 'layout', 'land_rights'
+        ]
+
+        # 各フィールドをチェック
+        for field_name in required_fields:
+            field_meta = extraction_meta.get(field_name)
+
+            # メタデータが存在しない = track_field_extractionが呼ばれていない
+            # または field_found=False = フィールドを探したが見つからなかった
+            # どちらの場合もエラーとして記録
+            if field_meta is None or not field_meta.get('field_found', False):
+                self._record_field_extraction_error_with_threshold(
+                    field_name, url, field_extraction_error_threshold
+                )
     
     def _record_field_extraction_error_with_threshold(
         self, 

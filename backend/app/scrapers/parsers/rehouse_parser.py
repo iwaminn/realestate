@@ -536,6 +536,14 @@ class RehouseParser(BaseHtmlParser):
         # 引渡時期
         elif '引渡' in label:
             property_data['delivery_date'] = value
+        
+        # 敷地の権利形態（フィールド抽出追跡を使用）
+        elif '敷地' in label and '権利' in label:
+            land_rights = self.extract_text(value)
+            # '-' は値なしとして扱う
+            if land_rights == '-':
+                land_rights = None
+            self.track_field_extraction(property_data, 'land_rights', land_rights, field_found=True)
     
     def _extract_date_info(self, soup: BeautifulSoup, property_data: Dict[str, Any]):
         """日付情報を抽出"""

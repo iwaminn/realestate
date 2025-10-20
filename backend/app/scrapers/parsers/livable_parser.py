@@ -640,11 +640,13 @@ class LivableParser(BaseHtmlParser):
             if fund:
                 property_data['repair_fund'] = fund
         
-        # 土地権利
-        elif '土地権利' in label or '敷地権' in label or '所有権' in label:
+        # 土地権利（フィールド抽出追跡を使用）
+        elif '土地権利' in label or '敷地権' in label or '所有権' in label or ('敷地' in label and '権利' in label):
             land_rights = self.extract_text(value)
-            if land_rights and land_rights != '-':
-                property_data['land_rights'] = land_rights
+            # '-' は値なしとして扱う
+            if land_rights == '-':
+                land_rights = None
+            self.track_field_extraction(property_data, 'land_rights', land_rights, field_found=True)
         
         # 駅情報・交通
         elif '交通' in label or '駅徒歩' in label or '最寄' in label:

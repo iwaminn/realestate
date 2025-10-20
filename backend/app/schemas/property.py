@@ -16,6 +16,7 @@ class ListingSchema(BaseModel):
     management_fee: Optional[int]
     repair_fund: Optional[int]
     remarks: Optional[str]
+    listing_land_rights: Optional[str]
     is_active: bool
     first_seen_at: datetime
     last_scraped_at: datetime

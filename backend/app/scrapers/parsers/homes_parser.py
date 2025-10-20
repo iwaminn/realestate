@@ -251,7 +251,7 @@ class HomesParser(BaseHtmlParser):
             ValueError: HTML構造が期待と異なる場合
             PropertyTypeNotSupportedError: マンション以外の物件タイプの場合
         """
-        from app.utils.exceptions import PropertyTypeNotSupportedError
+        from ...utils.exceptions import PropertyTypeNotSupportedError
         
         property_data = {}
 
@@ -414,6 +414,14 @@ class HomesParser(BaseHtmlParser):
         elif '総戸数' in key or '総区画数' in key:
             units = self.parse_total_units(value)
             self.track_field_extraction(property_data, 'total_units', units, field_found=True)
+        
+        # 敷地の権利形態（フィールド抽出追跡を使用）
+        elif '敷地' in key and '権利' in key:
+            land_rights = self.extract_text(value)
+            # '-' は値なしとして扱う
+            if land_rights == '-':
+                land_rights = None
+            self.track_field_extraction(property_data, 'land_rights', land_rights, field_found=True)
 
         # 部屋番号
         elif '部屋番号' in key or '号室' in key:
@@ -440,7 +448,7 @@ class HomesParser(BaseHtmlParser):
             ValueError: HTML構造が期待と異なる場合
             PropertyTypeNotSupportedError: タウンハウスなど除外対象の物件タイプの場合
         """
-        from app.utils.exceptions import PropertyTypeNotSupportedError
+        from ...utils.exceptions import PropertyTypeNotSupportedError
         
         h1_building_name = None
         room_number = None
