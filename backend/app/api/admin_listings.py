@@ -144,7 +144,7 @@ async def get_listings(
             'floor_number': listing.master_property.floor_number if listing.master_property else None,
             'area': listing.master_property.area if listing.master_property else None,
             'layout': listing.master_property.layout if listing.master_property else None,
-            'station_info': listing.station_info,
+            'station_info': listing.listing_station_info,  # 新カラムを使用（後方互換性のためキー名は維持）
             'first_seen_at': listing.first_seen_at.isoformat() if listing.first_seen_at else None,
             'last_confirmed_at': listing.last_confirmed_at.isoformat() if listing.last_confirmed_at else None,
             'delisted_at': listing.delisted_at.isoformat() if listing.delisted_at else None,
@@ -264,7 +264,7 @@ async def get_listing_detail(
         'repair_fund': listing.repair_fund,
         'agency_name': listing.agency_name,
         'agency_tel': listing.agency_tel,
-        'station_info': listing.station_info,
+        'station_info': listing.listing_station_info,  # 新カラムを使用（後方互換性のためキー名は維持）
         'remarks': listing.remarks,
 
         'first_seen_at': listing.first_seen_at.isoformat() if listing.first_seen_at else None,

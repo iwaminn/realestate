@@ -237,7 +237,7 @@ async def get_building_properties(
         func.bool_or(PropertyListing.is_active).label('has_active_listing'),
         func.max(PropertyListing.last_confirmed_at).label('last_confirmed_at'),
         func.max(PropertyListing.delisted_at).label('delisted_at'),
-        func.max(PropertyListing.station_info).label('station_info'),
+        func.max(PropertyListing.listing_station_info).label('station_info'),
         func.min(func.coalesce(
             PropertyListing.first_published_at,
             PropertyListing.published_at,

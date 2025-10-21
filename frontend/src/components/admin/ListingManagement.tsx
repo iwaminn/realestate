@@ -1068,6 +1068,18 @@ export const ListingManagement: React.FC = () => {
                               {selectedListing.listing_balcony_area ? `${selectedListing.listing_balcony_area}㎡` : '-'}
                             </Typography>
                           </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">管理費</Typography>
+                            <Typography variant="body2">
+                              {selectedListing.management_fee ? `${selectedListing.management_fee.toLocaleString()}円` : '-'}
+                            </Typography>
+                          </Grid>
+                          <Grid item xs={12} sm={6} md={3}>
+                            <Typography variant="caption" color="text.secondary">修繕積立金</Typography>
+                            <Typography variant="body2">
+                              {selectedListing.repair_fund ? `${selectedListing.repair_fund.toLocaleString()}円` : '-'}
+                            </Typography>
+                          </Grid>
 
                           {/* 掲載情報が保持する建物情報 */}
                           <Grid item xs={12}>

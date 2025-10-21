@@ -4291,14 +4291,14 @@ class BaseScraper(ABC):
                 changed_fields.append(f'説明文({old_desc_display}→{desc_display})')
             listing.description = description or listing.description
             
-            if station_info and listing.station_info != station_info:
+            if station_info and listing.listing_station_info != station_info:
                 other_changed = True
-                old_station = listing.station_info or "未設定"
+                old_station = listing.listing_station_info or "未設定"
                 # 駅情報が長い場合は省略
                 old_station_display = old_station[:25] + "..." if len(old_station) > 25 else old_station
                 station_display = station_info[:25] + "..." if len(station_info) > 25 else station_info
                 changed_fields.append(f'駅情報({old_station_display}→{station_display})')
-            listing.station_info = station_info or listing.station_info
+            listing.listing_station_info = station_info or listing.listing_station_info
             
             
             if management_fee is not None and listing.management_fee != management_fee:
@@ -4516,7 +4516,7 @@ class BaseScraper(ABC):
                     agency_name=agency_name,
                     site_property_id=site_property_id,
                     description=description,
-                    station_info=station_info,
+                    listing_station_info=station_info,
                     management_fee=management_fee,
                     repair_fund=repair_fund,
                     is_active=True,
@@ -4580,7 +4580,7 @@ class BaseScraper(ABC):
                                 agency_name=agency_name,
                                 site_property_id=site_property_id,
                                 description=description,
-                                station_info=station_info,
+                                listing_station_info=station_info,
                                             management_fee=management_fee,
                                 repair_fund=repair_fund,
                                 is_active=True,

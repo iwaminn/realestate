@@ -209,7 +209,7 @@ async def get_property_detail(
             'source_site': listing.source_site,
             'url': listing.url,
             'current_price': listing.current_price,
-            'station_info': listing.station_info,
+            'station_info': listing.listing_station_info,  # 新カラムを使用
             'listing_building_name': listing.listing_building_name,
             'listing_address': listing.listing_address,
             # 詳細フィールドを追加

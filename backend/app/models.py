@@ -128,7 +128,6 @@ class PropertyListing(Base):
     current_price = Column(Integer)                           # 現在の価格（万円）
     
     # 詳細情報（サイトごとに異なる可能性がある項目）
-    station_info = Column(Text)                               # 交通（駅からの距離など）
     description = Column(Text)                                # 物件説明
     management_company = Column(String(200))                  # 管理会社
     management_fee = Column(Integer)                          # 管理費
