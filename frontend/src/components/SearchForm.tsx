@@ -324,6 +324,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
               }}
               slotProps={{
                 popper: {
+                  placement: isMobile ? 'bottom' : 'bottom-start',
                   modifiers: [
                     {
                       name: 'offset',
@@ -333,8 +334,12 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                     },
                   ],
                   sx: {
-                    width: 'calc(100% - 24px) !important',
-                    marginLeft: '12px',
+                    ...(isMobile ? {
+                      width: 'calc(100% - 24px) !important',
+                      marginLeft: '12px',
+                    } : {
+                      minWidth: '600px',
+                    }),
                     '& .MuiAutocomplete-listbox': {
                       maxHeight: '400px',
                     },
