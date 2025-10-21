@@ -40,9 +40,11 @@ async def get_properties(
 
     # 物件レベルの価格改定情報を property_price_changes テーブルから取得
     # 多数決価格が変更された場合のみ記録されている
+    # 同じ日に複数の変更がある場合は、最新のcreated_atを取得
     price_change_subquery = db.query(
         PropertyPriceChange.master_property_id,
         func.max(PropertyPriceChange.change_date).label('latest_price_change_date'),
+        func.max(PropertyPriceChange.created_at).label('latest_price_change_time'),
         func.bool_or(True).label('has_price_change')
     ).group_by(PropertyPriceChange.master_property_id).subquery()
     
@@ -84,6 +86,7 @@ async def get_properties(
         price_subquery.c.station_info,
         published_date_subquery.c.earliest_published_at,
         price_change_subquery.c.latest_price_change_date.label('latest_price_update'),
+        price_change_subquery.c.latest_price_change_time.label('latest_price_update_time'),
         func.coalesce(price_change_subquery.c.has_price_change, False).label('has_price_change')
     ).outerjoin(
         published_date_subquery,
@@ -105,6 +108,7 @@ async def get_properties(
         combined_subquery.c.station_info,
         combined_subquery.c.earliest_published_at,
         combined_subquery.c.latest_price_update,
+        combined_subquery.c.latest_price_update_time,
         combined_subquery.c.has_price_change
     ).join(
         Building, MasterProperty.building_id == Building.id
@@ -211,14 +215,24 @@ async def get_properties(
             query = query.order_by(tsubo_price_expr.asc().nullsfirst())
     else:  # デフォルト: updated_at (価格改定日または売出確認日)
         # 価格改定日が存在する場合はそれを優先、なければ売出確認日を使用
+        # 第二ソートキー: 価格改定時刻（同じ日の価格変更を時刻順に並べる）
+        # 第三ソートキー: 物件ID（降順、より新しい物件を上に）
         sort_column = func.coalesce(
             combined_subquery.c.latest_price_update,
             combined_subquery.c.earliest_published_at
         )
-        query = query.order_by(
-            sort_column.desc().nullslast() if sort_order == "desc"
-            else sort_column.asc().nullsfirst()
-        )
+        if sort_order == "desc":
+            query = query.order_by(
+                sort_column.desc().nullslast(),
+                combined_subquery.c.latest_price_update_time.desc().nullslast(),
+                MasterProperty.id.desc()
+            )
+        else:
+            query = query.order_by(
+                sort_column.asc().nullsfirst(),
+                combined_subquery.c.latest_price_update_time.asc().nullsfirst(),
+                MasterProperty.id.asc()
+            )
     
     # ページネーション
     offset = (page - 1) * per_page
@@ -228,7 +242,7 @@ async def get_properties(
     properties = []
     for (mp, building, listing_count, source_sites, has_active_listing, 
          last_confirmed_at, delisted_at, station_info, earliest_published_at, 
-         latest_price_update, has_price_change) in results:
+         latest_price_update, latest_price_update_time, has_price_change) in results:
         
         # 価格を決定：アクティブな掲載がない場合のみfinal_priceを使用
         if not has_active_listing and mp.sold_at and mp.final_price:
