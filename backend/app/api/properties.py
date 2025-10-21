@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import func, or_, and_, distinct, String, select, case
 
 from ..database import get_db
-from ..models import Building, MasterProperty, PropertyListing, ListingPriceHistory
+from ..models import Building, MasterProperty, PropertyListing, ListingPriceHistory, PropertyPriceChange
 from ..schemas.property import PropertyDetailSchema, MasterPropertySchema, ListingSchema, PriceHistorySchema
 from ..schemas.building import BuildingSchema
 from ..utils.price_queries import create_majority_price_subquery, create_price_stats_subquery, apply_price_filter, get_sold_property_final_price
@@ -38,16 +38,22 @@ async def get_properties(
     # listing_countは常にアクティブな掲載のみカウント
     # latest_price_updateとhas_price_changeは常に全掲載を対象
 
-    # まず、各物件の価格改定情報と売出し確認日を全掲載から計算するサブクエリ
-    price_info_subquery = db.query(
+    # 物件レベルの価格改定情報を property_price_changes テーブルから取得
+    # 多数決価格が変更された場合のみ記録されている
+    price_change_subquery = db.query(
+        PropertyPriceChange.master_property_id,
+        func.max(PropertyPriceChange.change_date).label('latest_price_change_date'),
+        func.bool_or(True).label('has_price_change')
+    ).group_by(PropertyPriceChange.master_property_id).subquery()
+    
+    # 売出し確認日を全掲載から計算するサブクエリ
+    published_date_subquery = db.query(
         PropertyListing.master_property_id,
-        func.max(PropertyListing.price_updated_at).label('latest_price_update_all'),
-        func.bool_or(PropertyListing.price_updated_at.isnot(None)).label('has_price_change_all'),
         func.min(func.coalesce(
             PropertyListing.first_published_at,
             PropertyListing.published_at,
             PropertyListing.first_seen_at
-        )).label('earliest_published_at_all')
+        )).label('earliest_published_at')
     ).group_by(PropertyListing.master_property_id).subquery()
 
     price_subquery = db.query(
@@ -67,7 +73,7 @@ async def get_properties(
         PropertyListing.master_property_id
     ).subquery()
 
-    # price_info_subqueryと結合
+    # price_change_subquery と published_date_subquery を結合
     combined_subquery = db.query(
         price_subquery.c.master_property_id,
         price_subquery.c.listing_count,
@@ -76,12 +82,15 @@ async def get_properties(
         price_subquery.c.last_confirmed_at,
         price_subquery.c.delisted_at,
         price_subquery.c.station_info,
-        price_info_subquery.c.earliest_published_at_all.label('earliest_published_at'),
-        price_info_subquery.c.latest_price_update_all.label('latest_price_update'),
-        price_info_subquery.c.has_price_change_all.label('has_price_change')
+        published_date_subquery.c.earliest_published_at,
+        price_change_subquery.c.latest_price_change_date.label('latest_price_update'),
+        func.coalesce(price_change_subquery.c.has_price_change, False).label('has_price_change')
     ).outerjoin(
-        price_info_subquery,
-        price_subquery.c.master_property_id == price_info_subquery.c.master_property_id
+        published_date_subquery,
+        price_subquery.c.master_property_id == published_date_subquery.c.master_property_id
+    ).outerjoin(
+        price_change_subquery,
+        price_subquery.c.master_property_id == price_change_subquery.c.master_property_id
     ).subquery()
     
     # メインクエリ
