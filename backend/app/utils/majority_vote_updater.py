@@ -877,6 +877,10 @@ class MajorityVoteUpdater:
         
         # 広告文除去後に空文字になる場合はスキップ（元の名前を保持）
         if not normalized_best_name or normalized_best_name.strip() == '':
+            # 広告文のみの建物と判定
+            if hasattr(building, 'is_valid_name'):
+                building.is_valid_name = False
+                logger.info(f"建物ID {building_id}: is_valid_nameをFalseに更新（広告文のみ: '{best_name}'）")
             logger.warning(
                 f"建物ID {building_id}: 広告文除去後に空文字になるためスキップ "
                 f"(元の名前: '{best_name}', 現在の名前: '{building.normalized_name}')"
@@ -905,15 +909,10 @@ class MajorityVoteUpdater:
             building.normalized_name = normalized_best_name
             building.canonical_name = new_canonical_name
             
-            # 多数決で建物名が更新された場合、広告文のみかどうかを判定
-            is_ad_only = self._is_advertising_text(normalized_best_name)
+            # 多数決で建物名が更新された場合は、有効な建物名とみなす
             if hasattr(building, 'is_valid_name'):
-                if is_ad_only:
-                    building.is_valid_name = False
-                    logger.info(f"建物ID {building_id}: is_valid_nameをFalseに更新（広告文のみ: '{normalized_best_name}'）")
-                else:
-                    building.is_valid_name = True
-                    logger.info(f"建物ID {building_id}: is_valid_nameをTrueに更新（有効な建物名: '{normalized_best_name}'）")
+                building.is_valid_name = True
+                logger.info(f"建物ID {building_id}: is_valid_nameをTrueに更新（有効な建物名: '{normalized_best_name}'）")
             
             return True
         
@@ -1027,9 +1026,14 @@ class MajorityVoteUpdater:
             
             # 広告文除去後に空文字になる場合はスキップ
             if not normalized_best_name or normalized_best_name.strip() == '':
+                # 広告文のみの建物と判定（建物レベルでも設定）
+                building = self.session.query(Building).filter_by(id=property_obj.building_id).first()
+                if building and hasattr(building, 'is_valid_name'):
+                    building.is_valid_name = False
+                    logger.info(f"建物ID {property_obj.building_id}: is_valid_nameをFalseに更新（広告文のみ: '{best_name}'）")
                 logger.warning(
                     f"物件ID {property_id}: 広告文除去後に空文字になるためスキップ "
-                    f"(元の名前: '{best_name}', 現在の名前: '{property_obj.display_building_name}')"
+                    f"(元の名前: '{best_name}')"
                 )
                 return False
             
@@ -1065,50 +1069,6 @@ class MajorityVoteUpdater:
         site_priority = self.get_site_priority(source_site)
         # 優先度が高いサイトほど大きい重み
         return len(self.SITE_PRIORITY) - site_priority
-    
-    def _is_advertising_text(self, text: str) -> bool:
-        """広告的なテキストかどうかを判定"""
-        import re
-        
-        if not text:
-            return False
-        
-        # 広告的なパターン
-        ad_patterns = [
-            r'徒歩\d+分',
-            r'駅.*\d+分',
-            r'の中古マンション',
-            r'新築',
-            r'分譲',
-            r'賃貸',
-            r'[0-9,]+万円',
-            r'\d+LDK',
-            r'\d+階建',
-            r'築\d+年',
-            # 階数を含む建物名も広告文として扱う
-            r'\d+階$',  # 末尾に「○階」（スペースは不要）
-            r'\d+階部分',  # 「○階部分」
-            r'\d+階角部屋',  # 「○階角部屋」
-            r'地下\d+階',  # 「地下○階」
-            r'×\d+階',  # 「×14階」のようなパターン
-            r'〜.*〜$',  # 「〜ブランズ赤坂〜」のような広告的な表現
-            # 駅名のみの場合
-            r'^[^\s]+駅\s+徒歩',
-            r'^東京メトロ',
-            r'^JR[^\s]+線',
-            r'^都営[^\s]+線',
-        ]
-        
-        # いずれかのパターンにマッチしたら広告文と判定
-        for pattern in ad_patterns:
-            if re.search(pattern, text):
-                return True
-        
-        # 建物名として短すぎる場合も広告文と判定
-        if len(text) < 3:
-            return True
-        
-        return False
     
     def update_property_with_new_listing_info(self, master_property: MasterProperty, 
                                             listing_info: Dict[str, Any]) -> bool:
