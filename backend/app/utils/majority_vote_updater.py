@@ -905,10 +905,15 @@ class MajorityVoteUpdater:
             building.normalized_name = normalized_best_name
             building.canonical_name = new_canonical_name
             
-            # 多数決で建物名が更新された場合は、妥当な名前とみなす
-            if hasattr(building, 'is_valid_name') and not building.is_valid_name:
-                building.is_valid_name = True
-                logger.info(f"建物ID {building_id}: is_valid_nameをTrueに更新")
+            # 多数決で建物名が更新された場合、広告文のみかどうかを判定
+            is_ad_only = self._is_advertising_text(normalized_best_name)
+            if hasattr(building, 'is_valid_name'):
+                if is_ad_only:
+                    building.is_valid_name = False
+                    logger.info(f"建物ID {building_id}: is_valid_nameをFalseに更新（広告文のみ: '{normalized_best_name}'）")
+                else:
+                    building.is_valid_name = True
+                    logger.info(f"建物ID {building_id}: is_valid_nameをTrueに更新（有効な建物名: '{normalized_best_name}'）")
             
             return True
         
