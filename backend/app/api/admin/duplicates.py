@@ -2145,6 +2145,15 @@ async def merge_buildings(
                                 ).first()
                                 
                                 if not is_referenced:
+                                    # property_merge_exclusionsからの参照を削除
+                                    from app.models import PropertyMergeExclusion
+                                    db.query(PropertyMergeExclusion).filter(
+                                        or_(
+                                            PropertyMergeExclusion.property1_id == secondary_prop_id,
+                                            PropertyMergeExclusion.property2_id == secondary_prop_id
+                                        )
+                                    ).delete(synchronize_session=False)
+                                    
                                     # 参照されていない場合のみ削除
                                     db.delete(secondary_prop)
                                     duplicate_properties_merged += 1
