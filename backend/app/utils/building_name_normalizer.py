@@ -479,6 +479,61 @@ def remove_ad_text_from_building_name(ad_text: str) -> str:
 
     return result
 
+
+def remove_room_number_from_building_name(building_name: str, room_number: str | None) -> str:
+    """
+    建物名から部屋番号を除去する
+    
+    建物名の末尾に部屋番号が含まれている場合（スペース区切りを含む）、
+    それを除去して建物名のみを返す
+    
+    Args:
+        building_name: 建物名（部屋番号が含まれている可能性がある）
+        room_number: 部屋番号（Noneの場合は何もしない）
+        
+    Returns:
+        部屋番号を除去した建物名
+        
+    Examples:
+        >>> remove_room_number_from_building_name("グラントゥルース神田岩本町1002", "1002")
+        "グラントゥルース神田岩本町"
+        >>> remove_room_number_from_building_name("新宿ウエスト424", "424")
+        "新宿ウエスト"
+        >>> remove_room_number_from_building_name("チサンマンション祐天寺 104", "104")
+        "チサンマンション祐天寺"
+        >>> remove_room_number_from_building_name("パークコート千代田富士見ザ タワー", "2401")
+        "パークコート千代田富士見ザ タワー"
+    """
+    if not building_name or not room_number:
+        return building_name
+    
+    # 部屋番号を正規化（全角→半角）
+    import unicodedata
+    normalized_room_number = unicodedata.normalize('NFKC', str(room_number))
+    
+    # 建物名の末尾が部屋番号で終わっているかチェック
+    # パターン1: 部屋番号そのまま（例：「グラントゥルース神田岩本町1002」）
+    if building_name.endswith(normalized_room_number):
+        return building_name[:-len(normalized_room_number)].strip()
+    
+    # パターン2: 半角スペース + 部屋番号（例：「新宿ウエスト 424」）
+    pattern_half_space = f" {normalized_room_number}"
+    if building_name.endswith(pattern_half_space):
+        return building_name[:-len(pattern_half_space)].strip()
+    
+    # パターン3: 全角スペース + 部屋番号（例：「新宿ウエスト　424」）
+    pattern_full_space = f"　{normalized_room_number}"
+    if building_name.endswith(pattern_full_space):
+        return building_name[:-len(pattern_full_space)].strip()
+    
+    # パターン4: ハイフン + 部屋番号（例：「新宿ウエスト-424」）
+    pattern_hyphen = f"-{normalized_room_number}"
+    if building_name.endswith(pattern_hyphen):
+        return building_name[:-len(pattern_hyphen)].strip()
+    
+    # 部屋番号が含まれていない場合は元の建物名を返す
+    return building_name
+
 def normalize_building_name_with_ad_removal(building_name: str) -> str:
     """
     建物名を正規化する（広告文削除付き）

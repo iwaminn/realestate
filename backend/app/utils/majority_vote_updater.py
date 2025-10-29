@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, and_, String
 from sqlalchemy.orm import Session
 from ..models import Building, MasterProperty, PropertyListing, ListingPriceHistory
-from .building_name_normalizer import remove_ad_text_from_building_name
+from .building_name_normalizer import remove_ad_text_from_building_name, remove_room_number_from_building_name
 import logging
 
 logger = logging.getLogger(__name__)
@@ -953,7 +953,12 @@ class MajorityVoteUpdater:
                 if listing.listing_building_name:
                     # 広告文除去処理を適用
                     cleaned_building_name = remove_ad_text_from_building_name(listing.listing_building_name)
-                    
+
+                    # 部屋番号除去処理を適用
+                    cleaned_building_name = remove_room_number_from_building_name(
+                        cleaned_building_name, property_obj.room_number
+                    )
+
                     # 広告文除去後に有効な建物名がない場合はスキップ
                     if not cleaned_building_name:
                         continue
@@ -976,7 +981,12 @@ class MajorityVoteUpdater:
                 if listing.listing_building_name:
                     # 広告文除去処理を適用
                     cleaned_building_name = remove_ad_text_from_building_name(listing.listing_building_name)
-                    
+
+                    # 部屋番号除去処理を適用
+                    cleaned_building_name = remove_room_number_from_building_name(
+                        cleaned_building_name, property_obj.room_number
+                    )
+
                     # 広告文除去後に有効な建物名がない場合はスキップ
                     if not cleaned_building_name:
                         continue
