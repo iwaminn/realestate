@@ -23,6 +23,8 @@ import {
   FormControl,
   InputLabel,
   Tooltip,
+  Checkbox,
+  FormControlLabel,
 } from '@mui/material';
 import {
   Update as UpdateIcon,
@@ -88,6 +90,7 @@ export const DataUpdateManagement: React.FC = () => {
   } | null>(null);
   const [transactionPriceStats, setTransactionPriceStats] = useState<TransactionPriceStats | null>(null);
   const [updatingTransactionPrices, setUpdatingTransactionPrices] = useState(false);
+  const [forceRefetch, setForceRefetch] = useState(false);
 
   // キューステータスを取得
   const fetchQueueStatus = async () => {
@@ -179,9 +182,13 @@ export const DataUpdateManagement: React.FC = () => {
       await fetchQueueStatus();
       await fetchCacheStats();
     } catch (error) {
+      let errorMsg = '価格改定履歴の更新に失敗しました';
+      if (axios.isAxiosError(error) && error.response?.data?.detail) {
+        errorMsg = error.response.data.detail;
+      }
       setMessage({
         type: 'error',
-        text: '価格改定履歴の更新に失敗しました'
+        text: errorMsg
       });
     } finally {
       setLoading(false);
@@ -213,13 +220,17 @@ export const DataUpdateManagement: React.FC = () => {
       // 統計を再取得
       await fetchListingStats();
     } catch (error) {
+      let errorMsg = '掲載状態の更新に失敗しました';
+      if (axios.isAxiosError(error) && error.response?.data?.detail) {
+        errorMsg = error.response.data.detail;
+      }
       setListingUpdateResult({
         success: false,
-        message: '掲載状態の更新に失敗しました',
+        message: errorMsg,
       });
       setMessage({
         type: 'error',
-        text: '掲載状態の更新に失敗しました'
+        text: errorMsg
       });
     } finally {
       setUpdatingListingStatus(false);
@@ -228,7 +239,8 @@ export const DataUpdateManagement: React.FC = () => {
 
   // 成約価格情報を更新
   const updateTransactionPrices = async (mode: 'update' | 'full' = 'update') => {
-    if (!confirm(`成約価格情報を${mode === 'full' ? '全期間' : '最新データのみ'}更新しますか？\n更新には数分かかる場合があります。`)) {
+    const refetchMsg = forceRefetch ? '\n※ 既に取得済みの期間も強制的に再取得します' : '';
+    if (!confirm(`成約価格情報を${mode === 'full' ? '全期間' : '最新データのみ'}更新しますか？${refetchMsg}\n更新には数分かかる場合があります。`)) {
       return;
     }
 
@@ -236,7 +248,7 @@ export const DataUpdateManagement: React.FC = () => {
 
     try {
       const response = await axios.post('/admin/transaction-prices/update', null, {
-        params: { mode }
+        params: { mode, force_refetch: forceRefetch }
       });
       setMessage({
         type: 'success',
@@ -245,10 +257,17 @@ export const DataUpdateManagement: React.FC = () => {
       // 統計を再取得
       await fetchTransactionPriceStats();
     } catch (error) {
-      setMessage({
-        type: 'error',
-        text: '成約価格情報の更新に失敗しました'
-      });
+      if (axios.isAxiosError(error) && error.response?.status === 409) {
+        setMessage({
+          type: 'warning',
+          text: error.response?.data?.detail || '成約価格情報の更新が既に実行中です'
+        });
+      } else {
+        setMessage({
+          type: 'error',
+          text: '成約価格情報の更新に失敗しました'
+        });
+      }
     } finally {
       setUpdatingTransactionPrices(false);
     }
@@ -274,9 +293,13 @@ export const DataUpdateManagement: React.FC = () => {
       await fetchQueueStatus();
       await fetchCacheStats();
     } catch (error) {
+      let errorMsg = 'キューの処理に失敗しました';
+      if (axios.isAxiosError(error) && error.response?.data?.detail) {
+        errorMsg = error.response.data.detail;
+      }
       setMessage({
         type: 'error',
-        text: 'キューの処理に失敗しました'
+        text: errorMsg
       });
     } finally {
       setLoading(false);
@@ -501,6 +524,24 @@ export const DataUpdateManagement: React.FC = () => {
                 <Typography variant="body2" color="text.secondary">
                   • 全期間：すべての期間のデータを再取得（2021年〜）
                 </Typography>
+                <Box sx={{ mt: 2 }}>
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={forceRefetch}
+                        onChange={(e) => setForceRefetch(e.target.checked)}
+                        color="warning"
+                      />
+                    }
+                    label={
+                      <Tooltip title="既に取得済みの期間も完了記録を無視して強制的に再取得します。データに不整合がある場合に使用してください。" arrow>
+                        <Typography variant="body2" color="text.secondary">
+                          強制再取得（既存データも更新）
+                        </Typography>
+                      </Tooltip>
+                    }
+                  />
+                </Box>
               </CardContent>
               <CardActions>
                 <Button

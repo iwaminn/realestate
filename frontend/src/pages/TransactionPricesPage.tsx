@@ -81,6 +81,15 @@ interface PriceTrendData {
 type OrderBy = 'transaction_year' | 'area_name' | 'transaction_price' | 'price_per_sqm' | 'floor_area';
 type Order = 'asc' | 'desc';
 
+// 現在の年と四半期を取得する関数
+const getCurrentYearAndQuarter = () => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth(); // 0-11
+  const quarter = Math.floor(month / 3) + 1; // 1-4
+  return { year, quarter };
+};
+
 const TransactionPricesPage: React.FC = () => {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
@@ -93,8 +102,11 @@ const TransactionPricesPage: React.FC = () => {
   const [selectedYear, setSelectedYear] = useState<number | ''>('');
   const [startYear, setStartYear] = useState<number>(2020);
   const [startQuarter, setStartQuarter] = useState<number>(1);
-  const [endYear, setEndYear] = useState<number>(2025);
-  const [endQuarter, setEndQuarter] = useState<number>(1);
+
+  // 現在の年と四半期を動的に設定
+  const currentPeriod = getCurrentYearAndQuarter();
+  const [endYear, setEndYear] = useState<number>(currentPeriod.year);
+  const [endQuarter, setEndQuarter] = useState<number>(currentPeriod.quarter);
   const [areaStats, setAreaStats] = useState<AreaStatistics[]>([]);
   const [priceTrends, setPriceTrends] = useState<PriceTrendData[]>([]);
   const [areaSpecificTrends, setAreaSpecificTrends] = useState<{[key: string]: PriceTrendData[]}>({});
@@ -627,7 +639,7 @@ const TransactionPricesPage: React.FC = () => {
                   onChange={handleStartYearChange}
                   label="開始年"
                 >
-                  {[2020, 2021, 2022, 2023, 2024, 2025]
+                  {Array.from({ length: currentPeriod.year - 2020 + 1 }, (_, i) => 2020 + i)
                     .filter(year => year <= endYear)
                     .map(year => (
                       <MenuItem key={year} value={year}>{year}年</MenuItem>
@@ -659,7 +671,7 @@ const TransactionPricesPage: React.FC = () => {
                   onChange={handleEndYearChange}
                   label="終了年"
                 >
-                  {[2020, 2021, 2022, 2023, 2024, 2025]
+                  {Array.from({ length: currentPeriod.year - 2020 + 1 }, (_, i) => 2020 + i)
                     .filter(year => year >= startYear)
                     .map(year => (
                       <MenuItem key={year} value={year}>{year}年</MenuItem>

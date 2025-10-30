@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from sqlalchemy import create_engine, func
 from sqlalchemy.orm import sessionmaker
-from app.models import TransactionPrice
+from app.models import TransactionPrice, TransactionDataFetchCompletion
 from dotenv import load_dotenv
 
 # 環境変数を読み込み
@@ -289,6 +289,68 @@ class TransactionPriceAPIFetcher:
         self.db.commit()
         print(f"保存完了: {saved_count}件追加、{updated_count}件更新、{skipped_count}件スキップ")
 
+    def record_fetch_completion(self, city_code: str, city_name: str, year: int, quarter: int, record_count: int):
+        """
+        データ取得完了を記録
+        
+        Args:
+            city_code: 市区町村コード
+            city_name: 市区町村名
+            year: 取得年
+            quarter: 四半期
+            record_count: 取得した件数
+        """
+        try:
+            # 既存レコードをチェック
+            existing = self.db.query(TransactionDataFetchCompletion).filter(
+                TransactionDataFetchCompletion.city_code == city_code,
+                TransactionDataFetchCompletion.year == year,
+                TransactionDataFetchCompletion.quarter == quarter
+            ).first()
+            
+            if existing:
+                # 更新
+                existing.record_count = record_count
+                existing.completed_at = datetime.now()
+                existing.updated_at = datetime.now()
+            else:
+                # 新規作成
+                completion = TransactionDataFetchCompletion(
+                    city_code=city_code,
+                    city_name=city_name,
+                    year=year,
+                    quarter=quarter,
+                    record_count=record_count,
+                    completed_at=datetime.now()
+                )
+                self.db.add(completion)
+            
+            self.db.commit()
+            print(f"完了記録を保存: {city_name} {year}年Q{quarter} ({record_count}件)")
+        except Exception as e:
+            print(f"完了記録の保存エラー: {e}")
+            self.db.rollback()
+
+    def is_fetch_completed(self, city_code: str, year: int, quarter: int) -> bool:
+        """
+        指定期間のデータ取得が完了しているかチェック
+        
+        Args:
+            city_code: 市区町村コード
+            year: 取得年
+            quarter: 四半期
+            
+        Returns:
+            完了していればTrue
+        """
+        completion = self.db.query(TransactionDataFetchCompletion).filter(
+            TransactionDataFetchCompletion.city_code == city_code,
+            TransactionDataFetchCompletion.year == year,
+            TransactionDataFetchCompletion.quarter == quarter
+        ).first()
+        
+        return completion is not None
+
     def fetch_recent_data(self, city_code: Optional[str] = None):
         """
         最新の成約価格情報を取得（過去1四半期分）
@@ -325,14 +387,20 @@ class TransactionPriceAPIFetcher:
         # 保存
         if transactions:
             self.save_to_database(transactions)
+            
+            # 完了記録を保存
+            if city_code:
+                self.record_fetch_completion(city_code, area_name, year, quarter, len(transactions))
 
-    def fetch_historical_data(self, from_year: int = 2021, to_year: Optional[int] = None, city_code: Optional[str] = None):
+    def fetch_historical_data(self, from_year: int = 2021, to_year: Optional[int] = None, city_code: Optional[str] = None, force_refetch: bool = False):
         """
         指定期間の成約価格情報を取得
 
         Args:
             from_year: 開始年（デフォルト: 2021、成約価格情報の提供開始年）
             to_year: 終了年（省略時は現在年）
+            city_code: 市区町村コード
+            force_refetch: Trueの場合、完了記録を無視して再取得
         """
         if to_year is None:
             to_year = datetime.now().year
@@ -349,37 +417,55 @@ class TransactionPriceAPIFetcher:
                 if year == current_date.year and quarter > ((current_date.month - 1) // 3 + 1):
                     continue
 
+                # 完了記録をチェック（force_refetchがFalseの場合のみ）
+                if not force_refetch and city_code and self.is_fetch_completed(city_code, year, quarter):
+                    print(f"{area_name} - {year}年第{quarter}四半期: 取得済み（スキップ）")
+                    continue
+
                 # データ取得
                 raw_data = self.fetch_data(year, quarter, city_code=city_code)
 
                 # パース
+                period_transactions = []
                 for data in raw_data:
                     # 市区町村コードを取得
                     data_city_code = data.get("MunicipalityCode", city_code or DEFAULT_AREA_CODE)
                     transaction = self.parse_transaction(data, data_city_code)
                     if transaction:
-                        all_transactions.append(transaction)
+                        period_transactions.append(transaction)
+
+                if period_transactions:
+                    all_transactions.extend(period_transactions)
+                    # 期間ごとに保存と完了記録
+                    self.save_to_database(period_transactions)
+                    if city_code:
+                        self.record_fetch_completion(city_code, area_name, year, quarter, len(period_transactions))
 
                 # レート制限対策
                 time.sleep(1)
 
         print(f"合計{len(all_transactions)}件のマンション成約データを取得しました")
 
-        # 保存
-        if all_transactions:
-            self.save_to_database(all_transactions)
-
-    def get_latest_data_period(self):
+    def get_latest_data_period(self, city_code: Optional[str] = None):
         """
         データベースに保存されている最新のデータ期間を取得
+        
+        Args:
+            city_code: 市区町村コード（指定時はその区の最新データを取得）
 
         Returns:
             (year, quarter) のタプル
         """
-        latest = self.db.query(
+        query = self.db.query(
             TransactionPrice.transaction_year,
             TransactionPrice.transaction_quarter
-        ).order_by(
+        )
+        
+        # 市区町村コードが指定されている場合はフィルタリング
+        if city_code:
+            query = query.filter(TransactionPrice.district_code == city_code)
+        
+        latest = query.order_by(
             TransactionPrice.transaction_year.desc(),
             TransactionPrice.transaction_quarter.desc()
         ).first()
@@ -389,23 +475,30 @@ class TransactionPriceAPIFetcher:
         else:
             return None, None
 
-    def update_missing_periods(self, city_code: Optional[str] = None):
+    def update_missing_periods(self, city_code: Optional[str] = None, force_refetch: bool = False):
         """
         データベースに存在しない期間のデータを自動取得
+        
+        Args:
+            city_code: 市区町村コード（指定時はその区のみ更新）
+            force_refetch: Trueの場合、完了記録を無視して再取得
         """
-        latest_year, latest_quarter = self.get_latest_data_period()
+        # 区ごとの最新データを取得
+        latest_year, latest_quarter = self.get_latest_data_period(city_code=city_code)
 
         current_date = datetime.now()
         current_year = current_date.year
         current_quarter = (current_date.month - 1) // 3 + 1
 
+        area_name = next((k for k, v in AREA_CODES.items() if v == city_code), "全エリア") if city_code else "全エリア"
+
         if not latest_year:
             # データが全くない場合は2021年から取得
-            print("データベースが空です。2021年から取得を開始します。")
-            self.fetch_historical_data(from_year=2021, city_code=city_code)
+            print(f"{area_name}: データベースが空です。2021年から取得を開始します。")
+            self.fetch_historical_data(from_year=2021, city_code=city_code, force_refetch=force_refetch)
             return
 
-        print(f"最新データ: {latest_year}年第{latest_quarter}四半期")
+        print(f"{area_name} - 最新データ: {latest_year}年第{latest_quarter}四半期")
         print(f"現在: {current_year}年第{current_quarter}四半期")
 
         # 不足期間を取得
@@ -425,26 +518,37 @@ class TransactionPriceAPIFetcher:
             if year == current_year and quarter > current_quarter:
                 break
 
-            area_name = next((k for k, v in AREA_CODES.items() if v == city_code), "全エリア") if city_code else "全エリア"
+            # 完了記録をチェック（force_refetchがFalseの場合のみ）
+            if not force_refetch and city_code and self.is_fetch_completed(city_code, year, quarter):
+                print(f"{area_name} - {year}年第{quarter}四半期: 取得済み（スキップ）")
+                continue
+
             print(f"不足データを取得: {area_name} - {year}年第{quarter}四半期")
 
             # データ取得
             raw_data = self.fetch_data(year, quarter, city_code=city_code)
 
             # パース
+            period_transactions = []
             for data in raw_data:
                 # 市区町村コードを取得
                 data_city_code = data.get("MunicipalityCode", city_code or DEFAULT_AREA_CODE)
                 transaction = self.parse_transaction(data, data_city_code)
                 if transaction:
-                    all_transactions.append(transaction)
+                    period_transactions.append(transaction)
+
+            if period_transactions:
+                all_transactions.extend(period_transactions)
+                # 期間ごとに保存と完了記録
+                self.save_to_database(period_transactions)
+                if city_code:
+                    self.record_fetch_completion(city_code, area_name, year, quarter, len(period_transactions))
 
             # レート制限対策
             time.sleep(1)
 
         if all_transactions:
             print(f"合計{len(all_transactions)}件の新規データを取得しました")
-            self.save_to_database(all_transactions)
         else:
             print("新規データはありません")
 
@@ -466,6 +570,8 @@ def main():
                         help='取得開始年（historicalモード時）')
     parser.add_argument('--to-year', type=int,
                         help='取得終了年（historicalモード時）')
+    parser.add_argument('--force-refetch', action='store_true',
+                        help='完了記録を無視して強制的に再取得')
     parser.add_argument('--list-areas', action='store_true',
                         help='利用可能なエリア一覧を表示')
 
@@ -520,10 +626,10 @@ def main():
                 fetcher.fetch_recent_data(city_code=code)
             elif args.mode == 'historical':
                 # 指定期間すべて取得
-                fetcher.fetch_historical_data(from_year=args.from_year, to_year=args.to_year, city_code=code)
+                fetcher.fetch_historical_data(from_year=args.from_year, to_year=args.to_year, city_code=code, force_refetch=args.force_refetch)
             else:  # update
                 # 不足期間を自動判定して取得
-                fetcher.update_missing_periods(city_code=code)
+                fetcher.update_missing_periods(city_code=code, force_refetch=args.force_refetch)
 
         print(f"\n{'='*60}")
         print("すべての区の処理が完了しました")

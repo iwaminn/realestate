@@ -809,6 +809,32 @@ class TransactionPrice(Base):
     )
 
 
+class TransactionDataFetchCompletion(Base):
+    """成約価格データ取得完了記録テーブル"""
+    __tablename__ = "transaction_data_fetch_completion"
+
+    # 基本情報
+    id = Column(Integer, primary_key=True)
+    city_code = Column(String(10), nullable=False)  # 市区町村コード
+    city_name = Column(String(50))  # 市区町村名（表示用）
+    year = Column(Integer, nullable=False)  # 取得年
+    quarter = Column(Integer, nullable=False)  # 四半期（1-4）
+    
+    # 取得情報
+    record_count = Column(Integer, default=0)  # 取得した件数
+    completed_at = Column(DateTime, nullable=False)  # 取得完了日時
+    
+    # メタデータ
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, onupdate=func.now())
+
+    __table_args__ = (
+        UniqueConstraint('city_code', 'year', 'quarter', name='uq_city_year_quarter'),
+        Index('idx_fetch_completion_period', 'year', 'quarter'),
+        Index('idx_fetch_completion_city', 'city_code'),
+    )
+
+
 # 他のモデルをインポート（循環参照を避けるため最後にインポート）
 from .models_property_matching import AmbiguousPropertyMatch
 # from .models_scraping_task import ScrapingTask, ScrapingTaskProgress  # 循環インポート回避のためコメントアウト
