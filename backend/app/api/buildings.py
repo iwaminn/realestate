@@ -284,10 +284,13 @@ async def get_building_properties(
     
     # アクティブフィルタ
     if not include_inactive:
-        # sold_atではなくhas_active_listingで判定（販売終了でも新しいアクティブな掲載がある場合は表示）
+        # アクティブな掲載がある物件のみ表示
         query = query.filter(price_subquery_active.c.master_property_id.isnot(None))
         query = query.filter(price_subquery_active.c.has_active_listing == True)
-    
+    else:
+        # 非アクティブも含むが、掲載情報が全くない物件（ゾンビ物件）は除外
+        query = query.filter(price_subquery_all.c.master_property_id.isnot(None))
+
     # 階数でソート
     query = query.order_by(
         MasterProperty.floor_number.desc().nullslast(),
