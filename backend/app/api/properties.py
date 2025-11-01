@@ -448,9 +448,13 @@ async def get_property_details(
     
     if not master_property:
         raise HTTPException(status_code=404, detail="物件が見つかりません")
-    
+
     # 全掲載情報を取得（非アクティブも含む）
     all_listings = master_property.listings
+
+    # 掲載情報が0件の物件は表示しない（統合済み・削除済み物件）
+    if not all_listings:
+        raise HTTPException(status_code=404, detail="物件が見つかりません")
     
     # アクティブな掲載のみフィルタ
     active_listings = [l for l in all_listings if l.is_active]
