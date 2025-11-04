@@ -93,12 +93,13 @@ const PropertyMergeHistory: React.FC = () => {
 
     setReverting(true);
     try {
-      await axios.post(`/api/admin/revert-property-merge/${historyId}`);
+      await axios.post(`/admin/revert-property-merge/${historyId}`);
       alert('物件統合を取り消しました');
       fetchHistories();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to revert property merge:', error);
-      alert('取り消しに失敗しました');
+      const errorMessage = error.response?.data?.detail || error.message || '取り消しに失敗しました';
+      alert(`取り消しに失敗しました: ${errorMessage}`);
     } finally {
       setReverting(false);
       setSelectedHistory(null);
@@ -111,13 +112,13 @@ const PropertyMergeHistory: React.FC = () => {
     }
 
     try {
-      await axios.delete(`/api/admin/property-merge-history/${historyId}`);
+      await axios.delete(`/admin/property-merge-history/${historyId}`);
       alert('統合履歴を削除しました');
       fetchHistories();
     } catch (error: any) {
       console.error('Failed to delete property merge history:', error);
-      const errorMessage = error.response?.data?.detail || '削除に失敗しました';
-      alert(errorMessage);
+      const errorMessage = error.response?.data?.detail || error.message || '削除に失敗しました';
+      alert(`削除に失敗しました: ${errorMessage}`);
     }
   };
 
