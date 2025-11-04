@@ -143,12 +143,13 @@ const PropertyExclusionHistory: React.FC = () => {
 
     setReverting(true);
     try {
-      await axios.delete(`/api/admin/exclude-properties/${exclusionId}`);
+      await axios.delete(`/admin/exclude-properties/${exclusionId}`);
       alert('除外設定を取り消しました');
       fetchExclusions();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to revert property exclusion:', error);
-      alert('取り消しに失敗しました');
+      const errorMessage = error.response?.data?.detail || error.message || '取り消しに失敗しました';
+      alert(`取り消しに失敗しました: ${errorMessage}`);
     } finally {
       setReverting(false);
     }
