@@ -430,7 +430,6 @@ async def revert_property_merge(
                 direction=secondary_data.get("direction"),
                 management_fee=secondary_data.get("management_fee"),
                 repair_fund=secondary_data.get("repair_fund"),
-                station_info=secondary_data.get("station_info"),
                 parking_info=secondary_data.get("parking_info"),
                 display_building_name=secondary_data.get("display_building_name"),
                 created_at=datetime.fromisoformat(secondary_data["created_at"]) if secondary_data.get("created_at") else datetime.now(),
