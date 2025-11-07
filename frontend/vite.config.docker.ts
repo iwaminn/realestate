@@ -19,6 +19,16 @@ export default defineConfig({
         secure: false,
         cookieDomainRewrite: '',
         cookiePathRewrite: '/',
+      },
+      '/sitemap.xml': {
+        target: 'http://realestate-backend:8000',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/robots.txt': {
+        target: 'http://realestate-backend:8000',
+        changeOrigin: true,
+        secure: false,
       }
     }
   }
