@@ -56,6 +56,11 @@ services:
       # - MAIL_STARTTLS=True
       # - MAIL_SSL_TLS=False
       - FRONTEND_URL=${FRONTEND_URL}
+      # AWS SES設定（テスト用）
+      - SES_SMTP_HOST=${SES_SMTP_HOST}
+      - SES_SMTP_PORT=${SES_SMTP_PORT}
+      - SES_SMTP_USERNAME=${SES_SMTP_USERNAME}
+      - SES_SMTP_PASSWORD=${SES_SMTP_PASSWORD}
       # Google OAuth設定（開発環境用）
       # .envファイルから読み込み
       - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
@@ -80,7 +85,6 @@ services:
     volumes:
       - ./frontend:/app
       - ./certs:/app/certs:ro
-      - /app/node_modules
       - /etc/localtime:/etc/localtime:ro
     environment:
       # VITE_API_URL を削除してプロキシを使用

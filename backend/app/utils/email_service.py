@@ -275,56 +275,37 @@ class EmailService:
         """パスワードリセットメールを送信"""
         # アプリ名を取得
         app_name = os.getenv('VITE_APP_NAME', '都心マンション価格チェッカー')
-        
+
         # リセットURL生成
         base_url = os.getenv('FRONTEND_URL', 'http://localhost:3001')
         reset_url = f"{base_url}/reset-password?token={reset_token}"
-        
+
         if not self.enabled:
             # 開発モードではログに出力
             api_logger.info(f"[開発モード] パスワードリセットURL: {reset_url}")
             api_logger.info(f"[開発モード] 宛先: {email} ({user_name})")
             return True
-        
-        # 本番環境: FastMailでメール送信
+
+        # 本番環境: aiosmtplibで直接メール送信
         try:
             # HTMLテンプレート
             html_content = self._create_password_reset_html(user_name, reset_url, app_name)
-            
-            # テキスト版
-            text_content = f"""
-こんにちは{user_name or ''}様、
 
-{app_name}でパスワードリセットのリクエストがありました。
-
-以下のリンクをクリックしてパスワードをリセットしてください：
-{reset_url}
-
-このリンクは24時間有効です。
-
-※このリクエストに覚えがない場合は、このメールを無視してください。
-
-{app_name}運営チーム
-            """.strip()
-            
             # 送信元アドレスを指定
             from_email = "noreply@mscan.jp"
-            
-            # 送信元アドレスに応じた設定を取得してFastMailインスタンスを作成
-            config = get_mail_config(from_email)
-            fm = FastMail(config)
-            
-            message = MessageSchema(
+
+            # メール送信
+            success = await self._send_html_email(
+                from_email=from_email,
+                to_email=email,
                 subject=f"パスワードリセットのご案内 - {app_name}",
-                recipients=[email],
-                body=html_content,
-                subtype=MessageType.html
+                html_content=html_content
             )
-            
-            await fm.send_message(message)
-            api_logger.info(f"パスワードリセットメールを送信しました: {email}")
-            return True
-            
+
+            if success:
+                api_logger.info(f"パスワードリセットメールを送信しました: {email}")
+            return success
+
         except Exception as e:
             error_logger.error(f"パスワードリセットメール送信エラー: {e}")
             return False
@@ -768,7 +749,43 @@ class EmailService:
 </html>
         """
 
+    async def _send_html_email(self, from_email: str, to_email: str, subject: str, html_content: str) -> bool:
+        """aiosmtplibを使用してHTMLメールを送信"""
+        import aiosmtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
 
+        try:
+            # 送信元アドレスに応じた設定を取得
+            config = get_mail_config(from_email)
+
+            # MIMEメッセージを作成
+            message = MIMEMultipart('alternative')
+            message['From'] = from_email
+            message['To'] = to_email
+            message['Subject'] = subject
+
+            # HTMLパートを追加
+            html_part = MIMEText(html_content, 'html', 'utf-8')
+            message.attach(html_part)
+
+            # SMTPサーバーに接続して送信
+            await aiosmtplib.send(
+                message,
+                hostname=config.MAIL_SERVER,
+                port=config.MAIL_PORT,
+                username=config.MAIL_USERNAME,
+                password=config.MAIL_PASSWORD.get_secret_value() if hasattr(config.MAIL_PASSWORD, 'get_secret_value') else str(config.MAIL_PASSWORD),
+                use_tls=False,  # ポート587ではSTARTTLSを使用
+                start_tls=config.MAIL_STARTTLS,
+                timeout=60
+            )
+
+            return True
+
+        except Exception as e:
+            error_logger.error(f"メール送信エラー ({from_email} -> {to_email}): {e}")
+            return False
 
 
 # シングルトンインスタンス

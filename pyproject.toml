@@ -30,7 +30,7 @@ python-jose = {extras = ["cryptography"], version = "^3.3.0"}
 python-multipart = "^0.0.6"
 pyjwt = "^2.8.0"
 # メール送信
-fastapi-mail = "^1.4.1"
+fastapi-mail = "1.4.1"
 # OAuth認証
 authlib = "^1.3.0"
 httpx = "^0.26.0"
