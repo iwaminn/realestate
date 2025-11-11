@@ -683,6 +683,7 @@ const BuildingPropertiesPage: React.FC = () => {
       <Helmet>
         <title>{pageTitle}</title>
         <meta name="description" content={pageDescription} />
+        <link rel="canonical" href={`https://mscan.jp/buildings/${buildingId}/properties`} />
       </Helmet>
       <Container maxWidth="xl" sx={{
         py: isMobile ? 2 : 4,

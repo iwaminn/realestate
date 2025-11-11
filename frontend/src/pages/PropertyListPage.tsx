@@ -308,11 +308,27 @@ const PropertyListPage: React.FC = () => {
   const pageTitle = generatePageTitle();
   const pageDescription = generatePageDescription();
 
+  // canonical URLを生成（トラッキングパラメータを除外）
+  const generateCanonicalUrl = () => {
+    const params = new URLSearchParams(location.search);
+    
+    // トラッキングパラメータを除外
+    const trackingParams = ['utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content', 'fbclid', 'gclid'];
+    trackingParams.forEach(param => params.delete(param));
+    
+    // パラメータを含めたcanonical URLを生成
+    const queryString = params.toString();
+    return `https://mscan.jp/properties${queryString ? '?' + queryString : ''}`;
+  };
+
+  const canonicalUrl = generateCanonicalUrl();
+
   return (
     <>
       <Helmet>
         <title>{pageTitle}</title>
         <meta name="description" content={pageDescription} />
+        <link rel="canonical" href={canonicalUrl} />
       </Helmet>
       <Container maxWidth="xl" sx={{
         py: 4,

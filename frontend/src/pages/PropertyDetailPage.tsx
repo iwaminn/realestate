@@ -325,6 +325,7 @@ const PropertyDetailPage: React.FC = () => {
       <Helmet>
         <title>{pageTitle}</title>
         <meta name="description" content={pageDescription} />
+        {id && <link rel="canonical" href={`https://mscan.jp/properties/${id}`} />}
         <script type="application/ld+json">
           {JSON.stringify(structuredData)}
         </script>
