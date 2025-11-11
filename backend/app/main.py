@@ -37,6 +37,7 @@ from .api import transaction_prices
 from .api import contact
 from .api import admin_auth
 from .api import sitemap
+from .api import ssr
 
 app = FastAPI(title="不動産横断検索API", version="1.0.0")
 
@@ -129,6 +130,7 @@ app.include_router(geocoding.router)
 app.include_router(transaction_prices.router)
 app.include_router(contact.router)
 app.include_router(sitemap.router)  # sitemap.xmlとrobots.txt
+app.include_router(ssr.router)  # Server-Side Rendering（SSR）- 最後に登録して他のルートと衝突しないようにする
 
 
 # 起動時の初期化
