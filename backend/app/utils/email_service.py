@@ -461,8 +461,8 @@ class EmailService:
         .button {{
             display: inline-block;
             padding: 15px 30px;
-            background-color: #1976d2;
-            color: white;
+            background-color: #1976d2 !important;
+            color: white !important;
             text-decoration: none;
             border-radius: 5px;
             margin: 20px 0;
@@ -514,7 +514,7 @@ class EmailService:
             <p>以下のボタンをクリックしてパスワード設定を完了してください：</p>
             
             <p style="text-align: center;">
-                <a href="{verification_url}" class="button">パスワードを設定する</a>
+                <a href="{verification_url}" class="button" style="display: inline-block; padding: 15px 30px; background-color: #1976d2; color: #ffffff !important; text-decoration: none; border-radius: 5px; margin: 20px 0; font-weight: bold;">パスワードを設定する</a>
             </p>
             
             <div class="warning">
@@ -580,8 +580,8 @@ class EmailService:
         .button {{
             display: inline-block;
             padding: 15px 30px;
-            background-color: #1976d2;
-            color: white;
+            background-color: #1976d2 !important;
+            color: white !important;
             text-decoration: none;
             border-radius: 5px;
             margin: 20px 0;
@@ -621,7 +621,7 @@ class EmailService:
             <p>以下のボタンをクリックして新しいパスワードを設定してください：</p>
             
             <p style="text-align: center;">
-                <a href="{reset_url}" class="button">パスワードをリセットする</a>
+                <a href="{reset_url}" class="button" style="display: inline-block; padding: 15px 30px; background-color: #1976d2; color: #ffffff !important; text-decoration: none; border-radius: 5px; margin: 20px 0; font-weight: bold;">パスワードをリセットする</a>
             </p>
             
             <div class="warning">
@@ -688,8 +688,8 @@ class EmailService:
         .button {{
             display: inline-block;
             padding: 15px 30px;
-            background-color: #1976d2;
-            color: white;
+            background-color: #1976d2 !important;
+            color: white !important;
             text-decoration: none;
             border-radius: 5px;
             margin: 20px 0;
@@ -729,7 +729,7 @@ class EmailService:
             <p>以下のボタンをクリックしてメールアドレスの確認を完了してください：</p>
             
             <p style="text-align: center;">
-                <a href="{verification_url}" class="button">メールアドレスを確認する</a>
+                <a href="{verification_url}" class="button" style="display: inline-block; padding: 15px 30px; background-color: #1976d2; color: #ffffff !important; text-decoration: none; border-radius: 5px; margin: 20px 0; font-weight: bold;">メールアドレスを確認する</a>
             </p>
             
             <div class="warning">
