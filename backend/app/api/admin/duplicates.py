@@ -2116,6 +2116,25 @@ async def merge_buildings(
                                         {"candidates": json.dumps(new_candidates), "match_id": match.id}
                                     )
                             
+                            # ブックマークを主物件に移行
+                            bookmarks_to_move = db.query(PropertyBookmark).filter(
+                                PropertyBookmark.master_property_id == secondary_prop_id
+                            ).all()
+                            
+                            for bookmark in bookmarks_to_move:
+                                # 同じユーザーが主物件を既にブックマーク済みかチェック
+                                existing_bookmark = db.query(PropertyBookmark).filter(
+                                    PropertyBookmark.user_id == bookmark.user_id,
+                                    PropertyBookmark.master_property_id == primary_prop_id
+                                ).first()
+                                
+                                if existing_bookmark:
+                                    # 既にブックマーク済みの場合、古い方（二次物件のブックマーク）を削除
+                                    db.delete(bookmark)
+                                else:
+                                    # ブックマークを主物件に移行（created_atは維持）
+                                    bookmark.master_property_id = primary_prop_id
+                            
                             # 建物統合による自動統合は履歴に記録しない
                             # （スクレイピング時の自動紐付けと同様の扱い）
                             

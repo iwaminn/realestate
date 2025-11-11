@@ -203,6 +203,15 @@ async def get_bookmarks(
             ).first()
 
             if property_data:
+                # 掲載情報が存在するかチェック（統合済み物件を除外）
+                has_any_listings = db.query(PropertyListing).filter(
+                    PropertyListing.master_property_id == property_data.id
+                ).count() > 0
+                
+                # 掲載情報がない物件はスキップ
+                if not has_any_listings:
+                    continue
+                
                 # 詳細情報を取得（仮の価格で呼び出し）
                 details = _get_property_details(db, property_data, None)
                 
@@ -278,6 +287,15 @@ async def get_bookmarks(
         # エリアごとにグルーピング
         grouped = {}
         for bookmark, property_data, building in properties_query:
+            # 掲載情報が存在するかチェック（統合済み物件を除外）
+            has_any_listings = db.query(PropertyListing).filter(
+                PropertyListing.master_property_id == property_data.id
+            ).count() > 0
+            
+            # 掲載情報がない物件はスキップ
+            if not has_any_listings:
+                continue
+            
             # 住所から区名を抽出
             address = building.address or ""
             match = re.search(r'(.*?[区市町村])', address)
@@ -383,6 +401,15 @@ async def get_bookmarks(
         # 建物ごとにグルーピング
         grouped = {}
         for bookmark, property_data, building in properties_query:
+            # 掲載情報が存在するかチェック（統合済み物件を除外）
+            has_any_listings = db.query(PropertyListing).filter(
+                PropertyListing.master_property_id == property_data.id
+            ).count() > 0
+            
+            # 掲載情報がない物件はスキップ
+            if not has_any_listings:
+                continue
+            
             building_key = f"{building.id}_{building.normalized_name}"
             
             if building_key not in grouped:
