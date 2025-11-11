@@ -750,39 +750,27 @@ class EmailService:
         """
 
     async def _send_html_email(self, from_email: str, to_email: str, subject: str, html_content: str) -> bool:
-        """aiosmtplibを使用してHTMLメールを送信"""
-        import aiosmtplib
-        from email.mime.text import MIMEText
-        from email.mime.multipart import MIMEMultipart
-
+        """fastapi-mailを使用してHTMLメールを送信"""
         try:
             # 送信元アドレスに応じた設定を取得
             config = get_mail_config(from_email)
-
-            # MIMEメッセージを作成
-            message = MIMEMultipart('alternative')
-            message['From'] = from_email
-            message['To'] = to_email
-            message['Subject'] = subject
-
-            # HTMLパートを追加
-            html_part = MIMEText(html_content, 'html', 'utf-8')
-            message.attach(html_part)
-
-            # SMTPサーバーに接続して送信
-            await aiosmtplib.send(
-                message,
-                hostname=config.MAIL_SERVER,
-                port=config.MAIL_PORT,
-                username=config.MAIL_USERNAME,
-                password=config.MAIL_PASSWORD.get_secret_value() if hasattr(config.MAIL_PASSWORD, 'get_secret_value') else str(config.MAIL_PASSWORD),
-                use_tls=False,  # ポート587ではSTARTTLSを使用
-                start_tls=config.MAIL_STARTTLS,
-                timeout=60
+            
+            # FastMailインスタンスを作成
+            fm = FastMail(config)
+            
+            # メッセージを作成
+            message = MessageSchema(
+                subject=subject,
+                recipients=[to_email],
+                body=html_content,
+                subtype=MessageType.html
             )
-
+            
+            # メール送信
+            await fm.send_message(message)
+            
             return True
-
+            
         except Exception as e:
             error_logger.error(f"メール送信エラー ({from_email} -> {to_email}): {e}")
             return False
