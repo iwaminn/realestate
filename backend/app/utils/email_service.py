@@ -156,6 +156,13 @@ class EmailService:
 {app_name}運営チーム
             """.strip()
             
+            # 送信元アドレスを指定
+            from_email = "noreply@mscan.jp"
+            
+            # 送信元アドレスに応じた設定を取得してFastMailインスタンスを作成
+            config = get_mail_config(from_email)
+            fm = FastMail(config)
+            
             message = MessageSchema(
                 subject=f"メールアドレスの確認 - {app_name}",
                 recipients=[email],
@@ -163,7 +170,7 @@ class EmailService:
                 subtype=MessageType.html
             )
             
-            await self.fast_mail.send_message(message)
+            await fm.send_message(message)
             api_logger.info(f"確認メールを送信しました: {email}")
             return True
             
@@ -242,6 +249,13 @@ class EmailService:
 {app_name}運営チーム
             """.strip()
             
+            # 送信元アドレスを指定
+            from_email = "noreply@mscan.jp"
+            
+            # 送信元アドレスに応じた設定を取得してFastMailインスタンスを作成
+            config = get_mail_config(from_email)
+            fm = FastMail(config)
+            
             message = MessageSchema(
                 subject=f"パスワード設定の確認 - {app_name}",
                 recipients=[email],
@@ -249,7 +263,7 @@ class EmailService:
                 subtype=MessageType.html
             )
             
-            await self.fast_mail.send_message(message)
+            await fm.send_message(message)
             api_logger.info(f"パスワード設定確認メールを送信しました: {email}")
             return True
             
@@ -267,45 +281,9 @@ class EmailService:
         reset_url = f"{base_url}/reset-password?token={reset_token}"
         
         if not self.enabled:
-            # 開発モードではログファイルに詳細を出力
-            import json
-            from datetime import datetime
-            
-            # メール内容をログファイルに記録
-            log_dir = Path('/app/logs')
-            log_dir.mkdir(parents=True, exist_ok=True)
-            
-            email_log_file = log_dir / 'email_dev.log'
-            
-            email_content = {
-                'timestamp': datetime.utcnow().isoformat(),
-                'type': 'password_reset',
-                'to': email,
-                'user_name': user_name,
-                'reset_url': reset_url,
-                'token': reset_token,
-                'message': f'開発環境: パスワードリセットURLは {reset_url} です'
-            }
-            
-            # ファイルに追記
-            with open(email_log_file, 'a', encoding='utf-8') as f:
-                f.write(json.dumps(email_content, ensure_ascii=False) + '\n')
-            
-            # 通常のログにも出力
+            # 開発モードではログに出力
             api_logger.info(f"[開発モード] パスワードリセットURL: {reset_url}")
             api_logger.info(f"[開発モード] 宛先: {email} ({user_name})")
-            api_logger.info(f"[開発モード] トークン: {reset_token}")
-            api_logger.info(f"[開発モード] 詳細は /app/logs/email_dev.log を確認してください")
-            
-            # コンソールにも表示（見やすくするため）
-            print("\n" + "="*60)
-            print("📧 開発環境パスワードリセット情報")
-            print("="*60)
-            print(f"宛先: {email}")
-            print(f"リセットURL: {reset_url}")
-            print(f"トークン: {reset_token}")
-            print("="*60 + "\n")
-            
             return True
         
         # 本番環境: FastMailでメール送信
@@ -329,6 +307,13 @@ class EmailService:
 {app_name}運営チーム
             """.strip()
             
+            # 送信元アドレスを指定
+            from_email = "noreply@mscan.jp"
+            
+            # 送信元アドレスに応じた設定を取得してFastMailインスタンスを作成
+            config = get_mail_config(from_email)
+            fm = FastMail(config)
+            
             message = MessageSchema(
                 subject=f"パスワードリセットのご案内 - {app_name}",
                 recipients=[email],
@@ -336,7 +321,7 @@ class EmailService:
                 subtype=MessageType.html
             )
             
-            await self.fast_mail.send_message(message)
+            await fm.send_message(message)
             api_logger.info(f"パスワードリセットメールを送信しました: {email}")
             return True
             
@@ -395,9 +380,59 @@ class EmailService:
             
             return True
         
-        # 本番環境でのメール送信（実装は同様のパターン）
-        # 省略: 実際のSMTP送信処理
-        return False
+        # 本番環境でのメール送信
+        try:
+            # HTMLテンプレート（簡易版）
+            html_content = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family: 'Helvetica Neue', Arial, sans-serif; line-height: 1.6; color: #333; max-width: 600px; margin: 0 auto; padding: 20px;">
+    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 30px; text-align: center; border-radius: 10px 10px 0 0;">
+        <h1 style="color: white; margin: 0; font-size: 28px;">メールアドレス変更確認</h1>
+    </div>
+    <div style="background: #f9f9f9; padding: 30px; border-radius: 0 0 10px 10px;">
+        <p>こんにちは{user_name or ''}様、</p>
+        <p>{app_name}でメールアドレス変更のリクエストがありました。</p>
+        <p>以下のボタンをクリックして、新しいメールアドレスの確認を完了してください：</p>
+        <div style="text-align: center; margin: 30px 0;">
+            <a href="{verify_url}" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px 30px; text-decoration: none; border-radius: 5px; display: inline-block; font-weight: bold;">メールアドレスを確認</a>
+        </div>
+        <p style="color: #666; font-size: 14px;">ボタンが機能しない場合は、以下のURLをコピーしてブラウザに貼り付けてください：</p>
+        <p style="word-break: break-all; color: #667eea; font-size: 14px;">{verify_url}</p>
+        <p style="color: #666; font-size: 14px; margin-top: 30px;">このリンクは24時間有効です。</p>
+        <p style="color: #999; font-size: 12px; margin-top: 30px;">※このリクエストに覚えがない場合は、このメールを無視してください。</p>
+        <hr style="border: none; border-top: 1px solid #ddd; margin: 30px 0;">
+        <p style="color: #999; font-size: 12px; text-align: center;">{app_name}運営チーム</p>
+    </div>
+</body>
+</html>
+            """
+            
+            # 送信元アドレスを指定
+            from_email = "noreply@mscan.jp"
+            
+            # 送信元アドレスに応じた設定を取得してFastMailインスタンスを作成
+            config = get_mail_config(from_email)
+            fm = FastMail(config)
+            
+            message = MessageSchema(
+                subject=f"メールアドレス変更確認 - {app_name}",
+                recipients=[new_email],
+                body=html_content,
+                subtype=MessageType.html
+            )
+            
+            await fm.send_message(message)
+            api_logger.info(f"メールアドレス変更確認メールを送信しました: {new_email}")
+            return True
+            
+        except Exception as e:
+            error_logger.error(f"メールアドレス変更確認メール送信エラー: {e}")
+            return False
 
     def _create_password_set_verification_html(self, user_name: str, verification_url: str, app_name: str = '都心マンション価格チェッカー') -> str:
         """パスワード設定確認メールのHTMLを生成"""
