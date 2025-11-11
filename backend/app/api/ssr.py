@@ -48,15 +48,39 @@ DEFAULT_HTML_TEMPLATE = """<!doctype html>
 def load_frontend_html() -> str:
     """
     フロントエンドのビルド済みindex.htmlを読み込む
-    読み込めない場合はデフォルトテンプレートを使用
+    
+    本番環境：frontendコンテナからHTTPで取得
+    開発環境：ローカルファイルまたはデフォルトテンプレート
     """
+    import requests
+    
+    # 本番環境：frontendコンテナからHTMLを取得
+    frontend_urls = [
+        "http://frontend:3000/",  # 本番環境（docker-compose内部）
+        "http://localhost:3001/"   # 開発環境
+    ]
+    
+    for url in frontend_urls:
+        try:
+            response = requests.get(url, timeout=5)
+            if response.status_code == 200:
+                print(f"Success: フロントエンドのHTMLを取得しました: {url}")
+                return response.text
+        except Exception as e:
+            print(f"Warning: {url}からHTMLを取得できませんでした: {e}")
+            continue
+    
+    # ローカルファイルシステムから試行
     try:
         if os.path.exists(FRONTEND_DIST_PATH):
             with open(FRONTEND_DIST_PATH, 'r', encoding='utf-8') as f:
+                print(f"Success: ローカルファイルからHTMLを読み込みました: {FRONTEND_DIST_PATH}")
                 return f.read()
     except Exception as e:
-        print(f"Warning: フロントエンドのindex.htmlを読み込めませんでした: {e}")
+        print(f"Warning: ローカルファイルから読み込めませんでした: {e}")
     
+    # すべて失敗した場合はデフォルトテンプレート
+    print("Warning: フロントエンドのHTMLを取得できませんでした。デフォルトテンプレートを使用します。")
     return DEFAULT_HTML_TEMPLATE
 
 
