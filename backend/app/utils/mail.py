@@ -38,10 +38,33 @@ async def send_contact_email(
         email: 送信者メールアドレス
         subject: 件名
         message: メッセージ本文
-        recipient: 受信者メールアドレス（デフォルト: info@mscan.jp）
+        recipient: 受信者メールアドレス（デフォルト: admin@mscan.jp）
     """
     if recipient is None:
-        recipient = os.getenv("CONTACT_EMAIL", "info@mscan.jp")
+        recipient = os.getenv("CONTACT_EMAIL", "admin@mscan.jp")
+
+    # 送信元アドレスはinfo@mscan.jp
+    from_email = "info@mscan.jp"
+
+    # AWS SESの設定があれば使用、なければGoogle Workspace
+    if os.getenv('SES_SMTP_USERNAME'):
+        # AWS SES用の設定
+        conf_contact = ConnectionConfig(
+            MAIL_USERNAME=os.getenv('SES_SMTP_USERNAME', ''),
+            MAIL_PASSWORD=os.getenv('SES_SMTP_PASSWORD', ''),
+            MAIL_FROM=from_email,
+            MAIL_PORT=int(os.getenv('SES_SMTP_PORT', '587')),
+            MAIL_SERVER=os.getenv('SES_SMTP_HOST', 'email-smtp.ap-northeast-1.amazonaws.com'),
+            MAIL_STARTTLS=True,
+            MAIL_SSL_TLS=False,
+            USE_CREDENTIALS=True,
+            VALIDATE_CERTS=True
+        )
+    else:
+        # Google Workspace用の設定（既存）
+        conf_contact = conf
+
+    fm_contact = FastMail(conf_contact)
 
     # メール本文を作成
     html_body = f"""
@@ -62,27 +85,14 @@ async def send_contact_email(
     </html>
     """
 
-    text_body = f"""
-お問い合わせがありました
-
-送信者名: {name}
-メールアドレス: {email}
-件名: {subject}
-
-お問い合わせ内容:
-{message}
-
----
-このメールは都心マンション価格チェッカーのお問い合わせフォームから送信されました。
-    """
-
-    # メッセージを作成
+    # メッセージを作成（Reply-Toヘッダーを追加）
     message_schema = MessageSchema(
         subject=f"【お問い合わせ】{subject}",
         recipients=[recipient],
         body=html_body,
-        subtype=MessageType.html
+        subtype=MessageType.html,
+        reply_to=[email]  # 返信先を送信者のメールアドレスに設定
     )
 
     # メール送信
-    await fm.send_message(message_schema)
+    await fm_contact.send_message(message_schema)

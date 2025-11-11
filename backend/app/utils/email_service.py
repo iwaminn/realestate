@@ -11,8 +11,36 @@ from ..utils.logger import api_logger, error_logger
 
 
 # メール設定
-def get_mail_config() -> ConnectionConfig:
-    """メール設定を取得"""
+def get_mail_config(from_email: str = None) -> ConnectionConfig:
+    """
+    メール設定を取得
+    
+    送信元アドレスに応じて適切なSMTP設定を返す：
+    - noreply@mscan.jp, info@mscan.jp → AWS SES（送信専用）
+    - その他（admin@mscan.jp等） → Google Workspace
+    
+    Args:
+        from_email: 送信元メールアドレス
+    """
+    # AWS SESを使用するアドレス
+    ses_addresses = ['noreply@mscan.jp', 'info@mscan.jp']
+    
+    # AWS SESの設定が存在し、対象のアドレスの場合
+    if from_email in ses_addresses and os.getenv('SES_SMTP_USERNAME'):
+        return ConnectionConfig(
+            MAIL_USERNAME=os.getenv('SES_SMTP_USERNAME', ''),
+            MAIL_PASSWORD=os.getenv('SES_SMTP_PASSWORD', ''),
+            MAIL_FROM=from_email,
+            MAIL_FROM_NAME=os.getenv('MAIL_FROM_NAME', '都心マンション価格チェッカー'),
+            MAIL_PORT=int(os.getenv('SES_SMTP_PORT', '587')),
+            MAIL_SERVER=os.getenv('SES_SMTP_HOST', 'email-smtp.ap-northeast-1.amazonaws.com'),
+            MAIL_STARTTLS=True,
+            MAIL_SSL_TLS=False,
+            USE_CREDENTIALS=True,
+            VALIDATE_CERTS=True
+        )
+    
+    # デフォルト（Google Workspace）の設定
     return ConnectionConfig(
         MAIL_USERNAME=os.getenv('MAIL_USERNAME', ''),
         MAIL_PASSWORD=os.getenv('MAIL_PASSWORD', ''),
@@ -30,19 +58,24 @@ def get_mail_config() -> ConnectionConfig:
 class EmailService:
     def __init__(self):
         try:
-            self.config = get_mail_config()
-            self.fast_mail = FastMail(self.config)
-            
             # テンプレートディレクトリの設定
             template_dir = Path(__file__).parent.parent / 'templates' / 'email'
             template_dir.mkdir(parents=True, exist_ok=True)
             self.jinja_env = Environment(loader=FileSystemLoader(str(template_dir)))
             
             # メール送信が有効かチェック
-            self.enabled = bool(os.getenv('MAIL_USERNAME') and os.getenv('MAIL_PASSWORD'))
+            # Google WorkspaceまたはAWS SESのいずれかが設定されていればOK
+            google_enabled = bool(os.getenv('MAIL_USERNAME') and os.getenv('MAIL_PASSWORD'))
+            ses_enabled = bool(os.getenv('SES_SMTP_USERNAME') and os.getenv('SES_SMTP_PASSWORD'))
+            self.enabled = google_enabled or ses_enabled
             
             if not self.enabled:
                 api_logger.warning("メール送信設定が未設定です。開発モードで動作します。")
+            else:
+                if ses_enabled:
+                    api_logger.info("AWS SES設定が検出されました。noreply@/info@はSESを使用します。")
+                if google_enabled:
+                    api_logger.info("Google Workspace設定が検出されました。")
                 
         except Exception as e:
             error_logger.error(f"EmailService初期化エラー: {e}")
