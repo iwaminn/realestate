@@ -147,14 +147,58 @@ const PropertyListPage: React.FC = () => {
     try {
       const includeInactiveValue = includeInactiveParam !== undefined ? includeInactiveParam : includeInactive;
       
-      const response = await propertyApi.searchProperties({
-        ...params,
-        page,
-        per_page: 12,
-        sort_by: params.sort_by || 'updated_at',
-        sort_order: params.sort_order || 'desc',
-        include_inactive: includeInactiveValue,
-      });
+      // SSRで埋め込まれた初期データをチェック
+      const initialState = (window as any).__INITIAL_STATE__;
+      const ssrQueryParams = (window as any).__SSR_QUERY_PARAMS__;
+      
+      let response;
+      
+      // SSRデータがあり、クエリパラメータが一致する場合は初期データを使用
+      if (initialState && ssrQueryParams) {
+        // パラメータの一致をチェック（配列の比較はJSON.stringifyを使用）
+        const paramsMatch = (
+          ssrQueryParams.min_price === (params.min_price || null) &&
+          ssrQueryParams.max_price === (params.max_price || null) &&
+          ssrQueryParams.min_area === (params.min_area || null) &&
+          ssrQueryParams.max_area === (params.max_area || null) &&
+          JSON.stringify(ssrQueryParams.layouts || null) === JSON.stringify(params.layouts || null) &&
+          ssrQueryParams.building_name === (params.building_name || null) &&
+          ssrQueryParams.max_building_age === (params.max_building_age || null) &&
+          JSON.stringify(ssrQueryParams.wards || null) === JSON.stringify(params.wards || null) &&
+          ssrQueryParams.include_inactive === includeInactiveValue &&
+          ssrQueryParams.page === page &&
+          ssrQueryParams.sort_by === (params.sort_by || 'updated_at') &&
+          ssrQueryParams.sort_order === (params.sort_order || 'desc')
+        );
+        
+        if (paramsMatch) {
+          console.log('SSRから初期データを使用:', initialState);
+          response = initialState;
+          // 初期データを使用した後は削除（次回からはAPIを呼ぶ）
+          delete (window as any).__INITIAL_STATE__;
+          delete (window as any).__SSR_QUERY_PARAMS__;
+        } else {
+          // パラメータが一致しない場合は通常のAPI呼び出し
+          response = await propertyApi.searchProperties({
+            ...params,
+            page,
+            per_page: 12,
+            sort_by: params.sort_by || 'updated_at',
+            sort_order: params.sort_order || 'desc',
+            include_inactive: includeInactiveValue,
+          });
+        }
+      } else {
+        // SSRデータがない場合は通常のAPI呼び出し
+        response = await propertyApi.searchProperties({
+          ...params,
+          page,
+          per_page: 12,
+          sort_by: params.sort_by || 'updated_at',
+          sort_order: params.sort_order || 'desc',
+          include_inactive: includeInactiveValue,
+        });
+      }
       
       setProperties(response.properties);
       setTotalPages(response.total_pages);

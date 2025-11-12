@@ -84,6 +84,36 @@ def load_frontend_html() -> str:
     return DEFAULT_HTML_TEMPLATE
 
 
+def is_crawler(request: Request) -> bool:
+    """
+    User-Agentから検索エンジンクローラー（GoogleとBingのみ）かどうかを判定
+    
+    クローラーの場合のみSSR初期データを埋め込み、
+    通常のユーザーには高速なフローを提供する（Dynamic Rendering）
+    
+    Args:
+        request: FastAPIのリクエストオブジェクト
+    
+    Returns:
+        GoogleまたはBingのクローラーの場合True、それ以外False
+    """
+    user_agent = request.headers.get("user-agent", "").lower()
+    
+    # GoogleとBingの検索エンジンクローラーのみ対応
+    crawlers = [
+        "googlebot",              # Google検索
+        "google-inspectiontool",  # Google Search Console
+        "bingbot",                # Bing検索
+    ]
+    
+    is_bot = any(crawler in user_agent for crawler in crawlers)
+    
+    if is_bot:
+        print(f"INFO: 検索エンジンクローラー検出 - User-Agent: {user_agent[:100]}")
+    
+    return is_bot
+
+
 def generate_building_meta_tags(building_id: int, db: Session) -> dict:
     """
     建物ページのメタタグを生成
@@ -290,11 +320,10 @@ async def render_building_page(
     db: Session = Depends(get_db)
 ):
     """
-    建物ページのSSRを提供（初期データ埋め込み対応）
+    建物ページのSSRを提供（条件付き初期データ埋め込み対応）
     
-    Google botなどの検索エンジン向けに、ページ読み込み時から
-    データが埋め込まれたHTMLを返すことで、JavaScriptの実行を待たずに
-    コンテンツを表示できるようにする
+    クローラーの場合のみ初期データを埋め込み、
+    通常のユーザーには高速なフローを提供する（Dynamic Rendering）
     """
     # フロントエンドのHTMLを読み込む
     frontend_html = load_frontend_html()
@@ -302,34 +331,38 @@ async def render_building_page(
     # メタタグを生成
     meta_data = generate_building_meta_tags(building_id, db)
     
-    # 初期データを取得（buildingsエンドポイントの実装を再利用）
-    from .buildings import get_building_properties
-    try:
-        # APIエンドポイントと同じデータを取得
-        initial_data = await get_building_properties(building_id, include_inactive, db)
-        
-        # JavaScriptで安全に扱えるようにJSON文字列化
-        import json
-        initial_state_json = json.dumps(initial_data, ensure_ascii=False, default=str)
-        
-        # 初期データをHTMLに埋め込む
-        initial_state_script = f'''
+    # クローラーの場合のみ初期データを取得
+    initial_state_script = ""
+    if is_crawler(request):
+        # 初期データを取得（buildingsエンドポイントの実装を再利用）
+        from .buildings import get_building_properties
+        try:
+            # APIエンドポイントと同じデータを取得
+            initial_data = await get_building_properties(building_id, include_inactive, db)
+            
+            # JavaScriptで安全に扱えるようにJSON文字列化
+            import json
+            initial_state_json = json.dumps(initial_data, ensure_ascii=False, default=str)
+            
+            # 初期データをHTMLに埋め込む
+            initial_state_script = f'''
     <script>
       window.__INITIAL_STATE__ = {initial_state_json};
       window.__SSR_BUILDING_ID__ = {building_id};
       window.__SSR_INCLUDE_INACTIVE__ = {str(include_inactive).lower()};
     </script>'''
-    except Exception as e:
-        # データ取得失敗時はスクリプトを埋め込まない（通常のAPI呼び出しにフォールバック）
-        print(f"Warning: 初期データ取得失敗: {e}")
-        import traceback
-        traceback.print_exc()
-        initial_state_script = ""
+        except Exception as e:
+            # データ取得失敗時はスクリプトを埋め込まない（通常のAPI呼び出しにフォールバック）
+            print(f"Warning: 初期データ取得失敗: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print(f"INFO: 通常ユーザー - 初期データスキップ（高速モード）")
     
     # メタタグを注入
     html = inject_meta_tags_into_html(frontend_html, meta_data)
     
-    # 初期データスクリプトを</head>の直前に挿入
+    # 初期データスクリプトを</head>の直前に挿入（クローラーの場合のみ）
     if initial_state_script:
         html = html.replace('</head>', f'{initial_state_script}\n  </head>')
     
@@ -337,13 +370,17 @@ async def render_building_page(
 
 
 @router.get("/properties/{property_id}", response_class=HTMLResponse)
+
 async def render_property_page(
     property_id: int,
     request: Request,
     db: Session = Depends(get_db)
 ):
     """
-    物件詳細ページのSSRを提供
+    物件詳細ページのSSRを提供（条件付き初期データ埋め込み対応）
+    
+    クローラーの場合のみ初期データを埋め込み、
+    通常のユーザーには高速なフローを提供する（Dynamic Rendering）
     """
     # フロントエンドのHTMLを読み込む
     frontend_html = load_frontend_html()
@@ -351,19 +388,56 @@ async def render_property_page(
     # メタタグを生成
     meta_data = generate_property_meta_tags(property_id, db)
     
+    # クローラーの場合のみ初期データを取得
+    initial_state_script = ""
+    if is_crawler(request):
+        # 初期データを取得（propertiesエンドポイントの実装を再利用）
+        from .properties import get_property_details
+        try:
+            # APIエンドポイントと同じデータを取得
+            initial_data = await get_property_details(property_id, db)
+            
+            # JavaScriptで安全に扱えるようにJSON文字列化
+            import json
+            # Pydantic modelの場合はdict()を使用
+            data_dict = initial_data.dict() if hasattr(initial_data, 'dict') else initial_data
+            initial_state_json = json.dumps(data_dict, ensure_ascii=False, default=str)
+            
+            # 初期データをHTMLに埋め込む
+            initial_state_script = f'''
+    <script>
+      window.__INITIAL_STATE__ = {initial_state_json};
+      window.__SSR_PROPERTY_ID__ = {property_id};
+    </script>'''
+        except Exception as e:
+            # データ取得失敗時はスクリプトを埋め込まない（通常のAPI呼び出しにフォールバック）
+            print(f"Warning: 初期データ取得失敗: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print(f"INFO: 通常ユーザー - 初期データスキップ（高速モード）")
+    
     # メタタグを注入
     html = inject_meta_tags_into_html(frontend_html, meta_data)
+    
+    # 初期データスクリプトを</head>の直前に挿入（クローラーの場合のみ）
+    if initial_state_script:
+        html = html.replace('</head>', f'{initial_state_script}\n  </head>')
     
     return HTMLResponse(content=html)
 
 
 @router.get("/properties", response_class=HTMLResponse)
+
 async def render_properties_list_page(
     request: Request,
     db: Session = Depends(get_db)
 ):
     """
-    物件一覧ページのSSRを提供
+    物件一覧ページのSSRを提供（条件付き初期データ埋め込み対応）
+    
+    クローラーの場合のみ初期データを埋め込み、
+    通常のユーザーには高速なフローを提供する（Dynamic Rendering）
     """
     # フロントエンドのHTMLを読み込む
     frontend_html = load_frontend_html()
@@ -371,8 +445,90 @@ async def render_properties_list_page(
     # メタタグを生成
     meta_data = generate_properties_list_meta_tags(request)
     
+    # クローラーの場合のみ初期データを取得
+    initial_state_script = ""
+    if is_crawler(request):
+        # 初期データを取得（propertiesエンドポイントの実装を再利用）
+        from .properties import get_properties
+        try:
+            # クエリパラメータを取得
+            min_price = request.query_params.get('min_price')
+            max_price = request.query_params.get('max_price')
+            min_area = request.query_params.get('min_area')
+            max_area = request.query_params.get('max_area')
+            layouts = request.query_params.getlist('layouts') if 'layouts' in request.query_params else None
+            building_name = request.query_params.get('building_name')
+            max_building_age = request.query_params.get('max_building_age')
+            wards = request.query_params.getlist('wards') if 'wards' in request.query_params else None
+            include_inactive = request.query_params.get('include_inactive', 'false').lower() == 'true'
+            page = int(request.query_params.get('page', 1))
+            per_page = int(request.query_params.get('per_page', 30))
+            sort_by = request.query_params.get('sort_by', 'updated_at')
+            sort_order = request.query_params.get('sort_order', 'desc')
+            
+            # int/floatに変換
+            min_price = int(min_price) if min_price else None
+            max_price = int(max_price) if max_price else None
+            min_area = float(min_area) if min_area else None
+            max_area = float(max_area) if max_area else None
+            max_building_age = int(max_building_age) if max_building_age else None
+            
+            # APIエンドポイントと同じデータを取得
+            initial_data = await get_properties(
+                min_price=min_price,
+                max_price=max_price,
+                min_area=min_area,
+                max_area=max_area,
+                layouts=layouts,
+                building_name=building_name,
+                max_building_age=max_building_age,
+                wards=wards,
+                include_inactive=include_inactive,
+                page=page,
+                per_page=per_page,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                db=db
+            )
+            
+            # JavaScriptで安全に扱えるようにJSON文字列化
+            import json
+            initial_state_json = json.dumps(initial_data, ensure_ascii=False, default=str)
+            
+            # 初期データとクエリパラメータをHTMLに埋め込む
+            initial_state_script = f'''
+    <script>
+      window.__INITIAL_STATE__ = {initial_state_json};
+      window.__SSR_QUERY_PARAMS__ = {{
+        min_price: {json.dumps(min_price)},
+        max_price: {json.dumps(max_price)},
+        min_area: {json.dumps(min_area)},
+        max_area: {json.dumps(max_area)},
+        layouts: {json.dumps(layouts)},
+        building_name: {json.dumps(building_name)},
+        max_building_age: {json.dumps(max_building_age)},
+        wards: {json.dumps(wards)},
+        include_inactive: {str(include_inactive).lower()},
+        page: {page},
+        per_page: {per_page},
+        sort_by: {json.dumps(sort_by)},
+        sort_order: {json.dumps(sort_order)}
+      }};
+    </script>'''
+        except Exception as e:
+            # データ取得失敗時はスクリプトを埋め込まない（通常のAPI呼び出しにフォールバック）
+            print(f"Warning: 初期データ取得失敗: {e}")
+            import traceback
+            traceback.print_exc()
+    else:
+        print(f"INFO: 通常ユーザー - 初期データスキップ（高速モード）")
+    
     # メタタグを注入
     html = inject_meta_tags_into_html(frontend_html, meta_data)
+    
+    # 初期データスクリプトを</head>の直前に挿入（クローラーの場合のみ）
+    if initial_state_script:
+        html = html.replace('</head>', f'{initial_state_script}\n  </head>')
     
     return HTMLResponse(content=html)
 

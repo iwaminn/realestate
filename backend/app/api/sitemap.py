@@ -66,15 +66,37 @@ async def get_sitemap(db: Session = Depends(get_db)):
 
 
 @router.get("/robots.txt")
+
 async def get_robots():
     """
     robots.txtを生成
+    GoogleとBingのみを許可し、他の検索エンジンbotは拒否
     """
-    robots_content = f"""User-agent: *
+    robots_content = f"""# Google検索bot（許可）
+User-agent: Googlebot
 Allow: /
 Disallow: /admin
 Disallow: /api/
 
+# Google画像検索bot（許可）
+User-agent: Googlebot-Image
+Allow: /
+
+# Google Search Console検証ツール（許可）
+User-agent: Google-InspectionTool
+Allow: /
+
+# Bingbot（許可）
+User-agent: Bingbot
+Allow: /
+Disallow: /admin
+Disallow: /api/
+
+# その他すべてのbot（拒否）
+User-agent: *
+Disallow: /
+
+# Sitemap
 Sitemap: {BASE_URL}/sitemap.xml
 """
 

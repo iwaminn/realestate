@@ -83,8 +83,24 @@ const PropertyDetailPage: React.FC = () => {
 
   const fetchPropertyDetail = async (propertyId: number) => {
     try {
-      setLoading(true);
-      const data = await propertyApi.getPropertyDetail(propertyId);
+      // SSRで埋め込まれた初期データをチェック
+      const initialState = (window as any).__INITIAL_STATE__;
+      const ssrPropertyId = (window as any).__SSR_PROPERTY_ID__;
+      
+      let data;
+      
+      // SSRデータがあり、property_idが一致する場合は初期データを使用
+      if (initialState && ssrPropertyId === propertyId) {
+        console.log('SSRから初期データを使用:', initialState);
+        data = initialState;
+        // 初期データを使用した後は削除（次回からはAPIを呼ぶ）
+        delete (window as any).__INITIAL_STATE__;
+        delete (window as any).__SSR_PROPERTY_ID__;
+      } else {
+        setLoading(true);
+        data = await propertyApi.getPropertyDetail(propertyId);
+      }
+      
       setPropertyDetail(data);
       
       // 建物の住所から座標を取得してハザードマップURLを生成（非同期）
