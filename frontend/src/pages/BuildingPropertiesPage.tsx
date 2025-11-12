@@ -244,14 +244,31 @@ const BuildingPropertiesPage: React.FC = () => {
 
   const fetchBuildingProperties = async () => {
     try {
-      // 初回ロードか更新かを判定
-      if (properties.length === 0) {
-        setLoading(true);
+      // SSRで埋め込まれた初期データをチェック
+      const initialState = (window as any).__INITIAL_STATE__;
+      const ssrBuildingId = (window as any).__SSR_BUILDING_ID__;
+      const ssrIncludeInactive = (window as any).__SSR_INCLUDE_INACTIVE__;
+      
+      let response;
+      
+      // SSRデータがあり、パラメータが一致する場合は初期データを使用
+      if (initialState && ssrBuildingId === parseInt(buildingId!) && ssrIncludeInactive === includeInactive) {
+        console.log('SSRから初期データを使用:', initialState);
+        response = initialState;
+        // 初期データを使用した後は削除（次回からはAPIを呼ぶ）
+        delete (window as any).__INITIAL_STATE__;
+        delete (window as any).__SSR_BUILDING_ID__;
+        delete (window as any).__SSR_INCLUDE_INACTIVE__;
       } else {
-        setIsRefreshing(true);
+        // 初回ロードか更新かを判定
+        if (properties.length === 0) {
+          setLoading(true);
+        } else {
+          setIsRefreshing(true);
+        }
+        // 建物IDで物件を取得
+        response = await propertyApi.getBuildingProperties(parseInt(buildingId!), includeInactive);
       }
-      // 建物IDで物件を取得
-      const response = await propertyApi.getBuildingProperties(parseInt(buildingId!), includeInactive);
       
       setProperties(response.properties);
       setBuilding(response.building);

@@ -120,6 +120,7 @@ app.include_router(admin_transaction_prices.router, prefix="/api/admin", tags=["
 app.include_router(admin_price_changes.router, prefix="/api/admin", tags=["admin-price-changes"])
 app.include_router(properties_recent_updates.router)  # より具体的なパスを先に登録
 app.include_router(properties.router)
+app.include_router(ssr.router)  # SSRを先に登録（buildingsより前）
 app.include_router(buildings.router)
 app.include_router(stats.router)
 app.include_router(grouped_properties.router)
@@ -130,7 +131,7 @@ app.include_router(geocoding.router)
 app.include_router(transaction_prices.router)
 app.include_router(contact.router)
 app.include_router(sitemap.router)  # sitemap.xmlとrobots.txt
-app.include_router(ssr.router)  # Server-Side Rendering（SSR）- 最後に登録して他のルートと衝突しないようにする
+# SSRルーターはbuildingsより前に登録済み
 
 
 # 起動時の初期化

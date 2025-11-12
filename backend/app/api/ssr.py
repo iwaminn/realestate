@@ -2,7 +2,7 @@
 Server-Side Rendering (SSR) エンドポイント
 Google等の検索エンジン向けに、ページ固有のメタタグを埋め込んだHTMLを返す
 """
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Query
 from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
@@ -282,13 +282,19 @@ def inject_meta_tags_into_html(html: str, meta_data: dict) -> str:
 
 
 @router.get("/buildings/{building_id}/properties", response_class=HTMLResponse)
+
 async def render_building_page(
     building_id: int,
     request: Request,
+    include_inactive: bool = Query(False, description="販売終了物件も含む"),
     db: Session = Depends(get_db)
 ):
     """
-    建物ページのSSRを提供
+    建物ページのSSRを提供（初期データ埋め込み対応）
+    
+    Google botなどの検索エンジン向けに、ページ読み込み時から
+    データが埋め込まれたHTMLを返すことで、JavaScriptの実行を待たずに
+    コンテンツを表示できるようにする
     """
     # フロントエンドのHTMLを読み込む
     frontend_html = load_frontend_html()
@@ -296,8 +302,36 @@ async def render_building_page(
     # メタタグを生成
     meta_data = generate_building_meta_tags(building_id, db)
     
+    # 初期データを取得（buildingsエンドポイントの実装を再利用）
+    from .buildings import get_building_properties
+    try:
+        # APIエンドポイントと同じデータを取得
+        initial_data = await get_building_properties(building_id, include_inactive, db)
+        
+        # JavaScriptで安全に扱えるようにJSON文字列化
+        import json
+        initial_state_json = json.dumps(initial_data, ensure_ascii=False, default=str)
+        
+        # 初期データをHTMLに埋め込む
+        initial_state_script = f'''
+    <script>
+      window.__INITIAL_STATE__ = {initial_state_json};
+      window.__SSR_BUILDING_ID__ = {building_id};
+      window.__SSR_INCLUDE_INACTIVE__ = {str(include_inactive).lower()};
+    </script>'''
+    except Exception as e:
+        # データ取得失敗時はスクリプトを埋め込まない（通常のAPI呼び出しにフォールバック）
+        print(f"Warning: 初期データ取得失敗: {e}")
+        import traceback
+        traceback.print_exc()
+        initial_state_script = ""
+    
     # メタタグを注入
     html = inject_meta_tags_into_html(frontend_html, meta_data)
+    
+    # 初期データスクリプトを</head>の直前に挿入
+    if initial_state_script:
+        html = html.replace('</head>', f'{initial_state_script}\n  </head>')
     
     return HTMLResponse(content=html)
 
