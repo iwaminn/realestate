@@ -598,21 +598,38 @@ def normalize_wing_name(building_name: str) -> str:
         result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
     
     # 方角系の正規化パターン（優先順位の高い順に処理）
+    # カタカナ形式：前後にカタカナがない場合のみ変換
+    # 英語形式：前後にアルファベットがない場合のみ変換
     directional_patterns = [
-        # イースト/ウエスト/サウス/ノース + 棟/ウイング/アーク/ヒル/タワー/コート/レジデンス
-        (r'\s*(イースト|EAST)\s*(棟|ウイング|アーク|ヒル|タワー|コート|レジデンス)', r' 東\2'),
-        (r'\s*(ウエスト|ウェスト|WEST)\s*(棟|ウイング|アーク|ヒル|タワー|コート|レジデンス)', r' 西\2'),
-        (r'\s*(サウス|SOUTH)\s*(棟|ウイング|アーク|ヒル|タワー|コート|レジデンス)', r' 南\2'),
-        (r'\s*(ノース|NORTH)\s*(棟|ウイング|アーク|ヒル|タワー|コート|レジデンス)', r' 北\2'),
-        (r'\s*(センター|CENTER)\s*(棟|ウイング|アーク|ヒル|タワー|コート|レジデンス)', r' 中\2'),
-        
-        # イースト/ウエスト/サウス/ノース単体（末尾）
-        (r'\s*(イースト|EAST)$', r' 東棟'),
-        (r'\s*(ウエスト|ウェスト|WEST)$', r' 西棟'),
-        (r'\s*(サウス|SOUTH)$', r' 南棟'),
-        (r'\s*(ノース|NORTH)$', r' 北棟'),
-        (r'\s*(センター|CENTER)$', r' 中棟'),
-        
+        # カタカナ形式 + 接尾辞（前後にカタカナがない場合のみ）
+        # ※ ヒル/タワー/コート/レジデンスは固有名詞の一部として使われることが多いため除外
+        (r'(?<![\u30A0-\u30FFー])\s*(イースト)(?![\u30A0-\u30FFー])\s*(棟|館|塔|号|ウイング|アーク)', r' 東\2'),
+        (r'(?<![\u30A0-\u30FFー])\s*(ウエスト|ウェスト)(?![\u30A0-\u30FFー])\s*(棟|館|塔|号|ウイング|アーク)', r' 西\2'),
+        (r'(?<![\u30A0-\u30FFー])\s*(サウス)(?![\u30A0-\u30FFー])\s*(棟|館|塔|号|ウイング|アーク)', r' 南\2'),
+        (r'(?<![\u30A0-\u30FFー])\s*(ノース)(?![\u30A0-\u30FFー])\s*(棟|館|塔|号|ウイング|アーク)', r' 北\2'),
+        (r'(?<![\u30A0-\u30FFー])\s*(センター)(?![\u30A0-\u30FFー])\s*(棟|館|塔|号|ウイング|アーク)', r' 中\2'),
+
+        # 英語形式 + 接尾辞（前後にアルファベットがない場合のみ）
+        (r'(?<![A-Za-z])\s*(EAST)(?![A-Za-z])\s*(棟|館|塔|号|ウイング|アーク)', r' 東\2'),
+        (r'(?<![A-Za-z])\s*(WEST)(?![A-Za-z])\s*(棟|館|塔|号|ウイング|アーク)', r' 西\2'),
+        (r'(?<![A-Za-z])\s*(SOUTH)(?![A-Za-z])\s*(棟|館|塔|号|ウイング|アーク)', r' 南\2'),
+        (r'(?<![A-Za-z])\s*(NORTH)(?![A-Za-z])\s*(棟|館|塔|号|ウイング|アーク)', r' 北\2'),
+        (r'(?<![A-Za-z])\s*(CENTER)(?![A-Za-z])\s*(棟|館|塔|号|ウイング|アーク)', r' 中\2'),
+
+        # カタカナ形式単体（末尾、前後にカタカナがない場合のみ）
+        (r'(?<![\u30A0-\u30FFー])\s*(イースト)(?![\u30A0-\u30FFー])$', r' 東棟'),
+        (r'(?<![\u30A0-\u30FFー])\s*(ウエスト|ウェスト)(?![\u30A0-\u30FFー])$', r' 西棟'),
+        (r'(?<![\u30A0-\u30FFー])\s*(サウス)(?![\u30A0-\u30FFー])$', r' 南棟'),
+        (r'(?<![\u30A0-\u30FFー])\s*(ノース)(?![\u30A0-\u30FFー])$', r' 北棟'),
+        (r'(?<![\u30A0-\u30FFー])\s*(センター)(?![\u30A0-\u30FFー])$', r' 中棟'),
+
+        # 英語形式単体（末尾、前後にアルファベットがない場合のみ）
+        (r'(?<![A-Za-z])\s*(EAST)(?![A-Za-z])$', r' 東棟'),
+        (r'(?<![A-Za-z])\s*(WEST)(?![A-Za-z])$', r' 西棟'),
+        (r'(?<![A-Za-z])\s*(SOUTH)(?![A-Za-z])$', r' 南棟'),
+        (r'(?<![A-Za-z])\s*(NORTH)(?![A-Za-z])$', r' 北棟'),
+        (r'(?<![A-Za-z])\s*(CENTER)(?![A-Za-z])$', r' 中棟'),
+
         # 単独のアルファベット + 棟（方角の略称として扱う）
         # スペースがあってもなくても対応
         (r'\s*E棟', ' 東棟'),
@@ -755,69 +772,71 @@ def convert_japanese_numbers_to_arabic(text: str) -> str:
     }
     
     result = text
-    
-    # パターン1: 第X棟、X号館などの単純な置換
-    for pattern in [r'第([一二三四五六七八九十]+)([棟館号])', 
-                   r'([一二三四五六七八九十]+)([棟館号])']:
+
+    # ホワイトリスト方式：以下の場合のみ漢数字を変換
+    # 1. 建物の棟・館・号として明確に使われている場合
+    # 2. 前後に漢字がない単独の漢数字
+    # 地名（三田、五反田、六本木など）のように漢字が連続する場合は変換しない
+
+    def convert_kanji_number(num_str):
+        """漢数字を算用数字に変換"""
+        # 「十」を含む場合の処理
+        if '十' in num_str:
+            if num_str == '十':
+                return '10'
+            elif num_str.startswith('十'):
+                rest = num_str[1:]
+                if rest in basic_map:
+                    return '1' + basic_map[rest]
+            elif num_str.endswith('十'):
+                first = num_str[:-1]
+                if first in basic_map:
+                    return basic_map[first] + '0'
+            elif len(num_str) == 3 and num_str[1] == '十':
+                first = num_str[0]
+                last = num_str[2]
+                if first in basic_map and last in basic_map:
+                    return basic_map[first] + basic_map[last]
+        else:
+            # 単純な置換
+            converted = num_str
+            for kanji, num in basic_map.items():
+                converted = converted.replace(kanji, num)
+            return converted
+        return num_str
+
+    # パターン1: 接尾辞付き（第X棟、X番館、X棟など）
+    for pattern in [
+        r'第([一二三四五六七八九十壱弐参]+)([棟館号])',  # 第X棟、第X館、第X号
+        r'([一二三四五六七八九十壱弐参]+)番館',         # X番館
+        r'([一二三四五六七八九十壱弐参]+)([棟館号])'    # X棟、X館、X号
+    ]:
         def replace_func(match):
             num_str = match.group(1)
-            suffix = match.group(2) if len(match.groups()) > 1 else ''
-            prefix = '第' if '第' in match.group(0) else ''
-            
-            # 「十」を含む場合の処理
-            if '十' in num_str:
-                if num_str == '十':
-                    converted = '10'
-                elif num_str.startswith('十'):
-                    rest = num_str[1:]
-                    if rest in basic_map:
-                        converted = '1' + basic_map[rest]
-                    else:
-                        converted = num_str
-                elif num_str.endswith('十'):
-                    first = num_str[:-1]
-                    if first in basic_map:
-                        converted = basic_map[first] + '0'
-                    else:
-                        converted = num_str
-                elif len(num_str) == 3 and num_str[1] == '十':
-                    first = num_str[0]
-                    last = num_str[2]
-                    if first in basic_map and last in basic_map:
-                        converted = basic_map[first] + basic_map[last]
-                    else:
-                        converted = num_str
-                else:
-                    converted = num_str
+            if '番館' in match.group(0):
+                suffix = '番館'
             else:
-                # 単純な置換
-                converted = num_str
-                for kanji, num in basic_map.items():
-                    converted = converted.replace(kanji, num)
-            
+                suffix = match.group(2) if len(match.groups()) > 1 else ''
+            prefix = '第' if match.group(0).startswith('第') else ''
+            converted = convert_kanji_number(num_str)
             return prefix + converted + suffix
-        
+
         result = re.sub(pattern, replace_func, result)
-    
-    # パターン2: 残った独立した漢数字を処理
-    def convert_compound_number(match):
-        text = match.group(0)
-        # 十の位と一の位を処理
-        if '十' in text:
-            parts = text.split('十')
-            if len(parts) == 2:
-                tens = basic_map.get(parts[0], parts[0]) if parts[0] else '1'
-                ones = basic_map.get(parts[1], '0') if parts[1] else '0'
-                if tens.isdigit() and ones.isdigit():
-                    return str(int(tens) * 10 + int(ones))
-            elif text == '十':
-                return '10'
-        # 単純な一桁の数字
-        return basic_map.get(text, text)
-    
-    # 漢数字のパターンにマッチする部分を変換
-    result = re.sub(r'[一二三四五六七八九十]+', convert_compound_number, result)
-    
+
+    # パターン2: 前後に漢字がない単独の漢数字（地名などを除外）
+    # 例: "パークマンション 三" → "パークマンション 3"
+    # 例外: "三田" → 変換しない（前後に漢字）
+    def replace_isolated_kanji(match):
+        num_str = match.group(1)
+        return convert_kanji_number(num_str)
+
+    # Unicode漢字範囲: \u4E00-\u9FFF (CJK統合漢字), \u3005 (々)
+    result = re.sub(
+        r'(?<![一-龥々])([一二三四五六七八九十壱弐参]+)(?![一-龥々])',
+        replace_isolated_kanji,
+        result
+    )
+
     return result
 
 
