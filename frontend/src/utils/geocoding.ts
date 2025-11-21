@@ -12,7 +12,7 @@ import axios from './axiosConfig';
  */
 export async function getCoordinatesFromBuilding(buildingId: number): Promise<{ lat: number; lng: number } | null> {
   try {
-    const response = await axios.get(`/api/geocoding/building/${buildingId}`);
+    const response = await axios.get(`/geocoding/building/${buildingId}`);
     const data = response.data;
     
     if (data && data.latitude !== undefined && data.longitude !== undefined) {
@@ -55,7 +55,7 @@ export async function getHazardMapUrlFromBuilding(buildingId: number): Promise<s
   // 座標が取得できない場合、住所からジオコーディングを試みる
   if (!coords) {
     try {
-      const response = await axios.get(`/api/buildings/${buildingId}`);
+      const response = await axios.get(`/buildings/${buildingId}`);
       if (response.data && response.data.address) {
         coords = await getCoordinatesFromAddress(response.data.address);
       }
@@ -75,19 +75,9 @@ export async function getHazardMapUrlFromBuilding(buildingId: number): Promise<s
     return hazardMapUrl;
   }
 
-  // 座標が取得できない場合は、建物情報から住所を取得してURLに含める
-  try {
-    const response = await axios.get(`/api/buildings/${buildingId}`);
-    if (response.data && response.data.address) {
-      const encodedAddress = encodeURIComponent(response.data.address);
-      const hazardMapUrlWithAddress = `https://disaportal.gsi.go.jp/maps/index.html?base=pale&ls=disid_kouzui%2C0.8%7Cdisid_takashio%2C0.8%7Cdisid_doseki%2C0.8%7Cdisid_tsunami%2C0.8&disp=11111&lcd=disid_kouzui&vs=c1j0h0k0l0u0t0z0r0s0m0f1&d=l#address=${encodedAddress}`;
-      return hazardMapUrlWithAddress;
-    }
-  } catch (error) {
-  }
-
-  // 座標も住所も取得できない場合は、デフォルトのハザードマップURLを返す
-  return 'https://disaportal.gsi.go.jp/hazardmap/maps/index.html';
+  // 座標が取得できない場合は、デフォルトのハザードマップURLを返す
+  // 注: 国土地理院のハザードマップポータルサイトは #address= 形式をサポートしていないため
+  return 'https://disaportal.gsi.go.jp/maps/index.html?base=pale&ls=disid_kouzui%2C0.8%7Cdisid_takashio%2C0.8%7Cdisid_doseki%2C0.8%7Cdisid_tsunami%2C0.8&disp=11111&lcd=disid_kouzui&vs=c1j0h0k0l0u0t0z0r0s0m0f1&d=l';
 }
 
 /**
@@ -96,17 +86,20 @@ export async function getHazardMapUrlFromBuilding(buildingId: number): Promise<s
  * @returns ハザードマップのURL
  */
 export async function getHazardMapUrl(address: string): Promise<string> {
-  const coords = await getCoordinatesFromAddress(address);
+  // 座標取得を試みる
+  try {
+    const coords = await getCoordinatesFromAddress(address);
 
-  if (coords) {
-    // 座標が取得できた場合は、その位置を中心としたハザードマップURLを生成
-    const hazardMapUrl = `https://disaportal.gsi.go.jp/maps/index.html?ll=${coords.lat},${coords.lng}&z=15&base=pale&ls=disid_kouzui%2C0.8%7Cdisid_takashio%2C0.8%7Cdisid_doseki%2C0.8%7Cdisid_tsunami%2C0.8&disp=11111&lcd=disid_kouzui&vs=c1j0h0k0l0u0t0z0r0s0m0f1&d=l`;
-    return hazardMapUrl;
+    if (coords) {
+      // 座標が取得できた場合は、その位置を中心としたハザードマップURLを生成
+      const hazardMapUrl = `https://disaportal.gsi.go.jp/maps/index.html?ll=${coords.lat},${coords.lng}&z=15&base=pale&ls=disid_kouzui%2C0.8%7Cdisid_takashio%2C0.8%7Cdisid_doseki%2C0.8%7Cdisid_tsunami%2C0.8&disp=11111&lcd=disid_kouzui&vs=c1j0h0k0l0u0t0z0r0s0m0f1&d=l`;
+      return hazardMapUrl;
+    }
+  } catch (error) {
+    // 座標取得エラーは無視してデフォルトURLにフォールバック
   }
 
-  // 座標が取得できない場合は、住所検索機能付きのハザードマップURLを返す
-  // 住所をエンコードして検索パラメータとして渡す
-  const encodedAddress = encodeURIComponent(address);
-  const hazardMapUrlWithAddress = `https://disaportal.gsi.go.jp/maps/index.html?base=pale&ls=disid_kouzui%2C0.8%7Cdisid_takashio%2C0.8%7Cdisid_doseki%2C0.8%7Cdisid_tsunami%2C0.8&disp=11111&lcd=disid_kouzui&vs=c1j0h0k0l0u0t0z0r0s0m0f1&d=l#address=${encodedAddress}`;
-  return hazardMapUrlWithAddress;
+  // 座標が取得できない場合は、デフォルトのハザードマップURLを返す
+  // 注: 国土地理院のハザードマップポータルサイトは #address= 形式をサポートしていないため
+  return 'https://disaportal.gsi.go.jp/maps/index.html?base=pale&ls=disid_kouzui%2C0.8%7Cdisid_takashio%2C0.8%7Cdisid_doseki%2C0.8%7Cdisid_tsunami%2C0.8&disp=11111&lcd=disid_kouzui&vs=c1j0h0k0l0u0t0z0r0s0m0f1&d=l';
 }

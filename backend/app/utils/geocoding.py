@@ -19,7 +19,7 @@ class GeocodingService:
     CSIS_API_URL = "https://geocode.csis.u-tokyo.ac.jp/cgi-bin/simple_geocode.cgi"
     
     # 失敗時の再試行遅延（日数）
-    RETRY_DELAY_DAYS = 7  # 失敗から7日後に再試行
+    RETRY_DELAY_DAYS = 1  # 失敗から1日後に再試行
     
     @classmethod
     def get_coordinates_from_address(cls, address: str) -> Optional[Tuple[float, float]]:
@@ -40,7 +40,7 @@ class GeocodingService:
                     "addr": address,
                     "charset": "UTF8"
                 },
-                timeout=10
+                timeout=5  # 別スレッドで実行されるため、長めのタイムアウトでも問題なし
             )
             response.raise_for_status()
 

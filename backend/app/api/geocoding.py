@@ -24,7 +24,7 @@ class GeocodeRequest(BaseModel):
     address: str
 
 @router.get("/building/{building_id}")
-async def get_building_coordinates(
+def get_building_coordinates(
     building_id: int,
     db: Session = Depends(get_db)
 ) -> CoordinatesResponse:
@@ -67,7 +67,7 @@ async def get_building_coordinates(
         raise HTTPException(status_code=500, detail="座標取得中にエラーが発生しました")
 
 @router.post("/geocode")
-async def geocode_address(
+def geocode_address(
     request: GeocodeRequest
 ) -> CoordinatesResponse:
     """

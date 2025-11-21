@@ -93,9 +93,8 @@ const PropertyDetailPage: React.FC = () => {
       if (initialState && ssrPropertyId === propertyId) {
         console.log('SSRから初期データを使用:', initialState);
         data = initialState;
-        // 初期データを使用した後は削除（次回からはAPIを呼ぶ）
-        delete (window as any).__INITIAL_STATE__;
-        delete (window as any).__SSR_PROPERTY_ID__;
+        // 初期データは削除しない（2回目のリロードでも使用可能）
+        // 注: ページ遷移時は自動的にクリアされる
       } else {
         setLoading(true);
         data = await propertyApi.getPropertyDetail(propertyId);
@@ -103,12 +102,12 @@ const PropertyDetailPage: React.FC = () => {
       
       setPropertyDetail(data);
       
-      // 建物の住所から座標を取得してハザードマップURLを生成（非同期）
-      if (data?.master_property?.building?.address) {
-        const address = data.master_property.building.address;
-        // 非同期で座標を取得（ページ表示をブロックしない）
-        import('../utils/geocoding').then(({ getHazardMapUrl }) => {
-          getHazardMapUrl(address).then(url => {
+      // 建物IDから座標を取得してハザードマップURLを生成（非同期、キャッシュ利用）
+      if (data?.master_property?.building?.id) {
+        const buildingId = data.master_property.building.id;
+        // 非同期で座標を取得（ページ表示をブロックしない、DBキャッシュを利用）
+        import('../utils/geocoding').then(({ getHazardMapUrlFromBuilding }) => {
+          getHazardMapUrlFromBuilding(buildingId).then(url => {
             setHazardMapUrl(url);
           }).catch(() => {
             // ハザードマップURL生成エラーは無視（デフォルトURLを使用）
@@ -325,7 +324,7 @@ const PropertyDetailPage: React.FC = () => {
     "description": pageDescription,
     "offers": {
       "@type": "Offer",
-      "price": (isSold ? property.final_price : property.current_price) * 10000,
+      "price": ((isSold ? property.final_price : property.current_price) || 0) * 10000,
       "priceCurrency": "JPY",
       "availability": isSold ? "https://schema.org/Discontinued" : "https://schema.org/InStock"
     },
@@ -366,16 +365,16 @@ const PropertyDetailPage: React.FC = () => {
         <Grid container spacing={3}>
           <Grid item xs={12}>
             {/* スマートフォン：掲載件数とブックマーク（物件名の上） */}
-            <Box sx={{ 
+            <Box sx={{
               display: { xs: 'flex', md: 'none' },
-              flexWrap: 'wrap', 
-              gap: 1, 
+              flexWrap: 'wrap',
+              gap: 1,
               justifyContent: 'flex-end',
               mb: 1
             }}>
               <Chip label={`${property.listing_count}件の掲載`} color="secondary" />
-              <BookmarkButton 
-                propertyId={property.id} 
+              <BookmarkButton
+                propertyId={property.id}
                 size="medium"
               />
             </Box>
@@ -433,8 +432,8 @@ const PropertyDetailPage: React.FC = () => {
                 {/* PC：掲載件数とブックマーク */}
                 <Box sx={{ display: { xs: 'none', md: 'flex' }, gap: 1 }}>
                   <Chip label={`${property.listing_count}件の掲載`} color="secondary" />
-                  <BookmarkButton 
-                    propertyId={property.id} 
+                  <BookmarkButton
+                    propertyId={property.id}
                     size="medium"
                   />
                 </Box>
