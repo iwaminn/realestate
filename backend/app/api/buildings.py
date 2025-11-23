@@ -211,18 +211,6 @@ async def get_buildings(
         "total_pages": (total + per_page - 1) // per_page
     }
 
-@router.get("/buildings/{building_id}", response_model=BuildingSchema)
-async def get_building(
-    building_id: int,
-    db: Session = Depends(get_db)
-):
-    """建物の詳細情報を取得"""
-    building = db.query(Building).filter(Building.id == building_id).first()
-    if not building:
-        raise HTTPException(status_code=404, detail="建物が見つかりません")
-    
-    return building
-
 @router.get("/buildings/{building_id}/properties", response_model=Dict[str, Any])
 async def get_building_properties(
     building_id: int,
@@ -628,3 +616,14 @@ async def suggest_buildings(
         return results[:limit]
     else:  # 明示的に大きな limit が指定された場合は旧形式
         return [r["value"] for r in results[:limit]]
+@router.get("/buildings/{building_id}", response_model=BuildingSchema)
+async def get_building(
+    building_id: int,
+    db: Session = Depends(get_db)
+):
+    """建物の詳細情報を取得"""
+    building = db.query(Building).filter(Building.id == building_id).first()
+    if not building:
+        raise HTTPException(status_code=404, detail="建物が見つかりません")
+    
+    return building
