@@ -311,8 +311,7 @@ def inject_meta_tags_into_html(html: str, meta_data: dict) -> str:
     return html
 
 
-@router.get("/buildings/{building_id}/properties", response_class=HTMLResponse)
-
+@router.api_route("/buildings/{building_id}/properties", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def render_building_page(
     building_id: int,
     request: Request,
@@ -369,7 +368,7 @@ async def render_building_page(
     return HTMLResponse(content=html)
 
 
-@router.get("/properties/{property_id}", response_class=HTMLResponse)
+@router.api_route("/properties/{property_id}", methods=["GET", "HEAD"], response_class=HTMLResponse)
 
 async def render_property_page(
     property_id: int,
@@ -427,7 +426,7 @@ async def render_property_page(
     return HTMLResponse(content=html)
 
 
-@router.get("/properties", response_class=HTMLResponse)
+@router.api_route("/properties", methods=["GET", "HEAD"], response_class=HTMLResponse)
 
 async def render_properties_list_page(
     request: Request,
@@ -533,7 +532,7 @@ async def render_properties_list_page(
     return HTMLResponse(content=html)
 
 
-@router.get("/", response_class=HTMLResponse)
+@router.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def render_home_page(
     request: Request
 ):
