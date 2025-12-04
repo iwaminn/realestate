@@ -269,9 +269,8 @@ def inject_meta_tags_into_html(html: str, meta_data: dict) -> str:
     Returns:
         メタタグが注入されたHTML
     """
-    # メタタグを生成
-    meta_tags = f"""<title>{meta_data['title']}</title>
-    <meta name="description" content="{meta_data['description']}" />
+    # メタタグを生成（titleタグは別途置換するので除外）
+    meta_tags = f"""<meta name="description" content="{meta_data['description']}" />
     <link rel="canonical" href="{meta_data['canonical']}" />
     <meta property="og:title" content="{meta_data['title']}" />
     <meta property="og:description" content="{meta_data['description']}" />
@@ -285,14 +284,13 @@ def inject_meta_tags_into_html(html: str, meta_data: dict) -> str:
     # 1. <title>タグを置換
     html = re.sub(r'<title>.*?</title>', f'<title>{meta_data["title"]}</title>', html, flags=re.DOTALL)
     
-    # 2. <head>の終了タグの前にメタタグを追加（既存のtitleタグの後）
-    # まず既存のmeta descriptionとcanonicalがあれば削除
+    # 2. 既存のmeta description、canonical、OGタグ、Twitterタグを削除
     html = re.sub(r'<meta\s+name="description"[^>]*>', '', html)
     html = re.sub(r'<link\s+rel="canonical"[^>]*>', '', html)
     html = re.sub(r'<meta\s+property="og:[^"]*"[^>]*>', '', html)
     html = re.sub(r'<meta\s+name="twitter:[^"]*"[^>]*>', '', html)
     
-    # <title>タグの後に新しいメタタグを追加
+    # 3. <title>タグの後に新しいメタタグを追加
     if '<title>' in html:
         html = re.sub(
             r'(<title>.*?</title>)',
