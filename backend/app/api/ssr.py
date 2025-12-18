@@ -270,31 +270,31 @@ def inject_meta_tags_into_html(html: str, meta_data: dict) -> str:
         メタタグが注入されたHTML
     """
     # メタタグを生成（titleタグは別途置換するので除外）
-    meta_tags = f"""<meta name="description" content="{meta_data['description']}" />
-    <link rel="canonical" href="{meta_data['canonical']}" />
-    <meta property="og:title" content="{meta_data['title']}" />
-    <meta property="og:description" content="{meta_data['description']}" />
-    <meta property="og:url" content="{meta_data['canonical']}" />
-    <meta property="og:type" content="website" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <meta name="twitter:title" content="{meta_data['title']}" />
-    <meta name="twitter:description" content="{meta_data['description']}" />"""
+    # data-rh="true" を追加してreact-helmetが既存タグとして認識し、重複を防ぐ
+    meta_tags = f"""<meta name="description" content="{meta_data['description']}" data-rh="true" />
+    <link rel="canonical" href="{meta_data['canonical']}" data-rh="true" />
+    <meta property="og:title" content="{meta_data['title']}" data-rh="true" />
+    <meta property="og:description" content="{meta_data['description']}" data-rh="true" />
+    <meta property="og:url" content="{meta_data['canonical']}" data-rh="true" />
+    <meta property="og:type" content="website" data-rh="true" />
+    <meta name="twitter:card" content="summary_large_image" data-rh="true" />
+    <meta name="twitter:title" content="{meta_data['title']}" data-rh="true" />
+    <meta name="twitter:description" content="{meta_data['description']}" data-rh="true" />"""
 
     # 既存のHTMLに対してメタタグを注入
-    # 1. <title>タグを置換
-    html = re.sub(r'<title>.*?</title>', f'<title>{meta_data["title"]}</title>', html, flags=re.DOTALL)
-    
-    # 2. 既存のmeta description、canonical、OGタグ、Twitterタグを削除
+    # 1. 既存のmeta description、canonical、OGタグ、Twitterタグを削除
     html = re.sub(r'<meta\s+name="description"[^>]*>', '', html)
     html = re.sub(r'<link\s+rel="canonical"[^>]*>', '', html)
     html = re.sub(r'<meta\s+property="og:[^"]*"[^>]*>', '', html)
     html = re.sub(r'<meta\s+name="twitter:[^"]*"[^>]*>', '', html)
-    
-    # 3. <title>タグの後に新しいメタタグを追加
-    if '<title>' in html:
+
+    # 2. <title>タグを置換し、その後にメタタグを追加
+    # data-rh="true"を追加してreact-helmetが重複作成しないようにする
+    title_tag = f'<title data-rh="true">{meta_data["title"]}</title>'
+    if re.search(r'<title[^>]*>.*?</title>', html, flags=re.DOTALL):
         html = re.sub(
-            r'(<title>.*?</title>)',
-            r'\1\n    ' + meta_tags,
+            r'<title[^>]*>.*?</title>',
+            title_tag + '\n    ' + meta_tags,
             html,
             flags=re.DOTALL
         )
@@ -302,7 +302,7 @@ def inject_meta_tags_into_html(html: str, meta_data: dict) -> str:
         # <title>がない場合は<head>の直後に追加
         html = re.sub(
             r'(<head[^>]*>)',
-            r'\1\n    ' + meta_tags,
+            r'\1\n    ' + title_tag + '\n    ' + meta_tags,
             html
         )
     
