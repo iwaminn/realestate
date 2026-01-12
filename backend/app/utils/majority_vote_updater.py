@@ -12,6 +12,8 @@ from sqlalchemy.orm import Session
 from ..models import Building, MasterProperty, PropertyListing, ListingPriceHistory
 from .building_name_normalizer import remove_ad_text_from_building_name, remove_room_number_from_building_name
 import logging
+import re
+from dateutil.relativedelta import relativedelta
 
 logger = logging.getLogger(__name__)
 
@@ -306,20 +308,31 @@ class MajorityVoteUpdater:
 
     def get_majority_land_rights(self, values_with_source: List[tuple], current_value: Any = None) -> Optional[str]:
         """
-        権利形態の2段階多数決を行う
+        権利形態の多段階多数決を行う
 
         第1段階: 大分類（「所有権」「一般定期借地権」「旧法借地権」等）で多数決
-        第2段階: 勝った大分類の中で、詳細情報を含む値で多数決
+        第2段階: 借地権の場合は終了日を計算して多数決
+        第3段階: 残存期間を除外した条件部分で多数決
+        第4段階: 決定した終了日から現在の残存期間を計算し、条件部分と組み合わせ
 
         Args:
-            values_with_source: (権利形態文字列, ソースサイト名)のタプルのリスト
+            values_with_source: (権利形態文字列, ソースサイト名, created_at)のタプルのリスト
             current_value: 現在の値
 
         Returns:
             多数決で決定した権利形態（詳細情報を含む）
         """
-        # Noneや空文字を除外
-        valid_items = [(v, s) for v, s in values_with_source if v is not None and v != '']
+        # Noneや空文字を除外（2要素または3要素のタプルに対応）
+        valid_items = []
+        for item in values_with_source:
+            if len(item) == 3:
+                v, s, created_at = item
+            else:
+                v, s = item
+                created_at = None
+            if v is not None and v != '':
+                valid_items.append((v, s, created_at))
+
         if not valid_items:
             return current_value
 
@@ -330,12 +343,17 @@ class MajorityVoteUpdater:
                 return ''
 
             # 優先順位の高い順にチェック（より具体的なものを先に）
+            # 「地上権（普）」と「地上権（旧）」は法的に異なるので別カテゴリとして扱う
             categories = [
                 ('一般定期借地権', ['一般定期借地権', '定期借地権']),
                 ('旧法借地権', ['旧法借地権', '旧法賃借権']),
                 ('普通借地権', ['普通借地権']),
-                ('賃借権', ['賃借権（旧）', '賃借権']),  # 「賃借権（旧）」を先にチェック
-                ('地上権', ['地上権']),
+                ('賃借権（旧）', ['賃借権（旧）']),  # 「賃借権（旧）」を先にチェック
+                ('賃借権（普）', ['賃借権（普）']),
+                ('賃借権', ['賃借権']),  # 無印の賃借権
+                ('地上権（旧）', ['地上権（旧）']),  # 「地上権（旧）」を先にチェック
+                ('地上権（普）', ['地上権（普）']),
+                ('地上権', ['地上権']),  # 無印の地上権
                 ('所有権', ['所有権']),
             ]
 
@@ -348,13 +366,13 @@ class MajorityVoteUpdater:
             return land_rights
 
         # 第1段階: 大分類で集計
-        category_items = []  # (カテゴリ, 元の値, ソース)
-        for value, source in valid_items:
+        category_items = []  # (カテゴリ, 元の値, ソース, created_at)
+        for value, source, created_at in valid_items:
             category = get_land_rights_category(value)
-            category_items.append((category, value, source))
+            category_items.append((category, value, source, created_at))
 
         # カテゴリごとの投票数をカウント
-        category_counter = Counter([cat for cat, _, _ in category_items])
+        category_counter = Counter([cat for cat, _, _, _ in category_items])
         max_category_count = max(category_counter.values())
 
         # 最多カテゴリを取得
@@ -365,7 +383,7 @@ class MajorityVoteUpdater:
         else:
             # 同数の場合、サイト優先順位で決定
             category_priority = {}
-            for cat, value, source in category_items:
+            for cat, value, source, _ in category_items:
                 if cat in most_common_categories:
                     priority = self.get_site_priority(source)
                     if cat not in category_priority or priority < category_priority[cat]:
@@ -375,32 +393,208 @@ class MajorityVoteUpdater:
 
         logger.debug(f"権利形態の大分類多数決: {dict(category_counter)} → 勝者: {winning_category}")
 
-        # 第2段階: 勝ったカテゴリの中で詳細情報を含む値で多数決
-        winning_category_items = [(value, source) for cat, value, source in category_items if cat == winning_category]
+        # 勝ったカテゴリのアイテムを抽出
+        winning_category_items = [(value, source, created_at) for cat, value, source, created_at in category_items if cat == winning_category]
 
         if not winning_category_items:
             return current_value
 
-        # 詳細情報を含む値で多数決
-        value_counter = Counter([v for v, _ in winning_category_items])
+        # 所有権の場合はそのまま返す
+        if winning_category == '所有権':
+            return '所有権'
+
+        # 借地権の場合は終了日と条件部分で多数決
+        return self._process_lease_rights_majority(winning_category, winning_category_items)
+
+    def _extract_lease_end_date(self, land_rights: str, listing_date: datetime) -> Optional[str]:
+        """
+        権利形態から借地期限（終了日）を抽出
+
+        Returns:
+            終了日の年月 (YYYY-MM形式)、抽出できない場合は None
+        """
+        if not land_rights or '借地' not in land_rights:
+            return None
+
+        # パターン1: 明示的な終了日「借地期限2061年3月31日まで」
+        explicit_pattern = r'借地期限(\d{4})年(\d{1,2})月'
+        match = re.search(explicit_pattern, land_rights)
+        if match:
+            year, month = int(match.group(1)), int(match.group(2))
+            return f"{year}-{month:02d}"
+
+        # パターン2: 残存期間「借地期間残存35年5ヶ月」または「借地期間新規35年2ヶ月」
+        duration_pattern = r'借地期間(?:残存|新規)(\d+)年(?:(\d+)ヶ月)?'
+        match = re.search(duration_pattern, land_rights)
+        if match:
+            years = int(match.group(1))
+            months = int(match.group(2)) if match.group(2) else 0
+
+            # リスティング日時 + 残存期間 = 終了日
+            if listing_date:
+                end_date = listing_date + relativedelta(years=years, months=months)
+                return end_date.strftime("%Y-%m")
+            else:
+                # 日付情報がない場合は現在日時を使用
+                end_date = datetime.now() + relativedelta(years=years, months=months)
+                return end_date.strftime("%Y-%m")
+
+        return None
+
+    def _extract_conditions_without_duration(self, land_rights: str) -> str:
+        """
+        残存期間部分を除外した条件部分を抽出
+
+        例: 「一般定期借地権（賃借権）、借地期間残存35年2ヶ月、借地権設定登記不可、...」
+        → 「一般定期借地権（賃借権）、借地権設定登記不可、...」
+        """
+        if not land_rights:
+            return land_rights
+
+        # 残存期間部分を除外
+        result = re.sub(r'借地期間(?:残存|新規)\d+年(?:\d+ヶ月)?、?', '', land_rights)
+
+        # 明示的な終了日と保証金情報も除外（これらは物件ごとに異なる可能性がある）
+        result = re.sub(r'※定期賃借権：借地期限\d{4}年\d{1,2}月\d{1,2}日まで\s*', '', result)
+        result = re.sub(r'保証金（[^）]+）は販売価格に含まれています\s*、?', '', result)
+
+        # 連続するカンマや先頭/末尾のカンマを整理
+        result = re.sub(r'、+', '、', result)
+        result = re.sub(r'^、|、$', '', result)
+
+        return result.strip()
+
+    def _build_final_land_rights(self, conditions: str, end_date: str) -> str:
+        """
+        最終的な権利形態文字列を組み立て
+
+        Args:
+            conditions: 条件部分（残存期間を除く）
+            end_date: 終了日（YYYY-MM形式）
+
+        Returns:
+            組み立てた権利形態文字列
+        """
+        if not end_date:
+            return conditions
+
+        # 終了日から現在の残存期間を計算
+        now = datetime.now()
+        try:
+            end_dt = datetime.strptime(end_date + "-01", "%Y-%m-%d")
+        except ValueError:
+            return conditions
+
+        diff = relativedelta(end_dt, now)
+        years = diff.years
+        months = diff.months
+
+        # 負の値の場合（既に終了している場合）
+        if years < 0 or (years == 0 and months <= 0):
+            return conditions
+
+        if months > 0:
+            duration_str = f"借地期間残存{years}年{months}ヶ月"
+        else:
+            duration_str = f"借地期間残存{years}年"
+
+        # 条件から大分類部分を抽出
+        category_match = re.match(r'^([^、]+)、', conditions)
+        if category_match:
+            category = category_match.group(1)
+            rest_conditions = conditions[len(category):].lstrip('、')
+            if rest_conditions:
+                return f"{category}、{duration_str}、{rest_conditions}"
+            else:
+                return f"{category}、{duration_str}"
+        else:
+            return f"{conditions}、{duration_str}" if conditions else duration_str
+
+    def _process_lease_rights_majority(self, category: str, items: List[tuple]) -> str:
+        """
+        借地権の終了日検証 + 条件部分多数決を処理
+
+        Args:
+            category: 大分類（例: 「一般定期借地権」）
+            items: (権利形態, ソース, created_at) のリスト
+
+        Returns:
+            多数決で決定した権利形態
+        """
+        # 第2段階: 終了日を計算して多数決
+        end_dates = []
+        items_with_end_date = []
+        for value, source, created_at in items:
+            end_date = self._extract_lease_end_date(value, created_at)
+            if end_date:
+                end_dates.append(end_date)
+                items_with_end_date.append((value, source, created_at, end_date))
+
+        if not end_dates:
+            # 終了日が抽出できない場合は従来の多数決
+            logger.debug("終了日が抽出できないため、従来の多数決を使用")
+            return self._simple_majority_vote(items)
+
+        # 終了日で多数決
+        end_date_counter = Counter(end_dates)
+        winning_end_date = end_date_counter.most_common(1)[0][0]
+        logger.debug(f"終了日の多数決: {dict(end_date_counter)} → 勝者: {winning_end_date}")
+
+        # 第3段階: 残存期間を除外した条件部分で多数決
+        conditions_list = []
+        for value, source, created_at, end_date in items_with_end_date:
+            if end_date == winning_end_date:
+                conditions = self._extract_conditions_without_duration(value)
+                conditions_list.append((conditions, source))
+
+        if not conditions_list:
+            # 勝った終了日を持つアイテムがない場合（理論上は起きない）
+            return self._simple_majority_vote(items)
+
+        # 条件部分で多数決
+        conditions_counter = Counter([c for c, _ in conditions_list])
+        max_count = max(conditions_counter.values())
+        most_common_conditions = [c for c, count in conditions_counter.items() if count == max_count]
+
+        if len(most_common_conditions) == 1:
+            winning_conditions = most_common_conditions[0]
+        else:
+            # 同数の場合、サイト優先順位で決定
+            candidates = []
+            for cond in most_common_conditions:
+                sources = [s for c, s in conditions_list if c == cond]
+                best_priority = min(self.get_site_priority(s) for s in sources)
+                candidates.append((cond, best_priority))
+            candidates.sort(key=lambda x: x[1])
+            winning_conditions = candidates[0][0]
+
+        logger.debug(f"条件部分の多数決: 勝者の条件数={conditions_counter[winning_conditions]}")
+
+        # 第4段階: 最終結果を組み立て
+        result = self._build_final_land_rights(winning_conditions, winning_end_date)
+        logger.debug(f"権利形態の最終結果: {result[:80]}...")
+
+        return result
+
+    def _simple_majority_vote(self, items: List[tuple]) -> str:
+        """
+        従来のシンプルな多数決（フォールバック用）
+        """
+        value_counter = Counter([v for v, _, _ in items])
         max_count = max(value_counter.values())
         most_common_values = [value for value, count in value_counter.items() if count == max_count]
 
         if len(most_common_values) == 1:
-            result = most_common_values[0]
-        else:
-            # 同数の場合、サイト優先順位で決定
-            candidates = []
-            for value in most_common_values:
-                sources = [s for v, s in winning_category_items if v == value]
-                best_priority = min(self.get_site_priority(s) for s in sources)
-                candidates.append((value, best_priority))
-            candidates.sort(key=lambda x: x[1])
-            result = candidates[0][0]
+            return most_common_values[0]
 
-        logger.debug(f"権利形態の詳細多数決: {dict(value_counter)} → 結果: {result[:50]}...")
-
-        return result
+        # 同数の場合、サイト優先順位で決定
+        candidates = []
+        for value in most_common_values:
+            sources = [s for v, s, _ in items if v == value]
+            best_priority = min(self.get_site_priority(s) for s in sources)
+            candidates.append((value, best_priority))
+        candidates.sort(key=lambda x: x[1])
+        return candidates[0][0]
 
     def get_majority_price(self, prices: List[int], current_price: Any = None) -> Optional[int]:
         """
@@ -856,8 +1050,9 @@ class MajorityVoteUpdater:
                 info['basement_floors'].append((listing.listing_basement_floors, listing.source_site))
             
             # 敷地権利形態（所有権・借地権などは基本的に不変）
+            # 終了日計算のために created_at も含める
             if hasattr(listing, 'listing_land_rights') and listing.listing_land_rights:
-                info['land_rights'].append((listing.listing_land_rights, listing.source_site))
+                info['land_rights'].append((listing.listing_land_rights, listing.source_site, listing.created_at))
             
             # 総戸数（増築などで変わる可能性は低いが、基本的に不変）
             if hasattr(listing, 'listing_total_units') and listing.listing_total_units:
