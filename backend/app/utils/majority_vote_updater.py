@@ -304,6 +304,104 @@ class MajorityVoteUpdater:
         
         return candidates[0][0]
 
+    def get_majority_land_rights(self, values_with_source: List[tuple], current_value: Any = None) -> Optional[str]:
+        """
+        権利形態の2段階多数決を行う
+
+        第1段階: 大分類（「所有権」「一般定期借地権」「旧法借地権」等）で多数決
+        第2段階: 勝った大分類の中で、詳細情報を含む値で多数決
+
+        Args:
+            values_with_source: (権利形態文字列, ソースサイト名)のタプルのリスト
+            current_value: 現在の値
+
+        Returns:
+            多数決で決定した権利形態（詳細情報を含む）
+        """
+        # Noneや空文字を除外
+        valid_items = [(v, s) for v, s in values_with_source if v is not None and v != '']
+        if not valid_items:
+            return current_value
+
+        # 権利形態の大分類を抽出
+        def get_land_rights_category(land_rights: str) -> str:
+            """権利形態の大分類を取得"""
+            if not land_rights:
+                return ''
+
+            # 優先順位の高い順にチェック（より具体的なものを先に）
+            categories = [
+                ('一般定期借地権', ['一般定期借地権', '定期借地権']),
+                ('旧法借地権', ['旧法借地権', '旧法賃借権']),
+                ('普通借地権', ['普通借地権']),
+                ('賃借権', ['賃借権（旧）', '賃借権']),  # 「賃借権（旧）」を先にチェック
+                ('地上権', ['地上権']),
+                ('所有権', ['所有権']),
+            ]
+
+            for category_name, keywords in categories:
+                for keyword in keywords:
+                    if keyword in land_rights:
+                        return category_name
+
+            # どのカテゴリにも該当しない場合は元の値をカテゴリとして使用
+            return land_rights
+
+        # 第1段階: 大分類で集計
+        category_items = []  # (カテゴリ, 元の値, ソース)
+        for value, source in valid_items:
+            category = get_land_rights_category(value)
+            category_items.append((category, value, source))
+
+        # カテゴリごとの投票数をカウント
+        category_counter = Counter([cat for cat, _, _ in category_items])
+        max_category_count = max(category_counter.values())
+
+        # 最多カテゴリを取得
+        most_common_categories = [cat for cat, count in category_counter.items() if count == max_category_count]
+
+        if len(most_common_categories) == 1:
+            winning_category = most_common_categories[0]
+        else:
+            # 同数の場合、サイト優先順位で決定
+            category_priority = {}
+            for cat, value, source in category_items:
+                if cat in most_common_categories:
+                    priority = self.get_site_priority(source)
+                    if cat not in category_priority or priority < category_priority[cat]:
+                        category_priority[cat] = priority
+
+            winning_category = min(most_common_categories, key=lambda c: category_priority.get(c, 999))
+
+        logger.debug(f"権利形態の大分類多数決: {dict(category_counter)} → 勝者: {winning_category}")
+
+        # 第2段階: 勝ったカテゴリの中で詳細情報を含む値で多数決
+        winning_category_items = [(value, source) for cat, value, source in category_items if cat == winning_category]
+
+        if not winning_category_items:
+            return current_value
+
+        # 詳細情報を含む値で多数決
+        value_counter = Counter([v for v, _ in winning_category_items])
+        max_count = max(value_counter.values())
+        most_common_values = [value for value, count in value_counter.items() if count == max_count]
+
+        if len(most_common_values) == 1:
+            result = most_common_values[0]
+        else:
+            # 同数の場合、サイト優先順位で決定
+            candidates = []
+            for value in most_common_values:
+                sources = [s for v, s in winning_category_items if v == value]
+                best_priority = min(self.get_site_priority(s) for s in sources)
+                candidates.append((value, best_priority))
+            candidates.sort(key=lambda x: x[1])
+            result = candidates[0][0]
+
+        logger.debug(f"権利形態の詳細多数決: {dict(value_counter)} → 結果: {result[:50]}...")
+
+        return result
+
     def get_majority_price(self, prices: List[int], current_price: Any = None) -> Optional[int]:
         """
         価格の最頻値を取得する。同数の場合は安い方を優先
@@ -666,11 +764,12 @@ class MajorityVoteUpdater:
                 building.basement_floors = majority_basement_floors
                 updated = True
         
-        # 敷地権利形態の多数決
+        # 敷地権利形態の多数決（2段階: 大分類→詳細）
         if building_info['land_rights']:
-            majority_land_rights = self.get_majority_value(building_info['land_rights'], building.land_rights)
+            majority_land_rights = self.get_majority_land_rights(building_info['land_rights'], building.land_rights)
             if majority_land_rights != building.land_rights:
-                logger.info(f"建物 '{building.normalized_name}' の敷地権利形態を更新")
+                logger.info(f"建物 '{building.normalized_name}' の敷地権利形態を更新: "
+                          f"'{building.land_rights}' → '{majority_land_rights[:50] if majority_land_rights else None}...'")
                 building.land_rights = majority_land_rights
                 updated = True
         
