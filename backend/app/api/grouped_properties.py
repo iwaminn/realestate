@@ -9,7 +9,7 @@ import re
 
 from ..database import get_db
 from ..models import Building, MasterProperty, PropertyListing, PropertyPriceChange
-from ..utils.building_filters import apply_building_name_filter
+from ..utils.building_filters import apply_building_name_filter, apply_land_rights_filter
 
 router = APIRouter(prefix="/api", tags=["grouped-properties"])
 
@@ -23,6 +23,7 @@ async def get_properties_grouped_by_buildings(
     building_name: Optional[str] = Query(None),
     max_building_age: Optional[int] = Query(None),
     wards: Optional[List[str]] = Query(None),
+    land_rights_types: Optional[List[str]] = Query(None, description="権利形態（ownership, old_leasehold, fixed_term_leasehold, regular_leasehold）"),
     page: int = Query(1, ge=1),
     per_page: int = Query(20, ge=1, le=100),
     include_inactive: bool = Query(False),
@@ -80,7 +81,10 @@ async def get_properties_grouped_by_buildings(
         for ward in wards:
             ward_conditions.append(Building.address.ilike(f"%{ward}%"))
         base_query = base_query.filter(or_(*ward_conditions))
-    
+
+    # 権利形態フィルタ
+    base_query = apply_land_rights_filter(base_query, land_rights_types)
+
     # 価格フィルタを適用（has_active_listingベース）
     # サブクエリをjoinして使用
     base_query = base_query.outerjoin(

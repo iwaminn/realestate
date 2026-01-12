@@ -10,7 +10,7 @@ from ..models import Building, MasterProperty, PropertyListing, ListingPriceHist
 from ..schemas.property import PropertyDetailSchema, MasterPropertySchema, ListingSchema, PriceHistorySchema
 from ..schemas.building import BuildingSchema
 from ..utils.price_queries import create_majority_price_subquery, create_price_stats_subquery, apply_price_filter, get_sold_property_final_price
-from ..utils.building_filters import apply_building_name_filter, apply_building_filters, apply_property_filters
+from ..utils.building_filters import apply_building_name_filter, apply_building_filters, apply_property_filters, apply_land_rights_filter
 from .price_analysis import create_unified_price_timeline, analyze_source_price_consistency
 
 router = APIRouter(prefix="/api", tags=["properties"])
@@ -25,6 +25,7 @@ async def get_properties(
     building_name: Optional[str] = Query(None),
     max_building_age: Optional[int] = Query(None),
     wards: Optional[List[str]] = Query(None),
+    land_rights_types: Optional[List[str]] = Query(None, description="権利形態（ownership, old_leasehold, fixed_term_leasehold, regular_leasehold）"),
     include_inactive: bool = Query(False, description="販売終了物件を含む"),
     page: int = Query(1, ge=1),
     per_page: int = Query(30, ge=1, le=100),
@@ -165,6 +166,9 @@ async def get_properties(
     
     # 建物フィルタ
     query = apply_building_filters(query, wards, max_building_age)
+
+    # 権利形態フィルタ
+    query = apply_land_rights_filter(query, land_rights_types)
 
     # 総件数を取得
     total = query.count()

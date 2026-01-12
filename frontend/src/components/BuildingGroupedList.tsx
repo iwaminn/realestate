@@ -99,6 +99,9 @@ const BuildingGroupedList: React.FC<BuildingGroupedListProps> = ({
       if (searchParams.wards && searchParams.wards.length > 0) {
         searchParams.wards.forEach(ward => params.append('wards', ward));
       }
+      if (searchParams.land_rights_types && searchParams.land_rights_types.length > 0) {
+        searchParams.land_rights_types.forEach(type => params.append('land_rights_types', type));
+      }
       params.append('page', page.toString());
       params.append('per_page', '20');
       params.append('include_inactive', includeInactive.toString());

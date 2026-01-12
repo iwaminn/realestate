@@ -120,3 +120,72 @@ def apply_property_filters(
         query = query.filter(MasterProperty.layout.in_(layouts))
     
     return query
+
+
+# 権利形態カテゴリの定義
+LAND_RIGHTS_CATEGORIES = {
+    'ownership': {
+        'label': '所有権',
+        'keywords': ['所有権'],
+        'exclude_keywords': []  # 「所有権」のみにマッチ
+    },
+    'old_leasehold': {
+        'label': '旧法借地権',
+        'keywords': ['地上権（旧）', '賃借権（旧）', '旧法借地権', '旧法賃借権'],
+        'exclude_keywords': []
+    },
+    'fixed_term_leasehold': {
+        'label': '定期借地権',
+        'keywords': ['一般定期借地権', '定期借地権'],
+        'exclude_keywords': []
+    },
+    'regular_leasehold': {
+        'label': '普通借地権',
+        'keywords': ['普通借地権', '地上権（普）', '賃借権（普）', '普通賃借権'],
+        'exclude_keywords': []
+    }
+}
+
+
+def apply_land_rights_filter(
+    query: Query,
+    land_rights_types: Optional[List[str]] = None
+) -> Query:
+    """
+    権利形態フィルタを適用
+    
+    Args:
+        query: ベースクエリ
+        land_rights_types: 権利形態カテゴリのリスト
+            - 'ownership': 所有権
+            - 'old_leasehold': 旧法借地権（地上権（旧）、賃借権（旧）等）
+            - 'fixed_term_leasehold': 定期借地権（一般定期借地権等）
+            - 'regular_leasehold': 普通借地権（普通借地権、地上権（普）等）
+    
+    Returns:
+        フィルタ適用済みのクエリ
+    """
+    if not land_rights_types:
+        return query
+    
+    conditions = []
+    for category in land_rights_types:
+        if category not in LAND_RIGHTS_CATEGORIES:
+            continue
+        
+        category_info = LAND_RIGHTS_CATEGORIES[category]
+        keywords = category_info['keywords']
+        
+        # 各キーワードに対するOR条件を作成
+        keyword_conditions = []
+        for keyword in keywords:
+            keyword_conditions.append(Building.land_rights.ilike(f"%{keyword}%"))
+        
+        if keyword_conditions:
+            conditions.append(or_(*keyword_conditions))
+    
+    if conditions:
+        # 選択されたカテゴリのいずれかにマッチすればOK
+        query = query.filter(or_(*conditions))
+    
+    return query

@@ -74,7 +74,8 @@ const PropertyListPage: React.FC = () => {
     if (urlParams.get('building_name')) params.building_name = urlParams.get('building_name') || undefined;
     if (urlParams.get('max_building_age')) params.max_building_age = Number(urlParams.get('max_building_age'));
     if (urlParams.get('wards')) params.wards = urlParams.get('wards')?.split(',') || undefined;
-    
+    if (urlParams.get('land_rights_types')) params.land_rights_types = urlParams.get('land_rights_types')?.split(',') || undefined;
+
     return params;
   };
   
@@ -112,6 +113,7 @@ const PropertyListPage: React.FC = () => {
     if (params.building_name) urlParams.set('building_name', params.building_name);
     if (params.max_building_age) urlParams.set('max_building_age', params.max_building_age.toString());
     if (params.wards && params.wards.length > 0) urlParams.set('wards', params.wards.join(','));
+    if (params.land_rights_types && params.land_rights_types.length > 0) urlParams.set('land_rights_types', params.land_rights_types.join(','));
     if (page > 1) urlParams.set('page', page.toString());
     
     // include_inactiveパラメータを追加

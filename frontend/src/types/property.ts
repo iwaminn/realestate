@@ -107,12 +107,23 @@ export interface SearchParams {
   building_name?: string;
   max_building_age?: number;
   wards?: string[];
+  land_rights_types?: string[];
   sort_by?: string;
   sort_order?: string;
   page?: number;
   per_page?: number;
   include_inactive?: boolean;
 }
+
+// 権利形態カテゴリの定義
+export const LAND_RIGHTS_OPTIONS = [
+  { value: 'ownership', label: '所有権' },
+  { value: 'old_leasehold', label: '旧法借地権' },
+  { value: 'fixed_term_leasehold', label: '定期借地権' },
+  { value: 'regular_leasehold', label: '普通借地権' },
+] as const;
+
+export type LandRightsType = typeof LAND_RIGHTS_OPTIONS[number]['value'];
 
 export interface Area {
   id: number;

@@ -24,7 +24,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import FilterListIcon from '@mui/icons-material/FilterList';
-import { SearchParams, Area } from '../types/property';
+import { SearchParams, Area, LAND_RIGHTS_OPTIONS } from '../types/property';
 import { propertyApi } from '../api/propertyApi';
 import { debounce } from 'lodash';
 
@@ -48,6 +48,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
     building_name: initialValues?.building_name || '',
     max_building_age: initialValues?.max_building_age || undefined,
     wards: initialValues?.wards || [],
+    land_rights_types: initialValues?.land_rights_types || [],
   });
 
   // Autocomplete用の状態 - エイリアス対応
@@ -124,6 +125,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
         building_name: initialValues.building_name || '',
         max_building_age: initialValues.max_building_age || undefined,
         wards: initialValues.wards || [],
+        land_rights_types: initialValues.land_rights_types || [],
       });
       setBuildingInputValue(initialValues.building_name || '');
     }
@@ -172,6 +174,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
       building_name: '',
       max_building_age: undefined,
       wards: [],
+      land_rights_types: [],
     });
     setBuildingInputValue('');
     setBuildingOptions([]);
@@ -187,7 +190,8 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
       searchParams.max_area ||
       (searchParams.layouts && searchParams.layouts.length > 0) ||
       searchParams.max_building_age ||
-      (searchParams.wards && searchParams.wards.length > 0)
+      (searchParams.wards && searchParams.wards.length > 0) ||
+      (searchParams.land_rights_types && searchParams.land_rights_types.length > 0)
     );
   };
 
@@ -282,6 +286,23 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
           size="small"
           onDelete={() => {
             setSearchParams({ ...searchParams, max_building_age: undefined });
+          }}
+          sx={{ m: 0.5 }}
+        />
+      );
+    }
+
+    if (searchParams.land_rights_types && searchParams.land_rights_types.length > 0) {
+      const labels = searchParams.land_rights_types.map(
+        type => LAND_RIGHTS_OPTIONS.find(opt => opt.value === type)?.label || type
+      );
+      chips.push(
+        <Chip
+          key="land_rights"
+          label={`権利: ${labels.join(', ')}`}
+          size="small"
+          onDelete={() => {
+            setSearchParams({ ...searchParams, land_rights_types: [] });
           }}
           sx={{ m: 0.5 }}
         />
@@ -446,6 +467,7 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                     searchParams.layouts?.length || 0,
                     searchParams.max_building_age ? 1 : 0,
                     searchParams.wards?.length || 0,
+                    searchParams.land_rights_types?.length || 0,
                   ].reduce((a, b) => a + b, 0)
                 })` : '条件'}
               </Button>
@@ -680,6 +702,42 @@ const SearchForm: React.FC<SearchFormProps> = ({ onSearch, loading, initialValue
                 <MenuItem value={20}>20年以内</MenuItem>
                 <MenuItem value={25}>25年以内</MenuItem>
                 <MenuItem value={30}>30年以内</MenuItem>
+              </Select>
+            </FormControl>
+          </Grid>
+
+          <Grid item xs={12} sm={6} md={3}>
+            <FormControl fullWidth>
+              <InputLabel id="land-rights-multiple-chip-label">権利形態</InputLabel>
+              <Select
+                labelId="land-rights-multiple-chip-label"
+                id="land-rights-multiple-chip"
+                multiple
+                value={searchParams.land_rights_types || []}
+                onChange={handleMultiSelectChange('land_rights_types')}
+                input={<OutlinedInput id="select-multiple-land-rights-chip" label="権利形態" />}
+                renderValue={(selected) => (
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                    {selected.map((value) => {
+                      const option = LAND_RIGHTS_OPTIONS.find(opt => opt.value === value);
+                      return <Chip key={value} label={option?.label || value} size="small" />;
+                    })}
+                  </Box>
+                )}
+                MenuProps={{
+                  PaperProps: {
+                    style: {
+                      maxHeight: 48 * 4.5 + 8,
+                      width: 250,
+                    },
+                  },
+                }}
+              >
+                {LAND_RIGHTS_OPTIONS.map((option) => (
+                  <MenuItem key={option.value} value={option.value}>
+                    {option.label}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
           </Grid>
