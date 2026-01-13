@@ -102,6 +102,10 @@ class BaseScraper(ABC):
     
     # 疑わしい更新の検出設定
     SUSPICIOUS_UPDATE_THRESHOLD = 5  # 疑わしい更新の連続数閾値
+
+    # 築年月の実績ベース許容設定
+    DEFAULT_BUILT_DATE_MIN_COUNT = 3  # 最低件数
+    DEFAULT_BUILT_DATE_MIN_RATIO = 0.05  # 最低割合（5%）
     AREA_CHANGE_THRESHOLD = 0.7  # 面積変更の閾値（70%）
     PRICE_CHANGE_THRESHOLD = 0.7  # 価格変更の閾値（70%）
     
@@ -2749,19 +2753,20 @@ class BaseScraper(ABC):
             session.rollback()
             return False
     
-    def _verify_building_attributes(self, building: Building, total_floors: int = None, 
+    def _verify_building_attributes(self, building: Building, total_floors: int = None,
                                  built_year: int = None, built_month: int = None,
-                                 total_units: int = None) -> bool:
+                                 total_units: int = None, session=None) -> bool:
         """建物の属性（総階数、築年月、総戸数）が一致するか確認
-        
+
         前提条件：この関数が呼び出される時点で、住所と建物名の一致は確認済み
-        
+
         重要な仕様：
         - 比較可能な属性が少なくとも2つ必要
         - 比較可能な属性はすべて一致する必要がある
         - NULLの属性は比較から除外する
         - 総階数・総戸数が一致している場合は築年月の±1ヶ月の誤差を許容
         - 総階数・築年月が一致している場合は総戸数の±2戸の誤差を許容
+        - 築年月が不一致でも、建物の過去の掲載データに同じ築年月が一定数以上あれば許容
         """
         # 比較可能な属性をカウント
         comparable_attributes = []
@@ -2784,22 +2789,33 @@ class BaseScraper(ABC):
                 self.logger.debug(
                     f"築年が一致しない: 既存={building.built_year}, 新規={built_year}"
                 )
-                return False
-            
-            # 築月の比較（築年が一致している場合のみ）
-            if built_month is not None and building.built_month is not None:
-                built_month_diff = abs(building.built_month - built_month)
-                if built_month_diff != 0:
-                    self.logger.debug(
-                        f"築月が異なる: 既存={building.built_year}年{building.built_month}月, "
-                        f"新規={built_year}年{built_month}月 (差: {built_month_diff}ヶ月)"
+                # 実績ベースの築年月許容チェック
+                if session and self._check_built_date_variation(
+                    session, building.id, built_year, built_month
+                ):
+                    self.logger.info(
+                        f"築年月の実績ベース許容: 既存建物ID={building.id}に"
+                        f"{built_year}年{built_month}月の掲載実績あり"
                     )
-                    # 築月の不一致を記録（後で他の条件により判定）
-                    built_year_month_mismatch = True
+                    # 築年月は実績で許容されたので、年のみ一致として扱う
+                    comparable_attributes.append('built_year_variation')
                 else:
-                    comparable_attributes.append('built_year_month')  # 年月両方が完全一致
+                    return False
             else:
-                comparable_attributes.append('built_year')  # 年のみ一致
+                # 築月の比較（築年が一致している場合のみ）
+                if built_month is not None and building.built_month is not None:
+                    built_month_diff = abs(building.built_month - built_month)
+                    if built_month_diff != 0:
+                        self.logger.debug(
+                            f"築月が異なる: 既存={building.built_year}年{building.built_month}月, "
+                            f"新規={built_year}年{built_month}月 (差: {built_month_diff}ヶ月)"
+                        )
+                        # 築月の不一致を記録（後で他の条件により判定）
+                        built_year_month_mismatch = True
+                    else:
+                        comparable_attributes.append('built_year_month')  # 年月両方が完全一致
+                else:
+                    comparable_attributes.append('built_year')  # 年のみ一致
         
         # 総戸数の比較
         total_units_diff = 0
@@ -2863,11 +2879,81 @@ class BaseScraper(ABC):
         )
         return False
 
-    def _verify_building_attributes_strict(self, building: Building, total_floors: int = None, 
+    def _check_built_date_variation(self, session, building_id: int,
+                                    built_year: int, built_month: int = None) -> bool:
+        """建物の過去の掲載データに指定された築年月の実績があるかチェック
+
+        Args:
+            session: データベースセッション
+            building_id: 建物ID
+            built_year: チェックする築年
+            built_month: チェックする築月（オプション）
+
+        Returns:
+            bool: 条件を満たす実績がある場合True
+                - 件数がDEFAULT_BUILT_DATE_MIN_COUNT以上
+                - 割合がDEFAULT_BUILT_DATE_MIN_RATIO以上
+        """
+        from sqlalchemy import func
+        from ..models import PropertyListing, MasterProperty
+
+        # 環境変数から閾値を取得
+        min_count = int(os.getenv(
+            'BUILDING_BUILT_DATE_MIN_COUNT',
+            str(self.DEFAULT_BUILT_DATE_MIN_COUNT)
+        ))
+        min_ratio = float(os.getenv(
+            'BUILDING_BUILT_DATE_MIN_RATIO',
+            str(self.DEFAULT_BUILT_DATE_MIN_RATIO)
+        ))
+
+        # 建物に紐づく全掲載数を取得
+        total_listings = session.query(func.count(PropertyListing.id)).join(
+            MasterProperty, PropertyListing.master_property_id == MasterProperty.id
+        ).filter(
+            MasterProperty.building_id == building_id,
+            PropertyListing.listing_built_year.isnot(None)
+        ).scalar() or 0
+
+        if total_listings == 0:
+            self.logger.debug(f"建物ID={building_id}に築年月データがある掲載がない")
+            return False
+
+        # 指定された築年月の掲載数を取得
+        query = session.query(func.count(PropertyListing.id)).join(
+            MasterProperty, PropertyListing.master_property_id == MasterProperty.id
+        ).filter(
+            MasterProperty.building_id == building_id,
+            PropertyListing.listing_built_year == built_year
+        )
+
+        # 築月が指定されている場合は築月も条件に追加
+        if built_month is not None:
+            query = query.filter(PropertyListing.listing_built_month == built_month)
+
+        matching_count = query.scalar() or 0
+
+        # 割合を計算
+        ratio = matching_count / total_listings if total_listings > 0 else 0
+
+        self.logger.debug(
+            f"築年月実績チェック: 建物ID={building_id}, "
+            f"チェック対象={built_year}年{built_month}月, "
+            f"該当件数={matching_count}/{total_listings} ({ratio:.1%}), "
+            f"閾値: {min_count}件以上 AND {min_ratio:.1%}以上"
+        )
+
+        # 両方の条件を満たすかチェック
+        if matching_count >= min_count and ratio >= min_ratio:
+            return True
+
+        return False
+
+    def _verify_building_attributes_strict(self, building: Building, total_floors: int = None,
                                          built_year: int = None, built_month: int = None,
                                          total_units: int = None) -> bool:
         """建物の属性が厳密に一致するかチェック（誤差許容なし）
-        
+
         Returns:
             bool: すべての比較可能な属性が厳密に一致する場合True
         """
@@ -3157,7 +3243,7 @@ class BaseScraper(ABC):
             
             # 属性一致チェック
             strict_match = self._verify_building_attributes_strict(building, total_floors, built_year, built_month, total_units)
-            flexible_match = self._verify_building_attributes(building, total_floors, built_year, built_month, total_units)
+            flexible_match = self._verify_building_attributes(building, total_floors, built_year, built_month, total_units, session)
                 
             valid_candidates.append({
                 'building': building,
@@ -3238,7 +3324,7 @@ class BaseScraper(ABC):
             # 住所の完全一致をチェック
             if building_normalized_addr == normalized_address:
                 # 完全一致でも建物属性を確認
-                if self._verify_building_attributes(building, total_floors, built_year, built_month, total_units):
+                if self._verify_building_attributes(building, total_floors, built_year, built_month, total_units, session):
                     self.logger.info(f"既存建物を発見（名前と正規化住所が完全一致、属性も確認）: {building.normalized_name} at {building.address}")
                     return building
                 else:
@@ -3263,7 +3349,7 @@ class BaseScraper(ABC):
                 normalized_address.startswith(building_normalized_addr)):
                 
                 # 部分一致の場合も属性確認（住所は部分一致、建物名は完全一致）
-                if self._verify_building_attributes(building, total_floors, built_year, built_month, total_units):
+                if self._verify_building_attributes(building, total_floors, built_year, built_month, total_units, session):
                     self.logger.info(f"既存建物を発見（建物名完全一致・住所部分一致・属性確認）: {building.normalized_name} at {building.address}")
                     return building
                 else:
@@ -3319,7 +3405,7 @@ class BaseScraper(ABC):
                 attribute_score = 0
                 if self._verify_building_attributes_strict(primary_building, total_floors, built_year, built_month, total_units):
                     attribute_score = 100  # 厳密一致
-                elif self._verify_building_attributes(primary_building, total_floors, built_year, built_month, total_units):
+                elif self._verify_building_attributes(primary_building, total_floors, built_year, built_month, total_units, session):
                     attribute_score = 70   # 許容誤差一致
                 else:
                     continue  # 属性が一致しない場合はスキップ
@@ -3439,12 +3525,10 @@ class BaseScraper(ABC):
                             from ..utils.address_normalizer import AddressNormalizer
                             addr_normalizer = AddressNormalizer()
                             updates['normalized_address'] = addr_normalizer.normalize_for_comparison(address)
-                    # 築年月の更新（既存の値がないか、異なる値の場合は更新）
-                    if built_year and building.built_year != built_year:
-                        old_built_year = building.built_year
+                    # 築年月の更新（既存の値がない場合のみ）
+                    # 注意: 実績ベースの許容で紐付けた場合、多数決で決まった既存の築年月を維持する
+                    if built_year and not building.built_year:
                         updates['built_year'] = built_year
-                        if old_built_year:
-                            self.logger.info(f"築年月を更新: {old_built_year} → {built_year}, 建物ID: {building.id}")
                     if built_month and not building.built_month:
                         updates['built_month'] = built_month
                     if total_floors and not building.total_floors:
@@ -3488,12 +3572,10 @@ class BaseScraper(ABC):
             
             # 建物情報を更新（リポジトリを使用）
             updates = {}
-            # 築年月の更新（既存の値がないか、異なる値の場合は更新）
-            if built_year and building.built_year != built_year:
-                old_built_year = building.built_year
+            # 築年月の更新（既存の値がない場合のみ）
+            # 注意: 実績ベースの許容で紐付けた場合、多数決で決まった既存の築年月を維持する
+            if built_year and not building.built_year:
                 updates['built_year'] = built_year
-                if old_built_year:
-                    self.logger.info(f"築年月を更新: {old_built_year} → {built_year}, 建物ID: {building.id}")
             if built_month and not building.built_month:
                 updates['built_month'] = built_month
             if total_floors and not building.total_floors:
