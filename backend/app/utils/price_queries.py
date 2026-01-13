@@ -313,9 +313,8 @@ def update_sold_status_and_final_price(db: Session, master_property_id: int) -> 
             )
             
             if max_delisted_at:
-                # sold_atが未設定の場合のみ設定
-                if not master_property.sold_at:
-                    master_property.sold_at = max_delisted_at
+                # sold_atを最新のdelisted_atで更新（掲載追加→終了の繰り返しに対応）
+                master_property.sold_at = max_delisted_at
                 
                 # 最終価格を常に再計算（掲載情報の変更に対応）
                 final_price = calculate_final_price_for_sold_property(
