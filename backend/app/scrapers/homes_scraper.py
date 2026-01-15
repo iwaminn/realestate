@@ -3,6 +3,7 @@ LIFULL HOME'Sスクレイパー（リファクタリング版）
 homes.co.jpから中古マンション情報を取得
 """
 
+import random
 import re
 import time
 from typing import Dict, List, Optional, Any, Tuple
@@ -40,6 +41,8 @@ class HomesScraper(BaseScraper):
 
         # Playwrightクライアント（AWS WAF対策のためJavaScript実行が必要）
         self._playwright_client = None
+        self._request_count = 0  # リクエストカウンター（セッション再起動用）
+        self._session_restart_threshold = 50  # この回数ごとにブラウザを再起動
 
         # カスタムバリデーターを登録
         self.register_custom_validators()
@@ -158,10 +161,27 @@ class HomesScraper(BaseScraper):
             self.logger.info("[HOMES] Playwrightクライアントを停止しました")
         super().cleanup() if hasattr(super(), 'cleanup') else None
 
+    def _restart_browser_session(self):
+        """ブラウザセッションを再起動（AWS WAF対策）"""
+        if self._playwright_client is not None:
+            self.logger.info("[HOMES] ブラウザセッションを再起動します（WAF対策）")
+            self._playwright_client.stop()
+            self._playwright_client = None
+            # 再起動前に少し待機
+            time.sleep(random.uniform(3, 5))
+
     def fetch_page(self, url: str) -> Optional[BeautifulSoup]:
         """ページを取得してBeautifulSoupオブジェクトを返す（Playwright使用）"""
         try:
-            time.sleep(3)  # レート制限（サーバー負荷軽減、HOMESは厳しめ）
+            # ランダムな遅延を追加（3〜6秒、人間らしいアクセスパターン）
+            delay = random.uniform(3, 6)
+            time.sleep(delay)
+
+            # 一定回数ごとにブラウザセッションを再起動（WAF対策）
+            self._request_count += 1
+            if self._request_count >= self._session_restart_threshold:
+                self._restart_browser_session()
+                self._request_count = 0
 
             # Playwrightを使用してJavaScriptを実行
             client = self._get_playwright_client()
