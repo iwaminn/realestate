@@ -530,6 +530,26 @@ async def suggest_buildings(
                 # 既に他の方法でマッチしていて、かつ名前マッチではない場合は掲載名情報を追加
                 building_info[building.id]["listing_name"] = listing_match.normalized_name
     
+    # 物件0件の建物を除外
+    if building_info:
+        # 各建物の物件数を一括取得
+        building_ids = list(building_info.keys())
+        property_counts = db.query(
+            MasterProperty.building_id,
+            func.count(MasterProperty.id).label('count')
+        ).filter(
+            MasterProperty.building_id.in_(building_ids)
+        ).group_by(MasterProperty.building_id).all()
+
+        # 物件がある建物のIDセット
+        buildings_with_properties = {row.building_id for row in property_counts if row.count > 0}
+
+        # 物件0件の建物を除外
+        building_info = {
+            bid: info for bid, info in building_info.items()
+            if bid in buildings_with_properties
+        }
+
     # 建物名でグループ化して重複をチェック
     name_groups = {}
     for building_id, info in building_info.items():
