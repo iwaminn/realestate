@@ -163,12 +163,11 @@ class HomesScraper(BaseScraper):
 
     def _restart_browser_session(self):
         """ブラウザセッションを再起動（AWS WAF対策）"""
-        if self._playwright_client is not None:
-            self.logger.info("[HOMES] ブラウザセッションを再起動します（WAF対策）")
-            self._playwright_client.stop()
-            self._playwright_client = None
-            # 再起動前に少し待機
-            time.sleep(random.uniform(3, 5))
+        self.logger.info("[HOMES] ブラウザセッションを再起動します（WAF対策）")
+        client = self._get_playwright_client()
+        client.restart_browser()
+        # 再起動後に少し待機
+        time.sleep(random.uniform(3, 5))
 
     def fetch_page(self, url: str) -> Optional[BeautifulSoup]:
         """ページを取得してBeautifulSoupオブジェクトを返す（Playwright使用）"""
