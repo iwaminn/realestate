@@ -6,7 +6,7 @@ BuildingListingNameテーブルの管理ユーティリティ
 """
 
 import logging
-from typing import Optional, List, Set, Dict
+from typing import Optional, List, Set, Dict, Any
 from datetime import datetime
 from collections import defaultdict
 import time
@@ -601,10 +601,15 @@ class BuildingListingNameManager:
         search_name: str
     ) -> Dict[str, float]:
         """
-        建物名の統合スコアを計算（文字列一致度 × 出現割合）
+        建物名の統合スコアを計算（文字列一致度 × 複合割合）
 
         BuildingListingNameテーブルの全バリエーションと比較し、
-        文字列の一致度と出現割合を組み合わせた統合スコアを返す。
+        文字列の一致度と複合割合（建物内出現割合 + 排他性スコア）を組み合わせた統合スコアを返す。
+
+        複合割合の計算:
+        - 建物内出現割合: その建物内でこの名前が占める割合
+        - 排他性スコア: 全データベースでこの名前がこの建物に紐づく割合
+        - 複合割合 = (建物内出現割合 + 排他性スコア) / 2
 
         Args:
             building_id: 建物ID
@@ -612,9 +617,11 @@ class BuildingListingNameManager:
 
         Returns:
             Dict containing:
-                - unified_score: 統合スコア (0-100) = 文字列一致度 × 出現割合
+                - unified_score: 統合スコア (0-100)
                 - string_match_score: 文字列一致度 (0-100)
-                - proportion: 出現割合 (0.0-1.0)
+                - building_proportion: 建物内出現割合 (0.0-1.0)
+                - exclusivity_score: 排他性スコア (0.0-1.0)
+                - combined_proportion: 複合割合 (0.0-1.0)
                 - total_occurrences: この建物の全掲載回数
                 - matched_occurrences: マッチした掲載回数
                 - best_match_name: 最もマッチした掲載名
@@ -631,7 +638,9 @@ class BuildingListingNameManager:
             return {
                 'unified_score': 0.0,
                 'string_match_score': 0,
-                'proportion': 0.0,
+                'building_proportion': 0.0,
+                'exclusivity_score': 0.0,
+                'combined_proportion': 0.0,
                 'total_occurrences': 0,
                 'matched_occurrences': 0,
                 'best_match_name': None,
@@ -645,7 +654,9 @@ class BuildingListingNameManager:
             return {
                 'unified_score': 0.0,
                 'string_match_score': 0,
-                'proportion': 0.0,
+                'building_proportion': 0.0,
+                'exclusivity_score': 0.0,
+                'combined_proportion': 0.0,
                 'total_occurrences': 0,
                 'matched_occurrences': 0,
                 'best_match_name': None,
@@ -659,17 +670,20 @@ class BuildingListingNameManager:
         # 全バリエーションと比較して最高スコアを探す
         best_result = {
             'string_match_score': 0,
-            'proportion': 0.0,
+            'building_proportion': 0.0,
+            'exclusivity_score': 0.0,
+            'combined_proportion': 0.0,
             'matched_occurrences': 0,
             'best_match_name': None,
-            'match_type': 'none'
+            'match_type': 'none',
+            'canonical_name': None
         }
 
         for name in all_names:
             name_canonical = name.canonical_name
             name_normalized = name.normalized_name
             occurrence_count = name.occurrence_count
-            proportion = occurrence_count / total_occurrences
+            building_proportion = occurrence_count / total_occurrences
 
             # 文字列一致度を計算（優先度順にチェック）
             string_match_score = 0
@@ -697,42 +711,128 @@ class BuildingListingNameManager:
                     string_match_score = similarity * 60  # 最大60点
                     match_type = 'similar'
 
-            # 統合スコア = 文字列一致度 × 出現割合
-            # ただし、完全一致の場合は割合の影響を軽減（0.5 + 0.5 * proportion）
+            if string_match_score == 0:
+                continue
+
+            # 排他性スコアを計算
+            exclusivity_info = self.calculate_exclusivity_score(name_canonical, building_id)
+            exclusivity_score = exclusivity_info['exclusivity_score']
+
+            # 複合割合 = (建物内出現割合 + 排他性スコア) / 2
+            combined_proportion = (building_proportion + exclusivity_score) / 2
+
+            # 統合スコア = 文字列一致度 × 複合割合
+            # ただし、完全一致の場合は割合の影響を軽減（0.5 + 0.5 * combined_proportion）
             if match_type == 'exact':
                 # 完全一致なら最低でも50点、割合が100%なら100点
-                unified_score = string_match_score * (0.5 + 0.5 * proportion)
+                unified_score = string_match_score * (0.5 + 0.5 * combined_proportion)
             else:
-                unified_score = string_match_score * proportion
+                unified_score = string_match_score * combined_proportion
 
             # より良いスコアがあれば更新
-            if unified_score > best_result['string_match_score'] * best_result['proportion'] * (0.5 + 0.5 * best_result['proportion'] if best_result['match_type'] == 'exact' else 1):
-                # より正確な比較のため、現在のbest unified scoreを計算
-                current_best_unified = best_result['string_match_score'] * (0.5 + 0.5 * best_result['proportion']) if best_result['match_type'] == 'exact' else best_result['string_match_score'] * best_result['proportion']
+            current_best_unified = self._calculate_current_unified_score(best_result)
 
-                if unified_score > current_best_unified:
-                    best_result = {
-                        'string_match_score': string_match_score,
-                        'proportion': proportion,
-                        'matched_occurrences': occurrence_count,
-                        'best_match_name': name_normalized,
-                        'match_type': match_type
-                    }
+            if unified_score > current_best_unified:
+                best_result = {
+                    'string_match_score': string_match_score,
+                    'building_proportion': building_proportion,
+                    'exclusivity_score': exclusivity_score,
+                    'combined_proportion': combined_proportion,
+                    'matched_occurrences': occurrence_count,
+                    'best_match_name': name_normalized,
+                    'match_type': match_type,
+                    'canonical_name': name_canonical
+                }
 
         # 最終的な統合スコアを計算
         if best_result['match_type'] == 'exact':
-            unified_score = best_result['string_match_score'] * (0.5 + 0.5 * best_result['proportion'])
+            unified_score = best_result['string_match_score'] * (0.5 + 0.5 * best_result['combined_proportion'])
+        elif best_result['match_type'] != 'none':
+            unified_score = best_result['string_match_score'] * best_result['combined_proportion']
         else:
-            unified_score = best_result['string_match_score'] * best_result['proportion']
+            unified_score = 0.0
 
         return {
             'unified_score': unified_score,
             'string_match_score': best_result['string_match_score'],
-            'proportion': best_result['proportion'],
+            'building_proportion': best_result['building_proportion'],
+            'exclusivity_score': best_result['exclusivity_score'],
+            'combined_proportion': best_result['combined_proportion'],
             'total_occurrences': total_occurrences,
             'matched_occurrences': best_result['matched_occurrences'],
             'best_match_name': best_result['best_match_name'],
             'match_type': best_result['match_type']
+        }
+
+    def _calculate_current_unified_score(self, result: Dict) -> float:
+        """現在のベスト結果の統合スコアを計算"""
+        if result['match_type'] == 'none':
+            return 0.0
+        if result['match_type'] == 'exact':
+            return result['string_match_score'] * (0.5 + 0.5 * result['combined_proportion'])
+        return result['string_match_score'] * result['combined_proportion']
+
+    def calculate_exclusivity_score(
+        self,
+        canonical_name: str,
+        target_building_id: int
+    ) -> Dict[str, Any]:
+        """
+        名前の排他性スコアを計算
+
+        この名前が全データベースでどの程度特定の建物に紐づいているかを示す。
+        例：「三田ガーデンヒルズEAST HILL」が93%建物5273に紐づいている場合、
+        排他性スコアは0.93となる。
+
+        Args:
+            canonical_name: 正規化された建物名（canonical形式）
+            target_building_id: 対象の建物ID
+
+        Returns:
+            Dict containing:
+                - exclusivity_score: 排他性スコア (0.0-1.0)
+                - target_occurrences: 対象建物での出現回数
+                - total_occurrences: 全建物での出現回数
+                - building_count: この名前を持つ建物数
+        """
+        from sqlalchemy import func
+
+        # この名前を持つ全ての建物の出現回数を取得
+        results = self.db.query(
+            BuildingListingName.building_id,
+            func.sum(BuildingListingName.occurrence_count).label('total_count')
+        ).filter(
+            BuildingListingName.canonical_name == canonical_name
+        ).group_by(
+            BuildingListingName.building_id
+        ).all()
+
+        if not results:
+            return {
+                'exclusivity_score': 0.0,
+                'target_occurrences': 0,
+                'total_occurrences': 0,
+                'building_count': 0
+            }
+
+        # 集計
+        total_occurrences = sum(r.total_count for r in results)
+        target_occurrences = 0
+        building_count = len(results)
+
+        for r in results:
+            if r.building_id == target_building_id:
+                target_occurrences = r.total_count
+                break
+
+        # 排他性スコア = 対象建物での出現回数 / 全建物での出現回数
+        exclusivity_score = target_occurrences / total_occurrences if total_occurrences > 0 else 0.0
+
+        return {
+            'exclusivity_score': exclusivity_score,
+            'target_occurrences': target_occurrences,
+            'total_occurrences': total_occurrences,
+            'building_count': building_count
         }
 
     def find_buildings_by_name_with_unified_score(

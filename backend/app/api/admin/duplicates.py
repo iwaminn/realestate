@@ -620,8 +620,11 @@ async def get_duplicate_buildings(
     ).all()
     
     # 建物IDごとにエイリアスをグループ化してキャッシュを作成
-    # 新しい構造: {building_id: {'names': [{'name': str, 'count': int}, ...], 'total': int}}
+    # 構造: {building_id: {'names': [{'name': str, 'canonical': str, 'count': int}, ...], 'total': int}}
     aliases_cache = {}
+    # グローバル名前カウント（排他性計算用）: {canonical_name: total_count}
+    global_name_counts = {}
+
     for listing in all_listing_names:
         building_id = listing.building_id
         if building_id not in aliases_cache:
@@ -631,7 +634,12 @@ async def get_duplicate_buildings(
         count = listing.occurrence_count or 1
         aliases_cache[building_id]['total'] += count
 
-        # 重複を避けながら追加（名前と出現回数）
+        # グローバル名前カウントを更新
+        canonical = listing.canonical_name
+        if canonical:
+            global_name_counts[canonical] = global_name_counts.get(canonical, 0) + count
+
+        # 重複を避けながら追加（名前、canonical、出現回数）
         if listing.normalized_name:
             # 既存のエントリを探す
             existing = next(
@@ -644,6 +652,7 @@ async def get_duplicate_buildings(
             else:
                 aliases_cache[building_id]['names'].append({
                     'name': listing.normalized_name,
+                    'canonical': canonical,
                     'count': count
                 })
     
@@ -655,8 +664,11 @@ async def get_duplicate_buildings(
     # フェーズ4: Matcherの初期化（キャッシュ付き）
     phase_start = time.time()
     
-    # キャッシュを渡してMatcherを初期化
-    matcher = EnhancedBuildingMatcher(aliases_cache=aliases_cache)
+    # キャッシュを渡してMatcherを初期化（排他性計算用のグローバルカウントも渡す）
+    matcher = EnhancedBuildingMatcher(
+        aliases_cache=aliases_cache,
+        global_name_counts=global_name_counts
+    )
     
     phase_times['matcher_init_with_cache'] = time.time() - phase_start
     

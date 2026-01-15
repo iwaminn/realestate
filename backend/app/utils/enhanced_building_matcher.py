@@ -344,15 +344,18 @@ class BuildingNameNormalizer:
 class EnhancedBuildingMatcher:
     """統合型建物マッチャークラス"""
     
-    def __init__(self, aliases_cache=None):
+    def __init__(self, aliases_cache=None, global_name_counts=None):
         self.address_normalizer = AddressNormalizer()
         self.building_normalizer = BuildingNameNormalizer()
         
         # デバッグ情報を保存
         self.last_debug_info = {}
         
-        # 掲載履歴のキャッシュ（建物ID -> エイリアスリスト）
+        # 掲載履歴のキャッシュ（建物ID -> エイリアス情報）
         self.aliases_cache = aliases_cache or {}
+        
+        # グローバル名前カウント（排他性計算用）: {canonical_name: total_count}
+        self.global_name_counts = global_name_counts or {}
 
     def _get_building_aliases(self, building: Any, session) -> Dict[str, Any]:
         """建物の掲載履歴からエイリアス（建物名のバリエーション）を取得
@@ -362,7 +365,7 @@ class EnhancedBuildingMatcher:
             session: データベースセッション
             
         Returns:
-            {'names': [{'name': str, 'count': int}, ...], 'total': int}
+            {'names': [{'name': str, 'canonical': str, 'count': int}, ...], 'total': int}
         """
         empty_result = {'names': [], 'total': 0}
         
@@ -375,7 +378,7 @@ class EnhancedBuildingMatcher:
             else:
                 # 旧形式（リスト）の場合は変換
                 return {
-                    'names': [{'name': n, 'count': 1} for n in cache_entry],
+                    'names': [{'name': n, 'canonical': n, 'count': 1} for n in cache_entry],
                     'total': len(cache_entry)
                 }
         
@@ -406,6 +409,7 @@ class EnhancedBuildingMatcher:
                         seen_names[listing.normalized_name] = len(result['names'])
                         result['names'].append({
                             'name': listing.normalized_name,
+                            'canonical': listing.canonical_name,
                             'count': count
                         })
             
@@ -569,11 +573,11 @@ class EnhancedBuildingMatcher:
     def _calculate_name_similarity(self, name1: str, name2: str, 
                                     building1: Any = None, building2: Any = None, 
                                     session = None) -> float:
-        """建物名の統合スコアを計算（文字列一致度 × 出現割合）
+        """建物名の統合スコアを計算（文字列一致度 × 複合割合）
         
         base_scraper.pyと同じロジックを使用。
         両方の建物の掲載履歴から最もマッチする名前を見つけ、
-        その出現割合で重み付けしたスコアを返す。
+        複合割合（建物内出現割合 + 排他性スコア）で重み付けしたスコアを返す。
         
         Args:
             name1: 建物1の名前
@@ -593,41 +597,43 @@ class EnhancedBuildingMatcher:
         if norm1 == norm2:
             return 1.0
         
-        # 2. 各建物の掲載名リストを取得（出現回数付き）
+        # 2. 各建物の掲載名リストを取得（出現回数・canonical付き）
         aliases1 = self._get_building_aliases(building1, session) if building1 else {'names': [], 'total': 0}
         aliases2 = self._get_building_aliases(building2, session) if building2 else {'names': [], 'total': 0}
         
-        # 比較対象の名前リスト（正規化名と出現割合）
-        names1_with_proportion = [{'name': norm1, 'proportion': 1.0}]  # 基本名は割合1.0
-        names2_with_proportion = [{'name': norm2, 'proportion': 1.0}]
+        # 比較対象の名前リスト（正規化名、canonical、出現割合）
+        names1_with_info = [{'name': norm1, 'canonical': norm1, 'proportion': 1.0}]
+        names2_with_info = [{'name': norm2, 'canonical': norm2, 'proportion': 1.0}]
         
         # エイリアスを追加（出現割合計算）
         if aliases1['total'] > 0:
             for alias_info in aliases1['names']:
                 normalized_alias = self.building_normalizer.normalize(alias_info['name'])
-                if normalized_alias not in [n['name'] for n in names1_with_proportion]:
+                if normalized_alias not in [n['name'] for n in names1_with_info]:
                     proportion = alias_info['count'] / aliases1['total']
-                    names1_with_proportion.append({
+                    names1_with_info.append({
                         'name': normalized_alias,
+                        'canonical': alias_info.get('canonical', normalized_alias),
                         'proportion': proportion
                     })
                     
         if aliases2['total'] > 0:
             for alias_info in aliases2['names']:
                 normalized_alias = self.building_normalizer.normalize(alias_info['name'])
-                if normalized_alias not in [n['name'] for n in names2_with_proportion]:
+                if normalized_alias not in [n['name'] for n in names2_with_info]:
                     proportion = alias_info['count'] / aliases2['total']
-                    names2_with_proportion.append({
+                    names2_with_info.append({
                         'name': normalized_alias,
+                        'canonical': alias_info.get('canonical', normalized_alias),
                         'proportion': proportion
                     })
         
         # デバッグ情報
         self.last_debug_info['name_variations'] = {
-            'name1': [n['name'] for n in names1_with_proportion],
-            'name2': [n['name'] for n in names2_with_proportion],
-            'has_aliases1': len(names1_with_proportion) > 1,
-            'has_aliases2': len(names2_with_proportion) > 1
+            'name1': [n['name'] for n in names1_with_info],
+            'name2': [n['name'] for n in names2_with_info],
+            'has_aliases1': len(names1_with_info) > 1,
+            'has_aliases2': len(names2_with_info) > 1
         }
         
         # 3. 全ての組み合わせで統合スコアを計算し、最高スコアを採用
@@ -635,8 +641,8 @@ class EnhancedBuildingMatcher:
         best_pair = None
         best_details = None
         
-        for n1_info in names1_with_proportion:
-            for n2_info in names2_with_proportion:
+        for n1_info in names1_with_info:
+            for n2_info in names2_with_info:
                 n1 = n1_info['name']
                 n2 = n2_info['name']
                 
@@ -646,15 +652,55 @@ class EnhancedBuildingMatcher:
                 else:
                     string_match_score = self.building_normalizer.calculate_similarity(n1, n2)
                 
-                # 両方の出現割合の平均を使用
+                if string_match_score < 0.5:
+                    continue
+                
+                # 両方の出現割合の平均
                 avg_proportion = (n1_info['proportion'] + n2_info['proportion']) / 2
                 
+                # 排他性スコアの計算
+                # 両建物でこの名前が占める割合を計算
+                canonical1 = n1_info['canonical']
+                canonical2 = n2_info['canonical']
+                
+                exclusivity_score = 0.0
+                if self.global_name_counts:
+                    # canonical名が一致する場合、その排他性を計算
+                    if canonical1 == canonical2 and canonical1 in self.global_name_counts:
+                        global_count = self.global_name_counts[canonical1]
+                        # 両建物の合計出現回数
+                        b1_count = next((a['count'] for a in aliases1.get('names', []) 
+                                        if a.get('canonical') == canonical1), 0)
+                        b2_count = next((a['count'] for a in aliases2.get('names', []) 
+                                        if a.get('canonical') == canonical2), 0)
+                        combined_count = b1_count + b2_count
+                        exclusivity_score = combined_count / global_count if global_count > 0 else 0.0
+                    elif string_match_score >= 0.95:
+                        # 高い文字列一致度の場合、両方のcanonicalを確認
+                        for canonical in [canonical1, canonical2]:
+                            if canonical in self.global_name_counts:
+                                global_count = self.global_name_counts[canonical]
+                                b1_count = next((a['count'] for a in aliases1.get('names', []) 
+                                                if a.get('canonical') == canonical), 0)
+                                b2_count = next((a['count'] for a in aliases2.get('names', []) 
+                                                if a.get('canonical') == canonical), 0)
+                                combined_count = b1_count + b2_count
+                                ex_score = combined_count / global_count if global_count > 0 else 0.0
+                                exclusivity_score = max(exclusivity_score, ex_score)
+                
+                # グローバルカウントがない場合は、出現割合のみ使用
+                if not self.global_name_counts:
+                    exclusivity_score = avg_proportion
+                
+                # 複合割合 = (建物内出現割合 + 排他性スコア) / 2
+                combined_proportion = (avg_proportion + exclusivity_score) / 2
+                
                 # 統合スコアの計算
-                # 完全一致（または高一致）の場合: 最低50点を保証
+                # 完全一致（または高一致）の場合: 最低50%を保証
                 if string_match_score >= 0.95:
-                    adjusted_proportion = 0.5 + 0.5 * avg_proportion
+                    adjusted_proportion = 0.5 + 0.5 * combined_proportion
                 else:
-                    adjusted_proportion = avg_proportion
+                    adjusted_proportion = combined_proportion
                     
                 unified_score = string_match_score * adjusted_proportion
                 
@@ -665,7 +711,9 @@ class EnhancedBuildingMatcher:
                         'string_match': string_match_score,
                         'proportion1': n1_info['proportion'],
                         'proportion2': n2_info['proportion'],
-                        'avg_proportion': avg_proportion
+                        'avg_proportion': avg_proportion,
+                        'exclusivity_score': exclusivity_score,
+                        'combined_proportion': combined_proportion
                     }
                     
                 # 0.95以上で早期終了

@@ -3314,10 +3314,11 @@ class BaseScraper(ABC):
         if unified_name_info and unified_name_info.get('total_occurrences', 0) > 0:
             self.logger.debug(
                 f"  建物名詳細: 文字列一致={unified_name_info.get('string_match_score', 0):.0f}, "
-                f"割合={unified_name_info.get('proportion', 0):.1%}, "
+                f"建物内割合={unified_name_info.get('building_proportion', 0):.1%}, "
+                f"排他性={unified_name_info.get('exclusivity_score', 0):.1%}, "
+                f"複合割合={unified_name_info.get('combined_proportion', 0):.1%}, "
                 f"統合={unified_name_info.get('unified_score', 0):.1f}, "
-                f"マッチ名='{unified_name_info.get('best_match_name', '')}', "
-                f"タイプ={unified_name_info.get('match_type', 'none')}"
+                f"マッチ名='{unified_name_info.get('best_match_name', '')}'"
             )
 
         return total_score
