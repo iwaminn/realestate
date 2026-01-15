@@ -108,6 +108,10 @@ class BaseScraper(ABC):
     DEFAULT_BUILT_DATE_MIN_RATIO = 0.05  # 最低割合（5%）
     AREA_CHANGE_THRESHOLD = 0.7  # 面積変更の閾値（70%）
     PRICE_CHANGE_THRESHOLD = 0.7  # 価格変更の閾値（70%）
+
+    # 総戸数の実績ベース許容設定
+    DEFAULT_TOTAL_UNITS_MIN_COUNT = 3  # 最低件数
+    DEFAULT_TOTAL_UNITS_MIN_RATIO = 0.05  # 最低割合（5%）
     
     @contextmanager
     def transaction_scope(self):
@@ -2767,6 +2771,7 @@ class BaseScraper(ABC):
         - 総階数・総戸数が一致している場合は築年月の±1ヶ月の誤差を許容
         - 総階数・築年月が一致している場合は総戸数の±2戸の誤差を許容
         - 築年月が不一致でも、建物の過去の掲載データに同じ築年月が一定数以上あれば許容
+        - 総戸数が不一致でも、建物の過去の掲載データに同じ総戸数が一定数以上あれば許容
         """
         # 比較可能な属性をカウント
         comparable_attributes = []
@@ -2827,7 +2832,18 @@ class BaseScraper(ABC):
                 self.logger.debug(
                     f"総戸数が異なる: 既存={building.total_units}, 新規={total_units} (差: {total_units_diff}戸)"
                 )
-                total_units_mismatch = True
+                # 実績ベースの総戸数許容チェック
+                if session and self._check_total_units_variation(
+                    session, building.id, total_units
+                ):
+                    self.logger.info(
+                        f"総戸数の実績ベース許容: 既存建物ID={building.id}に"
+                        f"{total_units}戸の掲載実績あり"
+                    )
+                    # 総戸数は実績で許容されたので、総戸数一致として扱う
+                    comparable_attributes.append('total_units_variation')
+                else:
+                    total_units_mismatch = True
             else:
                 comparable_attributes.append('total_units')
         
@@ -2849,7 +2865,7 @@ class BaseScraper(ABC):
         # 特別な許容条件をチェック
         # 条件1: 総階数・総戸数が一致している場合は築年月の±1ヶ月の誤差を許容
         if ('total_floors' in comparable_attributes and 
-            'total_units' in comparable_attributes and
+            ('total_units' in comparable_attributes or 'total_units_variation' in comparable_attributes) and
             built_year_month_mismatch and built_month_diff <= 1):
             self.logger.debug(
                 f"総階数・総戸数一致により築年月の誤差±{built_month_diff}ヶ月を許容"
@@ -2939,6 +2955,74 @@ class BaseScraper(ABC):
         self.logger.debug(
             f"築年月実績チェック: 建物ID={building_id}, "
             f"チェック対象={built_year}年{built_month}月, "
+            f"該当件数={matching_count}/{total_listings} ({ratio:.1%}), "
+            f"閾値: {min_count}件以上 AND {min_ratio:.1%}以上"
+        )
+
+        # 両方の条件を満たすかチェック
+        if matching_count >= min_count and ratio >= min_ratio:
+            return True
+
+        return False
+
+    def _check_total_units_variation(self, session, building_id: int,
+                                     total_units: int) -> bool:
+        """建物の過去の掲載データに指定された総戸数の実績があるかチェック
+
+        背景:
+        - 同じ建物でも、棟単独の戸数と複合施設全体の戸数など、
+          異なる総戸数が掲載されることがある
+        - 過去の掲載実績があれば、その総戸数を許容する
+
+        Args:
+            session: データベースセッション
+            building_id: 建物ID
+            total_units: チェックする総戸数
+
+        Returns:
+            bool: 条件を満たす実績がある場合True
+                - 件数がDEFAULT_TOTAL_UNITS_MIN_COUNT以上
+                - 割合がDEFAULT_TOTAL_UNITS_MIN_RATIO以上
+        """
+        from sqlalchemy import func
+        from ..models import PropertyListing, MasterProperty
+
+        # 環境変数から閾値を取得
+        min_count = int(os.getenv(
+            'BUILDING_TOTAL_UNITS_MIN_COUNT',
+            str(self.DEFAULT_TOTAL_UNITS_MIN_COUNT)
+        ))
+        min_ratio = float(os.getenv(
+            'BUILDING_TOTAL_UNITS_MIN_RATIO',
+            str(self.DEFAULT_TOTAL_UNITS_MIN_RATIO)
+        ))
+
+        # 建物に紐づく全掲載数を取得（総戸数データがあるもの）
+        total_listings = session.query(func.count(PropertyListing.id)).join(
+            MasterProperty, PropertyListing.master_property_id == MasterProperty.id
+        ).filter(
+            MasterProperty.building_id == building_id,
+            PropertyListing.listing_total_units.isnot(None)
+        ).scalar() or 0
+
+        if total_listings == 0:
+            self.logger.debug(f"建物ID={building_id}に総戸数データがある掲載がない")
+            return False
+
+        # 指定された総戸数の掲載数を取得
+        matching_count = session.query(func.count(PropertyListing.id)).join(
+            MasterProperty, PropertyListing.master_property_id == MasterProperty.id
+        ).filter(
+            MasterProperty.building_id == building_id,
+            PropertyListing.listing_total_units == total_units
+        ).scalar() or 0
+
+        # 割合を計算
+        ratio = matching_count / total_listings if total_listings > 0 else 0
+
+        self.logger.debug(
+            f"総戸数実績チェック: 建物ID={building_id}, "
+            f"チェック対象={total_units}戸, "
             f"該当件数={matching_count}/{total_listings} ({ratio:.1%}), "
             f"閾値: {min_count}件以上 AND {min_ratio:.1%}以上"
         )
@@ -3175,6 +3259,62 @@ class BaseScraper(ABC):
         
         return 0, "不一致"
 
+
+    def _calculate_building_match_score(self, session, building: Building, 
+                                        address_score: int, strict_match: bool, 
+                                        flexible_match: bool, name_score: int) -> float:
+        """建物マッチングの総合スコアを計算
+        
+        スコア配分:
+        - 住所一致度: 50% (0-100点 → 0-50点)
+        - 属性一致度: 30% (厳密一致100点/許容誤差70点/不一致0点 → 0-30点)
+        - 建物名一致度: 10% (0-100点 → 0-10点)
+        - 掲載実績: 10% (掲載数に基づくスコア → 0-10点)
+        
+        Returns:
+            float: 総合スコア (0-100)
+        """
+        from sqlalchemy import func
+        from ..models import PropertyListing, MasterProperty
+        
+        # 1. 住所スコア (50%)
+        address_component = address_score * 0.5
+        
+        # 2. 属性スコア (30%)
+        if strict_match:
+            attribute_score = 100
+        elif flexible_match:
+            attribute_score = 70
+        else:
+            attribute_score = 0
+        attribute_component = attribute_score * 0.3
+        
+        # 3. 建物名スコア (10%)
+        name_component = name_score * 0.1
+        
+        # 4. 掲載実績スコア (10%)
+        # 掲載数が多いほど信頼性が高い
+        listing_count = session.query(func.count(PropertyListing.id)).join(
+            MasterProperty, PropertyListing.master_property_id == MasterProperty.id
+        ).filter(
+            MasterProperty.building_id == building.id
+        ).scalar() or 0
+        
+        # 掲載数を0-100のスコアに変換（100件以上で100点）
+        listing_score = min(listing_count, 100)
+        listing_component = listing_score * 0.1
+        
+        total_score = address_component + attribute_component + name_component + listing_component
+        
+        self.logger.debug(
+            f"建物スコア計算: ID={building.id}, "
+            f"住所={address_component:.1f}, 属性={attribute_component:.1f}, "
+            f"建物名={name_component:.1f}, 掲載実績={listing_component:.1f}, "
+            f"合計={total_score:.1f}"
+        )
+        
+        return total_score
+
     def _find_buildings_with_staged_matching(self, session, search_key: str, normalized_address: str, 
                                            total_floors: int = None, built_year: int = None, 
                                            built_month: int = None, total_units: int = None) -> Optional[Building]:
@@ -3244,6 +3384,11 @@ class BaseScraper(ABC):
             # 属性一致チェック
             strict_match = self._verify_building_attributes_strict(building, total_floors, built_year, built_month, total_units)
             flexible_match = self._verify_building_attributes(building, total_floors, built_year, built_month, total_units, session)
+            
+            # 総合スコアを計算
+            total_score = self._calculate_building_match_score(
+                session, building, address_score, strict_match, flexible_match, name_score
+            )
                 
             valid_candidates.append({
                 'building': building,
@@ -3252,23 +3397,15 @@ class BaseScraper(ABC):
                 'address_score': address_score,
                 'address_match_type': address_match_type,
                 'strict_match': strict_match,
-                'flexible_match': flexible_match
+                'flexible_match': flexible_match,
+                'total_score': total_score
             })
         
         if not valid_candidates:
             return None
         
-        # 優先順位でソート：
-        # 1. 厳密一致を優先（strict_match=True）
-        # 2. 住所の完全一致を優先（address_score）
-        # 3. 建物名の優先度（priority）
-        # 4. 建物名のスコア（score）
-        valid_candidates.sort(key=lambda x: (
-            not x['strict_match'],  # 厳密一致を優先（Falseが先）
-            -x['address_score'],    # 住所スコア（高い方が優先）
-            x['name_priority'],     # 優先度（数字が小さいほど優先）
-            -x['name_score']        # スコア（大きいほど優先）
-        ))
+        # 総合スコアでソート（高いほど優先）
+        valid_candidates.sort(key=lambda x: -x['total_score'])
         
         best_candidate = valid_candidates[0]
         building = best_candidate['building']
@@ -3278,7 +3415,7 @@ class BaseScraper(ABC):
         address_type = best_candidate['address_match_type']
         
         self.logger.info(
-            f"段階的検索で建物を発見（{match_type}・住所{address_type}・スコア{best_candidate['address_score']}・優先度{best_candidate['name_priority']}）: "
+            f"段階的検索で建物を発見（総合スコア{best_candidate['total_score']:.1f}・{match_type}・住所{address_type}）: "
             f"検索キー='{search_key}' → 既存='{building.canonical_name}' at {building.address}"
         )
         
@@ -3297,7 +3434,7 @@ class BaseScraper(ABC):
         normalizer = AddressNormalizer()
         normalized_address = normalizer.normalize_for_comparison(address)
         
-        # === 1. 正式な建物名での完全一致（最優先） ===
+        # === 1. 正式な建物名での完全一致（総合スコア方式） ===
         self.logger.debug(f"建物検索開始: search_key='{search_key}', normalized_address='{normalized_address}'")
         
         # まず、建物名（canonical_name）で候補を絞り込む
@@ -3307,7 +3444,9 @@ class BaseScraper(ABC):
         
         self.logger.debug(f"建物名'{search_key}'で{len(candidate_buildings)}件の候補が見つかりました")
         
-        # 候補の中から住所マッチングを行う
+        # 全候補を収集して比較する
+        phase1_candidates = []
+        
         for building in candidate_buildings:
             if not building.address:
                 continue
@@ -3315,45 +3454,57 @@ class BaseScraper(ABC):
             # 建物の住所を正規化
             building_normalized_addr = building.normalized_address
             if not building_normalized_addr:
-                # normalized_addressがない場合は、その場で正規化
                 building_normalized_addr = normalizer.normalize_for_comparison(building.address)
-                # DBを更新（次回からは高速化）
                 building.normalized_address = building_normalized_addr
                 self.safe_flush(session)
             
-            # 住所の完全一致をチェック
-            if building_normalized_addr == normalized_address:
-                # 完全一致でも建物属性を確認
-                if self._verify_building_attributes(building, total_floors, built_year, built_month, total_units, session):
-                    self.logger.info(f"既存建物を発見（名前と正規化住所が完全一致、属性も確認）: {building.normalized_name} at {building.address}")
-                    return building
-                else:
-                    self.logger.debug(f"住所は完全一致するが、総階数または築年が一致しない: {building.normalized_name}")
-                    # デバッグ情報：属性比較の詳細
-                    self.logger.debug(f"属性詳細比較 - 既存: floors={building.total_floors}, year={building.built_year}, month={building.built_month}")
-                    self.logger.debug(f"属性詳細比較 - 新規: floors={total_floors}, year={built_year}, month={built_month}")
-        
-        # 完全一致が見つからない場合、部分一致を試す
-        for building in candidate_buildings:
-            if not building.address:
+            # 住所スコアを計算
+            address_score, address_match_type = self._calculate_address_match_score(
+                normalized_address, building_normalized_addr
+            )
+            
+            # 住所が一致しない場合はスキップ（スコア40以下）
+            if address_score < 40:
                 continue
-                
-            building_normalized_addr = building.normalized_address
-            if not building_normalized_addr:
-                building_normalized_addr = normalizer.normalize_for_comparison(building.address)
-                building.normalized_address = building_normalized_addr
-                self.safe_flush(session)
             
-            # 部分一致をチェック
-            if (building_normalized_addr.startswith(normalized_address) or 
-                normalized_address.startswith(building_normalized_addr)):
-                
-                # 部分一致の場合も属性確認（住所は部分一致、建物名は完全一致）
-                if self._verify_building_attributes(building, total_floors, built_year, built_month, total_units, session):
-                    self.logger.info(f"既存建物を発見（建物名完全一致・住所部分一致・属性確認）: {building.normalized_name} at {building.address}")
-                    return building
-                else:
-                    self.logger.debug(f"建物名完全一致・住所は部分一致するが、総階数または築年が一致しない: {building.normalized_name}")
+            # 属性一致チェック
+            strict_match = self._verify_building_attributes_strict(building, total_floors, built_year, built_month, total_units)
+            flexible_match = self._verify_building_attributes(building, total_floors, built_year, built_month, total_units, session)
+            
+            # 属性が一致しない場合はスキップ
+            if not flexible_match:
+                self.logger.debug(f"住所は一致するが、属性が一致しない: {building.normalized_name}")
+                continue
+            
+            # 建物名スコア（完全一致なので100点）
+            name_score = 100
+            
+            # 総合スコアを計算
+            total_score = self._calculate_building_match_score(
+                session, building, address_score, strict_match, flexible_match, name_score
+            )
+            
+            phase1_candidates.append({
+                'building': building,
+                'address_score': address_score,
+                'address_match_type': address_match_type,
+                'strict_match': strict_match,
+                'flexible_match': flexible_match,
+                'total_score': total_score
+            })
+        
+        # 最適な候補を選択
+        if phase1_candidates:
+            phase1_candidates.sort(key=lambda x: -x['total_score'])
+            best = phase1_candidates[0]
+            building = best['building']
+            match_type = "厳密一致" if best['strict_match'] else "許容誤差一致"
+            
+            self.logger.info(
+                f"既存建物を発見（名前完全一致・総合スコア{best['total_score']:.1f}・{match_type}・住所{best['address_match_type']}）: "
+                f"{building.normalized_name} at {building.address}"
+            )
+            return building
         
         # === 2. BuildingListingNameテーブルでの検索（別名での完全一致） ===
         from sqlalchemy import or_
@@ -3419,8 +3570,12 @@ class BaseScraper(ABC):
                 else:
                     name_score = 50   # その他
                 
-                # 総合スコアを計算（住所を最重視、属性次重視、名前は参考程度）
-                total_score = (address_score * 0.5) + (attribute_score * 0.4) + (name_score * 0.1)
+                # 総合スコアを計算（掲載実績も考慮）
+                strict_match = (attribute_score == 100)
+                flexible_match = (attribute_score >= 70)
+                total_score = self._calculate_building_match_score(
+                    session, primary_building, address_score, strict_match, flexible_match, name_score
+                )
                 
                 # より良い候補があれば更新
                 if total_score > best_score:
