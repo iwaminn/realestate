@@ -51,6 +51,9 @@ COPY pyproject.toml poetry.lock ./
 # 依存関係のインストール（プロジェクト自体はインストールしない）
 RUN poetry install --no-interaction --no-ansi --no-root
 
+# Playwrightブラウザのインストール（Chromiumのみ）
+RUN playwright install chromium && playwright install-deps chromium
+
 # アプリケーションコードのコピー
 COPY backend ./backend
 

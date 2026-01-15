@@ -73,32 +73,39 @@ def run_all_scrapers(area: str = "minato", max_properties: int = 100, force_deta
             logger.warning(f"Task {task_id} has been cancelled. Stopping execution.")
             update_task_status(task_id, 'cancelled', completed_at=datetime.now())
             break
-            
+
         try:
             logger.info(f"Running {name} scraper...")
 
-            
+
             # 進捗更新コールバックを設定
             def progress_callback(stats):
                 update_task_progress(task_id, name, area_code, stats)
-            
+
             scraper.set_progress_callback(progress_callback)
-            
+
             # エリアコードを渡す（各スクレイパーは内部で変換を行う）
             # max_propertiesは既に__init__で設定されている
             scraper.scrape_area(area)
             results['success'] += 1
             logger.info(f"{name} scraper completed successfully")
-            
+
             # 進捗ステータスを完了に更新
             update_task_progress_status(task_id, name, area_code, 'completed')
         except Exception as e:
             logger.error(f"{name} scraper failed: {e}")
             results['failed'] += 1
             results['errors'].append(f"{name}: {str(e)}")
-            
+
             # エラー時も進捗ステータスを更新
             update_task_progress_status(task_id, name, area_code, 'error')
+        finally:
+            # スクレイパーのリソースをクリーンアップ（Playwrightブラウザ等）
+            if hasattr(scraper, 'cleanup'):
+                try:
+                    scraper.cleanup()
+                except Exception as cleanup_error:
+                    logger.warning(f"{name} scraper cleanup failed: {cleanup_error}")
     
     logger.info(f"Scraping job completed. Success: {results['success']}, Failed: {results['failed']}")
     
@@ -157,52 +164,59 @@ def run_single_scraper(scraper_name: str, area: str = "minato", max_properties: 
         logger.error(f"Unknown scraper: {scraper_name}")
         return
     
+    scraper = None
     try:
         logger.info(f"Running {scraper_name} scraper for area: {area} (code: {area_code}) with task_id: {task_id}")
         if force_detail_fetch:
             logger.info("Force detail fetch mode is enabled")
         scraper = scrapers[scraper_name.lower()](force_detail_fetch=force_detail_fetch, max_properties=max_properties, task_id=task_id)
-        
 
-        
+
         # 進捗更新コールバックを設定
         def progress_callback(stats):
             update_task_progress(task_id, scraper_name, area_code, stats)
-        
+
         scraper.set_progress_callback(progress_callback)
-        
+
         # タスクがキャンセルされているか確認
         if check_task_cancelled(task_id):
             logger.warning(f"Task {task_id} has been cancelled. Aborting execution.")
             update_task_status(task_id, 'cancelled', completed_at=datetime.now())
             return
-            
+
         if hasattr(scraper, 'run'):
             scraper.run(area)
         else:
             # max_propertiesは既に__init__で設定されている
             scraper.scrape_area(area)
-            
+
         logger.info(f"{scraper_name} scraper completed successfully")
-        
+
         # 進捗ステータスを完了に更新
         update_task_progress_status(task_id, scraper_name, area_code, 'completed')
-        
+
         # タスクのステータスを更新
         update_task_status(task_id, 'completed', completed_at=datetime.now())
-        
+
         # スクレイピング完了後に価格改定履歴キューを自動処理
         logger.info("スクレイピング完了。価格改定履歴キューの処理を開始します...")
         process_price_change_queue()
-        
+
         # サーバーサイドキャッシュをクリア
         from backend.app.utils.cache import clear_recent_updates_cache
         clear_recent_updates_cache()
         logger.info("サーバーサイドキャッシュをクリアしました")
-        
+
     except Exception as e:
         logger.error(f"{scraper_name} scraper failed: {e}", exc_info=True)
         update_task_status(task_id, 'error', completed_at=datetime.now(), total_errors=1)
+    finally:
+        # スクレイパーのリソースをクリーンアップ（Playwrightブラウザ等）
+        if scraper and hasattr(scraper, 'cleanup'):
+            try:
+                scraper.cleanup()
+            except Exception as cleanup_error:
+                logger.warning(f"{scraper_name} scraper cleanup failed: {cleanup_error}")
 
 
 def create_or_get_task(scrapers: List[str], areas: List[str], max_properties: int = 100, 

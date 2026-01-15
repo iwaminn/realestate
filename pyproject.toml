@@ -35,6 +35,8 @@ fastapi-mail = "1.5.8"
 authlib = "^1.3.0"
 httpx = "^0.26.0"
 itsdangerous = "^2.1.2"
+# ブラウザ自動化（JavaScript対応スクレイピング）
+playwright = "^1.40.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^7.4.0"

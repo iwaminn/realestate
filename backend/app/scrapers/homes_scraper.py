@@ -24,10 +24,10 @@ from .data_normalizer import (
 
 class HomesScraper(BaseScraper):
     """LIFULL HOME'Sのスクレイパー"""
-    
+
     BASE_URL = "https://www.homes.co.jp"
     SOURCE_SITE = SourceSite.HOMES
-    
+
     def __init__(self, force_detail_fetch=False, max_properties=None, ignore_error_history=False, task_id=None):
         super().__init__(self.SOURCE_SITE, force_detail_fetch, max_properties, ignore_error_history, task_id)
         self.parser = HomesParser(logger=self.logger)
@@ -37,6 +37,9 @@ class HomesScraper(BaseScraper):
         from ..scrapers.base_scraper import BuildingNameVerificationMode
         self.building_name_verification_mode = BuildingNameVerificationMode.MULTI_SOURCE
         self._setup_headers()
+
+        # Playwrightクライアント（AWS WAF対策のためJavaScript実行が必要）
+        self._playwright_client = None
 
         # カスタムバリデーターを登録
         self.register_custom_validators()
@@ -120,7 +123,7 @@ class HomesScraper(BaseScraper):
         return False
     
     def _setup_headers(self):
-        """HTTPヘッダーの設定"""
+        """HTTPヘッダーの設定（フォールバック用）"""
         self.http_client.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -137,44 +140,57 @@ class HomesScraper(BaseScraper):
             'Sec-Fetch-User': '?1',
             'Upgrade-Insecure-Requests': '1'
         })
-    
+
+    def _get_playwright_client(self):
+        """Playwrightクライアントを取得（遅延初期化）"""
+        if self._playwright_client is None:
+            from ..utils.playwright_client import PlaywrightClient
+            self._playwright_client = PlaywrightClient(headless=True, timeout=30000)
+            self._playwright_client.start()
+            self.logger.info("[HOMES] Playwrightクライアントを初期化しました")
+        return self._playwright_client
+
+    def cleanup(self):
+        """リソースのクリーンアップ"""
+        if self._playwright_client is not None:
+            self._playwright_client.stop()
+            self._playwright_client = None
+            self.logger.info("[HOMES] Playwrightクライアントを停止しました")
+        super().cleanup() if hasattr(super(), 'cleanup') else None
+
     def fetch_page(self, url: str) -> Optional[BeautifulSoup]:
-        """ページを取得してBeautifulSoupオブジェクトを返す"""
+        """ページを取得してBeautifulSoupオブジェクトを返す（Playwright使用）"""
         try:
-            time.sleep(3)  # より長い遅延を設定
-            
-            # リファラーを設定
+            time.sleep(2)  # レート制限
+
+            # Playwrightを使用してJavaScriptを実行
+            client = self._get_playwright_client()
+
+            # 一覧ページと詳細ページで待機するセレクタを変える
             if '/list/' in url:
-                self.http_client.session.headers['Referer'] = 'https://www.homes.co.jp/'
+                wait_selector = '.mod-mergeBuilding, .prg-building'
             else:
-                self.http_client.session.headers['Referer'] = 'https://www.homes.co.jp/mansion/chuko/tokyo/list/'
-            
-            response = self.http_client.session.get(url, timeout=30, allow_redirects=True)
-            
-            # 405エラーの特別処理
-            if response.status_code == 405:
-                self.logger.error(f"405 Method Not Allowed for {url}")
-                self.logger.info("Trying with modified headers...")
-                self.http_client.session.headers['Sec-Fetch-Site'] = 'same-origin'
-                self.http_client.session.headers['Sec-Fetch-Mode'] = 'cors'
-                time.sleep(5)
-                response = self.http_client.session.get(url, timeout=30)
-            
-            response.raise_for_status()
-            
-            if len(response.content) < 1000:
-                self.logger.warning(f"Response seems too small ({len(response.content)} bytes) for {url}")
-            
-            return BeautifulSoup(response.content, 'html.parser')
-            
+                wait_selector = 'h1, .property-detail'
+
+            html = client.fetch_page(url, wait_selector=wait_selector, wait_time=2)
+
+            if not html:
+                self.logger.error(f"[HOMES] ページ取得失敗: {url}")
+                return None
+
+            # HTMLサイズの確認
+            if len(html) < 1000:
+                self.logger.warning(f"[HOMES] レスポンスが小さすぎます ({len(html)} bytes): {url}")
+
+            # JavaScript無効ページかどうかを確認
+            if 'JavaScript is disabled' in html:
+                self.logger.error(f"[HOMES] JavaScript実行に失敗しました: {url}")
+                return None
+
+            return BeautifulSoup(html, 'html.parser')
+
         except Exception as e:
-            # 404エラーの場合も警告として記録（URL構造が変わった可能性もある）
-            if hasattr(e, 'response') and e.response is not None and e.response.status_code == 404:
-                self.logger.warning(f"[HOMES] ページが見つかりません（404）: {url} - 最終ページを超えたか、URL構造が変更された可能性があります")
-            else:
-                self.logger.error(f"Failed to fetch {url}: {type(e).__name__}: {e}")
-            if hasattr(e, 'response') and e.response is not None:
-                self.logger.debug(f"Response headers: {dict(e.response.headers)}")
+            self.logger.error(f"[HOMES] ページ取得エラー: {url}, {type(e).__name__}: {e}")
             return None
     
     def get_search_url(self, area: str, page: int = 1) -> str:
