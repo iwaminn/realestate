@@ -594,3 +594,188 @@ class BuildingListingNameManager:
         ).distinct().all()
         
         return [bid[0] for bid in building_ids]
+
+    def calculate_unified_name_score(
+        self,
+        building_id: int,
+        search_name: str
+    ) -> Dict[str, float]:
+        """
+        建物名の統合スコアを計算（文字列一致度 × 出現割合）
+
+        BuildingListingNameテーブルの全バリエーションと比較し、
+        文字列の一致度と出現割合を組み合わせた統合スコアを返す。
+
+        Args:
+            building_id: 建物ID
+            search_name: 検索する建物名
+
+        Returns:
+            Dict containing:
+                - unified_score: 統合スコア (0-100) = 文字列一致度 × 出現割合
+                - string_match_score: 文字列一致度 (0-100)
+                - proportion: 出現割合 (0.0-1.0)
+                - total_occurrences: この建物の全掲載回数
+                - matched_occurrences: マッチした掲載回数
+                - best_match_name: 最もマッチした掲載名
+                - match_type: マッチタイプ ('exact', 'prefix', 'substring', 'similar', 'none')
+        """
+        from difflib import SequenceMatcher
+
+        # 建物に紐づく全ての掲載名を取得
+        all_names = self.db.query(BuildingListingName).filter(
+            BuildingListingName.building_id == building_id
+        ).all()
+
+        if not all_names:
+            return {
+                'unified_score': 0.0,
+                'string_match_score': 0,
+                'proportion': 0.0,
+                'total_occurrences': 0,
+                'matched_occurrences': 0,
+                'best_match_name': None,
+                'match_type': 'none'
+            }
+
+        # 全掲載回数を計算
+        total_occurrences = sum(name.occurrence_count for name in all_names)
+
+        if total_occurrences == 0:
+            return {
+                'unified_score': 0.0,
+                'string_match_score': 0,
+                'proportion': 0.0,
+                'total_occurrences': 0,
+                'matched_occurrences': 0,
+                'best_match_name': None,
+                'match_type': 'none'
+            }
+
+        # 検索名を正規化
+        search_canonical = canonicalize_building_name(search_name)
+        search_normalized = normalize_building_name(search_name)
+
+        # 全バリエーションと比較して最高スコアを探す
+        best_result = {
+            'string_match_score': 0,
+            'proportion': 0.0,
+            'matched_occurrences': 0,
+            'best_match_name': None,
+            'match_type': 'none'
+        }
+
+        for name in all_names:
+            name_canonical = name.canonical_name
+            name_normalized = name.normalized_name
+            occurrence_count = name.occurrence_count
+            proportion = occurrence_count / total_occurrences
+
+            # 文字列一致度を計算（優先度順にチェック）
+            string_match_score = 0
+            match_type = 'none'
+
+            # 1. canonical_name完全一致
+            if name_canonical == search_canonical:
+                string_match_score = 100
+                match_type = 'exact'
+            # 2. 前方一致
+            elif name_canonical.startswith(search_canonical) or search_canonical.startswith(name_canonical):
+                # 長さの比率でスコア調整
+                ratio = min(len(search_canonical), len(name_canonical)) / max(len(search_canonical), len(name_canonical))
+                string_match_score = 80 + ratio * 15  # 80-95点
+                match_type = 'prefix'
+            # 3. 部分一致
+            elif search_canonical in name_canonical or name_canonical in search_canonical:
+                ratio = min(len(search_canonical), len(name_canonical)) / max(len(search_canonical), len(name_canonical))
+                string_match_score = 50 + ratio * 25  # 50-75点
+                match_type = 'substring'
+            # 4. 類似度マッチ（SequenceMatcher）
+            else:
+                similarity = SequenceMatcher(None, search_normalized, name_normalized).ratio()
+                if similarity >= 0.6:  # 60%以上の類似度
+                    string_match_score = similarity * 60  # 最大60点
+                    match_type = 'similar'
+
+            # 統合スコア = 文字列一致度 × 出現割合
+            # ただし、完全一致の場合は割合の影響を軽減（0.5 + 0.5 * proportion）
+            if match_type == 'exact':
+                # 完全一致なら最低でも50点、割合が100%なら100点
+                unified_score = string_match_score * (0.5 + 0.5 * proportion)
+            else:
+                unified_score = string_match_score * proportion
+
+            # より良いスコアがあれば更新
+            if unified_score > best_result['string_match_score'] * best_result['proportion'] * (0.5 + 0.5 * best_result['proportion'] if best_result['match_type'] == 'exact' else 1):
+                # より正確な比較のため、現在のbest unified scoreを計算
+                current_best_unified = best_result['string_match_score'] * (0.5 + 0.5 * best_result['proportion']) if best_result['match_type'] == 'exact' else best_result['string_match_score'] * best_result['proportion']
+
+                if unified_score > current_best_unified:
+                    best_result = {
+                        'string_match_score': string_match_score,
+                        'proportion': proportion,
+                        'matched_occurrences': occurrence_count,
+                        'best_match_name': name_normalized,
+                        'match_type': match_type
+                    }
+
+        # 最終的な統合スコアを計算
+        if best_result['match_type'] == 'exact':
+            unified_score = best_result['string_match_score'] * (0.5 + 0.5 * best_result['proportion'])
+        else:
+            unified_score = best_result['string_match_score'] * best_result['proportion']
+
+        return {
+            'unified_score': unified_score,
+            'string_match_score': best_result['string_match_score'],
+            'proportion': best_result['proportion'],
+            'total_occurrences': total_occurrences,
+            'matched_occurrences': best_result['matched_occurrences'],
+            'best_match_name': best_result['best_match_name'],
+            'match_type': best_result['match_type']
+        }
+
+    def find_buildings_by_name_with_unified_score(
+        self,
+        search_name: str,
+        min_score: float = 10.0
+    ) -> List[Dict]:
+        """
+        建物名で検索し、統合スコア付きで建物IDを返す
+
+        Args:
+            search_name: 検索する建物名
+            min_score: 最低統合スコア（これ以上のスコアでマッチした建物のみ返す）
+
+        Returns:
+            建物情報のリスト（統合スコア順）
+        """
+        # 検索名を正規化
+        search_canonical = canonicalize_building_name(search_name)
+
+        # canonical_nameで部分一致する建物を検索
+        candidate_names = self.db.query(BuildingListingName).filter(
+            or_(
+                BuildingListingName.canonical_name == search_canonical,
+                BuildingListingName.canonical_name.like(f"%{search_canonical}%")
+            )
+        ).all()
+
+        # 建物ごとに統合スコアを計算
+        building_scores = {}
+        for name_entry in candidate_names:
+            building_id = name_entry.building_id
+            if building_id not in building_scores:
+                score_data = self.calculate_unified_name_score(building_id, search_name)
+                if score_data['unified_score'] >= min_score:
+                    building_scores[building_id] = score_data
+                    building_scores[building_id]['building_id'] = building_id
+
+        # 統合スコア順にソート
+        result = sorted(
+            building_scores.values(),
+            key=lambda x: x['unified_score'],
+            reverse=True
+        )
+
+        return result

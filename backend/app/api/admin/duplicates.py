@@ -620,15 +620,32 @@ async def get_duplicate_buildings(
     ).all()
     
     # 建物IDごとにエイリアスをグループ化してキャッシュを作成
+    # 新しい構造: {building_id: {'names': [{'name': str, 'count': int}, ...], 'total': int}}
     aliases_cache = {}
     for listing in all_listing_names:
         building_id = listing.building_id
         if building_id not in aliases_cache:
-            aliases_cache[building_id] = []
-        
-        # 重複を避けながら追加
-        if listing.normalized_name and listing.normalized_name not in aliases_cache[building_id]:
-            aliases_cache[building_id].append(listing.normalized_name)
+            aliases_cache[building_id] = {'names': [], 'total': 0}
+
+        # 出現回数を合計に加算
+        count = listing.occurrence_count or 1
+        aliases_cache[building_id]['total'] += count
+
+        # 重複を避けながら追加（名前と出現回数）
+        if listing.normalized_name:
+            # 既存のエントリを探す
+            existing = next(
+                (n for n in aliases_cache[building_id]['names']
+                 if n['name'] == listing.normalized_name),
+                None
+            )
+            if existing:
+                existing['count'] += count
+            else:
+                aliases_cache[building_id]['names'].append({
+                    'name': listing.normalized_name,
+                    'count': count
+                })
     
     # ログ出力
     logger.info(f"掲載履歴キャッシュ作成: {len(all_building_ids)}件の建物, {len(all_listing_names)}件の掲載名")

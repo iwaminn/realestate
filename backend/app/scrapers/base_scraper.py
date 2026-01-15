@@ -3260,26 +3260,23 @@ class BaseScraper(ABC):
         return 0, "不一致"
 
 
-    def _calculate_building_match_score(self, session, building: Building, 
-                                        address_score: int, strict_match: bool, 
-                                        flexible_match: bool, name_score: int) -> float:
+    def _calculate_building_match_score(self, session, building: Building,
+                                        address_score: int, strict_match: bool,
+                                        flexible_match: bool,
+                                        search_name: str = None) -> float:
         """建物マッチングの総合スコアを計算
-        
+
         スコア配分:
-        - 住所一致度: 50% (0-100点 → 0-50点)
+        - 住所一致度: 40% (0-100点 → 0-40点)
         - 属性一致度: 30% (厳密一致100点/許容誤差70点/不一致0点 → 0-30点)
-        - 建物名一致度: 10% (0-100点 → 0-10点)
-        - 掲載実績: 10% (掲載数に基づくスコア → 0-10点)
-        
+        - 建物名統合スコア: 30% (文字列一致度×出現割合 → 0-30点)
+
         Returns:
             float: 総合スコア (0-100)
         """
-        from sqlalchemy import func
-        from ..models import PropertyListing, MasterProperty
-        
-        # 1. 住所スコア (50%)
-        address_component = address_score * 0.5
-        
+        # 1. 住所スコア (40%)
+        address_component = address_score * 0.4
+
         # 2. 属性スコア (30%)
         if strict_match:
             attribute_score = 100
@@ -3288,31 +3285,41 @@ class BaseScraper(ABC):
         else:
             attribute_score = 0
         attribute_component = attribute_score * 0.3
-        
-        # 3. 建物名スコア (10%)
-        name_component = name_score * 0.1
-        
-        # 4. 掲載実績スコア (10%)
-        # 掲載数が多いほど信頼性が高い
-        listing_count = session.query(func.count(PropertyListing.id)).join(
-            MasterProperty, PropertyListing.master_property_id == MasterProperty.id
-        ).filter(
-            MasterProperty.building_id == building.id
-        ).scalar() or 0
-        
-        # 掲載数を0-100のスコアに変換（100件以上で100点）
-        listing_score = min(listing_count, 100)
-        listing_component = listing_score * 0.1
-        
-        total_score = address_component + attribute_component + name_component + listing_component
-        
+
+        # 3. 建物名統合スコア (30%) - 文字列一致度 × 出現割合
+        unified_name_component = 0.0
+        unified_name_info = {}
+        if search_name:
+            try:
+                from ..utils.building_listing_name_manager import BuildingListingNameManager
+                name_manager = BuildingListingNameManager(session)
+                unified_name_info = name_manager.calculate_unified_name_score(
+                    building.id, search_name
+                )
+                # 統合スコア(0-100)を0-30点に変換
+                unified_name_component = unified_name_info.get('unified_score', 0) * 0.3
+            except Exception as e:
+                self.logger.debug(f"建物名統合スコア計算エラー: {e}")
+                unified_name_component = 0.0
+
+        total_score = address_component + attribute_component + unified_name_component
+
         self.logger.debug(
             f"建物スコア計算: ID={building.id}, "
             f"住所={address_component:.1f}, 属性={attribute_component:.1f}, "
-            f"建物名={name_component:.1f}, 掲載実績={listing_component:.1f}, "
-            f"合計={total_score:.1f}"
+            f"建物名統合={unified_name_component:.1f}, 合計={total_score:.1f}"
         )
-        
+
+        # 統合スコア情報がある場合はデバッグログに詳細を出力
+        if unified_name_info and unified_name_info.get('total_occurrences', 0) > 0:
+            self.logger.debug(
+                f"  建物名詳細: 文字列一致={unified_name_info.get('string_match_score', 0):.0f}, "
+                f"割合={unified_name_info.get('proportion', 0):.1%}, "
+                f"統合={unified_name_info.get('unified_score', 0):.1f}, "
+                f"マッチ名='{unified_name_info.get('best_match_name', '')}', "
+                f"タイプ={unified_name_info.get('match_type', 'none')}"
+            )
+
         return total_score
 
     def _find_buildings_with_staged_matching(self, session, search_key: str, normalized_address: str, 
@@ -3376,24 +3383,23 @@ class BaseScraper(ABC):
             # 住所が一致しない場合はスキップ（スコア40以下）
             if address_score < 40:
                 continue
-                
-            # 建物名一致度と優先度を計算
-            name_score, name_match_type = self._calculate_name_match_score(search_key, building.canonical_name)
+
+            # 建物名の完全一致を優先度として記録
             priority = 1 if building.canonical_name == search_key else 2  # 完全一致は優先度1
             
             # 属性一致チェック
             strict_match = self._verify_building_attributes_strict(building, total_floors, built_year, built_month, total_units)
             flexible_match = self._verify_building_attributes(building, total_floors, built_year, built_month, total_units, session)
             
-            # 総合スコアを計算
+            # 総合スコアを計算（統合建物名スコアを使用）
             total_score = self._calculate_building_match_score(
-                session, building, address_score, strict_match, flexible_match, name_score
+                session, building, address_score, strict_match, flexible_match,
+                search_name=search_key
             )
-                
+
             valid_candidates.append({
                 'building': building,
                 'name_priority': priority,
-                'name_score': name_score,
                 'address_score': address_score,
                 'address_match_type': address_match_type,
                 'strict_match': strict_match,
@@ -3475,15 +3481,13 @@ class BaseScraper(ABC):
             if not flexible_match:
                 self.logger.debug(f"住所は一致するが、属性が一致しない: {building.normalized_name}")
                 continue
-            
-            # 建物名スコア（完全一致なので100点）
-            name_score = 100
-            
-            # 総合スコアを計算
+
+            # 総合スコアを計算（統合建物名スコアを使用）
             total_score = self._calculate_building_match_score(
-                session, building, address_score, strict_match, flexible_match, name_score
+                session, building, address_score, strict_match, flexible_match,
+                search_name=search_key
             )
-            
+
             phase1_candidates.append({
                 'building': building,
                 'address_score': address_score,
@@ -3560,23 +3564,15 @@ class BaseScraper(ABC):
                     attribute_score = 70   # 許容誤差一致
                 else:
                     continue  # 属性が一致しない場合はスキップ
-                
-                # 建物名の一致度を計算
-                name_score = 0
-                if listing_match.normalized_name == search_key:
-                    name_score = 100  # 元の名前と完全一致
-                elif listing_match.canonical_name == canonical_search:
-                    name_score = 90   # 正規化名と完全一致
-                else:
-                    name_score = 50   # その他
-                
-                # 総合スコアを計算（掲載実績も考慮）
+
+                # 総合スコアを計算（統合建物名スコアを使用）
                 strict_match = (attribute_score == 100)
                 flexible_match = (attribute_score >= 70)
                 total_score = self._calculate_building_match_score(
-                    session, primary_building, address_score, strict_match, flexible_match, name_score
+                    session, primary_building, address_score, strict_match, flexible_match,
+                    search_name=search_key
                 )
-                
+
                 # より良い候補があれば更新
                 if total_score > best_score:
                     best_score = total_score
@@ -3584,7 +3580,6 @@ class BaseScraper(ABC):
                         'building': primary_building,
                         'address_score': address_score,
                         'attribute_score': attribute_score,
-                        'name_score': name_score,
                         'total_score': total_score,
                         'listing_name': listing_match.normalized_name
                     }
