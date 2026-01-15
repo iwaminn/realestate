@@ -161,7 +161,7 @@ class HomesScraper(BaseScraper):
     def fetch_page(self, url: str) -> Optional[BeautifulSoup]:
         """ページを取得してBeautifulSoupオブジェクトを返す（Playwright使用）"""
         try:
-            time.sleep(1)  # レート制限（サーバー負荷軽減）
+            time.sleep(2)  # レート制限（サーバー負荷軽減）
 
             # Playwrightを使用してJavaScriptを実行
             client = self._get_playwright_client()
