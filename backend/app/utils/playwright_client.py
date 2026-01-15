@@ -138,17 +138,14 @@ class PlaywrightClient:
             page.set_default_timeout(self.timeout)
 
             for attempt in range(max_retries + 1):
-                # ページに移動
+                # ページに移動（domcontentloadedで高速化）
                 logger.debug(f"Playwrightでページを取得 (attempt {attempt + 1}): {url}")
-                response = page.goto(url, wait_until='load', timeout=60000)
+                response = page.goto(url, wait_until='domcontentloaded', timeout=60000)
 
                 if response is None or not response.ok:
                     status = response.status if response else 'None'
                     logger.warning(f"ページ取得失敗: {url}, status={status}")
                     return None
-
-                # AWS WAFチャレンジを待つ（チャレンジは数秒で完了する）
-                time.sleep(3)
 
                 # HTMLを取得してチャレンジページかチェック
                 html = page.content()
@@ -157,13 +154,12 @@ class PlaywrightClient:
                 if 'JavaScript is disabled' in html or len(html) < 20000:
                     if attempt < max_retries:
                         logger.info(f"AWS WAFチャレンジを検出、待機してリトライ... (attempt {attempt + 1})")
-                        time.sleep(5)  # チャレンジ完了を待つ
+                        time.sleep(3)  # チャレンジ完了を待つ
                         # ページをリロード
-                        page.reload(wait_until='load', timeout=60000)
+                        page.reload(wait_until='domcontentloaded', timeout=60000)
                         continue
                     else:
                         logger.warning(f"AWS WAFチャレンジを通過できませんでした: {url}")
-                        # 最後の試行でもチャレンジページの場合はHTMLを返す（呼び出し元で判断）
                         break
 
                 # 正常なページ取得成功
@@ -172,7 +168,7 @@ class PlaywrightClient:
             # 追加の待機（セレクタまたは時間ベース）
             if wait_selector:
                 try:
-                    page.wait_for_selector(wait_selector, timeout=30000)
+                    page.wait_for_selector(wait_selector, timeout=15000)
                 except Exception as e:
                     logger.warning(f"セレクタ待機タイムアウト: {wait_selector}, {e}")
 

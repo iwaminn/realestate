@@ -161,7 +161,7 @@ class HomesScraper(BaseScraper):
     def fetch_page(self, url: str) -> Optional[BeautifulSoup]:
         """ページを取得してBeautifulSoupオブジェクトを返す（Playwright使用）"""
         try:
-            time.sleep(2)  # レート制限
+            time.sleep(1)  # レート制限（サーバー負荷軽減）
 
             # Playwrightを使用してJavaScriptを実行
             client = self._get_playwright_client()
@@ -172,7 +172,7 @@ class HomesScraper(BaseScraper):
             else:
                 wait_selector = 'h1, .property-detail'
 
-            html = client.fetch_page(url, wait_selector=wait_selector, wait_time=2)
+            html = client.fetch_page(url, wait_selector=wait_selector, wait_time=1)
 
             if not html:
                 self.logger.error(f"[HOMES] ページ取得失敗: {url}")
