@@ -172,8 +172,8 @@ class HomesScraper(BaseScraper):
     def fetch_page(self, url: str) -> Optional[BeautifulSoup]:
         """ページを取得してBeautifulSoupオブジェクトを返す（Playwright使用）"""
         try:
-            # ランダムな遅延を追加（3〜6秒、人間らしいアクセスパターン）
-            delay = random.uniform(3, 6)
+            # ランダムな遅延を追加（4〜6秒、人間らしいアクセスパターン）
+            delay = random.uniform(4, 6)
             time.sleep(delay)
 
             # 一定回数ごとにブラウザセッションを再起動（WAF対策）
