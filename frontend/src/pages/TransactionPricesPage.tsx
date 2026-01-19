@@ -100,11 +100,13 @@ const TransactionPricesPage: React.FC = () => {
   const [selectedDistrict, setSelectedDistrict] = useState<string>('');
   const [selectedArea, setSelectedArea] = useState<string>('');
   const [selectedYear, setSelectedYear] = useState<number | ''>('');
-  const [startYear, setStartYear] = useState<number>(2020);
-  const [startQuarter, setStartQuarter] = useState<number>(1);
 
   // 現在の年と四半期を動的に設定
   const currentPeriod = getCurrentYearAndQuarter();
+  // デフォルトは直近3年分（最小は2020年）
+  const defaultStartYear = Math.max(2020, currentPeriod.year - 3);
+  const [startYear, setStartYear] = useState<number>(defaultStartYear);
+  const [startQuarter, setStartQuarter] = useState<number>(1);
   const [endYear, setEndYear] = useState<number>(currentPeriod.year);
   const [endQuarter, setEndQuarter] = useState<number>(currentPeriod.quarter);
   const [areaStats, setAreaStats] = useState<AreaStatistics[]>([]);
