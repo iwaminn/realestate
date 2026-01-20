@@ -332,12 +332,17 @@ async def get_recent_updates_count(
 ):
     """
     直近N時間以内の価格改定物件と新着物件の件数のみを高速取得
+    （実際は日付ベースでフィルタリング：24h=本日、48h=過去2日間）
     """
     from datetime import datetime, timedelta
     from sqlalchemy import func
-    
-    # 対象期間の開始時刻
-    cutoff_time = datetime.now() - timedelta(hours=hours)
+    from ..utils.datetime_utils import get_utc_now
+
+    # 日付ベースで計算（24h=本日、48h=過去2日間）
+    jst_now = get_utc_now()
+    days_back = max(0, (hours // 24) - 1)  # 24h→0日前、48h→1日前、72h→2日前
+    cutoff_date = jst_now.date() - timedelta(days=days_back)
+    cutoff_time = datetime.combine(cutoff_date, datetime.min.time())
     
     # 価格変更があった物件の件数を取得（Full APIと同じロジック）
     from sqlalchemy import text

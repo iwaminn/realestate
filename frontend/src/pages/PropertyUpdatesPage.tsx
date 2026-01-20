@@ -320,7 +320,17 @@ const PropertyUpdatesPage: React.FC = () => {
   const tabNames = ['価格改定', '新規掲載'];
   const currentTabName = tabNames[tabValue] || '価格改定';
   const wardText = selectedWard === 'all' ? '全エリア' : selectedWard;
-  const hoursText = selectedHours === 24 ? '24時間以内' : `${selectedHours}時間以内`;
+  // 期間テキストを日付ベースの表現に変更
+  const getHoursText = (hours: number) => {
+    switch (hours) {
+      case 24: return '本日';
+      case 48: return '過去2日間';
+      case 72: return '過去3日間';
+      case 168: return '過去1週間';
+      default: return `過去${Math.ceil(hours / 24)}日間`;
+    }
+  };
+  const hoursText = getHoursText(selectedHours);
 
   const updateCount = tabValue === 0 ? filteredPriceChanges.length : filteredNewListings.length;
 
@@ -382,8 +392,8 @@ const PropertyUpdatesPage: React.FC = () => {
             <FormControl fullWidth size="small">
               <InputLabel>期間</InputLabel>
               <Select value={selectedHours} onChange={handleHoursChange} label="期間">
-                <MenuItem value={24}>過去24時間</MenuItem>
-                <MenuItem value={48}>過去48時間</MenuItem>
+                <MenuItem value={24}>本日</MenuItem>
+                <MenuItem value={48}>過去2日間</MenuItem>
                 <MenuItem value={72}>過去3日間</MenuItem>
                 <MenuItem value={168}>過去1週間</MenuItem>
               </Select>

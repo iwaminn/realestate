@@ -41,11 +41,13 @@ async def get_recent_updates_cached(
         return cached_data
     
     # キャッシュミス - データベースから取得
-    # 対象期間の開始日
+    # 対象期間の開始日（日付ベースで計算）
     from ..utils.datetime_utils import get_utc_now
     # 日本時間での計算
     jst_now = get_utc_now()  # 実際は日本時間
-    cutoff_date = jst_now.date() - timedelta(days=hours/24)
+    # hours=24は「本日」、hours=48は「過去2日間」として日付ベースで計算
+    days_back = max(0, (hours // 24) - 1)  # 24h→0日前、48h→1日前、72h→2日前
+    cutoff_date = jst_now.date() - timedelta(days=days_back)
     
     # 価格改定物件を取得（キャッシュテーブルから）
     # サブクエリでアクティブな掲載情報を取得
@@ -83,8 +85,9 @@ async def get_recent_updates_cached(
         .order_by(PropertyPriceChange.change_date.desc())
     ).all()
     
-    # 新着物件を取得（既存のロジックを使用）
-    cutoff_time = datetime.now() - timedelta(hours=hours)
+    # 新着物件を取得（日付ベースで計算）
+    # 価格改定と同じ日付を使用（当日の0:00から）
+    cutoff_time = datetime.combine(cutoff_date, datetime.min.time())
     
     # 各MasterPropertyの最初の掲載日時を取得
     first_listing_subq = (
@@ -278,11 +281,13 @@ async def get_recent_updates_counts(
         cached_data['cache_hit'] = True
         return cached_data
     
-    # キャッシュミス - データベースから件数を集計
+    # キャッシュミス - データベースから件数を集計（日付ベースで計算）
     from ..utils.datetime_utils import get_utc_now
     jst_now = get_utc_now()
-    cutoff_date = jst_now.date() - timedelta(days=hours/24)
-    cutoff_time = datetime.now() - timedelta(hours=hours)
+    # hours=24は「本日」、hours=48は「過去2日間」として日付ベースで計算
+    days_back = max(0, (hours // 24) - 1)  # 24h→0日前、48h→1日前、72h→2日前
+    cutoff_date = jst_now.date() - timedelta(days=days_back)
+    cutoff_time = datetime.combine(cutoff_date, datetime.min.time())
     
     # has_active_listingサブクエリ
     active_listing_check = (
