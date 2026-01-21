@@ -23,6 +23,11 @@ import {
   ToggleButton,
   ToggleButtonGroup,
   FormControlLabel,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  SelectChangeEvent,
   Checkbox,
   Tooltip,
   useMediaQuery,
@@ -66,6 +71,7 @@ interface BuildingStats {
 type ViewMode = 'card' | 'table';
 type OrderBy = 'earliest_published_at' | 'floor_number' | 'area' | 'min_price' | 'layout' | 'direction' | 'price_per_tsubo';
 type Order = 'asc' | 'desc';
+type SoldPeriod = 0 | 1 | 3 | 6 | 12; // 0=全期間, 1=1ヶ月, 3=3ヶ月, 6=6ヶ月, 12=1年
 
 // Googleマップとハザードマップのリンクコンポーネント
 interface MapLinksProps {
@@ -185,45 +191,61 @@ const BuildingPropertiesPage: React.FC = () => {
   // URLパラメータから各種設定を取得
   const getParamsFromUrl = () => {
     const urlParams = new URLSearchParams(location.search);
+    const soldPeriodParam = urlParams.get('soldPeriod');
+    const validSoldPeriods: SoldPeriod[] = [0, 1, 3, 6, 12];
+    const parsedSoldPeriod = soldPeriodParam ? parseInt(soldPeriodParam) : 3;
     return {
       includeInactive: urlParams.get('includeInactive') === 'true',
       viewMode: (urlParams.get('viewMode') as ViewMode) || 'table',
       orderBy: (urlParams.get('orderBy') as OrderBy) || 'earliest_published_at',
-      order: (urlParams.get('order') as Order) || 'desc'
+      order: (urlParams.get('order') as Order) || 'desc',
+      soldPeriod: (validSoldPeriods.includes(parsedSoldPeriod as SoldPeriod) ? parsedSoldPeriod : 3) as SoldPeriod
     };
   };
-  
+
   const initialParams = getParamsFromUrl();
   const [viewMode, setViewMode] = useState<ViewMode>(initialParams.viewMode);
   const [orderBy, setOrderBy] = useState<OrderBy>(initialParams.orderBy);
   const [order, setOrder] = useState<Order>(initialParams.order);
   const [includeInactive, setIncludeInactive] = useState(initialParams.includeInactive);
+  const [soldPeriod, setSoldPeriod] = useState<SoldPeriod>(initialParams.soldPeriod);
   const [statsExpanded, setStatsExpanded] = useState(!isMobile);
   
   // URLパラメータを更新する関数
-  const updateUrlParams = (updates: Partial<{includeInactive: boolean, viewMode: ViewMode, orderBy: OrderBy, order: Order}>) => {
+  const updateUrlParams = (updates: Partial<{includeInactive: boolean, viewMode: ViewMode, orderBy: OrderBy, order: Order, soldPeriod: SoldPeriod}>) => {
     const searchParams = new URLSearchParams(location.search);
-    
+
     if (updates.includeInactive !== undefined) {
       if (updates.includeInactive) {
         searchParams.set('includeInactive', 'true');
       } else {
         searchParams.delete('includeInactive');
+        // 販売終了物件を非表示にする場合は期間設定も削除
+        searchParams.delete('soldPeriod');
       }
     }
-    
+
+    if (updates.soldPeriod !== undefined) {
+      if (updates.soldPeriod === 3) {
+        // デフォルト値の場合は削除
+        searchParams.delete('soldPeriod');
+      } else {
+        searchParams.set('soldPeriod', updates.soldPeriod.toString());
+      }
+    }
+
     if (updates.viewMode !== undefined) {
       searchParams.set('viewMode', updates.viewMode);
     }
-    
+
     if (updates.orderBy !== undefined) {
       searchParams.set('orderBy', updates.orderBy);
     }
-    
+
     if (updates.order !== undefined) {
       searchParams.set('order', updates.order);
     }
-    
+
     navigate(`${location.pathname}?${searchParams.toString()}`, { replace: true });
   };
 
@@ -240,6 +262,7 @@ const BuildingPropertiesPage: React.FC = () => {
     setViewMode(params.viewMode);
     setOrderBy(params.orderBy);
     setOrder(params.order);
+    setSoldPeriod(params.soldPeriod);
   }, []);
 
   const fetchBuildingProperties = async () => {
@@ -476,8 +499,34 @@ const BuildingPropertiesPage: React.FC = () => {
     updateUrlParams({ orderBy: property, order: newOrder });
   };
 
+  // 販売終了物件の期間フィルタリング
+  const filteredProperties = React.useMemo(() => {
+    if (!includeInactive || soldPeriod === 0) {
+      // 販売終了物件を含まない場合、または全期間の場合はそのまま返す
+      return properties;
+    }
+
+    // 期間でフィルタリング
+    const cutoffDate = new Date();
+    cutoffDate.setMonth(cutoffDate.getMonth() - soldPeriod);
+
+    return properties.filter((property: Property) => {
+      // 販売中の物件は常に表示
+      if (property.has_active_listing) {
+        return true;
+      }
+      // 販売終了物件は指定期間内のもののみ表示
+      if (property.sold_at) {
+        const soldDate = new Date(property.sold_at);
+        return soldDate >= cutoffDate;
+      }
+      // sold_atがない販売終了物件は表示しない
+      return false;
+    });
+  }, [properties, includeInactive, soldPeriod]);
+
   const sortedProperties = React.useMemo(() => {
-    return [...properties].sort((a, b) => {
+    return [...filteredProperties].sort((a, b) => {
       let aValue: any;
       let bValue: any;
 
@@ -524,7 +573,7 @@ const BuildingPropertiesPage: React.FC = () => {
         return aValue < bValue ? -1 : aValue > bValue ? 1 : 0;
       }
     });
-  }, [properties, orderBy, order]);
+  }, [filteredProperties, orderBy, order]);
 
   if (loading) {
     return (
@@ -658,18 +707,39 @@ const BuildingPropertiesPage: React.FC = () => {
           </>
         )}
 
-        <Box sx={{ mb: 3 }}>
+        <Box sx={{ mb: 3, display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
           <FormControlLabel
             control={
               <Checkbox
                 checked={includeInactive}
                 onChange={(e) => {
                   setIncludeInactive(e.target.checked);
+                  updateUrlParams({ includeInactive: e.target.checked });
                 }}
               />
             }
             label="販売終了物件を含む"
           />
+          {includeInactive && (
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <InputLabel>期間</InputLabel>
+              <Select
+                value={soldPeriod}
+                label="期間"
+                onChange={(e: SelectChangeEvent<number>) => {
+                  const newPeriod = e.target.value as SoldPeriod;
+                  setSoldPeriod(newPeriod);
+                  updateUrlParams({ soldPeriod: newPeriod });
+                }}
+              >
+                <MenuItem value={1}>過去1ヶ月</MenuItem>
+                <MenuItem value={3}>過去3ヶ月</MenuItem>
+                <MenuItem value={6}>過去6ヶ月</MenuItem>
+                <MenuItem value={12}>過去1年</MenuItem>
+                <MenuItem value={0}>全期間</MenuItem>
+              </Select>
+            </FormControl>
+          )}
         </Box>
 
         <Alert severity="info">
@@ -912,7 +982,7 @@ const BuildingPropertiesPage: React.FC = () => {
         }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
             <Typography variant="h5">
-              {includeInactive ? '全物件' : '販売中の物件'} ({properties.length}件)
+              {includeInactive ? (soldPeriod === 0 ? '全物件' : `販売終了物件を含む（過去${soldPeriod === 12 ? '1年' : `${soldPeriod}ヶ月`}）`) : '販売中の物件'} ({sortedProperties.length}件)
             </Typography>
             {isRefreshing && (
               <CircularProgress size={20} thickness={4} />
@@ -949,17 +1019,40 @@ const BuildingPropertiesPage: React.FC = () => {
             </ToggleButton>
           </ToggleButtonGroup>
         </Box>
-        <FormControlLabel
-          control={
-            <Checkbox
-              checked={includeInactive}
-              onChange={(e) => {
-                setIncludeInactive(e.target.checked);
-              }}
-            />
-          }
-          label="販売終了物件を含む"
-        />
+        <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={includeInactive}
+                onChange={(e) => {
+                  setIncludeInactive(e.target.checked);
+                  updateUrlParams({ includeInactive: e.target.checked });
+                }}
+              />
+            }
+            label="販売終了物件を含む"
+          />
+          {includeInactive && (
+            <FormControl size="small" sx={{ minWidth: 140 }}>
+              <InputLabel>期間</InputLabel>
+              <Select
+                value={soldPeriod}
+                label="期間"
+                onChange={(e: SelectChangeEvent<number>) => {
+                  const newPeriod = e.target.value as SoldPeriod;
+                  setSoldPeriod(newPeriod);
+                  updateUrlParams({ soldPeriod: newPeriod });
+                }}
+              >
+                <MenuItem value={1}>過去1ヶ月</MenuItem>
+                <MenuItem value={3}>過去3ヶ月</MenuItem>
+                <MenuItem value={6}>過去6ヶ月</MenuItem>
+                <MenuItem value={12}>過去1年</MenuItem>
+                <MenuItem value={0}>全期間</MenuItem>
+              </Select>
+            </FormControl>
+          )}
+        </Box>
       </Box>
 
       {viewMode === 'table' ? (
