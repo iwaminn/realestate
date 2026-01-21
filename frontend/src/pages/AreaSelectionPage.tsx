@@ -44,6 +44,7 @@ const AreaSelectionPage: React.FC = () => {
     [key: string]: { price_changes: number; new_listings: number };
   }>({});
   const [updatesLoading, setUpdatesLoading] = useState(true);
+  const [displayHours, setDisplayHours] = useState(24); // 表示する期間（24=本日、48=過去2日間）
   const [buildingOptions, setBuildingOptions] = useState<Array<string | { value: string; label: string }>>([]);
   const [loadingBuildings, setLoadingBuildings] = useState(false);
   const [autocompleteOpen, setAutocompleteOpen] = useState(false);
@@ -54,16 +55,28 @@ const AreaSelectionPage: React.FC = () => {
   const fetchUpdatesCounts = useCallback(async () => {
       setUpdatesLoading(true);
       try {
-        // 件数のみを取得する軽量APIを使用
-        const data = await propertyApi.getRecentUpdatesCount(24);
-        
-        // 状態を更新
-        setUpdatesCounts({
-          total_price_changes: data.total_price_changes,
-          total_new_listings: data.total_new_listings
-        });
-        setWardCounts(data.ward_counts);
-        
+        // まず本日（24時間）の件数を取得
+        const todayData = await propertyApi.getRecentUpdatesCount(24);
+
+        // 本日の更新が1件でもあれば本日のデータを表示
+        if (todayData.total_price_changes > 0 || todayData.total_new_listings > 0) {
+          setUpdatesCounts({
+            total_price_changes: todayData.total_price_changes,
+            total_new_listings: todayData.total_new_listings
+          });
+          setWardCounts(todayData.ward_counts);
+          setDisplayHours(24);
+        } else {
+          // 本日の更新がなければ過去2日間のデータを取得して表示
+          const twoDaysData = await propertyApi.getRecentUpdatesCount(48);
+          setUpdatesCounts({
+            total_price_changes: twoDaysData.total_price_changes,
+            total_new_listings: twoDaysData.total_new_listings
+          });
+          setWardCounts(twoDaysData.ward_counts);
+          setDisplayHours(48);
+        }
+
       } catch (error) {
         console.error('Failed to fetch updates counts:', error);
       }
@@ -299,7 +312,7 @@ const AreaSelectionPage: React.FC = () => {
         <Box sx={{ mb: 3 }}>
           <Typography variant="h5" sx={{ fontWeight: 'bold' }}>
             <UpdateIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
-            直近24時間の更新情報
+            {displayHours === 24 ? '本日の更新情報' : '過去2日間の更新情報'}
           </Typography>
         </Box>
         
@@ -316,7 +329,7 @@ const AreaSelectionPage: React.FC = () => {
                   boxShadow: 3,
                 }
               }}
-              onClick={updatesLoading ? undefined : () => navigate('/updates?tab=0')}
+              onClick={updatesLoading ? undefined : () => navigate(`/updates?tab=0&hours=${displayHours}`)}
             >
               <Box sx={{ 
                 display: 'flex', 
@@ -362,7 +375,7 @@ const AreaSelectionPage: React.FC = () => {
                       disabled={updatesLoading}
                       onClick={(e) => {
                         e.stopPropagation();
-                        navigate(`/updates?tab=0&ward=${encodeURIComponent(ward.name)}`);
+                        navigate(`/updates?tab=0&ward=${encodeURIComponent(ward.name)}&hours=${displayHours}`);
                       }}
                       sx={{
                         minWidth: 'auto',
@@ -421,7 +434,7 @@ const AreaSelectionPage: React.FC = () => {
                   boxShadow: 3,
                 }
               }}
-              onClick={updatesLoading ? undefined : () => navigate('/updates?tab=1')}
+              onClick={updatesLoading ? undefined : () => navigate(`/updates?tab=1&hours=${displayHours}`)}
             >
               <Box sx={{ 
                 display: 'flex', 
@@ -467,7 +480,7 @@ const AreaSelectionPage: React.FC = () => {
                       disabled={updatesLoading}
                       onClick={(e) => {
                         e.stopPropagation();
-                        navigate(`/updates?tab=1&ward=${encodeURIComponent(ward.name)}`);
+                        navigate(`/updates?tab=1&ward=${encodeURIComponent(ward.name)}&hours=${displayHours}`);
                       }}
                       sx={{
                         minWidth: 'auto',

@@ -86,8 +86,9 @@ const PropertyUpdatesPage: React.FC = () => {
   // 並び替えの状態管理
   type SortField = 'building_name' | 'price' | 'price_diff' | 'area' | 'floor_number' | 'built_year' | 'days_on_market' | 'changed_at' | 'created_at' | 'layout' | 'direction';
   type SortOrder = 'asc' | 'desc';
-  const [sortField, setSortField] = useState<SortField>('price_diff');
-  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+
+  // 有効なソートフィールドのリスト
+  const validSortFields: SortField[] = ['building_name', 'price', 'price_diff', 'area', 'floor_number', 'built_year', 'days_on_market', 'changed_at', 'created_at', 'layout', 'direction'];
 
   // URLパラメータから初期値を取得
   const tabValue = parseInt(searchParams.get('tab') || '0');
@@ -95,6 +96,13 @@ const PropertyUpdatesPage: React.FC = () => {
   const selectedHours = parseInt(searchParams.get('hours') || '24');
   const page = parseInt(searchParams.get('page') || '0');
   const rowsPerPage = parseInt(searchParams.get('rowsPerPage') || '25');
+
+  // ソートパラメータをURLから取得（タブに応じたデフォルト値を使用）
+  const defaultSortField: SortField = tabValue === 0 ? 'price_diff' : 'price';
+  const urlSortField = searchParams.get('sort') as SortField | null;
+  const sortField: SortField = urlSortField && validSortFields.includes(urlSortField) ? urlSortField : defaultSortField;
+  const urlSortOrder = searchParams.get('order') as SortOrder | null;
+  const sortOrder: SortOrder = urlSortOrder === 'asc' || urlSortOrder === 'desc' ? urlSortOrder : 'desc';
 
   const fetchUpdates = async () => {
     setLoading(true);
@@ -164,13 +172,19 @@ const PropertyUpdatesPage: React.FC = () => {
   // URLパラメータを更新するヘルパー関数
   const updateSearchParams = (updates: Record<string, string>) => {
     const newParams = new URLSearchParams(searchParams);
+    // タブに応じたデフォルトソートフィールドを判定
+    const currentTab = updates.tab !== undefined ? parseInt(updates.tab) : tabValue;
+    const defaultSort = currentTab === 0 ? 'price_diff' : 'price';
+
     Object.entries(updates).forEach(([key, value]) => {
-      if (value === '' || 
+      if (value === '' ||
           (key === 'tab' && value === '0') ||
-          (key === 'ward' && value === 'all') || 
-          (key === 'hours' && value === '24') || 
+          (key === 'ward' && value === 'all') ||
+          (key === 'hours' && value === '24') ||
           (key === 'page' && value === '0') ||
-          (key === 'rowsPerPage' && value === '25')) {
+          (key === 'rowsPerPage' && value === '25') ||
+          (key === 'sort' && value === defaultSort) ||
+          (key === 'order' && value === 'desc')) {
         // デフォルト値の場合はパラメータを削除
         newParams.delete(key);
       } else {
@@ -181,18 +195,17 @@ const PropertyUpdatesPage: React.FC = () => {
   };
 
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
-    updateSearchParams({ tab: newValue.toString(), page: '0' });
-    
-    // タブ変更時にデフォルトの並び替えを設定
+    // タブ変更時はソートをリセット（URLパラメータから削除することでデフォルトに戻る）
+    const newParams = new URLSearchParams(searchParams);
+    newParams.delete('sort');
+    newParams.delete('order');
+    newParams.delete('page');
     if (newValue === 0) {
-      // 価格改定履歴タブ：価格変動幅の降順
-      setSortField('price_diff');
-      setSortOrder('desc');
+      newParams.delete('tab');
     } else {
-      // 新規掲載物件タブ：価格の降順
-      setSortField('price');
-      setSortOrder('desc');
+      newParams.set('tab', newValue.toString());
     }
+    setSearchParams(newParams);
   };
 
   const handleWardChange = (event: SelectChangeEvent) => {
@@ -217,9 +230,7 @@ const PropertyUpdatesPage: React.FC = () => {
   const handleSort = (field: SortField) => {
     const isCurrentField = sortField === field;
     const newOrder: SortOrder = isCurrentField && sortOrder === 'desc' ? 'asc' : 'desc';
-    setSortField(field);
-    setSortOrder(newOrder);
-    updateSearchParams({ page: '0' }); // ページを最初に戻す
+    updateSearchParams({ sort: field, order: newOrder, page: '0' });
   };
 
   const formatPrice = (price: number, showUnit: boolean = true) => {
