@@ -778,59 +778,30 @@ class MajorityVoteUpdater:
                 master_property.current_price = majority_price
                 updated = True
         
-        # ユニーク制約違反をチェック
-        if (new_floor_number != master_property.floor_number or 
-            new_area != master_property.area or 
-            new_layout != master_property.layout or 
-            new_direction != master_property.direction):
-            
-            # 同じ組み合わせの物件が既に存在するかチェック（自分自身を除く）
-            from sqlalchemy import and_
-            existing_property = self.session.query(MasterProperty).filter(
-                and_(
-                    MasterProperty.building_id == master_property.building_id,
-                    MasterProperty.floor_number == new_floor_number,
-                    MasterProperty.area == new_area,
-                    MasterProperty.layout == new_layout,
-                    MasterProperty.direction == new_direction,
-                    MasterProperty.id != master_property.id  # 自分自身を除外
-                )
-            ).first()
-            
-            if existing_property:
-                logger.warning(
-                    f"物件ID {master_property.id} の多数決更新をスキップ: "
-                    f"更新後の属性が物件ID {existing_property.id} と重複 "
-                    f"(建物ID: {master_property.building_id}, 階数: {new_floor_number}, "
-                    f"面積: {new_area}㎡, 間取り: {new_layout}, 方角: {new_direction})"
-                )
-                # ユニーク制約違反の場合は、階数・面積・間取り・方角の更新をスキップ
-                # ただし、それ以外の属性は更新可能
-            else:
-                # ユニーク制約違反がない場合のみ更新
-                if new_floor_number != master_property.floor_number:
-                    logger.info(f"物件ID {master_property.id} の階数を "
-                              f"{master_property.floor_number} → {new_floor_number} に更新")
-                    master_property.floor_number = new_floor_number
-                    updated = True
-                
-                if new_area != master_property.area:
-                    logger.info(f"物件ID {master_property.id} の面積を "
-                              f"{master_property.area} → {new_area} に更新")
-                    master_property.area = new_area
-                    updated = True
-                
-                if new_layout != master_property.layout:
-                    logger.info(f"物件ID {master_property.id} の間取りを "
-                              f"{master_property.layout} → {new_layout} に更新")
-                    master_property.layout = new_layout
-                    updated = True
-                
-                if new_direction != master_property.direction:
-                    logger.info(f"物件ID {master_property.id} の方角を "
-                              f"{master_property.direction} → {new_direction} に更新")
-                    master_property.direction = new_direction
-                    updated = True
+        # 階数・面積・間取り・方角の更新
+        if new_floor_number != master_property.floor_number:
+            logger.info(f"物件ID {master_property.id} の階数を "
+                      f"{master_property.floor_number} → {new_floor_number} に更新")
+            master_property.floor_number = new_floor_number
+            updated = True
+        
+        if new_area != master_property.area:
+            logger.info(f"物件ID {master_property.id} の面積を "
+                      f"{master_property.area} → {new_area} に更新")
+            master_property.area = new_area
+            updated = True
+        
+        if new_layout != master_property.layout:
+            logger.info(f"物件ID {master_property.id} の間取りを "
+                      f"{master_property.layout} → {new_layout} に更新")
+            master_property.layout = new_layout
+            updated = True
+        
+        if new_direction != master_property.direction:
+            logger.info(f"物件ID {master_property.id} の方角を "
+                      f"{master_property.direction} → {new_direction} に更新")
+            master_property.direction = new_direction
+            updated = True
         
         # バルコニー面積の多数決（ユニーク制約に含まれない）
         if info['balcony_areas']:

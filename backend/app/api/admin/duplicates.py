@@ -2246,13 +2246,24 @@ async def merge_buildings(
                         # 統合後、統合先建物のbuilding_listing_namesを再集計
                         listing_name_manager.refresh_building_names(primary_id)
 
-            # 建物統合で掲載が統合された物件のsold_atとfinal_priceを更新
+            # 建物統合で掲載が統合された物件の多数決更新
             # duplicate_merge_detailsから統合された物件のprimary_idのみを収集（最適化）
-            from ...utils.price_queries import update_sold_status_and_final_price
             affected_property_ids = set()
             for detail in duplicate_merge_details:
                 # 掲載が統合された物件（primary側）のみ更新が必要
                 affected_property_ids.add(detail["primary_id"])
+            
+            # 掲載統合により影響を受けた物件の多数決更新
+            for property_id in affected_property_ids:
+                try:
+                    affected_property = db.query(MasterProperty).filter(MasterProperty.id == property_id).first()
+                    if affected_property:
+                        updater.update_master_property_by_majority(affected_property)
+                except Exception as e:
+                    print(f"建物統合後の物件多数決更新に失敗: property_id={property_id}, error={e}")
+            
+            # 建物統合で掲載が統合された物件のsold_atとfinal_priceを更新
+            from ...utils.price_queries import update_sold_status_and_final_price
             
             # 掲載統合により影響を受けた物件のみsold_atとfinal_priceを更新
             for property_id in affected_property_ids:
