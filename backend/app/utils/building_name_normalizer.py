@@ -163,7 +163,7 @@ def remove_ad_text_from_building_name(ad_text: str) -> str:
         r'\d+階(高層階|低層階|最上階|角部屋|角住戸|[南北東西]{1,2}向き|(南西|南東|北西|北東|東南|西南|東北|西北)角(部屋|住戸))',
         r'(南西|南東|北西|北東|東南|西南|東北|西北)角(部屋|住戸)',
         # 眺望・階数関連
-        '眺望.*', '陽当.*', '日当.*', '眺望良好', '海を望む.*', '上階なし',
+        '眺望.*', '陽当.*', '日当.*', '眺望良好', '海を望む.*', '.*を望む(\d+階?)?', '上階なし',
         '開放感.*',
         '室内.*', '内装.*',
         # 建物規模
@@ -270,10 +270,10 @@ def remove_ad_text_from_building_name(ad_text: str) -> str:
                 if re.match(pattern, word):
                     return True
             
-            # マッチしなければ、分割記号（・、&、/）で分割してすべての部分が広告文かチェック
-            if any(sep in word for sep in ['・', '&', '/']):
+            # マッチしなければ、分割記号（・、&、/、|）で分割してすべての部分が広告文かチェック
+            if any(sep in word for sep in ['・', '&', '/', '|']):
                 # 複数の分割記号で分割
-                parts = re.split(r'[・&/]', word)
+                parts = re.split(r'[・&/|]', word)
                 all_parts_ad = True
                 for part in parts:
                     if not part.strip():

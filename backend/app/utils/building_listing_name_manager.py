@@ -598,7 +598,8 @@ class BuildingListingNameManager:
     def calculate_unified_name_score(
         self,
         building_id: int,
-        search_name: str
+        search_name: str,
+        is_ambiguous_search: bool = False
     ) -> Dict[str, float]:
         """
         建物名の統合スコアを計算（文字列一致度 × 複合割合）
@@ -610,10 +611,16 @@ class BuildingListingNameManager:
         - 建物内出現割合: その建物内でこの名前が占める割合
         - 排他性スコア: 全データベースでこの名前がこの建物に紐づく割合
         - 複合割合 = (建物内出現割合 + 排他性スコア) / 2
+        
+        案E: 曖昧な検索の場合 (is_ambiguous_search=True)
+        - 検索キーが同一住所の複数建物のcanonical_nameに前方一致する場合に使用
+        - 完全一致でも前方一致と同じスコア計算を適用（完全一致ボーナスなし）
+        - これにより、同一マンション群で公平なスコア比較が可能になる
 
         Args:
             building_id: 建物ID
             search_name: 検索する建物名
+            is_ambiguous_search: 曖昧な検索モード（案E）
 
         Returns:
             Dict containing:
@@ -626,6 +633,7 @@ class BuildingListingNameManager:
                 - matched_occurrences: マッチした掲載回数
                 - best_match_name: 最もマッチした掲載名
                 - match_type: マッチタイプ ('exact', 'prefix', 'substring', 'similar', 'none')
+                - is_ambiguous_search: 曖昧検索モードかどうか
         """
         from difflib import SequenceMatcher
 
@@ -644,7 +652,8 @@ class BuildingListingNameManager:
                 'total_occurrences': 0,
                 'matched_occurrences': 0,
                 'best_match_name': None,
-                'match_type': 'none'
+                'match_type': 'none',
+                'is_ambiguous_search': is_ambiguous_search
             }
 
         # 全掲載回数を計算
@@ -660,7 +669,8 @@ class BuildingListingNameManager:
                 'total_occurrences': 0,
                 'matched_occurrences': 0,
                 'best_match_name': None,
-                'match_type': 'none'
+                'match_type': 'none',
+                'is_ambiguous_search': is_ambiguous_search
             }
 
         # 検索名を正規化
@@ -688,13 +698,26 @@ class BuildingListingNameManager:
             # 文字列一致度を計算（優先度順にチェック）
             string_match_score = 0
             match_type = 'none'
+            
+            # 案E: 曖昧検索モードでは完全一致も前方一致として扱う
+            is_exact_match = (name_canonical == search_canonical)
+            is_prefix_match = (
+                name_canonical.startswith(search_canonical) or 
+                search_canonical.startswith(name_canonical)
+            )
 
             # 1. canonical_name完全一致
-            if name_canonical == search_canonical:
-                string_match_score = 100
-                match_type = 'exact'
+            if is_exact_match:
+                if is_ambiguous_search:
+                    # 案E: 曖昧検索モードでは完全一致でも前方一致スコアを適用
+                    # 長さの比率は1.0なので、80 + 1.0 * 15 = 95点
+                    string_match_score = 95  # 前方一致の最高スコア
+                    match_type = 'prefix_as_exact'  # 記録用：実際は完全一致だが前方一致として計算
+                else:
+                    string_match_score = 100
+                    match_type = 'exact'
             # 2. 前方一致
-            elif name_canonical.startswith(search_canonical) or search_canonical.startswith(name_canonical):
+            elif is_prefix_match:
                 # 長さの比率でスコア調整
                 ratio = min(len(search_canonical), len(name_canonical)) / max(len(search_canonical), len(name_canonical))
                 string_match_score = 80 + ratio * 15  # 80-95点
@@ -722,11 +745,12 @@ class BuildingListingNameManager:
             combined_proportion = (building_proportion + exclusivity_score) / 2
 
             # 統合スコア = 文字列一致度 × 複合割合
-            # ただし、完全一致の場合は割合の影響を軽減（0.5 + 0.5 * combined_proportion）
-            if match_type == 'exact':
+            # 案E: 曖昧検索モードでは完全一致ボーナスを適用しない
+            if match_type == 'exact' and not is_ambiguous_search:
                 # 完全一致なら最低でも50点、割合が100%なら100点
                 unified_score = string_match_score * (0.5 + 0.5 * combined_proportion)
             else:
+                # 前方一致、部分一致、類似度マッチ、または曖昧検索モードの完全一致
                 unified_score = string_match_score * combined_proportion
 
             # より良いスコアがあれば更新
@@ -745,7 +769,7 @@ class BuildingListingNameManager:
                 }
 
         # 最終的な統合スコアを計算
-        if best_result['match_type'] == 'exact':
+        if best_result['match_type'] == 'exact' and not is_ambiguous_search:
             unified_score = best_result['string_match_score'] * (0.5 + 0.5 * best_result['combined_proportion'])
         elif best_result['match_type'] != 'none':
             unified_score = best_result['string_match_score'] * best_result['combined_proportion']
@@ -761,7 +785,8 @@ class BuildingListingNameManager:
             'total_occurrences': total_occurrences,
             'matched_occurrences': best_result['matched_occurrences'],
             'best_match_name': best_result['best_match_name'],
-            'match_type': best_result['match_type']
+            'match_type': best_result['match_type'],
+            'is_ambiguous_search': is_ambiguous_search
         }
 
     def _calculate_current_unified_score(self, result: Dict) -> float:

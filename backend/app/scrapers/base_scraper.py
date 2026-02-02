@@ -3260,16 +3260,76 @@ class BaseScraper(ABC):
         return 0, "不一致"
 
 
+
+    def _is_ambiguous_building_name_search(
+        self, session, search_key: str, normalized_address: str
+    ) -> tuple[bool, list]:
+        """検索キーが同一住所の複数建物のcanonical_nameの前方一致かどうかを判定
+        
+        案E: 曖昧な検索の検出
+        - 検索キー「三田ガーデンヒルズ」が「三田ガーデンヒルズサウスヒル」と「三田ガーデンヒルズパークマンション」の両方に前方一致する場合を検出
+        - このような場合、BuildingListingNameの完全一致ボーナスを適用せず、すべての候補に対して前方一致スコアを適用
+        
+        Args:
+            session: データベースセッション
+            search_key: 検索する建物名
+            normalized_address: 正規化された住所
+            
+        Returns:
+            tuple: (is_ambiguous: bool, matching_buildings: list of Building)
+        """
+        from ..utils.building_name_normalizer import canonicalize_building_name
+        from ..utils.address_normalizer import AddressNormalizer
+        
+        canonical_search = canonicalize_building_name(search_key)
+        normalizer = AddressNormalizer()
+        
+        # 同一住所の建物を取得
+        buildings_at_address = session.query(Building).filter(
+            Building.normalized_address == normalized_address
+        ).all()
+        
+        if len(buildings_at_address) < 2:
+            # 同一住所に建物が1件以下なら曖昧ではない
+            return False, []
+        
+        # 検索キーが前方一致する建物をカウント
+        matching_buildings = []
+        for building in buildings_at_address:
+            building_canonical = canonicalize_building_name(building.normalized_name or '')
+            # 検索キーが建物名の前方部分と一致するか
+            if building_canonical.startswith(canonical_search):
+                matching_buildings.append(building)
+            # または建物名が検索キーの前方部分と一致するか（逆パターン）
+            elif canonical_search.startswith(building_canonical):
+                matching_buildings.append(building)
+        
+        # 2件以上の建物が前方一致する場合は曖昧な検索
+        is_ambiguous = len(matching_buildings) >= 2
+        
+        if is_ambiguous:
+            self.logger.info(
+                f"曖昧な検索を検出: '{search_key}' は同一住所の{len(matching_buildings)}件の建物に前方一致 "
+                f"({', '.join([b.normalized_name for b in matching_buildings])})"
+            )
+        
+        return is_ambiguous, matching_buildings
+
     def _calculate_building_match_score(self, session, building: Building,
                                         address_score: int, strict_match: bool,
                                         flexible_match: bool,
-                                        search_name: str = None) -> float:
+                                        search_name: str = None,
+                                        is_ambiguous_search: bool = False) -> float:
         """建物マッチングの総合スコアを計算
 
         スコア配分:
         - 住所一致度: 40% (0-100点 → 0-40点)
         - 属性一致度: 30% (厳密一致100点/許容誤差70点/不一致0点 → 0-30点)
         - 建物名統合スコア: 30% (文字列一致度×出現割合 → 0-30点)
+        
+        案E: 曖昧な検索の場合
+        - is_ambiguous_search=True の場合、BuildingListingNameの完全一致ボーナスを適用しない
+        - 同一マンション群で検索キーが複数建物に前方一致する場合に使用
 
         Returns:
             float: 総合スコア (0-100)
@@ -3294,7 +3354,8 @@ class BaseScraper(ABC):
                 from ..utils.building_listing_name_manager import BuildingListingNameManager
                 name_manager = BuildingListingNameManager(session)
                 unified_name_info = name_manager.calculate_unified_name_score(
-                    building.id, search_name
+                    building.id, search_name,
+                    is_ambiguous_search=is_ambiguous_search  # 案E: 曖昧検索フラグを渡す
                 )
                 # 統合スコア(0-100)を0-30点に変換
                 unified_name_component = unified_name_info.get('unified_score', 0) * 0.3
@@ -3304,8 +3365,10 @@ class BaseScraper(ABC):
 
         total_score = address_component + attribute_component + unified_name_component
 
+        # 曖昧検索の場合はログに明示
+        ambiguous_note = "（曖昧検索モード）" if is_ambiguous_search else ""
         self.logger.debug(
-            f"建物スコア計算: ID={building.id}, "
+            f"建物スコア計算{ambiguous_note}: ID={building.id}, "
             f"住所={address_component:.1f}, 属性={attribute_component:.1f}, "
             f"建物名統合={unified_name_component:.1f}, 合計={total_score:.1f}"
         )
@@ -3325,12 +3388,15 @@ class BaseScraper(ABC):
 
     def _find_buildings_with_staged_matching(self, session, search_key: str, normalized_address: str, 
                                            total_floors: int = None, built_year: int = None, 
-                                           built_month: int = None, total_units: int = None) -> Optional[Building]:
+                                           built_month: int = None, total_units: int = None,
+                                           is_ambiguous_search: bool = False) -> Optional[Building]:
         """段階的マッチングで建物を検索
         
         1. 完全属性一致を優先
         2. 許容誤差一致をフォールバック
         3. 建物名一致度で優先順位付け
+        
+        案E: 曖昧な検索の場合はis_ambiguous_search=Trueを渡す
         """
         # 住所を正規化（表記ゆれを吸収）
         from ..utils.address_normalizer import AddressNormalizer
@@ -3393,9 +3459,11 @@ class BaseScraper(ABC):
             flexible_match = self._verify_building_attributes(building, total_floors, built_year, built_month, total_units, session)
             
             # 総合スコアを計算（統合建物名スコアを使用）
+            # 案E: 曖昧検索フラグを渡す
             total_score = self._calculate_building_match_score(
                 session, building, address_score, strict_match, flexible_match,
-                search_name=search_key
+                search_name=search_key,
+                is_ambiguous_search=is_ambiguous_search
             )
 
             valid_candidates.append({
@@ -3415,14 +3483,38 @@ class BaseScraper(ABC):
         valid_candidates.sort(key=lambda x: -x['total_score'])
         
         best_candidate = valid_candidates[0]
+        
+        # 案E+スコア差保留: 曖昧検索時にスコア差が小さい場合は保留
+        SCORE_DIFF_THRESHOLD = 5.0  # スコア差閾値
+        
+        if is_ambiguous_search and len(valid_candidates) >= 2:
+            second_candidate = valid_candidates[1]
+            score_diff = best_candidate['total_score'] - second_candidate['total_score']
+            
+            if score_diff < SCORE_DIFF_THRESHOLD:
+                self.logger.warning(
+                    f"段階的検索: 曖昧検索でスコア差が小さいため紐づけを保留: "
+                    f"1位={best_candidate['building'].normalized_name}({best_candidate['total_score']:.1f}点), "
+                    f"2位={second_candidate['building'].normalized_name}({second_candidate['total_score']:.1f}点), "
+                    f"差={score_diff:.1f}点 < 閾値{SCORE_DIFF_THRESHOLD}点"
+                )
+                return None  # 保留 → 新規建物として登録
+        
         building = best_candidate['building']
         
         # ログ出力
         match_type = "厳密一致" if best_candidate['strict_match'] else "許容誤差一致"
         address_type = best_candidate['address_match_type']
+        ambiguous_note = "・曖昧検索モード" if is_ambiguous_search else ""
+        
+        # スコア差情報をログに追加
+        score_diff_info = ""
+        if is_ambiguous_search and len(valid_candidates) >= 2:
+            score_diff = best_candidate['total_score'] - valid_candidates[1]['total_score']
+            score_diff_info = f"・差{score_diff:.1f}点"
         
         self.logger.info(
-            f"段階的検索で建物を発見（総合スコア{best_candidate['total_score']:.1f}・{match_type}・住所{address_type}）: "
+            f"段階的検索で建物を発見（総合スコア{best_candidate['total_score']:.1f}・{match_type}・住所{address_type}{score_diff_info}{ambiguous_note}）: "
             f"検索キー='{search_key}' → 既存='{building.canonical_name}' at {building.address}"
         )
         
@@ -3430,7 +3522,13 @@ class BaseScraper(ABC):
 
     def find_existing_building_by_key(self, session, search_key: str, address: str = None, total_floors: int = None,
                                      built_year: int = None, built_month: int = None, total_units: int = None) -> Optional[Building]:
-        """検索キーで既存の建物を探す（最適化された統一検索ロジック）"""
+        """検索キーで既存の建物を探す（最適化された統一検索ロジック）
+        
+        案E: 曖昧な検索の検出と対応
+        - 検索キーが同一住所の複数建物のcanonical_nameに前方一致する場合を検出
+        - 曖昧検索時はBuildingListingNameの完全一致ボーナスを適用しない
+        - これにより、同一マンション群での公平なスコア比較が可能
+        """
         # 住所が指定されていない場合は、建物名だけでの判断は危険なのでNoneを返す
         if not address:
             self.logger.debug(f"住所が指定されていないため、建物検索をスキップ: {search_key}")
@@ -3441,8 +3539,13 @@ class BaseScraper(ABC):
         normalizer = AddressNormalizer()
         normalized_address = normalizer.normalize_for_comparison(address)
         
+        # === 案E: 曖昧な検索かどうかを最初に判定 ===
+        is_ambiguous_search, ambiguous_buildings = self._is_ambiguous_building_name_search(
+            session, search_key, normalized_address
+        )
+        
         # === 1. 正式な建物名での完全一致（総合スコア方式） ===
-        self.logger.debug(f"建物検索開始: search_key='{search_key}', normalized_address='{normalized_address}'")
+        self.logger.debug(f"建物検索開始: search_key='{search_key}', normalized_address='{normalized_address}', 曖昧検索={is_ambiguous_search}")
         
         # まず、建物名（canonical_name）で候補を絞り込む
         candidate_buildings = session.query(Building).filter(
@@ -3484,9 +3587,11 @@ class BaseScraper(ABC):
                 continue
 
             # 総合スコアを計算（統合建物名スコアを使用）
+            # 案E: 曖昧検索フラグを渡す
             total_score = self._calculate_building_match_score(
                 session, building, address_score, strict_match, flexible_match,
-                search_name=search_key
+                search_name=search_key,
+                is_ambiguous_search=is_ambiguous_search
             )
 
             phase1_candidates.append({
@@ -3504,14 +3609,16 @@ class BaseScraper(ABC):
             best = phase1_candidates[0]
             building = best['building']
             match_type = "厳密一致" if best['strict_match'] else "許容誤差一致"
+            ambiguous_note = "・曖昧検索モード" if is_ambiguous_search else ""
             
             self.logger.info(
-                f"既存建物を発見（名前完全一致・総合スコア{best['total_score']:.1f}・{match_type}・住所{best['address_match_type']}）: "
+                f"既存建物を発見（名前完全一致・総合スコア{best['total_score']:.1f}・{match_type}・住所{best['address_match_type']}{ambiguous_note}）: "
                 f"{building.normalized_name} at {building.address}"
             )
             return building
         
         # === 2. BuildingListingNameテーブルでの検索（別名での完全一致） ===
+        # 案E: 曖昧検索時は同一住所の前方一致建物も候補に追加
         from sqlalchemy import or_
         from ..models import BuildingListingName
         from ..utils.building_name_normalizer import canonicalize_building_name
@@ -3527,15 +3634,26 @@ class BaseScraper(ABC):
             )
         ).all()
         
+        # 案E: 曖昧検索時は、BuildingListingNameにない前方一致建物も候補に追加
+        # これにより、エイリアスが登録されていない建物も公平に比較される
+        candidate_building_ids = set()
         if listing_matches:
-            # 複数の候補から最適な建物を選択
-            best_candidate = None
-            best_score = -1
+            candidate_building_ids = {lm.building_id for lm in listing_matches}
+        
+        if is_ambiguous_search and ambiguous_buildings:
+            for ab in ambiguous_buildings:
+                if ab.id not in candidate_building_ids:
+                    candidate_building_ids.add(ab.id)
+                    self.logger.debug(f"曖昧検索: 前方一致建物を候補に追加: {ab.normalized_name} (ID: {ab.id})")
+        
+        if candidate_building_ids:
+            # 案E+スコア差保留: 全候補のスコアを収集して比較
+            all_candidates = []
             
-            for listing_match in listing_matches:
+            for building_id in candidate_building_ids:
                 # 建物を取得
                 primary_building = session.query(Building).filter(
-                    Building.id == listing_match.building_id
+                    Building.id == building_id
                 ).first()
                 
                 if not primary_building or not primary_building.address:
@@ -3559,43 +3677,82 @@ class BaseScraper(ABC):
                 
                 # 属性の一致度を計算
                 attribute_score = 0
-                if self._verify_building_attributes_strict(primary_building, total_floors, built_year, built_month, total_units):
+                strict_match = self._verify_building_attributes_strict(primary_building, total_floors, built_year, built_month, total_units)
+                flexible_match = self._verify_building_attributes(primary_building, total_floors, built_year, built_month, total_units, session)
+                
+                if strict_match:
                     attribute_score = 100  # 厳密一致
-                elif self._verify_building_attributes(primary_building, total_floors, built_year, built_month, total_units, session):
+                elif flexible_match:
                     attribute_score = 70   # 許容誤差一致
                 else:
                     continue  # 属性が一致しない場合はスキップ
 
-                # 総合スコアを計算（統合建物名スコアを使用）
-                strict_match = (attribute_score == 100)
-                flexible_match = (attribute_score >= 70)
+                # 総合スコアを計算
                 total_score = self._calculate_building_match_score(
                     session, primary_building, address_score, strict_match, flexible_match,
-                    search_name=search_key
+                    search_name=search_key,
+                    is_ambiguous_search=is_ambiguous_search
                 )
 
-                # より良い候補があれば更新
-                if total_score > best_score:
-                    best_score = total_score
-                    best_candidate = {
-                        'building': primary_building,
-                        'address_score': address_score,
-                        'attribute_score': attribute_score,
-                        'total_score': total_score,
-                        'listing_name': listing_match.normalized_name
-                    }
+                # 候補リストに追加
+                source = 'listing_name'
+                if ambiguous_buildings and building_id in [ab.id for ab in ambiguous_buildings]:
+                    source = 'ambiguous_prefix'
+                    
+                all_candidates.append({
+                    'building': primary_building,
+                    'address_score': address_score,
+                    'attribute_score': attribute_score,
+                    'strict_match': strict_match,
+                    'total_score': total_score,
+                    'source': source
+                })
             
-            # 最適な候補が見つかった場合
-            if best_candidate:
-                building = best_candidate['building']
-                address_match_type = "完全一致" if best_candidate['address_score'] == 100 else "部分一致"
-                attribute_match_type = "厳密一致" if best_candidate['attribute_score'] == 100 else "許容誤差一致"
+            # 候補をスコア順にソート
+            all_candidates.sort(key=lambda x: -x['total_score'])
+            
+            if all_candidates:
+                best_candidate = all_candidates[0]
                 
-                self.logger.info(
-                    f"BuildingListingNameから最適な建物を選択（住所{address_match_type}・{attribute_match_type}・スコア{best_candidate['total_score']:.1f}）: "
-                    f"'{search_key}' → '{building.normalized_name}' (建物ID: {building.id})"
-                )
-                return building
+                # 案E+スコア差保留: 曖昧検索時にスコア差が小さい場合は保留
+                SCORE_DIFF_THRESHOLD = 5.0  # スコア差閾値
+                
+                if is_ambiguous_search and len(all_candidates) >= 2:
+                    second_candidate = all_candidates[1]
+                    score_diff = best_candidate['total_score'] - second_candidate['total_score']
+                    
+                    if score_diff < SCORE_DIFF_THRESHOLD:
+                        self.logger.warning(
+                            f"曖昧検索でスコア差が小さいため紐づけを保留: "
+                            f"1位={best_candidate['building'].normalized_name}({best_candidate['total_score']:.1f}点), "
+                            f"2位={second_candidate['building'].normalized_name}({second_candidate['total_score']:.1f}点), "
+                            f"差={score_diff:.1f}点 < 閾値{SCORE_DIFF_THRESHOLD}点"
+                        )
+                        # 保留 → Phase 3の段階的検索へ進む（または新規建物として登録）
+                    else:
+                        # スコア差が十分ある場合は1位の建物を返す
+                        building = best_candidate['building']
+                        address_match_type = "完全一致" if best_candidate['address_score'] == 100 else "部分一致"
+                        attribute_match_type = "厳密一致" if best_candidate['strict_match'] else "許容誤差一致"
+                        
+                        self.logger.info(
+                            f"BuildingListingNameから最適な建物を選択（住所{address_match_type}・{attribute_match_type}・"
+                            f"スコア{best_candidate['total_score']:.1f}・差{score_diff:.1f}点・曖昧検索モード）: "
+                            f"'{search_key}' → '{building.normalized_name}' (建物ID: {building.id})"
+                        )
+                        return building
+                else:
+                    # 曖昧検索でない場合、または候補が1件のみの場合は通常通り返す
+                    building = best_candidate['building']
+                    address_match_type = "完全一致" if best_candidate['address_score'] == 100 else "部分一致"
+                    attribute_match_type = "厳密一致" if best_candidate['strict_match'] else "許容誤差一致"
+                    ambiguous_note = "・曖昧検索モード" if is_ambiguous_search else ""
+                    
+                    self.logger.info(
+                        f"BuildingListingNameから最適な建物を選択（住所{address_match_type}・{attribute_match_type}・スコア{best_candidate['total_score']:.1f}{ambiguous_note}）: "
+                        f"'{search_key}' → '{building.normalized_name}' (建物ID: {building.id})"
+                    )
+                    return building
             else:
                 self.logger.debug(f"BuildingListingNameで複数候補が見つかったが、住所または属性が一致する建物がない")
         
@@ -3607,7 +3764,8 @@ class BaseScraper(ABC):
         
         if normalized_address:  # 住所がある場合のみ実行
             staged_result = self._find_buildings_with_staged_matching(
-                session, search_key, normalized_address, total_floors, built_year, built_month, total_units
+                session, search_key, normalized_address, total_floors, built_year, built_month, total_units,
+                is_ambiguous_search=is_ambiguous_search  # 案E: 曖昧検索フラグを渡す
             )
             if staged_result:
                 return staged_result
