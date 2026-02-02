@@ -520,25 +520,40 @@ def remove_room_number_from_building_name(building_name: str, room_number: str |
     normalized_room_number = unicodedata.normalize('NFKC', str(room_number))
     
     # 建物名の末尾が部屋番号で終わっているかチェック
-    # パターン1: 部屋番号そのまま（例：「グラントゥルース神田岩本町1002」）
+    # パターン1: 部屋番号 + 号室（例：「ハイネス哲学堂209号室」）
+    pattern_goshitsu = f"{normalized_room_number}号室"
+    if building_name.endswith(pattern_goshitsu):
+        return building_name[:-len(pattern_goshitsu)].strip()
+
+    # パターン2: 半角スペース + 部屋番号 + 号室（例：「ハイネス哲学堂 209号室」）
+    pattern_space_goshitsu = f" {normalized_room_number}号室"
+    if building_name.endswith(pattern_space_goshitsu):
+        return building_name[:-len(pattern_space_goshitsu)].strip()
+
+    # パターン3: 全角スペース + 部屋番号 + 号室（例：「ハイネス哲学堂　209号室」）
+    pattern_fullspace_goshitsu = f"　{normalized_room_number}号室"
+    if building_name.endswith(pattern_fullspace_goshitsu):
+        return building_name[:-len(pattern_fullspace_goshitsu)].strip()
+
+    # パターン4: 部屋番号そのまま（例：「グラントゥルース神田岩本町1002」）
     if building_name.endswith(normalized_room_number):
         return building_name[:-len(normalized_room_number)].strip()
-    
-    # パターン2: 半角スペース + 部屋番号（例：「新宿ウエスト 424」）
+
+    # パターン5: 半角スペース + 部屋番号（例：「新宿ウエスト 424」）
     pattern_half_space = f" {normalized_room_number}"
     if building_name.endswith(pattern_half_space):
         return building_name[:-len(pattern_half_space)].strip()
-    
-    # パターン3: 全角スペース + 部屋番号（例：「新宿ウエスト　424」）
+
+    # パターン6: 全角スペース + 部屋番号（例：「新宿ウエスト　424」）
     pattern_full_space = f"　{normalized_room_number}"
     if building_name.endswith(pattern_full_space):
         return building_name[:-len(pattern_full_space)].strip()
-    
-    # パターン4: ハイフン + 部屋番号（例：「新宿ウエスト-424」）
+
+    # パターン7: ハイフン + 部屋番号（例：「新宿ウエスト-424」）
     pattern_hyphen = f"-{normalized_room_number}"
     if building_name.endswith(pattern_hyphen):
         return building_name[:-len(pattern_hyphen)].strip()
-    
+
     # 部屋番号が含まれていない場合は元の建物名を返す
     return building_name
 

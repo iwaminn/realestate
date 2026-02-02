@@ -1230,68 +1230,39 @@ class MajorityVoteUpdater:
         # BuildingNameGrouperを使用
         from .building_name_grouper import get_grouper
         grouper = get_grouper()
-        
+
         # 建物名と重みを収集
         all_building_names = []
         name_weights = {}  # {建物名: 重み}
-        
-        # アクティブな掲載情報があるかチェック
-        active_listings = self.session.query(PropertyListing).filter(
+
+        # 全ての掲載情報を取得（アクティブ・非アクティブ両方）
+        # 改善: アクティブ掲載のみではなく、全掲載で多数決を取る
+        all_listings = self.session.query(PropertyListing).filter(
             PropertyListing.master_property_id == property_id,
-            PropertyListing.is_active == True
+            PropertyListing.listing_building_name.isnot(None)
         ).all()
-        
-        if active_listings:
-            # アクティブな掲載情報から建物名を取得
-            for listing in active_listings:
-                if listing.listing_building_name:
-                    # 広告文除去処理を適用
-                    cleaned_building_name = remove_ad_text_from_building_name(listing.listing_building_name)
 
-                    # 部屋番号除去処理を適用
-                    cleaned_building_name = remove_room_number_from_building_name(
-                        cleaned_building_name, property_obj.room_number
-                    )
+        for listing in all_listings:
+            if listing.listing_building_name:
+                # 広告文除去処理を適用
+                cleaned_building_name = remove_ad_text_from_building_name(listing.listing_building_name)
 
-                    # 広告文除去後に有効な建物名がない場合はスキップ
-                    if not cleaned_building_name:
-                        continue
-                    
-                    # 純粋な出現回数ベース（サイト重み付けなし）
-                    all_building_names.append(cleaned_building_name)
-                    
-                    if cleaned_building_name in name_weights:
-                        name_weights[cleaned_building_name] += 1
-                    else:
-                        name_weights[cleaned_building_name] = 1
-        else:
-            # すべて非アクティブの場合、最近の掲載情報を使用
-            recent_listings = self.session.query(PropertyListing).filter(
-                PropertyListing.master_property_id == property_id,
-                PropertyListing.listing_building_name.isnot(None)
-            ).order_by(PropertyListing.last_scraped_at.desc()).limit(10).all()
-            
-            for listing in recent_listings:
-                if listing.listing_building_name:
-                    # 広告文除去処理を適用
-                    cleaned_building_name = remove_ad_text_from_building_name(listing.listing_building_name)
+                # 部屋番号除去処理を適用
+                cleaned_building_name = remove_room_number_from_building_name(
+                    cleaned_building_name, property_obj.room_number
+                )
 
-                    # 部屋番号除去処理を適用
-                    cleaned_building_name = remove_room_number_from_building_name(
-                        cleaned_building_name, property_obj.room_number
-                    )
+                # 広告文除去後に有効な建物名がない場合はスキップ
+                if not cleaned_building_name:
+                    continue
 
-                    # 広告文除去後に有効な建物名がない場合はスキップ
-                    if not cleaned_building_name:
-                        continue
-                    
-                    # 純粋な出現回数ベース（サイト重み付けなし）
-                    all_building_names.append(cleaned_building_name)
-                    
-                    if cleaned_building_name in name_weights:
-                        name_weights[cleaned_building_name] += 1
-                    else:
-                        name_weights[cleaned_building_name] = 1
+                # 純粋な出現回数ベース（サイト重み付けなし）
+                all_building_names.append(cleaned_building_name)
+
+                if cleaned_building_name in name_weights:
+                    name_weights[cleaned_building_name] += 1
+                else:
+                    name_weights[cleaned_building_name] = 1
         
         if all_building_names:
             # 建物名をグループ化（スペース正規化）
