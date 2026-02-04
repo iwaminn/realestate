@@ -4,10 +4,11 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_, distinct, case, asc, desc, String
+import math
 
 from ..database import get_db
 from ..models import Building, MasterProperty, PropertyListing
-from ..schemas.building import BuildingSchema
+from ..schemas.building import BuildingSchema, NearbyBuildingSchema
 
 router = APIRouter(prefix="/api", tags=["buildings"])
 
@@ -645,5 +646,172 @@ async def get_building(
     building = db.query(Building).filter(Building.id == building_id).first()
     if not building:
         raise HTTPException(status_code=404, detail="建物が見つかりません")
-    
+
     return building
+
+
+def calculate_distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """
+    2点間の距離をメートルで計算（ハバーサイン公式）
+    """
+    R = 6371000  # 地球の半径（メートル）
+
+    lat1_rad = math.radians(lat1)
+    lat2_rad = math.radians(lat2)
+    delta_lat = math.radians(lat2 - lat1)
+    delta_lon = math.radians(lon2 - lon1)
+
+    a = math.sin(delta_lat / 2) ** 2 + \
+        math.cos(lat1_rad) * math.cos(lat2_rad) * math.sin(delta_lon / 2) ** 2
+    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    return R * c
+
+
+@router.get("/buildings/{building_id}/nearby", response_model=List[Dict[str, Any]])
+async def get_nearby_buildings(
+    building_id: int,
+    radius_meters: int = Query(500, ge=100, le=5000, description="検索半径（メートル）"),
+    limit: int = Query(10, ge=1, le=50, description="最大件数"),
+    db: Session = Depends(get_db)
+):
+    """
+    指定した建物の周辺建物を取得
+
+    - 座標がない場合はジオコーディングを試みる
+    - 販売中の物件がある建物のみ返す
+    """
+    # 対象建物を取得
+    building = db.query(Building).filter(Building.id == building_id).first()
+    if not building:
+        raise HTTPException(status_code=404, detail="建物が見つかりません")
+
+    # 座標がない場合はジオコーディングを試みる
+    if not building.latitude or not building.longitude:
+        if building.address:
+            try:
+                from ..services.geocoding_service import GeocodingService
+                geocoding_service = GeocodingService(db)
+                coords = geocoding_service.geocode_building(building)
+                if coords:
+                    building.latitude = coords['latitude']
+                    building.longitude = coords['longitude']
+                    db.commit()
+            except Exception as e:
+                # ジオコーディングエラーは無視
+                pass
+
+    # 座標がない場合は空のリストを返す
+    if not building.latitude or not building.longitude:
+        return []
+
+    # 検索範囲の概算（度単位）
+    # 緯度1度 ≈ 111km、経度1度は緯度によって変わる
+    lat_range = radius_meters / 111000
+    lon_range = radius_meters / (111000 * math.cos(math.radians(building.latitude)))
+
+    min_lat = building.latitude - lat_range
+    max_lat = building.latitude + lat_range
+    min_lon = building.longitude - lon_range
+    max_lon = building.longitude + lon_range
+
+    # 販売中物件がある建物をサブクエリで取得（坪単価計算用に面積も取得）
+    # 坪単価 = 価格 / (面積 / 3.30578) = 価格 * 3.30578 / 面積
+    active_building_subquery = db.query(
+        MasterProperty.building_id,
+        func.count(distinct(MasterProperty.id)).label('property_count'),
+        func.min(PropertyListing.current_price).label('min_price'),
+        func.max(PropertyListing.current_price).label('max_price'),
+        func.avg(PropertyListing.current_price).label('avg_price'),
+        # 面積の範囲
+        func.min(MasterProperty.area).label('min_area'),
+        func.max(MasterProperty.area).label('max_area'),
+        # 坪単価の平均を計算（面積がある物件のみ）
+        func.avg(
+            case(
+                (MasterProperty.area > 0,
+                 PropertyListing.current_price * 3.30578 / MasterProperty.area),
+                else_=None
+            )
+        ).label('avg_price_per_tsubo')
+    ).join(
+        PropertyListing, MasterProperty.id == PropertyListing.master_property_id
+    ).filter(
+        PropertyListing.is_active == True
+    ).group_by(
+        MasterProperty.building_id
+    ).subquery()
+
+    # 周辺の建物を検索（座標のある建物のみ）
+    nearby_query = db.query(
+        Building,
+        active_building_subquery.c.property_count,
+        active_building_subquery.c.min_price,
+        active_building_subquery.c.max_price,
+        active_building_subquery.c.avg_price,
+        active_building_subquery.c.min_area,
+        active_building_subquery.c.max_area,
+        active_building_subquery.c.avg_price_per_tsubo
+    ).join(
+        active_building_subquery, Building.id == active_building_subquery.c.building_id
+    ).filter(
+        Building.id != building_id,  # 自分自身を除外
+        Building.latitude.isnot(None),
+        Building.longitude.isnot(None),
+        Building.latitude >= min_lat,
+        Building.latitude <= max_lat,
+        Building.longitude >= min_lon,
+        Building.longitude <= max_lon
+    )
+
+    candidates = nearby_query.all()
+
+    # 正確な距離を計算してフィルタリング
+    nearby_buildings = []
+    for b, prop_count, min_price, max_price, avg_price, min_area, max_area, avg_price_per_tsubo in candidates:
+        distance = calculate_distance(
+            building.latitude, building.longitude,
+            b.latitude, b.longitude
+        )
+        if distance <= radius_meters:
+            nearby_buildings.append({
+                "building": b,
+                "distance_meters": round(distance),
+                "property_count": prop_count or 0,
+                "min_price": min_price,
+                "max_price": max_price,
+                "avg_price": int(avg_price) if avg_price else None,
+                "min_area": float(min_area) if min_area else None,
+                "max_area": float(max_area) if max_area else None,
+                "avg_price_per_tsubo": round(avg_price_per_tsubo) if avg_price_per_tsubo else None
+            })
+
+    # 距離順でソート
+    nearby_buildings.sort(key=lambda x: x["distance_meters"])
+
+    # 上限数で制限
+    nearby_buildings = nearby_buildings[:limit]
+
+    # レスポンス形式に変換
+    result = []
+    for item in nearby_buildings:
+        b = item["building"]
+        result.append({
+            "id": b.id,
+            "normalized_name": b.normalized_name,
+            "address": b.address,
+            "total_floors": b.total_floors,
+            "built_year": b.built_year,
+            "built_month": b.built_month,
+            "station_info": b.station_info,
+            "distance_meters": item["distance_meters"],
+            "property_count": item["property_count"],
+            "avg_price_per_tsubo": item["avg_price_per_tsubo"],
+            "area_range": {
+                "min": item["min_area"],
+                "max": item["max_area"]
+            } if item["min_area"] else None,
+            "building_age": datetime.now().year - b.built_year if b.built_year else None
+        })
+
+    return result

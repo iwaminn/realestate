@@ -187,6 +187,24 @@ const BuildingPropertiesPage: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [maxFloorFromProperties, setMaxFloorFromProperties] = useState<number | null>(null);
   const [hazardMapUrl, setHazardMapUrl] = useState<string>('https://disaportal.gsi.go.jp/hazardmap/maps/index.html');
+  const [nearbyBuildings, setNearbyBuildings] = useState<Array<{
+    id: number;
+    normalized_name: string;
+    address: string | null;
+    total_floors: number | null;
+    built_year: number | null;
+    built_month: number | null;
+    station_info: string | null;
+    distance_meters: number;
+    property_count: number;
+    avg_price_per_tsubo: number | null;
+    area_range: {
+      min: number | null;
+      max: number | null;
+    } | null;
+    building_age: number | null;
+  }>>([]);
+  const [nearbyLoading, setNearbyLoading] = useState(false);
   
   // URLパラメータから各種設定を取得
   const getParamsFromUrl = () => {
@@ -252,8 +270,24 @@ const BuildingPropertiesPage: React.FC = () => {
   useEffect(() => {
     if (buildingId) {
       fetchBuildingProperties();
+      fetchNearbyBuildings();
     }
   }, [buildingId, includeInactive]);
+
+  const fetchNearbyBuildings = async () => {
+    if (!buildingId) return;
+
+    setNearbyLoading(true);
+    try {
+      const nearby = await propertyApi.getNearbyBuildings(parseInt(buildingId), 500, 10);
+      setNearbyBuildings(nearby);
+    } catch (err) {
+      console.error('周辺建物の取得に失敗:', err);
+      // エラーは無視（周辺建物が表示されないだけ）
+    } finally {
+      setNearbyLoading(false);
+    }
+  };
 
   // URLパラメータが変更された時の処理（初期ロード時のみ）
   useEffect(() => {
@@ -1381,8 +1415,8 @@ const BuildingPropertiesPage: React.FC = () => {
 
             return (
             <Grid item xs={12} md={6} key={property.id}>
-              <Card 
-                sx={{ 
+              <Card
+                sx={{
                   cursor: 'pointer',
                   '&:hover': {
                     boxShadow: 3
@@ -1414,19 +1448,19 @@ const BuildingPropertiesPage: React.FC = () => {
                         />
                       )}
                     </Box>
-                    <Tooltip 
+                    <Tooltip
                       title={
                         <Box>
                           {property.source_sites.map((site) => (
                             <Box key={site} sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
-                              <Box 
-                                sx={{ 
-                                  width: 8, 
-                                  height: 8, 
+                              <Box
+                                sx={{
+                                  width: 8,
+                                  height: 8,
                                   borderRadius: '50%',
                                   backgroundColor: getSourceColor(site),
                                   mr: 1
-                                }} 
+                                }}
                               />
                               <Typography variant="body2">{site}</Typography>
                             </Box>
@@ -1521,9 +1555,9 @@ const BuildingPropertiesPage: React.FC = () => {
                               価格改定: {formatDate(property.price_change_info.date)}
                             </Typography>
                             <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                              <Typography 
-                                variant="body2" 
-                                sx={{ 
+                              <Typography
+                                variant="body2"
+                                sx={{
                                   fontSize: '0.875rem',
                                   color: 'text.secondary',
                                   textDecoration: 'line-through'
@@ -1531,9 +1565,9 @@ const BuildingPropertiesPage: React.FC = () => {
                               >
                                 {formatPrice(property.price_change_info.previous_price, true)}
                               </Typography>
-                              <Typography 
-                                variant="body2" 
-                                sx={{ 
+                              <Typography
+                                variant="body2"
+                                sx={{
                                   fontSize: '0.875rem',
                                   color: property.price_change_info.change_amount > 0 ? 'error.main' : 'success.main',
                                   fontWeight: 'bold'
@@ -1564,6 +1598,96 @@ const BuildingPropertiesPage: React.FC = () => {
             );
           })}
         </Grid>
+      )}
+
+      {/* 周辺の建物セクション */}
+      {(nearbyBuildings.length > 0 || nearbyLoading) && (
+        <Box sx={{ mt: isMobile ? 3 : 4 }}>
+          <Typography variant="h5" sx={{ mb: isMobile ? 1 : 2 }}>
+            周辺の建物（500m以内）
+          </Typography>
+          {nearbyLoading ? (
+            <Box display="flex" justifyContent="center" py={2}>
+              <CircularProgress size={24} />
+            </Box>
+          ) : (
+            <TableContainer component={Paper}>
+              <Table>
+                <TableHead>
+                  <TableRow>
+                    <TableCell sx={{ py: 2.5 }}>建物名</TableCell>
+                    <TableCell align="right" sx={{ display: { xs: 'none', sm: 'table-cell' }, py: 2.5 }}>距離</TableCell>
+                    <TableCell align="right" sx={{ py: 2.5 }}>販売中</TableCell>
+                    <TableCell align="right" sx={{ display: { xs: 'none', md: 'table-cell' }, py: 2.5 }}>平均坪単価</TableCell>
+                    <TableCell align="right" sx={{ display: { xs: 'none', md: 'table-cell' }, py: 2.5 }}>面積</TableCell>
+                    <TableCell align="right" sx={{ display: { xs: 'none', sm: 'table-cell' }, py: 2.5 }}>築年</TableCell>
+                    <TableCell align="right" sx={{ display: { xs: 'none', lg: 'table-cell' }, py: 2.5 }}>階数</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {nearbyBuildings.map((nb) => (
+                    <TableRow
+                      key={nb.id}
+                      hover
+                      sx={{ cursor: 'pointer', '& td': { py: 2.5 } }}
+                      onClick={() => navigate(`/buildings/${nb.id}/properties`)}
+                    >
+                      <TableCell>
+                        <Box>
+                          <Typography variant="body2" sx={{ fontWeight: 500 }}>
+                            {nb.normalized_name}
+                          </Typography>
+                          <Typography variant="caption" color="text.secondary" sx={{ display: { xs: 'block', md: 'none' } }}>
+                            {nb.distance_meters}m
+                            {nb.built_year && ` / 築${new Date().getFullYear() - nb.built_year}年`}
+                            {nb.avg_price_per_tsubo && ` / @${nb.avg_price_per_tsubo.toLocaleString()}万`}
+                            {nb.area_range && ` / ${nb.area_range.min === nb.area_range.max ? `${nb.area_range.min}㎡` : `${nb.area_range.min}〜${nb.area_range.max}㎡`}`}
+                          </Typography>
+                        </Box>
+                      </TableCell>
+                      <TableCell align="right" sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
+                        {nb.distance_meters}m
+                      </TableCell>
+                      <TableCell align="right">
+                        <Chip
+                          label={`${nb.property_count}件`}
+                          size="small"
+                          color="primary"
+                          variant="outlined"
+                        />
+                      </TableCell>
+                      <TableCell align="right" sx={{ display: { xs: 'none', md: 'table-cell' }, whiteSpace: 'nowrap' }}>
+                        {nb.avg_price_per_tsubo
+                          ? `${nb.avg_price_per_tsubo.toLocaleString()}万円`
+                          : '-'}
+                      </TableCell>
+                      <TableCell align="right" sx={{ display: { xs: 'none', md: 'table-cell' }, whiteSpace: 'nowrap' }}>
+                        {nb.area_range ? (
+                          nb.area_range.min === nb.area_range.max
+                            ? `${nb.area_range.min}㎡`
+                            : `${nb.area_range.min}〜${nb.area_range.max}㎡`
+                        ) : '-'}
+                      </TableCell>
+                      <TableCell align="right" sx={{ display: { xs: 'none', sm: 'table-cell' } }}>
+                        {nb.built_year ? (
+                          <>
+                            {nb.built_year}年
+                            <Typography component="span" variant="caption" color="text.secondary" sx={{ ml: 0.5 }}>
+                              (築{new Date().getFullYear() - nb.built_year}年)
+                            </Typography>
+                          </>
+                        ) : '-'}
+                      </TableCell>
+                      <TableCell align="right" sx={{ display: { xs: 'none', lg: 'table-cell' } }}>
+                        {nb.total_floors ? `${nb.total_floors}階` : '-'}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+        </Box>
       )}
     </Container>
     </>

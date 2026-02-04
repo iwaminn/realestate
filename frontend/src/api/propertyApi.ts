@@ -429,4 +429,28 @@ export const propertyApi = {
     });
     return response.data;
   },
+
+  // 周辺建物を取得
+  getNearbyBuildings: async (buildingId: number, radiusMeters: number = 500, limit: number = 10): Promise<Array<{
+    id: number;
+    normalized_name: string;
+    address: string | null;
+    total_floors: number | null;
+    built_year: number | null;
+    built_month: number | null;
+    station_info: string | null;
+    distance_meters: number;
+    property_count: number;
+    avg_price_per_tsubo: number | null;
+    area_range: {
+      min: number | null;
+      max: number | null;
+    } | null;
+    building_age: number | null;
+  }>> => {
+    const response = await api.get(`/buildings/${buildingId}/nearby`, {
+      params: { radius_meters: radiusMeters, limit }
+    });
+    return response.data;
+  },
 };
